@@ -1,0 +1,49 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+# CocoaPods (not used, but just in case)
+Pods/
+
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Node (backend)
+backend/node_modules/
+backend/dist/
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
