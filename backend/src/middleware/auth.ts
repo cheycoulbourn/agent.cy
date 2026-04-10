@@ -1,25 +1,46 @@
 import { Request, Response, NextFunction } from "express";
+import { createClient } from "@supabase/supabase-js";
 
-// Simple API key auth for MVP
-// In production, validate Supabase JWT tokens instead
-export function authMiddleware(
+const supabase = createClient(
+  process.env.SUPABASE_URL || "",
+  process.env.SUPABASE_SERVICE_ROLE_KEY || ""
+);
+
+export async function authMiddleware(
   req: Request,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
+  // Option 1: API key auth (for MVP / testing)
   const apiKey = req.headers["x-api-key"];
-  const expectedKey = process.env.API_KEY;
-
-  if (!expectedKey) {
-    console.warn("API_KEY not set — auth disabled in development");
+  if (apiKey && apiKey === process.env.API_KEY) {
     next();
     return;
   }
 
-  if (apiKey !== expectedKey) {
-    res.status(401).json({ error: "Unauthorized" });
+  // Option 2: Supabase JWT auth (for production iOS app)
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    const { data, error } = await supabase.auth.getUser(token);
+
+    if (error || !data.user) {
+      res.status(401).json({ error: "Invalid token" });
+      return;
+    }
+
+    // Attach user to request for downstream use
+    (req as any).userId = data.user.id;
+    next();
     return;
   }
 
-  next();
+  // No valid auth provided
+  if (!process.env.API_KEY) {
+    console.warn("No auth configured — allowing request in development");
+    next();
+    return;
+  }
+
+  res.status(401).json({ error: "Unauthorized" });
 }
