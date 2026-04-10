@@ -59,7 +59,7 @@ struct AppButton: View {
         case .secondary: colorScheme == .dark ? .textOnDark : .brandBlack
         case .tertiary: .brandBrown
         case .ai: .brandBlack
-        case .destructive: .destructive
+        case .destructive: .error
         }
     }
 
@@ -76,7 +76,7 @@ struct AppButton: View {
     private var borderColor: Color {
         switch style {
         case .secondary: colorScheme == .dark ? .borderDark : .borderLight
-        case .destructive: .destructive.opacity(0.5)
+        case .destructive: .error.opacity(0.5)
         default: .clear
         }
     }
