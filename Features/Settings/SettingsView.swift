@@ -28,7 +28,7 @@ struct SettingsView: View {
                     .overlay {
                         Text(String(profile?.displayName.prefix(1) ?? "?"))
                             .font(AppFont.title3())
-                            .foregroundStyle(.brandBrown)
+                            .foregroundStyle(Color.brandBrown)
                     }
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -36,7 +36,7 @@ struct SettingsView: View {
                         .font(AppFont.headline())
                     Text(profile?.niche ?? "Set up your profile")
                         .font(AppFont.caption())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
             .padding(.vertical, Spacing.xxs)
@@ -75,12 +75,12 @@ struct SettingsView: View {
                 Text("Current Plan")
                 Spacer()
                 Text("Free")
-                    .foregroundStyle(.textSecondary)
+                    .foregroundStyle(Color.textSecondary)
             }
             Button("Upgrade to Pro") {
                 // TODO: Show paywall
             }
-            .foregroundStyle(.brandPink)
+            .foregroundStyle(Color.brandPink)
         }
     }
 
@@ -90,7 +90,7 @@ struct SettingsView: View {
                 Text("Version")
                 Spacer()
                 Text("0.1.0")
-                    .foregroundStyle(.textSecondary)
+                    .foregroundStyle(Color.textSecondary)
             }
         }
     }

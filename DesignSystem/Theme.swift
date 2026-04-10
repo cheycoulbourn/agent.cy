@@ -24,27 +24,6 @@ extension Color {
     static let error = Color(hex: "E85D5D")
 }
 
-// Used for .foregroundStyle(.brandBrown) etc.
-extension ShapeStyle where Self == Color {
-    static var brandBlack: Color { .init(hex: "1A1A1A") }
-    static var brandBeige: Color { .init(hex: "E8DDD3") }
-    static var brandBrown: Color { .init(hex: "A68B7B") }
-    static var brandPink: Color { .init(hex: "F2C4C4") }
-    static var bgLight: Color { .init(hex: "FAF8F5") }
-    static var bgDark: Color { .init(hex: "0F0F0F") }
-    static var cardLight: Color { .white }
-    static var cardDark: Color { .init(hex: "1C1C1C") }
-    static var borderLight: Color { .init(hex: "E5E0DA") }
-    static var borderDark: Color { .init(hex: "2A2A2A") }
-    static var textPrimary: Color { .init(hex: "1A1A1A") }
-    static var textSecondary: Color { .init(hex: "A68B7B") }
-    static var textTertiary: Color { .init(hex: "8E8C99") }
-    static var textOnDark: Color { .init(hex: "F0EEF5") }
-    static var aiAccent: Color { .init(hex: "F2C4C4") }
-    static var success: Color { .init(hex: "7BC47F") }
-    static var warning: Color { .init(hex: "E8C547") }
-    static var destructive: Color { .init(hex: "E85D5D") }
-}
 
 // MARK: - Hex Initializer
 

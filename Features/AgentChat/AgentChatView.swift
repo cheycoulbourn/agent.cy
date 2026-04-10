@@ -54,7 +54,7 @@ struct AgentChatView: View {
                             SparkPulse(size: 16)
                             Text("Thinking...")
                                 .font(AppFont.subhead())
-                                .foregroundStyle(.textSecondary)
+                                .foregroundStyle(Color.textSecondary)
                             Spacer()
                         }
                         .padding(.horizontal, Spacing.md)
@@ -173,7 +173,7 @@ struct MessageBubble: View {
                         SparkIcon(size: 12)
                         Text("Agent Cy")
                             .font(AppFont.caption(.medium))
-                            .foregroundStyle(.brandBrown)
+                            .foregroundStyle(Color.brandBrown)
                     }
                 }
 
@@ -220,7 +220,7 @@ struct QuickActionChip: View {
             }
             .padding(.horizontal, Spacing.sm)
             .padding(.vertical, Spacing.xs)
-            .foregroundStyle(colorScheme == .dark ? .textOnDark : .textPrimary)
+            .foregroundStyle(colorScheme == .dark ? Color.textOnDark : Color.textPrimary)
             .background(Color.brandPink.opacity(0.2))
             .clipShape(Capsule())
         }

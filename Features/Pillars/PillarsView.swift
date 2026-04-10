@@ -40,7 +40,7 @@ struct PillarsView: View {
                 .font(AppFont.title3())
             Text("Content pillars are the core themes you create around. They help keep your content balanced and on-brand.")
                 .font(AppFont.subhead())
-                .foregroundStyle(.textSecondary)
+                .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(.vertical, Spacing.xxxl)
@@ -58,14 +58,14 @@ struct PillarsView: View {
                         .font(AppFont.headline())
                     Text("\(Int(pillar.targetPercentage))% target")
                         .font(AppFont.caption())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
 
                 Spacer()
 
                 Text("\(pillar.contentItems.count) posts")
                     .font(AppFont.caption())
-                    .foregroundStyle(.textTertiary)
+                    .foregroundStyle(Color.textTertiary)
             }
         }
     }
@@ -123,7 +123,7 @@ struct PillarEditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.brandBrown)
+                        .foregroundStyle(Color.brandBrown)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -136,7 +136,7 @@ struct PillarEditorView: View {
                         dismiss()
                     }
                     .font(.headline)
-                    .foregroundStyle(.brandBlack)
+                    .foregroundStyle(Color.brandBlack)
                     .disabled(name.isEmpty)
                 }
             }

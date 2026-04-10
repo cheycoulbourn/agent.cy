@@ -81,7 +81,7 @@ struct IdeasView: View {
                 .font(AppFont.title3())
             Text("Capture ideas from anywhere — text, photos, links, or voice memos.")
                 .font(AppFont.subhead())
-                .foregroundStyle(.textSecondary)
+                .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
             AppButton("Capture an Idea", style: .primary, icon: "plus") {
                 showCapture = true
@@ -131,14 +131,14 @@ struct InspirationCard: View {
                 HStack {
                     Image(systemName: inspiration.sourceType.icon)
                         .font(.system(size: 14))
-                        .foregroundStyle(.brandBrown)
+                        .foregroundStyle(Color.brandBrown)
                     Text(inspiration.sourceType.displayName)
                         .font(AppFont.caption(.medium))
-                        .foregroundStyle(.brandBrown)
+                        .foregroundStyle(Color.brandBrown)
                     Spacer()
                     Text(inspiration.createdAt, style: .relative)
                         .font(AppFont.caption())
-                        .foregroundStyle(.textTertiary)
+                        .foregroundStyle(Color.textTertiary)
                 }
 
                 if let title = inspiration.title {
@@ -150,7 +150,7 @@ struct InspirationCard: View {
                 if let notes = inspiration.notes, !notes.isEmpty {
                     Text(notes)
                         .font(AppFont.subhead())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                         .lineLimit(3)
                 }
 

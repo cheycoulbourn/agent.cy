@@ -48,10 +48,10 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: Spacing.xxs) {
             Text(greetingText)
                 .font(AppFont.title2())
-                .foregroundStyle(colorScheme == .dark ? .textOnDark : .textPrimary)
+                .foregroundStyle(colorScheme == .dark ? Color.textOnDark : Color.textPrimary)
             Text(Date.now, format: .dateTime.weekday(.wide).month(.wide).day())
                 .font(AppFont.subhead())
-                .foregroundStyle(.textSecondary)
+                .foregroundStyle(Color.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, Spacing.sm)
@@ -67,7 +67,7 @@ struct DashboardView: View {
                         VStack(spacing: Spacing.xxs) {
                             Text(day.formatted(.dateTime.weekday(.abbreviated)))
                                 .font(AppFont.caption())
-                                .foregroundStyle(.textSecondary)
+                                .foregroundStyle(Color.textSecondary)
                             Circle()
                                 .fill(day.isToday ? Color.brandBlack : Color.borderLight)
                                 .frame(width: 32, height: 32)
@@ -99,13 +99,13 @@ struct DashboardView: View {
                         PillarsView()
                     }
                     .font(AppFont.caption(.medium))
-                    .foregroundStyle(.brandBrown)
+                    .foregroundStyle(Color.brandBrown)
                 }
 
                 if pillars.isEmpty {
                     Text("Set up your content pillars to track balance.")
                         .font(AppFont.subhead())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 } else {
                     HStack(spacing: Spacing.sm) {
                         ForEach(pillars) { pillar in
@@ -113,7 +113,7 @@ struct DashboardView: View {
                                 PillarDot(color: pillar.color)
                                 Text(pillar.name)
                                     .font(AppFont.caption())
-                                    .foregroundStyle(.textSecondary)
+                                    .foregroundStyle(Color.textSecondary)
                             }
                         }
                     }
@@ -129,7 +129,7 @@ struct DashboardView: View {
                     SparkIcon(size: 14)
                     Text("Agent Cy")
                         .font(AppFont.caption(.semibold))
-                        .foregroundStyle(.brandBrown)
+                        .foregroundStyle(Color.brandBrown)
                 }
                 Text("Start by setting up your content pillars and brand voice. I'll learn your style and help you plan content that's unmistakably you.")
                     .font(AppFont.body())
@@ -150,7 +150,7 @@ struct DashboardView: View {
                 if upcomingContent.isEmpty {
                     Text("Nothing scheduled yet. Start capturing ideas!")
                         .font(AppFont.subhead())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 } else {
                     ForEach(upcomingContent.prefix(3)) { item in
                         HStack {
@@ -164,7 +164,7 @@ struct DashboardView: View {
                                 if let date = item.scheduledDate {
                                     Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                                         .font(AppFont.caption())
-                                        .foregroundStyle(.textSecondary)
+                                        .foregroundStyle(Color.textSecondary)
                                 }
                             }
                             Spacer()
@@ -184,11 +184,11 @@ struct DashboardView: View {
                         .font(AppFont.headline())
                     Text("Capture and develop your ideas")
                         .font(AppFont.subhead())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .foregroundStyle(.textTertiary)
+                    .foregroundStyle(Color.textTertiary)
             }
         }
     }

@@ -85,7 +85,7 @@ struct ContentCalendarView: View {
                                 SparkIcon(size: 14)
                                 Text("No content planned. Want me to suggest something?")
                                     .font(AppFont.subhead())
-                                    .foregroundStyle(.textSecondary)
+                                    .foregroundStyle(Color.textSecondary)
                                 Spacer()
                             }
                         }
@@ -114,7 +114,7 @@ struct ContentCalendarView: View {
                     ForEach(["M", "T", "W", "T", "F", "S", "S"], id: \.self) { day in
                         Text(day)
                             .font(AppFont.caption(.medium))
-                            .foregroundStyle(.textTertiary)
+                            .foregroundStyle(Color.textTertiary)
                     }
 
                     ForEach(monthDates, id: \.self) { date in
@@ -145,14 +145,14 @@ struct ContentCalendarView: View {
             VStack(spacing: Spacing.xxs) {
                 Text(date.formatted(.dateTime.weekday(.abbreviated)))
                     .font(AppFont.caption())
-                    .foregroundStyle(.textSecondary)
+                    .foregroundStyle(Color.textSecondary)
                 ZStack {
                     Circle()
                         .fill(isSelected ? Color.brandBlack : Color.clear)
                         .frame(width: 36, height: 36)
                     Text(date.formatted(.dateTime.day()))
                         .font(AppFont.subhead(isToday ? .bold : .regular))
-                        .foregroundStyle(isSelected ? .white : (isToday ? .brandBlack : .textSecondary))
+                        .foregroundStyle(isSelected ? Color.white : (isToday ? Color.brandBlack : Color.textSecondary))
                 }
                 if hasContent {
                     Circle()
@@ -206,7 +206,7 @@ struct ContentCalendarView: View {
                         }
                         Text(item.format.displayName)
                             .font(AppFont.caption())
-                            .foregroundStyle(.textSecondary)
+                            .foregroundStyle(Color.textSecondary)
                     }
                 }
                 Spacer()

@@ -69,7 +69,7 @@ struct OnboardingView: View {
                 .font(AppFont.largeTitle())
             Text("agent.cy learns your style, finds your ideas, and keeps you posting.")
                 .font(AppFont.body())
-                .foregroundStyle(.textSecondary)
+                .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Spacing.xxl)
 
@@ -97,7 +97,7 @@ struct OnboardingView: View {
                         .font(AppFont.title2())
                     Text("What do you create content about?")
                         .font(AppFont.body())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
 
                 let niches = ["Lifestyle", "Beauty", "Fitness", "Tech", "Food", "Travel",
@@ -123,7 +123,7 @@ struct OnboardingView: View {
                         .font(AppFont.title2())
                     Text("These are the core themes you create around. Add 2-7 pillars.")
                         .font(AppFont.body())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
 
                 ForEach($pillarInputs) { $pillar in
@@ -148,7 +148,7 @@ struct OnboardingView: View {
                             Text("Add pillar")
                         }
                         .font(AppFont.subhead(.medium))
-                        .foregroundStyle(.brandBrown)
+                        .foregroundStyle(Color.brandBrown)
                     }
                 }
             }
@@ -164,7 +164,7 @@ struct OnboardingView: View {
                         .font(AppFont.title2())
                     Text("How does your brand sound? Pick 3-5 words.")
                         .font(AppFont.body())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
 
                 let adjectives = ["Warm", "Witty", "Professional", "Casual", "Educational",
@@ -210,7 +210,7 @@ struct OnboardingView: View {
                         .font(AppFont.title2())
                     Text("Where do you publish content?")
                         .font(AppFont.body())
-                        .foregroundStyle(.textSecondary)
+                        .foregroundStyle(Color.textSecondary)
                 }
 
                 ForEach(SocialPlatform.allCases) { platform in

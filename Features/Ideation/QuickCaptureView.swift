@@ -30,12 +30,12 @@ struct QuickCaptureView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.brandBrown)
+                        .foregroundStyle(Color.brandBrown)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { saveInspiration() }
                         .font(.headline)
-                        .foregroundStyle(.brandBlack)
+                        .foregroundStyle(Color.brandBlack)
                         .disabled(!canSave)
                 }
             }
@@ -101,10 +101,10 @@ struct QuickCaptureView: View {
                     VStack(spacing: Spacing.sm) {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.system(size: 32))
-                            .foregroundStyle(.brandBrown)
+                            .foregroundStyle(Color.brandBrown)
                         Text("Choose from library")
                             .font(AppFont.subhead())
-                            .foregroundStyle(.brandBrown)
+                            .foregroundStyle(Color.brandBrown)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 140)
@@ -127,10 +127,10 @@ struct QuickCaptureView: View {
                     VStack(spacing: Spacing.sm) {
                         Image(systemName: "mic.circle.fill")
                             .font(.system(size: 48))
-                            .foregroundStyle(.brandPink)
+                            .foregroundStyle(Color.brandPink)
                         Text("Tap to record")
                             .font(AppFont.subhead())
-                            .foregroundStyle(.brandBrown)
+                            .foregroundStyle(Color.brandBrown)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 140)
