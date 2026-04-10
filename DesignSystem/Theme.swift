@@ -2,42 +2,42 @@ import SwiftUI
 
 // MARK: - Color Palette
 
-extension Color {
+extension ShapeStyle where Self == Color {
     // Primary
-    static let brandBlack = Color(hex: "1A1A1A")
+    static var brandBlack: Color { Color(hex: "1A1A1A") }
 
     // Secondary
-    static let brandBeige = Color(hex: "E8DDD3")
+    static var brandBeige: Color { Color(hex: "E8DDD3") }
 
     // Tertiary
-    static let brandBrown = Color(hex: "A68B7B")
+    static var brandBrown: Color { Color(hex: "A68B7B") }
 
     // Accent (AI moments)
-    static let brandPink = Color(hex: "F2C4C4")
+    static var brandPink: Color { Color(hex: "F2C4C4") }
 
     // Backgrounds
-    static let bgLight = Color(hex: "FAF8F5")
-    static let bgDark = Color(hex: "0F0F0F")
+    static var bgLight: Color { Color(hex: "FAF8F5") }
+    static var bgDark: Color { Color(hex: "0F0F0F") }
 
     // Cards
-    static let cardLight = Color.white
-    static let cardDark = Color(hex: "1C1C1C")
+    static var cardLight: Color { .white }
+    static var cardDark: Color { Color(hex: "1C1C1C") }
 
     // Borders
-    static let borderLight = Color(hex: "E5E0DA")
-    static let borderDark = Color(hex: "2A2A2A")
+    static var borderLight: Color { Color(hex: "E5E0DA") }
+    static var borderDark: Color { Color(hex: "2A2A2A") }
 
     // Text
-    static let textPrimary = Color(hex: "1A1A1A")
-    static let textSecondary = Color(hex: "A68B7B")
-    static let textTertiary = Color(hex: "8E8C99")
-    static let textOnDark = Color(hex: "F0EEF5")
+    static var textPrimary: Color { Color(hex: "1A1A1A") }
+    static var textSecondary: Color { Color(hex: "A68B7B") }
+    static var textTertiary: Color { Color(hex: "8E8C99") }
+    static var textOnDark: Color { Color(hex: "F0EEF5") }
 
     // Semantic
-    static let aiAccent = Color(hex: "F2C4C4")
-    static let success = Color(hex: "7BC47F")
-    static let warning = Color(hex: "E8C547")
-    static let destructive = Color(hex: "E85D5D")
+    static var aiAccent: Color { Color(hex: "F2C4C4") }
+    static var success: Color { Color(hex: "7BC47F") }
+    static var warning: Color { Color(hex: "E8C547") }
+    static var destructive: Color { Color(hex: "E85D5D") }
 }
 
 // MARK: - Hex Initializer

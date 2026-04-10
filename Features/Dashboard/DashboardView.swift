@@ -5,10 +5,11 @@ struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.colorScheme) private var colorScheme
     @Query private var profiles: [CreatorProfile]
-    @Query(
-        filter: #Predicate<ContentItem> { $0.status == .scheduled || $0.status == .planned },
-        sort: \ContentItem.scheduledDate
-    ) private var upcomingContent: [ContentItem]
+    @Query(sort: \ContentItem.scheduledDate) private var allContent: [ContentItem]
+
+    private var upcomingContent: [ContentItem] {
+        allContent.filter { $0.status == .scheduled || $0.status == .planned }
+    }
     @Query private var pillars: [ContentPillar]
 
     private var profile: CreatorProfile? { profiles.first }

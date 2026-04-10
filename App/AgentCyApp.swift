@@ -34,16 +34,18 @@ struct AgentCyApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if hasCompletedOnboarding {
-                MainTabView()
-            } else {
-                OnboardingView {
-                    hasCompletedOnboarding = true
+            Group {
+                if hasCompletedOnboarding {
+                    MainTabView()
+                } else {
+                    OnboardingView {
+                        hasCompletedOnboarding = true
+                    }
                 }
             }
+            .preferredColorScheme(resolvedColorScheme)
         }
         .modelContainer(modelContainer)
-        .preferredColorScheme(resolvedColorScheme)
     }
 
     private var resolvedColorScheme: ColorScheme? {
