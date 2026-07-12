@@ -202,7 +202,7 @@ export const ReadyBriefSchema = z
     proposedTasks: z.array(ProposedTaskSchema).max(12),
     assumptions: z.array(mediumText).max(10),
     voiceConfidence: z.number().min(0).max(1),
-    platformVariants: z.array(PlatformVariantSchema).min(1).max(3),
+    platformVariants: z.array(PlatformVariantSchema).min(1).max(4),
   })
   .strict()
   .superRefine((brief, context) => {

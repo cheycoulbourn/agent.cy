@@ -2991,7 +2991,7 @@
               },
               "platformVariants": {
                 "minItems": 1,
-                "maxItems": 3,
+                "maxItems": 4,
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -3617,7 +3617,7 @@
               },
               "platformVariants": {
                 "minItems": 1,
-                "maxItems": 3,
+                "maxItems": 4,
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -4001,7 +4001,7 @@
               },
               "platformVariants": {
                 "minItems": 1,
-                "maxItems": 3,
+                "maxItems": 4,
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -5528,7 +5528,7 @@
               },
               "platformVariants": {
                 "minItems": 1,
-                "maxItems": 3,
+                "maxItems": 4,
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -6554,7 +6554,7 @@
                                   },
                                   "platformVariants": {
                                     "minItems": 1,
-                                    "maxItems": 3,
+                                    "maxItems": 4,
                                     "type": "array",
                                     "items": {
                                       "type": "object",
@@ -6912,7 +6912,7 @@
                                   },
                                   "platformVariants": {
                                     "minItems": 1,
-                                    "maxItems": 3,
+                                    "maxItems": 4,
                                     "type": "array",
                                     "items": {
                                       "type": "object",
@@ -8207,7 +8207,7 @@
                               },
                               "platformVariants": {
                                 "minItems": 1,
-                                "maxItems": 3,
+                                "maxItems": 4,
                                 "type": "array",
                                 "items": {
                                   "type": "object",
@@ -8565,7 +8565,7 @@
                               },
                               "platformVariants": {
                                 "minItems": 1,
-                                "maxItems": 3,
+                                "maxItems": 4,
                                 "type": "array",
                                 "items": {
                                   "type": "object",
