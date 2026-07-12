@@ -82,6 +82,11 @@ struct QuickCaptureView: View {
                 if let plannedDate = appModel.quickCaptureTargetDate {
                     targetDate = plannedDate
                 }
+                if let suggestedPillarID = appModel.quickCapturePillarID,
+                   pillars.contains(where: { $0.id == suggestedPillarID && !$0.isArchived }) {
+                    postPillarID = suggestedPillarID
+                }
+                appModel.quickCapturePillarID = nil
                 if let preferredPlatform = profiles.first?.selectedPlatforms.first {
                     postPlatform = preferredPlatform
                 }
@@ -245,7 +250,7 @@ struct QuickCaptureView: View {
                         Text(pillar.name)
                     } icon: {
                         Circle()
-                            .fill(Color(agentHex: pillar.colorHex))
+                            .fill(Color(agentHex: pillar.resolvedColorHex(in: pillars)))
                             .frame(width: 12, height: 12)
                     }
                         .tag(Optional(pillar.id))

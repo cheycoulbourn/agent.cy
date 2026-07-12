@@ -114,6 +114,7 @@ private struct RootActionsModifier: ViewModifier {
                         appModel.quickCaptureStartsWithTask = false
                         appModel.quickCaptureStartsWithPost = false
                         appModel.quickCaptureStartsRecording = false
+                        appModel.quickCapturePillarID = nil
                         appModel.presentedSheet = .quickCapture
                     } label: {
                         Image(systemName: "plus")

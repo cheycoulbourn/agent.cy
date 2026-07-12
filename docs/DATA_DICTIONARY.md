@@ -76,15 +76,18 @@ Meaningful differences for one selected destination. It does not duplicate the m
 
 A first-class creator-work item stored once and queried into every relevant surface.
 
-- `id`, optional `briefID`, `title`, `kind`, `notes`, optional `estimatedMinutes`, `sortOrder`.
+- `id`, optional `briefID`, optional `parentTaskID`, `title`, `kind`, `notes`, optional `estimatedMinutes`, `sortOrder`.
 - Optional `targetDate`, `isCompleted`, optional `completedAt`.
 - `recordingMilestoneEmitted` prevents duplicate filming milestones.
+- A task without `parentTaskID` is top-level. Subtasks complete independently and appear only beneath their parent.
 
 ### Pillar
 
 An optional content theme. Briefs without a pillar remain valid.
 
-- `id`, `name`, `detail`, `colorHex`, `isArchived`, `createdAt`.
+- `id`, optional `parentPillarID`, `name`, `detail`, `colorHex`, assigned weekdays, `isArchived`, `createdAt`.
+- A top-level pillar is an anchor. A branch inherits its active anchor's color and assigned weekdays.
+- If an anchor is missing, its former branches remain valid and display with their stored fallback color and weekdays.
 
 ### RhythmTemplate
 

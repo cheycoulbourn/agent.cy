@@ -14,6 +14,10 @@ struct AgendaView: View {
     @State private var weekPlan: WeekPlan?
 
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
+    private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
+    private var anchors: [Pillar] {
+        activePillars.filter { $0.resolvedAnchor(in: activePillars).id == $0.id }
+    }
 
     private var weekStart: Date {
         let calendar = Calendar.current
@@ -85,6 +89,7 @@ struct AgendaView: View {
             HStack(spacing: AgentSpacing.x1) {
                 ForEach(weekDays, id: \.self) { day in
                     let dayBriefs = plannedBriefs(on: day)
+                    let dayPillars = assignedPillars(on: day)
                     Button {
                         selectedDay = day
                     } label: {
@@ -94,12 +99,16 @@ struct AgendaView: View {
                             Text(day.formatted(.dateTime.day()))
                                 .font(.agentHeadline)
                             HStack(spacing: 3) {
-                                if dayBriefs.isEmpty {
-                                    Circle().fill(Color.agentBorder).frame(width: 5, height: 5)
-                                } else {
+                                if !dayBriefs.isEmpty {
                                     ForEach(dayBriefs.prefix(3)) { brief in
                                         Circle().fill(color(for: brief)).frame(width: 7, height: 7)
                                     }
+                                } else if !dayPillars.isEmpty {
+                                    ForEach(dayPillars.prefix(3)) { pillar in
+                                        Circle().fill(Color(agentHex: pillar.colorHex)).frame(width: 7, height: 7)
+                                    }
+                                } else {
+                                    Circle().fill(Color.agentBorder).frame(width: 5, height: 5)
                                 }
                             }
                             .frame(height: 8)
@@ -110,7 +119,7 @@ struct AgendaView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                    .accessibilityValue(dayBriefs.isEmpty ? "Nothing planned" : "\(dayBriefs.count) items planned")
+                    .accessibilityValue(dayBriefs.isEmpty ? (dayPillars.isEmpty ? "Nothing planned" : "\(dayPillars.count) pillar themes assigned") : "\(dayBriefs.count) items planned")
                 }
             }
 
@@ -122,6 +131,27 @@ struct AgendaView: View {
                         planningDay = PlanningDay(date: selectedDay)
                     }
                     .buttonStyle(AgentCompactPrimaryButtonStyle())
+                }
+
+                let themes = assignedPillars(on: selectedDay)
+                if !themes.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: AgentSpacing.x2) {
+                            ForEach(themes) { pillar in
+                                Label {
+                                    Text(pillar.name)
+                                } icon: {
+                                    Circle().fill(Color(agentHex: pillar.colorHex)).frame(width: 10, height: 10)
+                                }
+                                .font(.agentMono)
+                                .padding(.horizontal, AgentSpacing.x3)
+                                .frame(minHeight: 36)
+                                .background(Color.agentCanvas, in: .capsule)
+                                .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
+                            }
+                        }
+                    }
+                    .accessibilityLabel("Pillars assigned to this day")
                 }
 
                 let selectedBriefs = plannedBriefs(on: selectedDay)
@@ -192,7 +222,8 @@ struct AgendaView: View {
     private func plannedBriefs(on day: Date) -> [CreativeBrief] {
         let calendar = Calendar.current
         let taskIDs = tasks.compactMap { task -> UUID? in
-            guard let date = task.targetDate,
+            guard task.parentTaskID == nil,
+                  let date = task.targetDate,
                   calendar.isDate(date, inSameDayAs: day),
                   let briefID = task.briefID else { return nil }
             return briefID
@@ -217,7 +248,12 @@ struct AgendaView: View {
     private func color(for brief: CreativeBrief) -> Color {
         guard let pillarID = brief.pillarID,
               let pillar = pillars.first(where: { $0.id == pillarID }) else { return .agentSecondary }
-        return Color(agentHex: pillar.colorHex)
+        return Color(agentHex: pillar.resolvedColorHex(in: pillars))
+    }
+
+    private func assignedPillars(on day: Date) -> [Pillar] {
+        guard let weekday = PillarWeekday(rawValue: Calendar.current.component(.weekday, from: day)) else { return [] }
+        return anchors.filter { $0.assignedWeekdays.contains(weekday) }
     }
 
     private func loadWeek() {
@@ -228,6 +264,7 @@ struct AgendaView: View {
     private func beginNewPost(on day: Date) {
         planningDay = nil
         appModel.quickCaptureTargetDate = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+        appModel.quickCapturePillarID = assignedPillars(on: day).first?.id
         appModel.quickCaptureStartsWithIdeas = false
         appModel.quickCaptureStartsWithTask = false
         appModel.quickCaptureStartsRecording = false

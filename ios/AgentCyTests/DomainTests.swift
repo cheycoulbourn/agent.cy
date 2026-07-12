@@ -167,6 +167,58 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<WeekPlan>()).count, 1)
     }
 
+    func testBranchPillarInheritsAnchorColorAndDaysThenFallsBackSafely() {
+        let anchor = Pillar(
+            name: "Teaching",
+            colorHex: "9B3A2E",
+            assignedWeekdays: [.monday, .wednesday]
+        )
+        let branch = Pillar(
+            parentPillarID: anchor.id,
+            name: "Tutorials",
+            colorHex: "416B85",
+            assignedWeekdays: [.friday]
+        )
+        let pillars = [anchor, branch]
+
+        XCTAssertEqual(branch.resolvedAnchor(in: pillars).id, anchor.id)
+        XCTAssertEqual(branch.resolvedColorHex(in: pillars), "9B3A2E")
+        XCTAssertEqual(branch.resolvedWeekdays(in: pillars), [.monday, .wednesday])
+
+        anchor.isArchived = true
+        XCTAssertEqual(branch.resolvedAnchor(in: pillars).id, branch.id)
+        XCTAssertEqual(branch.resolvedColorHex(in: pillars), "416B85")
+        XCTAssertEqual(branch.resolvedWeekdays(in: pillars), [.friday])
+        XCTAssertEqual(branch.resolvedAnchor(in: [branch]).id, branch.id)
+    }
+
+    func testSubtasksCompleteIndependentlyAndDeleteWithParent() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+        let parent = try XCTUnwrap(model.createTask(
+            title: "Prepare the post",
+            kind: .editing,
+            targetDate: nil,
+            context: context
+        ))
+        let first = try XCTUnwrap(model.createSubtask(title: "Choose the clips", parent: parent, context: context))
+        let second = try XCTUnwrap(model.createSubtask(title: "Add captions", parent: parent, context: context))
+
+        XCTAssertEqual(first.parentTaskID, parent.id)
+        XCTAssertEqual(second.parentTaskID, parent.id)
+        XCTAssertEqual(model.subtasks(for: parent, context: context).map(\.title), ["Choose the clips", "Add captions"])
+
+        model.toggleTask(first, context: context)
+        XCTAssertTrue(first.isCompleted)
+        XCTAssertFalse(parent.isCompleted)
+        XCTAssertFalse(second.isCompleted)
+
+        model.replan(task: parent, choice: .archive, context: context)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
+    }
+
     func testAssistancePolicyControlsUnsolicitedPillarProposals() {
         XCTAssertEqual(AssistancePolicy(mode: .drive).pillarProposalLimit(explicitlyRequested: false), 0)
         XCTAssertEqual(AssistancePolicy(mode: .drive).pillarProposalLimit(explicitlyRequested: true), 3)

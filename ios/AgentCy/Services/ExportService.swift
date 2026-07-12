@@ -27,7 +27,7 @@ struct LocalExportService: ExportServicing {
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -123,6 +123,7 @@ struct LocalExportService: ExportServicing {
                 [
                     "id": task.id.uuidString,
                     "briefID": task.briefID?.uuidString ?? NSNull(),
+                    "parentTaskID": task.parentTaskID?.uuidString ?? NSNull(),
                     "title": task.title,
                     "kind": task.kind.rawValue,
                     "notes": task.notes,
@@ -134,7 +135,17 @@ struct LocalExportService: ExportServicing {
                     "isRecordingMilestoneDesignated": task.isRecordingMilestoneDesignated
                 ] as [String: Any]
             },
-            "pillars": pillars.map { ["id": $0.id.uuidString, "name": $0.name, "detail": $0.detail, "isArchived": $0.isArchived] as [String: Any] },
+            "pillars": pillars.map {
+                [
+                    "id": $0.id.uuidString,
+                    "parentPillarID": $0.parentPillarID?.uuidString ?? NSNull(),
+                    "name": $0.name,
+                    "detail": $0.detail,
+                    "colorHex": $0.colorHex,
+                    "assignedWeekdays": $0.assignedWeekdays.map(\.rawValue).sorted(),
+                    "isArchived": $0.isArchived
+                ] as [String: Any]
+            },
             "rhythmTemplates": rhythmTemplates.map { ["id": $0.id.uuidString, "name": $0.name, "entries": $0.entriesText, "isActive": $0.isActive] as [String: Any] },
             "weekPlans": weekPlans.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "rhythmEntries": $0.rhythmEntriesText, "notes": $0.notes] },
             "conversationThreads": threads.map { ["id": $0.id.uuidString, "briefID": $0.briefID?.uuidString ?? NSNull(), "title": $0.title, "turnCount": $0.turnCount] as [String: Any] },
@@ -177,10 +188,18 @@ struct LocalExportService: ExportServicing {
             for output in variants {
                 lines += ["#### \(output.platform.title)", output.caption, ""]
             }
-            let briefTasks = tasks
-                .filter { $0.briefID == brief.id }
+            let allBriefTasks = tasks.filter { $0.briefID == brief.id }
+            let briefTasks = allBriefTasks
+                .filter { $0.parentTaskID == nil }
                 .sorted { $0.sortOrder < $1.sortOrder }
-                .map { "- [\($0.isCompleted ? "x" : " ")] \($0.title) (\($0.kind.title))" }
+                .flatMap { task in
+                    let parentLine = "- [\(task.isCompleted ? "x" : " ")] \(task.title) (\(task.kind.title))"
+                    let childLines = allBriefTasks
+                        .filter { $0.parentTaskID == task.id }
+                        .sorted { $0.sortOrder < $1.sortOrder }
+                        .map { "  - [\($0.isCompleted ? "x" : " ")] \($0.title)" }
+                    return [parentLine] + childLines
+                }
             if !briefTasks.isEmpty {
                 lines += ["### Tasks"] + briefTasks + [""]
             }

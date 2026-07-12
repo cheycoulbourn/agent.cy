@@ -35,6 +35,7 @@ final class AppModel {
     var quickCaptureStartsWithPost = false
     var quickCaptureStartsRecording = false
     var quickCaptureTargetDate: Date?
+    var quickCapturePillarID: UUID?
     var briefProposals: [UUID: BriefProposal] = [:]
     var revisionProposals: [UUID: BriefRevisionProposal] = [:]
     var voiceProfileChangeProposal: VoiceProfileChangeProposal?
@@ -486,6 +487,31 @@ final class AppModel {
         context.insert(task)
         try? context.save()
         return task
+    }
+
+    @discardableResult
+    func createSubtask(
+        title: String,
+        parent: CreatorTask,
+        context: ModelContext
+    ) -> CreatorTask? {
+        guard can(.createTask, context: context), parent.parentTaskID == nil else { return nil }
+        let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            notice = .error("Name the subtask before adding it.")
+            return nil
+        }
+        let siblings = subtasks(for: parent, context: context)
+        let subtask = CreatorTask(
+            briefID: parent.briefID,
+            parentTaskID: parent.id,
+            title: cleaned,
+            kind: parent.kind,
+            sortOrder: siblings.count
+        )
+        context.insert(subtask)
+        try? context.save()
+        return subtask
     }
 
     func findIdeas(context: ModelContext) async -> [IdeaDirection] {
@@ -988,6 +1014,7 @@ final class AppModel {
         case .pause:
             task.targetDate = nil
         case .archive:
+            subtasks(for: task, context: context).forEach(context.delete)
             context.delete(task)
         }
         try? context.save()
@@ -1239,6 +1266,15 @@ final class AppModel {
     func tasks(for brief: CreativeBrief, context: ModelContext) -> [CreatorTask] {
         let id = brief.id
         let descriptor = FetchDescriptor<CreatorTask>(predicate: #Predicate { $0.briefID == id }, sortBy: [SortDescriptor(\.sortOrder)])
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    func subtasks(for task: CreatorTask, context: ModelContext) -> [CreatorTask] {
+        let parentID = task.id
+        let descriptor = FetchDescriptor<CreatorTask>(
+            predicate: #Predicate { $0.parentTaskID == parentID },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+        )
         return (try? context.fetch(descriptor)) ?? []
     }
 

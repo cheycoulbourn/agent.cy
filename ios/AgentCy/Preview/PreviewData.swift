@@ -32,15 +32,25 @@ enum PreviewData {
         let systemsPillar = Pillar(
             name: "Creator systems",
             detail: "Simple ways to make creative work easier.",
-            colorHex: "9B3A2E"
+            colorHex: "9B3A2E",
+            assignedWeekdays: [.monday, .wednesday, .friday]
         )
         let honestWorkPillar = Pillar(
             name: "Behind the work",
             detail: "Honest lessons from the process.",
-            colorHex: "55705B"
+            colorHex: "55705B",
+            assignedWeekdays: [.tuesday, .thursday]
+        )
+        let tutorialBranch = Pillar(
+            parentPillarID: systemsPillar.id,
+            name: "Practical tutorials",
+            detail: "Walkthroughs people can use today.",
+            colorHex: systemsPillar.colorHex,
+            assignedWeekdays: systemsPillar.assignedWeekdays
         )
         context.insert(systemsPillar)
         context.insert(honestWorkPillar)
+        context.insert(tutorialBranch)
 
         let ready = CreativeBrief(title: "The one-job idea test", premise: "A rough idea becomes filmable when it has one audience and one job.", status: .ready)
         ready.pillarID = systemsPillar.id
@@ -59,7 +69,10 @@ enum PreviewData {
         reel.caption = "One audience. One change. That is enough to rescue the note."
         reel.targetDate = Calendar.current.date(byAdding: .day, value: 1, to: Date())
         context.insert(reel)
-        context.insert(CreatorTask(briefID: ready.id, title: "Film the one-job walkthrough", kind: .filming, targetDate: Date(), sortOrder: 0, isRecordingMilestoneDesignated: true))
+        let filmingTask = CreatorTask(briefID: ready.id, title: "Film the one-job walkthrough", kind: .filming, targetDate: Date(), sortOrder: 0, isRecordingMilestoneDesignated: true)
+        context.insert(filmingTask)
+        context.insert(CreatorTask(briefID: ready.id, parentTaskID: filmingTask.id, title: "Set the camera", kind: .filming, sortOrder: 0))
+        context.insert(CreatorTask(briefID: ready.id, parentTaskID: filmingTask.id, title: "Record two takes", kind: .filming, sortOrder: 1))
         context.insert(CreatorTask(briefID: ready.id, title: "Edit the 45-second cut", kind: .editing, sortOrder: 1))
 
         let developing = CreativeBrief(title: "What I stopped tracking", premise: "Share why fewer creator metrics created better work.", source: .text, status: .developing)

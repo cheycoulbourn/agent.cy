@@ -77,8 +77,9 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 
 - Today is the warm daily launch view with a greeting, one focus, content going live today, today's tasks, and quick capture.
 - Agenda owns the current and next weekly content plan, copied production rhythm, pillar-color placement, and platform posting targets.
-- Tasks contains all brief-linked and standalone creator-work tasks.
-- Pillars contains manual, guided, or inferred themes. Unfiled briefs remain valid.
+- Tasks contains all brief-linked and standalone creator-work tasks. Parent tasks may contain independently completable subtasks, which remain out of top-level lists.
+- Pillars contains manual, guided, or inferred themes. Anchors own color and preferred weekdays; branches inherit both. Unfiled briefs remain valid.
+- Pillar detail groups branches, ideas, scheduled work, and posted work, with a manual new-spark action for posted content.
 - Spark contains New Idea, New Post, three-angle ideation, on-device voice capture, and searchable/filterable Your work including archived content.
 - Ask Cy opens global context-aware conversation.
 - `+` captures an Idea, Post, or creator-work Task without opening chat.

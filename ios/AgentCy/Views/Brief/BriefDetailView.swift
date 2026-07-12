@@ -256,7 +256,7 @@ struct BriefDetailView: View {
                         HStack(spacing: AgentSpacing.x3) {
                             if let selectedPillar {
                                 Circle()
-                                    .fill(Color(agentHex: selectedPillar.colorHex))
+                                    .fill(Color(agentHex: selectedPillar.resolvedColorHex(in: activePillars)))
                                     .frame(width: 24, height: 24)
                                     .overlay(Circle().stroke(Color.agentBorder, lineWidth: 1))
                                 Text(selectedPillar.name)
@@ -312,36 +312,18 @@ struct BriefDetailView: View {
 
     @ViewBuilder
     private var taskSection: some View {
-        if !tasks.isEmpty {
+        if !topLevelTasks.isEmpty {
             DisclosureGroup(isExpanded: $showTasks) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(tasks) { task in
-                        EditorialRow {
-                            HStack(spacing: AgentSpacing.x3) {
-                                Button { appModel.toggleTask(task, context: context) } label: {
-                                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(task.isCompleted ? Color.agentSuccess : Color.agentSecondary)
-                                }
-                                .buttonStyle(.plain)
-                                .frame(width: 44, height: 44)
-                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                    Text(task.title).font(.agentBody).strikethrough(task.isCompleted)
-                                    if !task.notes.isEmpty {
-                                        Text(task.notes).font(.agentBody).foregroundStyle(Color.agentSecondary)
-                                    }
-                                    if let minutes = task.estimatedMinutes {
-                                        MetaLabel("\(minutes) min")
-                                    }
-                                }
-                            }
-                        }
+                    ForEach(topLevelTasks) { task in
+                        EditorialRow { TaskRow(task: task, allTasks: tasks) }
                     }
                 }
                 .padding(.top, AgentSpacing.x3)
             } label: {
                 BriefDisclosureLabel(
                     title: "Tasks",
-                    detail: "\(tasks.filter(\.isCompleted).count) of \(tasks.count) complete"
+                    detail: "\(topLevelTasks.filter(\.isCompleted).count) of \(topLevelTasks.count) complete"
                 )
             }
         }
@@ -387,6 +369,7 @@ struct BriefDetailView: View {
     private var hasComposedContent: Bool { !brief.spokenHook.isEmpty || !brief.scriptBeats.isEmpty }
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var selectedPillar: Pillar? { activePillars.first { $0.id == brief.pillarID } }
+    private var topLevelTasks: [CreatorTask] { tasks.filter { $0.parentTaskID == nil } }
     private var postedCount: Int { outputs.filter { $0.status == .posted }.count }
     private var canRequestRevision: Bool {
         hasComposedContent &&
@@ -431,7 +414,7 @@ private struct PillarSelectionView: View {
                 VStack(spacing: 0) {
                     selectionRow(title: "No pillar", colorHex: nil, id: nil)
                     ForEach(pillars) { pillar in
-                        selectionRow(title: pillar.name, colorHex: pillar.colorHex, id: pillar.id)
+                        selectionRow(title: pillar.name, colorHex: pillar.resolvedColorHex(in: pillars), id: pillar.id)
                     }
                 }
                 .padding(.horizontal, AgentSpacing.x6)

@@ -299,6 +299,7 @@ final class PlatformOutput {
 final class CreatorTask {
     var id: UUID = UUID()
     var briefID: UUID?
+    var parentTaskID: UUID?
     var title: String = ""
     var notes: String = ""
     var estimatedMinutes: Int?
@@ -311,9 +312,10 @@ final class CreatorTask {
     var isRecordingMilestoneDesignated: Bool = false
     var createdAt: Date = Date()
 
-    init(id: UUID = UUID(), briefID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), briefID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
         self.id = id
         self.briefID = briefID
+        self.parentTaskID = parentTaskID
         self.title = title
         self.notes = notes
         self.estimatedMinutes = estimatedMinutes
@@ -333,18 +335,51 @@ final class CreatorTask {
 @Model
 final class Pillar {
     var id: UUID = UUID()
+    var parentPillarID: UUID?
     var name: String = ""
     var detail: String = ""
     var colorHex: String = "55705B"
+    var assignedWeekdaysRaw: String = ""
     var isArchived: Bool = false
     var createdAt: Date = Date()
 
-    init(id: UUID = UUID(), name: String = "", detail: String = "", colorHex: String = "55705B", createdAt: Date = Date()) {
+    init(id: UUID = UUID(), parentPillarID: UUID? = nil, name: String = "", detail: String = "", colorHex: String = "55705B", assignedWeekdays: Set<PillarWeekday> = [], createdAt: Date = Date()) {
         self.id = id
+        self.parentPillarID = parentPillarID
         self.name = name
         self.detail = detail
         self.colorHex = colorHex
+        self.assignedWeekdaysRaw = assignedWeekdays.map(\.rawValue).sorted().map(String.init).joined(separator: ",")
         self.createdAt = createdAt
+    }
+
+    var assignedWeekdays: Set<PillarWeekday> {
+        get {
+            Set(assignedWeekdaysRaw.split(separator: ",").compactMap { value in
+                Int(value).flatMap(PillarWeekday.init(rawValue:))
+            })
+        }
+        set {
+            assignedWeekdaysRaw = newValue.map(\.rawValue).sorted().map(String.init).joined(separator: ",")
+        }
+    }
+
+    var isBranch: Bool { parentPillarID != nil }
+
+    func resolvedAnchor(in pillars: [Pillar]) -> Pillar {
+        guard let parentPillarID,
+              let parent = pillars.first(where: { $0.id == parentPillarID && !$0.isArchived }) else {
+            return self
+        }
+        return parent
+    }
+
+    func resolvedColorHex(in pillars: [Pillar]) -> String {
+        resolvedAnchor(in: pillars).colorHex
+    }
+
+    func resolvedWeekdays(in pillars: [Pillar]) -> Set<PillarWeekday> {
+        resolvedAnchor(in: pillars).assignedWeekdays
     }
 }
 

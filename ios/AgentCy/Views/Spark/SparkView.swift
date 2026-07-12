@@ -147,6 +147,7 @@ struct SparkView: View {
 
     private func openCapture(post: Bool = false, ideas: Bool = false, recording: Bool = false) {
         appModel.quickCaptureTargetDate = nil
+        appModel.quickCapturePillarID = nil
         appModel.quickCaptureStartsWithTask = false
         appModel.quickCaptureStartsWithPost = post
         appModel.quickCaptureStartsWithIdeas = ideas

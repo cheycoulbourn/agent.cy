@@ -12,7 +12,7 @@ struct TodayView: View {
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
 
     private var todayTasks: [CreatorTask] {
-        let incomplete = tasks.filter { !$0.isCompleted }
+        let incomplete = tasks.filter { !$0.isCompleted && $0.parentTaskID == nil }
         let datedToday = incomplete.filter { task in
             task.targetDate.map(Calendar.current.isDateInToday) ?? false
         }
@@ -68,10 +68,19 @@ struct TodayView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Complete \(task.title)")
 
-                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                        MetaLabel(task.kind.title)
-                        Text(task.title).font(.agentHeadline)
+                    NavigationLink {
+                        TaskDetailView(task: task)
+                    } label: {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                            MetaLabel(task.kind.title)
+                            Text(task.title).font(.agentHeadline).foregroundStyle(Color.agentText)
+                            let steps = tasks.filter { $0.parentTaskID == task.id }
+                            if !steps.isEmpty {
+                                MetaLabel("\(steps.filter(\.isCompleted).count) of \(steps.count) steps")
+                            }
+                        }
                     }
+                    .buttonStyle(.plain)
                     Spacer()
                 }
                 .padding(AgentSpacing.x4)
@@ -163,16 +172,25 @@ struct TodayView: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Complete \(task.title)")
-                            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                Text(task.title).font(.agentBody)
-                                if let date = task.targetDate {
-                                    Text(date, format: .dateTime.hour().minute())
-                                        .font(.agentMono)
-                                        .foregroundStyle(Color.agentSecondary)
-                                } else {
-                                    MetaLabel(task.kind.title)
+                            NavigationLink {
+                                TaskDetailView(task: task)
+                            } label: {
+                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                    Text(task.title).font(.agentBody).foregroundStyle(Color.agentText)
+                                    if let date = task.targetDate {
+                                        Text(date, format: .dateTime.hour().minute())
+                                            .font(.agentMono)
+                                            .foregroundStyle(Color.agentSecondary)
+                                    } else {
+                                        MetaLabel(task.kind.title)
+                                    }
+                                    let steps = tasks.filter { $0.parentTaskID == task.id }
+                                    if !steps.isEmpty {
+                                        MetaLabel("\(steps.filter(\.isCompleted).count) of \(steps.count) steps")
+                                    }
                                 }
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -236,6 +254,7 @@ struct TodayView: View {
 
     private func openCapture(_ kind: TodayCaptureKind) {
         appModel.quickCaptureTargetDate = nil
+        appModel.quickCapturePillarID = nil
         appModel.quickCaptureStartsWithIdeas = false
         appModel.quickCaptureStartsRecording = false
         appModel.quickCaptureStartsWithTask = kind == .task

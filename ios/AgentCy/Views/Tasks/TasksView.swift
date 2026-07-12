@@ -15,10 +15,11 @@ struct TasksView: View {
     @State private var filter: Filter = .open
 
     private var filtered: [CreatorTask] {
+        let topLevel = tasks.filter { $0.parentTaskID == nil }
         switch filter {
-        case .open: tasks.filter { !$0.isCompleted }
-        case .completed: tasks.filter(\.isCompleted)
-        case .all: tasks
+        case .open: return topLevel.filter { !$0.isCompleted }
+        case .completed: return topLevel.filter(\.isCompleted)
+        case .all: return topLevel
         }
     }
 
@@ -41,6 +42,7 @@ struct TasksView: View {
                         appModel.quickCaptureStartsWithTask = true
                         appModel.quickCaptureStartsWithPost = false
                         appModel.quickCaptureStartsRecording = false
+                        appModel.quickCapturePillarID = nil
                         appModel.presentedSheet = .quickCapture
                     }
                         .buttonStyle(AgentCompactPrimaryButtonStyle())
@@ -48,7 +50,7 @@ struct TasksView: View {
             } else {
                 List {
                     ForEach(filtered) { task in
-                        TaskRow(task: task)
+                        TaskRow(task: task, allTasks: tasks)
                             .listRowBackground(Color.agentCanvas)
                             .listRowSeparatorTint(Color.agentBorder)
                     }
@@ -62,10 +64,14 @@ struct TasksView: View {
     }
 }
 
-private struct TaskRow: View {
+struct TaskRow: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     let task: CreatorTask
+    let allTasks: [CreatorTask]
+
+    private var subtasks: [CreatorTask] { allTasks.filter { $0.parentTaskID == task.id } }
+    private var completedSubtasks: Int { subtasks.filter(\.isCompleted).count }
 
     var body: some View {
         HStack(alignment: .top, spacing: AgentSpacing.x3) {
@@ -76,18 +82,24 @@ private struct TaskRow: View {
             .buttonStyle(.plain)
             .frame(width: 44, height: 44)
             .accessibilityLabel(task.isCompleted ? "Mark incomplete" : "Complete task")
-            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                Text(task.title)
-                    .font(.agentBody)
-                    .strikethrough(task.isCompleted)
-                    .foregroundStyle(task.isCompleted ? Color.agentSecondary : Color.agentText)
-                HStack {
-                    Label(task.kind.title, systemImage: task.kind.symbol)
-                    if let target = task.targetDate { Text("·"); Text(target, style: .relative) }
+            NavigationLink {
+                TaskDetailView(task: task)
+            } label: {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(task.title)
+                        .font(.agentBody)
+                        .strikethrough(task.isCompleted)
+                        .foregroundStyle(task.isCompleted ? Color.agentSecondary : Color.agentText)
+                    HStack {
+                        Label(task.kind.title, systemImage: task.kind.symbol)
+                        if let target = task.targetDate { Text("·"); Text(target, style: .relative) }
+                        if !subtasks.isEmpty { Text("·"); Text("\(completedSubtasks)/\(subtasks.count) steps") }
+                    }
+                    .font(.agentMono)
+                    .foregroundStyle(Color.agentSecondary)
                 }
-                .font(.agentMono)
-                .foregroundStyle(Color.agentSecondary)
             }
+            .buttonStyle(.plain)
             Spacer()
             if !task.isCompleted {
                 Menu {
@@ -103,5 +115,151 @@ private struct TaskRow: View {
             }
         }
         .padding(.vertical, AgentSpacing.x1)
+    }
+}
+
+struct TaskDetailView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var task: CreatorTask
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
+    @Query private var briefs: [CreativeBrief]
+    @State private var showAddSubtask = false
+    @State private var confirmDelete = false
+
+    private var subtasks: [CreatorTask] {
+        allTasks.filter { $0.parentTaskID == task.id }.sorted {
+            if $0.sortOrder == $1.sortOrder { return $0.createdAt < $1.createdAt }
+            return $0.sortOrder < $1.sortOrder
+        }
+    }
+    private var completedCount: Int { subtasks.filter(\.isCompleted).count }
+    private var linkedBrief: CreativeBrief? { task.briefID.flatMap { id in briefs.first { $0.id == id } } }
+
+    var body: some View {
+        Form {
+            Section("Task") {
+                TextField("Next action", text: $task.title, axis: .vertical)
+                Picker("Kind", selection: Binding(get: { task.kind }, set: { task.kind = $0 })) {
+                    ForEach(CreatorTaskKind.allCases) { kind in
+                        Label(kind.title, systemImage: kind.symbol).tag(kind)
+                    }
+                }
+                TextField("Notes", text: $task.notes, axis: .vertical)
+            }
+
+            Section("Timing") {
+                Toggle("Add a flexible target", isOn: hasTarget)
+                    .tint(.actionAccent)
+                if task.targetDate != nil {
+                    DatePicker("Target", selection: targetDate, displayedComponents: [.date, .hourAndMinute])
+                }
+                Stepper("Estimate: \(task.estimatedMinutes ?? 15) min", value: estimate, in: 5...480, step: 5)
+            }
+
+            if let linkedBrief {
+                Section("Content") {
+                    NavigationLink(linkedBrief.title) { BriefDetailView(brief: linkedBrief) }
+                }
+            }
+
+            Section {
+                if subtasks.isEmpty {
+                    Text("Break this task into small, independently completable steps.")
+                        .foregroundStyle(Color.agentSecondary)
+                } else {
+                    ProgressView(value: Double(completedCount), total: Double(subtasks.count)) {
+                        Text("\(completedCount) of \(subtasks.count) complete")
+                    }
+                    .tint(.actionAccent)
+                    ForEach(subtasks) { subtask in
+                        HStack(spacing: AgentSpacing.x3) {
+                            Button { appModel.toggleTask(subtask, context: context) } label: {
+                                Image(systemName: subtask.isCompleted ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(subtask.isCompleted ? Color.agentSuccess : Color.agentSecondary)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: 44, height: 44)
+                            TextField("Subtask", text: Bindable(subtask).title)
+                                .strikethrough(subtask.isCompleted)
+                        }
+                    }
+                }
+                Button("Add a subtask", systemImage: "plus") { showAddSubtask = true }
+            } header: {
+                Text("Subtasks")
+            }
+
+            Section {
+                Button(task.isCompleted ? "Mark task open" : "Complete task", systemImage: task.isCompleted ? "arrow.uturn.backward.circle" : "checkmark.circle") {
+                    appModel.toggleTask(task, context: context)
+                }
+                Button("Delete task", systemImage: "trash", role: .destructive) { confirmDelete = true }
+            }
+        }
+        .navigationTitle("Task")
+        .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { try? context.save() }
+        .sheet(isPresented: $showAddSubtask) {
+            NewSubtaskView(parent: task)
+        }
+        .confirmationDialog("Delete this task?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete task", role: .destructive) {
+                appModel.replan(task: task, choice: .archive, context: context)
+                dismiss()
+            }
+        } message: {
+            Text("Its subtasks will also be deleted.")
+        }
+        .agentScreen()
+    }
+
+    private var hasTarget: Binding<Bool> {
+        Binding(
+            get: { task.targetDate != nil },
+            set: { task.targetDate = $0 ? (task.targetDate ?? Date()) : nil }
+        )
+    }
+
+    private var targetDate: Binding<Date> {
+        Binding(get: { task.targetDate ?? Date() }, set: { task.targetDate = $0 })
+    }
+
+    private var estimate: Binding<Int> {
+        Binding(get: { task.estimatedMinutes ?? 15 }, set: { task.estimatedMinutes = $0 })
+    }
+}
+
+private struct NewSubtaskView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    let parent: CreatorTask
+    @State private var title = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Subtask") {
+                    TextField("Small next step", text: $title, axis: .vertical)
+                }
+            }
+            .navigationTitle("New subtask")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add", systemImage: "checkmark") {
+                        if appModel.createSubtask(title: title, parent: parent, context: context) != nil { dismiss() }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
     }
 }
