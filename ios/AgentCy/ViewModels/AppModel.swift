@@ -999,8 +999,6 @@ final class AppModel {
         switch choice {
         case .move:
             task.targetDate = Calendar.current.date(byAdding: .day, value: 1, to: task.targetDate ?? Date())
-        case .simplify:
-            if !task.title.hasPrefix("Simplify: ") { task.title = "Simplify: \(task.title)" }
         case .pause:
             task.targetDate = nil
         case .archive:
@@ -1016,6 +1014,16 @@ final class AppModel {
         try? context.save()
     }
 
+    func removeLegacySimplifyPrefixes(context: ModelContext) {
+        let tasks = (try? context.fetch(FetchDescriptor<CreatorTask>())) ?? []
+        var changed = false
+        for task in tasks where task.title.hasPrefix("Simplify: ") {
+            task.title = String(task.title.dropFirst("Simplify: ".count))
+            changed = true
+        }
+        if changed { try? context.save() }
+    }
+
     func replan(output: PlatformOutput, choice: ReplanChoice, context: ModelContext) {
         guard let brief = brief(id: output.briefID, context: context), brief.status != .archived else {
             notice = .info("That content is no longer active.")
@@ -1026,11 +1034,6 @@ final class AppModel {
             switch choice {
             case .move:
                 output.targetDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
-            case .simplify:
-                let note = "Simplify to the essential cut."
-                if !output.editChanges.localizedCaseInsensitiveContains(note) {
-                    output.editChanges = output.editChanges.isEmpty ? note : "\(output.editChanges)\n\(note)"
-                }
             case .pause:
                 output.targetDate = nil
             case .archive:
@@ -1051,11 +1054,6 @@ final class AppModel {
             let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
             _ = BriefLifecycle.schedule(output, for: tomorrow, brief: brief)
             BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
-        case .simplify:
-            let note = "Simplify to the essential cut while preserving the approved premise and CTA."
-            if !output.editChanges.localizedCaseInsensitiveContains(note) {
-                output.editChanges = output.editChanges.isEmpty ? note : "\(output.editChanges)\n\(note)"
-            }
         case .pause:
             _ = BriefLifecycle.schedule(output, for: nil, brief: brief)
             BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))

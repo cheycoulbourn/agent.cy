@@ -265,6 +265,17 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
     }
 
+    func testLegacySimplifyPrefixIsRemovedFromSavedTasks() {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let task = CreatorTask(title: "Simplify: Read the brief aloud", kind: .scripting)
+        context.insert(task)
+
+        AppModel(reminderService: PreviewReminderService()).removeLegacySimplifyPrefixes(context: context)
+
+        XCTAssertEqual(task.title, "Read the brief aloud")
+    }
+
     func testAssistancePolicyControlsUnsolicitedPillarProposals() {
         XCTAssertEqual(AssistancePolicy(mode: .drive).pillarProposalLimit(explicitlyRequested: false), 0)
         XCTAssertEqual(AssistancePolicy(mode: .drive).pillarProposalLimit(explicitlyRequested: true), 3)
@@ -396,7 +407,7 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(brief.lifecycleHistory.last?.date, start.addingTimeInterval(70))
     }
 
-    func testPlatformOutputReplanMovesSimplifiesPausesAndArchivesCalmly() throws {
+    func testPlatformOutputReplanMovesPausesAndArchivesCalmly() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         context.insert(SubscriptionState(access: .paid))
@@ -407,8 +418,6 @@ final class DomainTests: XCTestCase {
         context.insert(output)
         let model = AppModel(reminderService: PreviewReminderService())
 
-        model.replan(output: output, choice: .simplify, context: context)
-        XCTAssertTrue(output.editChanges.contains("Simplify to the essential cut"))
         model.replan(output: output, choice: .move, context: context)
         XCTAssertGreaterThan(output.targetDate ?? .distantPast, Date())
         XCTAssertEqual(brief.status, .scheduled)

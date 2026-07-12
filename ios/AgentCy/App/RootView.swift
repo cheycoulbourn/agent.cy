@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Query private var profiles: [CreatorProfile]
     @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var hasProfile: Bool {
@@ -28,6 +29,7 @@ struct RootView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: hasProfile)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: appModel.hasInstallationCredential)
         .task {
+            appModel.removeLegacySimplifyPrefixes(context: context)
             await appModel.refreshInstallationCredentialStatus()
         }
         .agentScreen()

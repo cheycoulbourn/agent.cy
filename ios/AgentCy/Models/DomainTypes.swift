@@ -319,7 +319,6 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
 
 enum ReplanChoice: String, CaseIterable, Identifiable, Sendable {
     case move
-    case simplify
     case pause
     case archive
 

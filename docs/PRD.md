@@ -104,7 +104,7 @@ Tasks may be completed while linked content is still a Spark or Developing; task
 - Dates are flexible targets, not punitive deadlines.
 - Production-rhythm templates are not exposed in the current Agenda experience.
 - Week changes remain local unless explicitly saved to the template.
-- Missed targets offer move, simplify, pause, or archive.
+- Missed targets offer move, pause, or archive.
 - Two opt-in local reminders are supported: daily focus and weekly reset.
 - A Posted brief offers Create a new spark from this. There is no Repurpose Inbox.
 
