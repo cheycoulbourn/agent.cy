@@ -307,7 +307,11 @@ struct BriefDetailView: View {
     private var outputSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             ForEach(outputs) { output in
-                PlatformOutputEditor(output: output, canPlan: [.ready, .scheduled, .posted].contains(brief.status))
+                PlatformOutputEditor(
+                    brief: brief,
+                    output: output,
+                    canPlan: [.ready, .scheduled, .posted].contains(brief.status)
+                )
             }
             if brief.status != .archived, !availablePlatforms.isEmpty {
                 Menu {
@@ -795,7 +799,7 @@ private struct BriefField: View {
                 .padding(AgentSpacing.x4)
                 .background(Color.agentSurface)
                 .clipShape(.rect(cornerRadius: AgentRadius.control))
-                .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).strokeBorder(Color.agentBorder, lineWidth: 1))
         }
     }
 }
@@ -803,9 +807,11 @@ private struct BriefField: View {
 private struct PlatformOutputEditor: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    let brief: CreativeBrief
     @Bindable var output: PlatformOutput
     let canPlan: Bool
     @State private var targetDate = Date()
+    @State private var confirmDelete = false
 
     var body: some View {
         DisclosureGroup {
@@ -842,6 +848,12 @@ private struct PlatformOutputEditor: View {
                         .font(.agentMono)
                         .foregroundStyle(Color.agentSecondary)
                 }
+                if brief.status != .archived {
+                    Button("Delete platform", systemImage: "trash", role: .destructive) {
+                        confirmDelete = true
+                    }
+                    .frame(minHeight: 44)
+                }
             }
             .padding(.top, AgentSpacing.x4)
         } label: {
@@ -854,5 +866,16 @@ private struct PlatformOutputEditor: View {
         .padding(.vertical, AgentSpacing.x4)
         .overlay(alignment: .bottom) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
         .onAppear { targetDate = output.targetDate ?? Date() }
+        .confirmationDialog(
+            "Delete \(output.platform.title)?",
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete platform", role: .destructive) {
+                appModel.deletePlatformOutput(output, from: brief, context: context)
+            }
+        } message: {
+            Text("This removes only this platform. Your brief stays intact.")
+        }
     }
 }

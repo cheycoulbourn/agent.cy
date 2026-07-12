@@ -235,6 +235,36 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(shorts.titleOverride, brief.title)
         XCTAssertEqual(model.outputs(for: brief, context: context).count, 3)
         XCTAssertEqual(brief.status, .ready)
+
+        model.deletePlatformOutput(tiktok, from: brief, context: context)
+        XCTAssertEqual(model.outputs(for: brief, context: context).map(\.platform), [.instagramReels, .youtubeShorts])
+    }
+
+    func testDeletingPlatformRecalculatesMasterStatusAndAgendaDate() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let target = Date().addingTimeInterval(3_600)
+        let brief = CreativeBrief(title: "Two platforms", premise: "A premise", status: .posted)
+        brief.agendaDate = target
+        let posted = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .posted)
+        posted.postedAt = Date()
+        let scheduled = PlatformOutput(briefID: brief.id, platform: .tiktok, status: .scheduled)
+        scheduled.targetDate = target
+        context.insert(brief)
+        context.insert(posted)
+        context.insert(scheduled)
+        try context.save()
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        model.deletePlatformOutput(posted, from: brief, context: context)
+        XCTAssertEqual(brief.status, .scheduled)
+        XCTAssertEqual(brief.agendaDate, target)
+
+        model.deletePlatformOutput(scheduled, from: brief, context: context)
+        XCTAssertEqual(brief.status, .ready)
+        XCTAssertNil(brief.agendaDate)
+        XCTAssertTrue(model.outputs(for: brief, context: context).isEmpty)
     }
 
     func testBranchPillarInheritsAnchorColorAndDaysThenFallsBackSafely() {

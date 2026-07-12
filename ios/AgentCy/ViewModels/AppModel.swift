@@ -1311,6 +1311,29 @@ final class AppModel {
         }
     }
 
+    func deletePlatformOutput(
+        _ output: PlatformOutput,
+        from brief: CreativeBrief,
+        context: ModelContext
+    ) {
+        guard can(.editExisting, context: context),
+              brief.status != .archived,
+              output.briefID == brief.id else { return }
+
+        let remaining = outputs(for: brief, context: context).filter { $0.id != output.id }
+        if let removedTarget = output.targetDate, brief.agendaDate == removedTarget {
+            brief.agendaDate = remaining.compactMap(\.targetDate).min()
+        }
+        context.delete(output)
+        BriefLifecycle.synchronize(brief, outputs: remaining)
+        brief.updatedAt = Date()
+        do {
+            try context.save()
+        } catch {
+            notice = .error("That platform could not be deleted.")
+        }
+    }
+
     func tasks(for brief: CreativeBrief, context: ModelContext) -> [CreatorTask] {
         let id = brief.id
         let descriptor = FetchDescriptor<CreatorTask>(predicate: #Predicate { $0.briefID == id }, sortBy: [SortDescriptor(\.sortOrder)])
