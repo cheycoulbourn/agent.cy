@@ -244,6 +244,7 @@ private struct DayPlannerSheet: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
     let day: Date
     let createNew: () -> Void
 
@@ -257,7 +258,14 @@ private struct DayPlannerSheet: View {
                     }
                 }
 
-                let available = briefs.filter { $0.status != .archived }
+                let datedOutputBriefIDs = Set(outputs.compactMap { output in
+                    output.targetDate == nil ? nil : output.briefID
+                })
+                let available = briefs.filter { brief in
+                    brief.status != .archived &&
+                        brief.agendaDate == nil &&
+                        !datedOutputBriefIDs.contains(brief.id)
+                }
                 if !available.isEmpty {
                     Section("Add existing work") {
                         ForEach(available) { brief in
