@@ -121,7 +121,7 @@ struct AgentSecondaryButtonStyle: ButtonStyle {
             .padding(.horizontal, AgentSpacing.x6)
             .foregroundStyle(Color.agentText)
             .background(Color.agentSurface, in: .capsule)
-            .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
+            .overlay(Capsule().strokeBorder(Color.agentBorder, lineWidth: 1))
             .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
     }
 }
