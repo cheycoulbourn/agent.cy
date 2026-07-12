@@ -27,7 +27,7 @@ struct LocalExportService: ExportServicing {
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 5,
+            "schemaVersion": 6,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -127,6 +127,7 @@ struct LocalExportService: ExportServicing {
                     "parentTaskID": task.parentTaskID?.uuidString ?? NSNull(),
                     "title": task.title,
                     "kind": task.kind.rawValue,
+                    "priority": task.priority.rawValue,
                     "notes": task.notes,
                     "estimatedMinutes": task.estimatedMinutes ?? NSNull(),
                     "isCompleted": task.isCompleted,

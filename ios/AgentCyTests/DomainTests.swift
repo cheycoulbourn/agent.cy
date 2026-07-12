@@ -242,6 +242,7 @@ final class DomainTests: XCTestCase {
         let parent = try XCTUnwrap(model.createTask(
             title: "Prepare the post",
             kind: .editing,
+            priority: .high,
             targetDate: nil,
             context: context
         ))
@@ -250,6 +251,9 @@ final class DomainTests: XCTestCase {
 
         XCTAssertEqual(first.parentTaskID, parent.id)
         XCTAssertEqual(second.parentTaskID, parent.id)
+        XCTAssertEqual(parent.priority, .high)
+        XCTAssertEqual(first.priority, .high)
+        XCTAssertEqual(second.priority, .high)
         XCTAssertEqual(model.subtasks(for: parent, context: context).map(\.title), ["Choose the clips", "Add captions"])
 
         model.toggleTask(first, context: context)
@@ -257,7 +261,7 @@ final class DomainTests: XCTestCase {
         XCTAssertFalse(parent.isCompleted)
         XCTAssertFalse(second.isCompleted)
 
-        model.replan(task: parent, choice: .archive, context: context)
+        model.deleteTask(parent, context: context)
         XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
     }
 

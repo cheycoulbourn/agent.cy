@@ -305,6 +305,7 @@ final class CreatorTask {
     var notes: String = ""
     var estimatedMinutes: Int?
     var kindRaw: String = CreatorTaskKind.planning.rawValue
+    var priorityRaw: String = TaskPriority.medium.rawValue
     var isCompleted: Bool = false
     var targetDate: Date?
     var sortOrder: Int = 0
@@ -313,7 +314,7 @@ final class CreatorTask {
     var isRecordingMilestoneDesignated: Bool = false
     var createdAt: Date = Date()
 
-    init(id: UUID = UUID(), briefID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), briefID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, priority: TaskPriority = .medium, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
         self.id = id
         self.briefID = briefID
         self.parentTaskID = parentTaskID
@@ -321,6 +322,7 @@ final class CreatorTask {
         self.notes = notes
         self.estimatedMinutes = estimatedMinutes
         self.kindRaw = kind.rawValue
+        self.priorityRaw = priority.rawValue
         self.targetDate = targetDate
         self.sortOrder = sortOrder
         self.isRecordingMilestoneDesignated = isRecordingMilestoneDesignated
@@ -330,6 +332,11 @@ final class CreatorTask {
     var kind: CreatorTaskKind {
         get { CreatorTaskKind(rawValue: kindRaw) ?? .planning }
         set { kindRaw = newValue.rawValue }
+    }
+
+    var priority: TaskPriority {
+        get { TaskPriority(rawValue: priorityRaw) ?? .medium }
+        set { priorityRaw = newValue.rawValue }
     }
 }
 

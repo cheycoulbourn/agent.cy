@@ -53,6 +53,12 @@ struct TasksView: View {
                         TaskRow(task: task, allTasks: tasks)
                             .listRowBackground(Color.agentCanvas)
                             .listRowSeparatorTint(Color.agentBorder)
+                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button("Delete", systemImage: "trash", role: .destructive) {
+                                    appModel.deleteTask(task, context: context)
+                                }
+                            }
                     }
                 }
                 .listStyle(.plain)
@@ -74,7 +80,7 @@ struct TaskRow: View {
     private var completedSubtasks: Int { subtasks.filter(\.isCompleted).count }
 
     var body: some View {
-        HStack(alignment: .top, spacing: AgentSpacing.x3) {
+        HStack(alignment: .center, spacing: AgentSpacing.x3) {
             Button { appModel.toggleTask(task, context: context) } label: {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(task.isCompleted ? Color.agentSuccess : Color.agentSecondary)
@@ -85,18 +91,30 @@ struct TaskRow: View {
             NavigationLink {
                 TaskDetailView(task: task)
             } label: {
-                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    Label(task.kind.title, systemImage: task.kind.symbol)
+                        .font(.agentMono)
+                        .foregroundStyle(Color.agentSecondary)
                     Text(task.title)
-                        .font(.agentBody)
+                        .font(.agentHeadline)
                         .strikethrough(task.isCompleted)
                         .foregroundStyle(task.isCompleted ? Color.agentSecondary : Color.agentText)
-                    HStack {
-                        Label(task.kind.title, systemImage: task.kind.symbol)
-                        if let target = task.targetDate { Text("·"); Text(target, style: .relative) }
-                        if !subtasks.isEmpty { Text("·"); Text("\(completedSubtasks)/\(subtasks.count) steps") }
+
+                    HStack(alignment: .top, spacing: AgentSpacing.x2) {
+                        TaskAttribute(title: "Status", value: task.isCompleted ? "Done" : "Open")
+                        TaskAttribute(title: "Date", value: dateText)
+                        TaskAttribute(
+                            title: "Priority",
+                            value: task.priority.title,
+                            valueColor: priorityColor
+                        )
                     }
-                    .font(.agentMono)
-                    .foregroundStyle(Color.agentSecondary)
+
+                    if !subtasks.isEmpty {
+                        Text("\(completedSubtasks) of \(subtasks.count) steps")
+                            .font(.agentMono)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
                 }
             }
             .buttonStyle(.plain)
@@ -114,7 +132,42 @@ struct TaskRow: View {
                 .accessibilityLabel("Replan task")
             }
         }
-        .padding(.vertical, AgentSpacing.x1)
+        .padding(.vertical, AgentSpacing.x2)
+    }
+
+    private var dateText: String {
+        guard let targetDate = task.targetDate else { return "None" }
+        if Calendar.current.isDateInToday(targetDate) { return "Today" }
+        if Calendar.current.isDateInTomorrow(targetDate) { return "Tomorrow" }
+        return targetDate.formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    private var priorityColor: Color {
+        switch task.priority {
+        case .low: Color.agentSecondary
+        case .medium: Color.agentText
+        case .high: Color.actionAccent
+        }
+    }
+}
+
+private struct TaskAttribute: View {
+    let title: String
+    let value: String
+    var valueColor: Color = .agentText
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+            Text(title.uppercased())
+                .font(.agentMono)
+                .foregroundStyle(Color.agentSecondary)
+            Text(value)
+                .font(.agentBody)
+                .foregroundStyle(valueColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -144,6 +197,11 @@ struct TaskDetailView: View {
                 Picker("Kind", selection: Binding(get: { task.kind }, set: { task.kind = $0 })) {
                     ForEach(CreatorTaskKind.allCases) { kind in
                         Label(kind.title, systemImage: kind.symbol).tag(kind)
+                    }
+                }
+                Picker("Priority", selection: Binding(get: { task.priority }, set: { task.priority = $0 })) {
+                    ForEach(TaskPriority.allCases) { priority in
+                        Text(priority.title).tag(priority)
                     }
                 }
                 TextField("Notes", text: $task.notes, axis: .vertical)
@@ -206,7 +264,7 @@ struct TaskDetailView: View {
         }
         .confirmationDialog("Delete this task?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete task", role: .destructive) {
-                appModel.replan(task: task, choice: .archive, context: context)
+                appModel.deleteTask(task, context: context)
                 dismiss()
             }
         } message: {

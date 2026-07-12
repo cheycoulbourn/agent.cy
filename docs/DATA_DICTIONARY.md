@@ -77,7 +77,7 @@ Meaningful differences for one selected destination. It does not duplicate the m
 
 A first-class creator-work item stored once and queried into every relevant surface.
 
-- `id`, optional `briefID`, optional `parentTaskID`, `title`, `kind`, `notes`, optional `estimatedMinutes`, `sortOrder`.
+- `id`, optional `briefID`, optional `parentTaskID`, `title`, `kind`, `priority`, `notes`, optional `estimatedMinutes`, `sortOrder`.
 - Optional `targetDate`, `isCompleted`, optional `completedAt`.
 - `recordingMilestoneEmitted` prevents duplicate filming milestones.
 - A task without `parentTaskID` is top-level. Subtasks complete independently and appear only beneath their parent.

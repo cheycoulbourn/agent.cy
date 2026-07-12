@@ -26,6 +26,7 @@ struct QuickCaptureView: View {
     @State private var postFirstTask = ""
     @State private var taskTitle = ""
     @State private var taskKind: CreatorTaskKind = .planning
+    @State private var taskPriority: TaskPriority = .medium
     @State private var addTarget = false
     @State private var targetDate = Date()
     @State private var ideas: [IdeaDirection] = []
@@ -219,12 +220,15 @@ struct QuickCaptureView: View {
             Picker("Kind", selection: $taskKind) {
                 ForEach(CreatorTaskKind.allCases) { kind in Label(kind.title, systemImage: kind.symbol).tag(kind) }
             }
+            Picker("Priority", selection: $taskPriority) {
+                ForEach(TaskPriority.allCases) { priority in Text(priority.title).tag(priority) }
+            }
             Toggle("Add a flexible target", isOn: $addTarget).tint(.actionAccent)
             if addTarget {
                 DatePicker("Target", selection: $targetDate, displayedComponents: [.date, .hourAndMinute])
             }
             Button("Save task", systemImage: "checkmark") {
-                if appModel.createTask(title: taskTitle, kind: taskKind, targetDate: addTarget ? targetDate : nil, context: context) != nil {
+                if appModel.createTask(title: taskTitle, kind: taskKind, priority: taskPriority, targetDate: addTarget ? targetDate : nil, context: context) != nil {
                     appModel.quickCaptureTargetDate = nil
                     dismiss()
                 }

@@ -462,14 +462,14 @@ final class AppModel {
     }
 
     @discardableResult
-    func createTask(title: String, kind: CreatorTaskKind, targetDate: Date?, context: ModelContext) -> CreatorTask? {
+    func createTask(title: String, kind: CreatorTaskKind, priority: TaskPriority = .medium, targetDate: Date?, context: ModelContext) -> CreatorTask? {
         guard can(.createTask, context: context) else { return nil }
         let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
             notice = .error("Give the task a clear next action.")
             return nil
         }
-        let task = CreatorTask(title: cleaned, kind: kind, targetDate: targetDate)
+        let task = CreatorTask(title: cleaned, kind: kind, priority: priority, targetDate: targetDate)
         context.insert(task)
         try? context.save()
         return task
@@ -493,6 +493,7 @@ final class AppModel {
             parentTaskID: parent.id,
             title: cleaned,
             kind: parent.kind,
+            priority: parent.priority,
             sortOrder: siblings.count
         )
         context.insert(subtask)
@@ -1003,9 +1004,15 @@ final class AppModel {
         case .pause:
             task.targetDate = nil
         case .archive:
-            subtasks(for: task, context: context).forEach(context.delete)
-            context.delete(task)
+            deleteTask(task, context: context)
+            return
         }
+        try? context.save()
+    }
+
+    func deleteTask(_ task: CreatorTask, context: ModelContext) {
+        subtasks(for: task, context: context).forEach(context.delete)
+        context.delete(task)
         try? context.save()
     }
 

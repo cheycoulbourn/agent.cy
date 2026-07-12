@@ -237,6 +237,15 @@ enum CreatorTaskKind: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum TaskPriority: String, CaseIterable, Codable, Identifiable, Sendable {
+    case low
+    case medium
+    case high
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
 enum PillarWeekday: Int, CaseIterable, Codable, Identifiable, Sendable {
     case sunday = 1
     case monday = 2
