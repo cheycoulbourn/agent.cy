@@ -57,7 +57,7 @@ pnpm dev:server
 
 Debug builds use the local fixture creative service by default. To exercise the live proxy in a Debug launch, set the scheme environment variable `AGENTCY_USE_LIVE_AI=1`; `AGENTCY_API_BASE_URL` can override the endpoint in the same way. Live mode inserts one-use invitation redemption before the first AI request and stores the returned credential in the device-only Keychain.
 
-Release builds use the live service by default. Before archiving, replace the `https://replace-me.invalid` value in `ios/project.yml` with the deployed Railway HTTPS origin, regenerate the project with `xcodegen generate`, and verify `/healthz` plus invitation redemption on a real device. Do not ship the placeholder endpoint.
+Release builds use the live service at `https://agentcy-production.up.railway.app`. Before archiving, regenerate the project with `xcodegen generate` and verify `/healthz` plus invitation redemption on a real device.
 
 Install an iOS Simulator runtime matching the Xcode iOS SDK to run the complete test suite and visual checks. Then run `./scripts/verify.sh`.
 
