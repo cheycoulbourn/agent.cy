@@ -67,13 +67,11 @@ struct BriefDetailView: View {
 
                     taskSection
 
-                    if !outputs.isEmpty {
-                        DisclosureGroup(isExpanded: $showPlatforms) {
-                            outputSection
-                                .padding(.top, AgentSpacing.x4)
-                        } label: {
-                            BriefDisclosureLabel(title: "Post versions", detail: "\(postedCount) of \(outputs.count) posted")
-                        }
+                    DisclosureGroup(isExpanded: $showPlatforms) {
+                        outputSection
+                            .padding(.top, AgentSpacing.x4)
+                    } label: {
+                        BriefDisclosureLabel(title: "Platforms", detail: platformSummary)
                     }
 
                     DisclosureGroup(isExpanded: $showHistory) {
@@ -311,6 +309,19 @@ struct BriefDetailView: View {
             ForEach(outputs) { output in
                 PlatformOutputEditor(output: output, canPlan: [.ready, .scheduled, .posted].contains(brief.status))
             }
+            if brief.status != .archived, !availablePlatforms.isEmpty {
+                Menu {
+                    ForEach(availablePlatforms) { platform in
+                        Button(platform.title) {
+                            _ = appModel.addPlatformOutput(to: brief, platform: platform, context: context)
+                        }
+                    }
+                } label: {
+                    Label("Add platform", systemImage: "plus")
+                }
+                .buttonStyle(AgentSecondaryButtonStyle())
+                .accessibilityHint("Adds another editable platform version to this brief")
+            }
         }
     }
 
@@ -375,6 +386,14 @@ struct BriefDetailView: View {
     private var selectedPillar: Pillar? { activePillars.first { $0.id == brief.pillarID } }
     private var topLevelTasks: [CreatorTask] { tasks.filter { $0.parentTaskID == nil } }
     private var postedCount: Int { outputs.filter { $0.status == .posted }.count }
+    private var availablePlatforms: [CreatorPlatform] {
+        CreatorPlatform.choices(for: contentFormat)
+            .filter { platform in !outputs.contains { $0.platform == platform } }
+    }
+    private var platformSummary: String {
+        if outputs.isEmpty { return "None added" }
+        return "\(outputs.count) added · \(postedCount) posted"
+    }
     private var canRequestRevision: Bool {
         hasComposedContent &&
         brief.status != .archived &&
@@ -664,7 +683,7 @@ private struct BriefProposalReviewView: View {
                             }
                             .padding(.top, AgentSpacing.x4)
                         } label: {
-                            BriefDisclosureLabel(title: "Post versions", detail: "\(proposal.variants.count)")
+                            BriefDisclosureLabel(title: "Platforms", detail: "\(proposal.variants.count)")
                         }
                     }
 

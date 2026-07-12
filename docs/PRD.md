@@ -78,6 +78,7 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 - Today is the warm daily launch view with a greeting, one focus, content going live today, today's tasks, and quick capture.
 - Agenda can move backward or forward one week at a time. Every day separates planned Posts from production Tasks, and pillar colors appear only when assigned.
 - Tasks contains all brief-linked and standalone creator-work tasks. Each row shows status, date, and priority, supports left-swipe deletion, and uses full-row separators. Parent tasks may contain independently completable subtasks, which remain out of top-level lists.
+- Platforms replaces Post versions. Creators can manually add any eligible platform not already attached to the brief, then edit its caption, opening adjustment, title where relevant, CTA, edit notes, posting target, and status independently.
 - Content placement and task scheduling are separate. A task date never places its linked post on Agenda.
 - Pillars contains manual, guided, or inferred themes. Each anchor page edits its color through unlabeled swatches and its assigned weekdays through one-letter controls; branches inherit both. Pillar descriptions are not part of the interface. Unfiled briefs remain valid.
 - Pillar detail groups branches, ideas, scheduled work, and posted work, with a manual new-spark action for posted content.

@@ -1265,6 +1265,52 @@ final class AppModel {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    @discardableResult
+    func addPlatformOutput(
+        to brief: CreativeBrief,
+        platform: CreatorPlatform,
+        context: ModelContext
+    ) -> PlatformOutput? {
+        guard can(.editExisting, context: context), brief.status != .archived else { return nil }
+        let existing = outputs(for: brief, context: context)
+        guard !existing.contains(where: { $0.platform == platform }) else {
+            notice = .info("\(platform.title) is already part of this brief.")
+            return nil
+        }
+        let format: ContentFormat = existing.contains(where: { $0.platform == .youtubeVideo }) || brief.durationSeconds > 90
+            ? .longForm
+            : .shortForm
+        guard platform.format == format else {
+            notice = .info("Choose a \(format.title.lowercased()) platform for this brief.")
+            return nil
+        }
+
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: platform,
+            status: [.ready, .scheduled, .posted].contains(brief.status) ? .ready : .draft
+        )
+        if let source = existing.first {
+            output.caption = source.caption
+            output.cta = source.cta
+        } else {
+            output.cta = brief.ctaIntent
+        }
+        if platform == .youtubeShorts || platform == .youtubeVideo {
+            output.titleOverride = brief.title
+        }
+        context.insert(output)
+        brief.updatedAt = Date()
+        do {
+            try context.save()
+            return output
+        } catch {
+            context.delete(output)
+            notice = .error("That platform could not be added.")
+            return nil
+        }
+    }
+
     func tasks(for brief: CreativeBrief, context: ModelContext) -> [CreatorTask] {
         let id = brief.id
         let descriptor = FetchDescriptor<CreatorTask>(predicate: #Predicate { $0.briefID == id }, sortBy: [SortDescriptor(\.sortOrder)])

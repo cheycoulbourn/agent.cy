@@ -208,6 +208,35 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(ContentFormat.longForm.durationOptions, [180, 300, 480, 600, 900])
     }
 
+    func testEligiblePlatformsCanBeAddedOnceAndEditedIndependently() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let brief = CreativeBrief(title: "A clear system", premise: "Show the system", status: .ready)
+        brief.durationSeconds = 45
+        let instagram = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .ready)
+        instagram.caption = "Shared starting caption"
+        instagram.cta = "Save this"
+        context.insert(brief)
+        context.insert(instagram)
+        try context.save()
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let tiktok = try XCTUnwrap(model.addPlatformOutput(to: brief, platform: .tiktok, context: context))
+        XCTAssertEqual(tiktok.status, .ready)
+        XCTAssertEqual(tiktok.caption, "Shared starting caption")
+        XCTAssertEqual(tiktok.cta, "Save this")
+        XCTAssertTrue(tiktok.openingAdjustment.isEmpty)
+        XCTAssertTrue(tiktok.editChanges.isEmpty)
+        XCTAssertNil(model.addPlatformOutput(to: brief, platform: .tiktok, context: context))
+        XCTAssertNil(model.addPlatformOutput(to: brief, platform: .youtubeVideo, context: context))
+
+        let shorts = try XCTUnwrap(model.addPlatformOutput(to: brief, platform: .youtubeShorts, context: context))
+        XCTAssertEqual(shorts.titleOverride, brief.title)
+        XCTAssertEqual(model.outputs(for: brief, context: context).count, 3)
+        XCTAssertEqual(brief.status, .ready)
+    }
+
     func testBranchPillarInheritsAnchorColorAndDaysThenFallsBackSafely() {
         let anchor = Pillar(
             name: "Teaching",
