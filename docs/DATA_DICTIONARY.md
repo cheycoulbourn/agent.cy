@@ -98,7 +98,7 @@ A reusable weekly production pattern.
 
 ### WeekPlan
 
-A dated copy of a rhythm template plus week-specific changes. Editing it does not mutate the source template without an explicit save action.
+A legacy dated copy of a rhythm template retained for migration compatibility. It is not exposed in the current Agenda experience.
 
 - `id`, `weekStart`, copied rhythm entries, `notes`, `createdAt`.
 

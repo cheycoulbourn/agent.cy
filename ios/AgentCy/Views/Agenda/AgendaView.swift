@@ -3,14 +3,12 @@ import SwiftUI
 
 struct AgendaView: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
     @State private var weekScope: AgendaWeekScope = .thisWeek
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
     @State private var planningDay: PlanningDay?
-    @State private var weekPlan: WeekPlan?
 
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
@@ -34,7 +32,7 @@ struct AgendaView: View {
                 EditorialHeader(
                     kicker: weekRange,
                     title: weekScope == .thisWeek ? "Your week." : "Next week, a fresh slate.",
-                    subtitle: "Plan content and production without locking yourself in."
+                    subtitle: "Plan your content for the week."
                 )
 
                 Picker("Week", selection: $weekScope) {
@@ -45,13 +43,6 @@ struct AgendaView: View {
                 .pickerStyle(.segmented)
 
                 weekSection
-
-                if let weekPlan {
-                    WeekRhythmEditor(plan: weekPlan) {
-                        appModel.saveWeekToTemplate(weekPlan, context: context)
-                    }
-                }
-
             }
             .padding(.horizontal, AgentSpacing.x6)
             .padding(.top, AgentSpacing.x6)
@@ -65,8 +56,9 @@ struct AgendaView: View {
             }
         }
         .agentScreen()
-        .onAppear { loadWeek() }
-        .onChange(of: weekScope) { _, _ in loadWeek() }
+        .onChange(of: weekScope) { _, _ in
+            selectedDay = weekScope == .thisWeek ? Calendar.current.startOfDay(for: Date()) : weekStart
+        }
     }
 
     private var weekSection: some View {
@@ -114,10 +106,16 @@ struct AgendaView: View {
                 HStack {
                     Text(selectedDayTitle).font(.agentHeadline)
                     Spacer()
-                    Button("Add content", systemImage: "plus") {
+                    Button {
                         planningDay = PlanningDay(date: selectedDay)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(Color.agentText)
+                            .frame(width: 44, height: 44)
                     }
-                    .buttonStyle(AgentCompactPrimaryButtonStyle())
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add content")
                 }
 
                 let themes = assignedPillars(on: selectedDay)
@@ -217,11 +215,6 @@ struct AgendaView: View {
         return anchors.filter { $0.assignedWeekdays.contains(weekday) }
     }
 
-    private func loadWeek() {
-        selectedDay = weekScope == .thisWeek ? Calendar.current.startOfDay(for: Date()) : weekStart
-        weekPlan = appModel.ensureWeek(startingAt: weekStart, context: context)
-    }
-
     private func beginNewPost(on day: Date) {
         planningDay = nil
         appModel.quickCaptureTargetDate = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
@@ -300,39 +293,5 @@ private struct DayPlannerSheet: View {
 
     private var plannedDate: Date {
         Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
-    }
-}
-
-private struct WeekRhythmEditor: View {
-    @Bindable var plan: WeekPlan
-    let saveTemplate: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            SectionRuleHeader(title: "Production rhythm")
-            TextEditor(text: $plan.rhythmEntriesText)
-                .font(.agentBody)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 112)
-                .padding(AgentSpacing.x3)
-                .background(Color.agentSurface)
-                .clipShape(.rect(cornerRadius: AgentRadius.control))
-                .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
-                .overlay(alignment: .topLeading) {
-                    if plan.rhythmEntriesText.isEmpty {
-                        Text("Monday: choose an idea\nWednesday: film\nFriday: post")
-                            .font(.agentBody)
-                            .foregroundStyle(Color.agentSecondary)
-                            .padding(AgentSpacing.x4)
-                            .allowsHitTesting(false)
-                    }
-                }
-            HStack {
-                Text("This week only").font(.agentMono).foregroundStyle(Color.agentSecondary)
-                Spacer()
-                Button("Save to template", action: saveTemplate)
-                    .buttonStyle(AgentCompactSecondaryButtonStyle())
-            }
-        }
     }
 }

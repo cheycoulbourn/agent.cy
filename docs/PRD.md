@@ -76,7 +76,7 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 ## Navigation
 
 - Today is the warm daily launch view with a greeting, one focus, content going live today, today's tasks, and quick capture.
-- Agenda owns the current and next weekly content plan, copied production rhythm, and pillar-color placement. Each content item appears once on its planned day.
+- Agenda owns the current and next weekly content plan and pillar-color placement. Each content item appears once on its planned day.
 - Tasks contains all brief-linked and standalone creator-work tasks. Parent tasks may contain independently completable subtasks, which remain out of top-level lists.
 - Content placement and task scheduling are separate. A task date never places its linked post on Agenda.
 - Pillars contains manual, guided, or inferred themes. Anchors own color and preferred weekdays; branches inherit both. Unfiled briefs remain valid.
@@ -102,7 +102,7 @@ Tasks may be completed while linked content is still a Spark or Developing; task
 ## Planning and reminders
 
 - Dates are flexible targets, not punitive deadlines.
-- A reusable rhythm template is copied into each week.
+- Production-rhythm templates are not exposed in the current Agenda experience.
 - Week changes remain local unless explicitly saved to the template.
 - Missed targets offer move, simplify, pause, or archive.
 - Two opt-in local reminders are supported: daily focus and weekly reset.
