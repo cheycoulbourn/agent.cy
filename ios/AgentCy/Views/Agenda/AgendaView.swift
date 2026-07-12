@@ -103,20 +103,7 @@ struct AgendaView: View {
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                HStack {
-                    Text(selectedDayTitle).font(.agentHeadline)
-                    Spacer()
-                    Button {
-                        planningDay = PlanningDay(date: selectedDay)
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(Color.agentText)
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Add content")
-                }
+                Text(selectedDayTitle).font(.agentHeadline)
 
                 let themes = assignedPillars(on: selectedDay)
                 if !themes.isEmpty {
@@ -166,9 +153,25 @@ struct AgendaView: View {
                     }
                 }
             }
+            .padding(.trailing, 68)
             .padding(AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
             .overlay(RoundedRectangle(cornerRadius: AgentRadius.panel).stroke(Color.agentBorder, lineWidth: 1))
+            .overlay(alignment: .trailing) {
+                Button {
+                    planningDay = PlanningDay(date: selectedDay)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 27, weight: .regular))
+                        .frame(width: 56, height: 56)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.roundedRectangle(radius: 18))
+                .tint(Color.agentSurface)
+                .foregroundStyle(Color.agentText)
+                .padding(.trailing, AgentSpacing.x3)
+                .accessibilityLabel("Add content")
+            }
         }
     }
 
