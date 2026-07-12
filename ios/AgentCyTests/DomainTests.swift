@@ -4,6 +4,21 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testStoreUsesCloudKitOnlyWhenTheBuildExplicitlyEnablesIt() {
+        XCTAssertTrue(ModelContainerFactory.shouldUseCloudKit(
+            cloudKitEnabled: true,
+            forceLocalOnly: false
+        ))
+        XCTAssertFalse(ModelContainerFactory.shouldUseCloudKit(
+            cloudKitEnabled: false,
+            forceLocalOnly: false
+        ))
+        XCTAssertFalse(ModelContainerFactory.shouldUseCloudKit(
+            cloudKitEnabled: true,
+            forceLocalOnly: true
+        ))
+    }
+
     func testPostedStatusAndUnpostingRollback() throws {
         let brief = CreativeBrief(title: "Test", premise: "A premise", status: .ready)
         let output = PlatformOutput(briefID: brief.id, platform: .tiktok, status: .ready)
@@ -93,7 +108,7 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(AccessPolicy.allows(.askCy, state: state))
     }
 
-    func testPlanningSparkCreatesOneDatedTaskAndMovingItDoesNotDuplicate() throws {
+    func testPlanningSparkUsesItsOwnAgendaDateWithoutCreatingATask() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         context.insert(SubscriptionState(access: .paid))
@@ -107,12 +122,12 @@ final class DomainTests: XCTestCase {
             targetDate: monday,
             context: context
         ))
-        XCTAssertEqual(model.tasks(for: brief, context: context).count, 1)
-        XCTAssertEqual(model.tasks(for: brief, context: context).first?.targetDate, monday)
+        XCTAssertEqual(brief.agendaDate, monday)
+        XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
 
         XCTAssertTrue(model.plan(brief, on: tuesday, context: context))
-        XCTAssertEqual(model.tasks(for: brief, context: context).count, 1)
-        XCTAssertEqual(model.tasks(for: brief, context: context).first?.targetDate, tuesday)
+        XCTAssertEqual(brief.agendaDate, tuesday)
+        XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
     }
 
     func testQuickPostCreatesDraftOutputAndFlexibleTaskWithoutAdvancingLifecycle() throws {
@@ -140,12 +155,14 @@ final class DomainTests: XCTestCase {
         let output = try XCTUnwrap(model.outputs(for: brief, context: context).first)
         XCTAssertEqual(output.status, .draft)
         XCTAssertEqual(output.targetDate, postDate)
+        XCTAssertEqual(brief.agendaDate, postDate)
         let task = try XCTUnwrap(model.tasks(for: brief, context: context).first)
         XCTAssertEqual(task.title, "List the three shots")
 
         let movedDate = postDate.addingTimeInterval(86_400)
         model.schedule(output: output, date: movedDate, context: context)
         XCTAssertEqual(output.targetDate, movedDate)
+        XCTAssertEqual(brief.agendaDate, movedDate)
         XCTAssertEqual(output.status, .draft)
         XCTAssertEqual(brief.status, .spark)
 

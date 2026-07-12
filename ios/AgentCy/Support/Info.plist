@@ -4,6 +4,8 @@
 <dict>
 	<key>AGENTCY_API_BASE_URL</key>
 	<string>$(AGENTCY_API_BASE_URL)</string>
+	<key>AGENTCY_CLOUDKIT_ENABLED</key>
+	<string>$(AGENTCY_CLOUDKIT_ENABLED)</string>
 	<key>AGENTCY_USE_LIVE_AI</key>
 	<string>$(AGENTCY_USE_LIVE_AI)</string>
 	<key>CFBundleDevelopmentRegion</key>

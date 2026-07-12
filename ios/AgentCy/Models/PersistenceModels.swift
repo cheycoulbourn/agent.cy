@@ -141,6 +141,7 @@ final class CreativeBrief {
     var sourceRaw: String = SparkSource.text.rawValue
     var statusRaw: String = BriefStatus.spark.rawValue
     var pillarID: UUID?
+    var agendaDate: Date?
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     var archivedAt: Date?

@@ -5,7 +5,6 @@ struct AgendaView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
     @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
     @State private var weekScope: AgendaWeekScope = .thisWeek
@@ -27,17 +26,6 @@ struct AgendaView: View {
 
     private var weekDays: [Date] {
         (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) }
-    }
-
-    private var weekInterval: DateInterval {
-        DateInterval(start: weekStart, end: Calendar.current.date(byAdding: .day, value: 7, to: weekStart) ?? weekStart)
-    }
-
-    private var weekOutputs: [PlatformOutput] {
-        outputs.filter { output in
-            guard let date = output.targetDate, weekInterval.contains(date) else { return false }
-            return activeBriefs.contains { $0.id == output.briefID }
-        }
     }
 
     var body: some View {
@@ -64,7 +52,6 @@ struct AgendaView: View {
                     }
                 }
 
-                postingSection
             }
             .padding(.horizontal, AgentSpacing.x6)
             .padding(.top, AgentSpacing.x6)
@@ -187,24 +174,6 @@ struct AgendaView: View {
         }
     }
 
-    @ViewBuilder
-    private var postingSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            SectionRuleHeader(title: "Posting targets", trailing: "\(weekOutputs.count)")
-            if weekOutputs.isEmpty {
-                Text("Posts with a date will appear here.")
-                    .font(.agentBody)
-                    .foregroundStyle(Color.agentSecondary)
-            } else {
-                ForEach(weekOutputs) { output in
-                    if let brief = brief(for: output) {
-                        AgendaOutputRow(output: output, brief: brief)
-                    }
-                }
-            }
-        }
-    }
-
     private var weekRange: String {
         guard let last = weekDays.last else { return "" }
         return "\(weekStart.formatted(.dateTime.month(.abbreviated).day()))–\(last.formatted(.dateTime.month(.abbreviated).day()))"
@@ -221,23 +190,15 @@ struct AgendaView: View {
 
     private func plannedBriefs(on day: Date) -> [CreativeBrief] {
         let calendar = Calendar.current
-        let taskIDs = tasks.compactMap { task -> UUID? in
-            guard task.parentTaskID == nil,
-                  let date = task.targetDate,
-                  calendar.isDate(date, inSameDayAs: day),
-                  let briefID = task.briefID else { return nil }
-            return briefID
+        return activeBriefs.filter { brief in
+            let outputDate = outputs
+                .filter { $0.briefID == brief.id }
+                .compactMap(\.targetDate)
+                .sorted()
+                .first
+            guard let plannedDate = brief.agendaDate ?? outputDate else { return false }
+            return calendar.isDate(plannedDate, inSameDayAs: day)
         }
-        let outputIDs = outputs.compactMap { output -> UUID? in
-            guard let date = output.targetDate, calendar.isDate(date, inSameDayAs: day) else { return nil }
-            return output.briefID
-        }
-        let plannedIDs = Set(taskIDs + outputIDs)
-        return activeBriefs.filter { plannedIDs.contains($0.id) }
-    }
-
-    private func brief(for output: PlatformOutput) -> CreativeBrief? {
-        activeBriefs.first { $0.id == output.briefID }
     }
 
     private func pillarName(for brief: CreativeBrief) -> String? {
@@ -373,80 +334,5 @@ private struct WeekRhythmEditor: View {
                     .buttonStyle(AgentCompactSecondaryButtonStyle())
             }
         }
-    }
-}
-
-private struct AgendaOutputRow: View {
-    @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
-    let output: PlatformOutput
-    let brief: CreativeBrief
-    @State private var target = Date()
-    @State private var confirmArchive = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            HStack {
-                Label(output.platform.shortTitle, systemImage: output.platform.symbol).font(.agentHeadline)
-                Spacer()
-                MetaLabel(output.status.rawValue)
-            }
-            NavigationLink {
-                BriefDetailView(brief: brief)
-            } label: {
-                Text(brief.title).font(.agentBody).foregroundStyle(Color.agentText)
-            }
-
-            DatePicker("Post on", selection: $target, displayedComponents: [.date, .hourAndMinute])
-                .onChange(of: target) { _, date in appModel.schedule(output: output, date: date, context: context) }
-
-            HStack {
-                Button("Remove date") { appModel.schedule(output: output, date: nil, context: context) }
-                Spacer()
-                if [.ready, .scheduled, .posted].contains(brief.status) {
-                    Button(output.status == .posted ? "Mark unposted" : "Mark posted") {
-                        appModel.togglePosted(output: output, context: context)
-                    }
-                } else {
-                    NavigationLink("Develop post") { BriefDetailView(brief: brief) }
-                }
-            }
-            .font(.agentHeadline)
-
-            if targetHasPassed {
-                Menu("Adjust this target", systemImage: "arrow.triangle.2.circlepath") {
-                    Button("Move to tomorrow", systemImage: "calendar.badge.clock") {
-                        appModel.replan(output: output, choice: .move, context: context)
-                        target = output.targetDate ?? Date()
-                    }
-                    Button("Simplify the output", systemImage: "line.3.horizontal.decrease") {
-                        appModel.replan(output: output, choice: .simplify, context: context)
-                    }
-                    Button("Pause this target", systemImage: "pause") {
-                        appModel.replan(output: output, choice: .pause, context: context)
-                        target = Date()
-                    }
-                    Button("Archive the content", systemImage: "archivebox", role: .destructive) {
-                        confirmArchive = true
-                    }
-                }
-                .frame(minHeight: 44)
-            }
-        }
-        .padding(.vertical, AgentSpacing.x4)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
-        .onAppear { target = output.targetDate ?? Date() }
-        .confirmationDialog("Archive \(brief.title)?", isPresented: $confirmArchive, titleVisibility: .visible) {
-            Button("Archive content", role: .destructive) {
-                appModel.replan(output: output, choice: .archive, context: context)
-            }
-        } message: {
-            Text("Archive is manual. The content remains available in Your work.")
-        }
-    }
-
-    private var targetHasPassed: Bool {
-        guard let date = output.targetDate else { return false }
-        return output.status != .posted && date < Date()
     }
 }

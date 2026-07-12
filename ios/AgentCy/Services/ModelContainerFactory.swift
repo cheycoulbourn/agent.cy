@@ -10,10 +10,14 @@ enum ModelContainerFactory {
         }
 
         #if targetEnvironment(simulator) || AGENTCY_LOCAL_ONLY
-        let database: ModelConfiguration.CloudKitDatabase = .none
+        let forceLocalOnly = true
         #else
-        let database: ModelConfiguration.CloudKitDatabase = .private("iCloud.com.agentcy.app")
+        let forceLocalOnly = false
         #endif
+        let database: ModelConfiguration.CloudKitDatabase = shouldUseCloudKit(
+            cloudKitEnabled: cloudKitEnabled,
+            forceLocalOnly: forceLocalOnly
+        ) ? .private("iCloud.com.agentcy.app") : .none
         let cloud = ModelConfiguration(
             "AgentCyStore",
             schema: schema,
@@ -26,5 +30,14 @@ enum ModelContainerFactory {
         } catch {
             fatalError("agent.cy could not open its CloudKit-backed local store: \(error.localizedDescription)")
         }
+    }
+
+    static func shouldUseCloudKit(cloudKitEnabled: Bool, forceLocalOnly: Bool) -> Bool {
+        cloudKitEnabled && !forceLocalOnly
+    }
+
+    private static var cloudKitEnabled: Bool {
+        let value = Bundle.main.object(forInfoDictionaryKey: "AGENTCY_CLOUDKIT_ENABLED") as? String
+        return (value as NSString?)?.boolValue ?? false
     }
 }

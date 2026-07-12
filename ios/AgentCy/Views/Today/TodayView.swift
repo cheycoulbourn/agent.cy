@@ -57,36 +57,7 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             SectionRuleHeader(title: "Today's focus")
 
-            if let task = todayTasks.first {
-                HStack(spacing: AgentSpacing.x3) {
-                    Button {
-                        appModel.toggleTask(task, context: context)
-                    } label: {
-                        Image(systemName: "circle")
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Complete \(task.title)")
-
-                    NavigationLink {
-                        TaskDetailView(task: task)
-                    } label: {
-                        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                            MetaLabel(task.kind.title)
-                            Text(task.title).font(.agentHeadline).foregroundStyle(Color.agentText)
-                            let steps = tasks.filter { $0.parentTaskID == task.id }
-                            if !steps.isEmpty {
-                                MetaLabel("\(steps.filter(\.isCompleted).count) of \(steps.count) steps")
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                }
-                .padding(AgentSpacing.x4)
-                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
-                .overlay(RoundedRectangle(cornerRadius: AgentRadius.panel).stroke(Color.agentBorder, lineWidth: 1))
-            } else if let output = todayOutputs.first, let brief = brief(for: output) {
+            if let output = todayOutputs.first, let brief = brief(for: output) {
                 NavigationLink {
                     BriefDetailView(brief: brief)
                 } label: {

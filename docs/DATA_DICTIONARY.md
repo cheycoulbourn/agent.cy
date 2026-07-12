@@ -50,6 +50,7 @@ The master content object across the full lifecycle. A new record begins as a Sp
 - `readyBriefPayloadJSON`: the last approved canonical `ReadyBrief` contract, overlaid with creator edits before later scoped revisions.
 - `lifecycleHistoryText`: ordered, timestamped status transitions. Repeated writes of the same status do not create duplicate history entries.
 - Dates: `createdAt`, `updatedAt`, optional `archivedAt`.
+- Optional `agendaDate` places the content once in Agenda. It is not a task or a lifecycle transition.
 
 ### PendingBriefProposal
 

@@ -386,15 +386,8 @@ final class AppModel {
         }
         let title = titleFromSpark(premise)
         let brief = CreativeBrief(title: title, premise: premise, source: source)
+        brief.agendaDate = targetDate
         context.insert(brief)
-        if let targetDate {
-            context.insert(CreatorTask(
-                briefID: brief.id,
-                title: "Make \(title)",
-                kind: .planning,
-                targetDate: targetDate
-            ))
-        }
         try? context.save()
         return brief
     }
@@ -425,6 +418,7 @@ final class AppModel {
         )
         brief.notes = cleanNotes
         brief.pillarID = pillarID
+        brief.agendaDate = targetDate
         context.insert(brief)
 
         let output = PlatformOutput(briefID: brief.id, platform: platform, status: .draft)
@@ -451,21 +445,9 @@ final class AppModel {
 
     @discardableResult
     func plan(_ brief: CreativeBrief, on date: Date, context: ModelContext) -> Bool {
-        guard can(.createTask, context: context), brief.status != .archived else { return false }
-        let existing = tasks(for: brief, context: context).first {
-            !$0.isCompleted && $0.kind == .planning && $0.title.hasPrefix("Make ")
-        }
-        if let existing {
-            existing.targetDate = date
-        } else {
-            context.insert(CreatorTask(
-                briefID: brief.id,
-                title: "Make \(brief.title)",
-                kind: .planning,
-                targetDate: date,
-                sortOrder: tasks(for: brief, context: context).count
-            ))
-        }
+        guard can(.schedule, context: context), brief.status != .archived else { return false }
+        brief.agendaDate = date
+        brief.updatedAt = Date()
         do {
             try context.save()
             return true
@@ -953,8 +935,10 @@ final class AppModel {
             notice = .error("That post is no longer available.")
             return
         }
+        let previousDate = output.targetDate
         if [.spark, .developing].contains(brief.status), output.status == .draft {
             output.targetDate = date
+            if brief.agendaDate == nil || brief.agendaDate == previousDate { brief.agendaDate = date }
             brief.updatedAt = Date()
             try? context.save()
             return
@@ -963,6 +947,7 @@ final class AppModel {
             notice = .info("Approve this brief before adding production or posting targets.")
             return
         }
+        if brief.agendaDate == nil || brief.agendaDate == previousDate { brief.agendaDate = date }
         BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
         try? context.save()
     }
@@ -1025,6 +1010,7 @@ final class AppModel {
             notice = .info("That content is no longer active.")
             return
         }
+        let previousDate = output.targetDate
         if output.status == .draft, [.spark, .developing].contains(brief.status) {
             switch choice {
             case .move:
@@ -1038,6 +1024,9 @@ final class AppModel {
                 output.targetDate = nil
             case .archive:
                 BriefLifecycle.archive(brief)
+            }
+            if brief.agendaDate == nil || brief.agendaDate == previousDate {
+                brief.agendaDate = output.targetDate
             }
             try? context.save()
             return
@@ -1061,6 +1050,10 @@ final class AppModel {
             BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
         case .archive:
             BriefLifecycle.archive(brief)
+        }
+        if (choice == .move || choice == .pause),
+           (brief.agendaDate == nil || brief.agendaDate == previousDate) {
+            brief.agendaDate = output.targetDate
         }
         try? context.save()
     }

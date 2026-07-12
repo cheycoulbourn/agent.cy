@@ -70,6 +70,7 @@ struct LocalExportService: ExportServicing {
                     "voiceConfidence": brief.voiceConfidence,
                     "source": brief.source.rawValue,
                     "status": brief.status.rawValue,
+                    "agendaDate": brief.agendaDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "lifecycleHistory": brief.lifecycleHistory.map {
                         [
                             "status": $0.status.rawValue,

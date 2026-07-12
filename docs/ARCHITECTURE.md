@@ -58,6 +58,7 @@ Capture, editing, lifecycle, tasks, planning, reminders, export, and deletion wo
 - Platform outputs own platform status and optional URL.
 - The master is Posted when at least one selected output is Posted.
 - Tasks are stored once and queried into Brief, Today, and Tasks.
+- CreativeBrief owns its Agenda placement. CreatorTask target dates never infer or duplicate content placement.
 - Top-level tasks may own independently completable subtasks. Subtasks stay out of top-level lists and are deleted with their parent.
 - Pillar branches inherit color and assigned weekdays from their active anchor. Missing or archived parents safely fall back to the branch's stored values.
 - Rhythm templates and week instances are distinct records.
