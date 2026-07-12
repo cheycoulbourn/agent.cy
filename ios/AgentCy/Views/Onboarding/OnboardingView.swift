@@ -383,6 +383,9 @@ struct OnboardingView: View {
     private func finish(startWithIdeas: Bool) {
         Task {
             appModel.quickCaptureStartsWithIdeas = startWithIdeas
+            appModel.quickCaptureStartsWithTask = false
+            appModel.quickCaptureStartsWithPost = false
+            appModel.quickCaptureStartsRecording = false
             if await appModel.completeOnboarding(draft, context: context) {
                 appModel.presentedSheet = .quickCapture
             }

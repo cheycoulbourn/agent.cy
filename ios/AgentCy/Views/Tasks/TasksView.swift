@@ -39,6 +39,8 @@ struct TasksView: View {
                 } actions: {
                     Button("Add a task") {
                         appModel.quickCaptureStartsWithTask = true
+                        appModel.quickCaptureStartsWithPost = false
+                        appModel.quickCaptureStartsRecording = false
                         appModel.presentedSheet = .quickCapture
                     }
                         .buttonStyle(AgentCompactPrimaryButtonStyle())

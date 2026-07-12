@@ -15,7 +15,6 @@
 		20A4E944BE4B386CC4E50F9D /* VoiceExampleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B173D7947488D50FC476EB0 /* VoiceExampleService.swift */; };
 		258DEA0997381331810985AF /* VoiceExampleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF8574EBD41FD1CECA143FD7 /* VoiceExampleTests.swift */; };
 		2E57FC40E99545BB22654143 /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */; };
-		30927005F3AC4A710EE763D1 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB3BBF9B7BFEFFA99BD9AA5 /* LibraryView.swift */; };
 		32CEEAC2741F7D2CA0C56788 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED042483D5E974837FB79516 /* AppModel.swift */; };
 		3DDB89466D5D0099AC367509 /* SpeechCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE11B52A9F529D18880915D0 /* SpeechCaptureService.swift */; };
 		4913F85E046CEC163B0356AD /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1759E0C4AC460805C96F5D6 /* RootView.swift */; };
@@ -55,6 +54,7 @@
 		E825EDFCE909109F0337DA95 /* DevelopBriefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5397F30C5D0FFA58A666EB59 /* DevelopBriefView.swift */; };
 		EB3E230A4D36BC79C9EF2C06 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8390A3692666C8E89EF49FD4 /* ExportService.swift */; };
 		F48DA5D24924B6C1F7BC0B8E /* LiveContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69ACDB75C9CF91DE0A2D4A76 /* LiveContractTests.swift */; };
+		F970F9E14B9A06C16E660F70 /* SparkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2F3F3E5E6D413A042260A52 /* SparkView.swift */; };
 		FCCE80AE456E227F88E042D3 /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0E8458229483D88EB768BD4 /* TasksView.swift */; };
 /* End PBXBuildFile section */
 
@@ -100,6 +100,7 @@
 		97CBFDCC0967A07B6FAC4CCE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9EB246AA32BE0319A23F6424 /* QuickCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickCaptureView.swift; sourceTree = "<group>"; };
 		A0E8458229483D88EB768BD4 /* TasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksView.swift; sourceTree = "<group>"; };
+		A2F3F3E5E6D413A042260A52 /* SparkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparkView.swift; sourceTree = "<group>"; };
 		A320D1AB470C9506D944E839 /* AgentCyLocalOnly.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AgentCyLocalOnly.entitlements; sourceTree = "<group>"; };
 		ABAB4909D9C767854BBEA979 /* AgentCy.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AgentCy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF3A1AF3AB9AB17B76B21B6D /* IBM-Plex-Mono-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "IBM-Plex-Mono-LICENSE.txt"; sourceTree = "<group>"; };
@@ -109,7 +110,6 @@
 		C1759E0C4AC460805C96F5D6 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		C1A65D72577776031838A00C /* ModelContainerFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelContainerFactory.swift; sourceTree = "<group>"; };
 		C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Regular.ttf"; sourceTree = "<group>"; };
-		CAB3BBF9B7BFEFFA99BD9AA5 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		CDEA0469B163CE1502C499B0 /* InterVariable.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = InterVariable.ttf; sourceTree = "<group>"; };
 		CEB993766D86ACF3C2BE275F /* PrivacyEraseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyEraseTests.swift; sourceTree = "<group>"; };
 		D1765CA8A4F80549DF895168 /* DomainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainTests.swift; sourceTree = "<group>"; };
@@ -220,6 +220,14 @@
 			path = Design;
 			sourceTree = "<group>";
 		};
+		848F6DA8C48C5BE0BBAC3CA4 /* Spark */ = {
+			isa = PBXGroup;
+			children = (
+				A2F3F3E5E6D413A042260A52 /* SparkView.swift */,
+			);
+			path = Spark;
+			sourceTree = "<group>";
+		};
 		9670586179D43C60A4877381 /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
@@ -325,14 +333,6 @@
 			);
 			sourceTree = "<group>";
 		};
-		E78AE3273054BBDE3F243B09 /* Library */ = {
-			isa = PBXGroup;
-			children = (
-				CAB3BBF9B7BFEFFA99BD9AA5 /* LibraryView.swift */,
-			);
-			path = Library;
-			sourceTree = "<group>";
-		};
 		E87234F0345A97947781F07F /* Tasks */ = {
 			isa = PBXGroup;
 			children = (
@@ -357,11 +357,11 @@
 				D28AD2684E236B949B54EFDB /* Brief */,
 				0C700BAC82C31D38F17E3F69 /* Capture */,
 				3F4076FAACD32CE6889173E2 /* Cy */,
-				E78AE3273054BBDE3F243B09 /* Library */,
 				029556B636A51E023DD6C5ED /* Onboarding */,
 				4E1BAD7FD71760D0F3394FCC /* Pillars */,
 				414B6122ED9B5D1F4F715AA1 /* Settings */,
 				977E293720691060E3FD4826 /* Shell */,
+				848F6DA8C48C5BE0BBAC3CA4 /* Spark */,
 				E87234F0345A97947781F07F /* Tasks */,
 				61284D88666A691732462D15 /* Today */,
 			);
@@ -488,7 +488,6 @@
 				E825EDFCE909109F0337DA95 /* DevelopBriefView.swift in Sources */,
 				86F74923ACE96D6FC6AF021C /* DomainTypes.swift in Sources */,
 				EB3E230A4D36BC79C9EF2C06 /* ExportService.swift in Sources */,
-				30927005F3AC4A710EE763D1 /* LibraryView.swift in Sources */,
 				D04FD631F458EB3BB8602133 /* LifecycleService.swift in Sources */,
 				70C0DA88B1A344F0C116E3E6 /* ModelContainerFactory.swift in Sources */,
 				95F2186A4F90D79DCA081880 /* OnboardingView.swift in Sources */,
@@ -500,6 +499,7 @@
 				8F088C9A1CEA36BF895297DE /* ReminderService.swift in Sources */,
 				4913F85E046CEC163B0356AD /* RootView.swift in Sources */,
 				79520FFF1DA3D50A191AEE69 /* SettingsView.swift in Sources */,
+				F970F9E14B9A06C16E660F70 /* SparkView.swift in Sources */,
 				3DDB89466D5D0099AC367509 /* SpeechCaptureService.swift in Sources */,
 				19EB0A634416C1C1FAE8138A /* SpeechCaptureStatusView.swift in Sources */,
 				6EDF2F5B9EC4C6A5F17F8A79 /* SubscriptionService.swift in Sources */,

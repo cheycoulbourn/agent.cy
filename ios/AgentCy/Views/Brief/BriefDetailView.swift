@@ -83,8 +83,8 @@ struct BriefDetailView: View {
                 if brief.status == .posted {
                     Button("Create a new idea from this", systemImage: "arrow.triangle.branch") {
                         if appModel.createRepurposedSpark(from: brief, context: context) != nil {
-                            appModel.selectedTab = .library
-                            appModel.notice = .info("A new idea is waiting in your Library.")
+                            appModel.selectedTab = .spark
+                            appModel.notice = .info("A new idea is waiting in Your work.")
                         }
                     }
                     .buttonStyle(AgentSecondaryButtonStyle())
@@ -148,7 +148,7 @@ struct BriefDetailView: View {
         .confirmationDialog("Archive this brief?", isPresented: $confirmArchive, titleVisibility: .visible) {
             Button("Archive", role: .destructive) { appModel.archive(brief, context: context) }
         } message: {
-            Text("Archive is always manual. You can still find this brief with the Archived Library filter.")
+            Text("Archive is always manual. You can still find this content in Your work.")
         }
         .onChange(of: manualDevelopmentFingerprint) { oldValue, newValue in
             guard oldValue != newValue, brief.status == .spark else { return }
@@ -292,6 +292,7 @@ struct BriefDetailView: View {
             BriefField(label: "Audience", text: $brief.audience)
             BriefField(label: "Goal", text: $brief.creativeGoal)
             BriefField(label: "Takeaway", text: $brief.takeaway)
+            BriefField(label: "Notes", text: $brief.notes)
             BriefField(label: "On-screen text", text: $brief.firstFrameText)
             BriefField(label: "Call to action", text: $brief.ctaIntent)
             BriefField(label: "How to film", text: $brief.filmingGuidance)
@@ -402,6 +403,7 @@ struct BriefDetailView: View {
         [
             brief.title,
             brief.premise,
+            brief.notes,
             brief.audience,
             brief.creativeGoal,
             brief.takeaway,

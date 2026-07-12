@@ -58,7 +58,7 @@ enum BriefLifecycle {
     @discardableResult
     static func toggleTask(_ task: CreatorTask, brief: CreativeBrief? = nil, now: Date = Date()) -> Bool {
         if let briefID = task.briefID {
-            guard let brief, brief.id == briefID, canExecute(brief) else { return false }
+            guard let brief, brief.id == briefID, brief.status != .archived else { return false }
         }
         task.isCompleted.toggle()
         task.completedAt = task.isCompleted ? now : nil

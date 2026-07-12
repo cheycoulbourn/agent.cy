@@ -27,7 +27,7 @@ struct LocalExportService: ExportServicing {
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -54,6 +54,7 @@ struct LocalExportService: ExportServicing {
                     "id": brief.id.uuidString,
                     "title": brief.title,
                     "premise": brief.premise,
+                    "notes": brief.notes,
                     "audience": brief.audience,
                     "goal": brief.creativeGoal,
                     "takeaway": brief.takeaway,
@@ -163,6 +164,7 @@ struct LocalExportService: ExportServicing {
                 "",
                 "**Status:** \(brief.status.title)  ",
                 "**Premise:** \(brief.premise)",
+                brief.notes.isEmpty ? "" : "**Notes:** \(brief.notes)",
                 "",
                 "### Hook",
                 brief.spokenHook,

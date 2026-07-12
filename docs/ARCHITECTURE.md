@@ -23,7 +23,7 @@ There is no agent.cy account and no Supabase dependency.
 ## Client modules
 
 - Domain: SwiftData entities, lifecycle rules, task and planning logic.
-- Features: onboarding, ideation, briefs, Today, Agenda, Tasks, Pillars, Library, Cy, settings.
+- Features: onboarding, ideation, briefs, Today, Agenda, Tasks, Pillars, Spark/Your work, Cy, settings.
 - Services: AI transport, speech, notifications, entitlements, telemetry, export, erasure, and installation identity.
 - DesignSystem: colors, typography, spacing, motion, components, and accessibility behavior.
 
@@ -60,4 +60,3 @@ Capture, editing, lifecycle, tasks, planning, reminders, export, and deletion wo
 - Tasks are stored once and queried into Brief, Today, and Tasks.
 - Rhythm templates and week instances are distinct records.
 - Recorded validation is a milestone emitted by the filming task, not a visible status.
-

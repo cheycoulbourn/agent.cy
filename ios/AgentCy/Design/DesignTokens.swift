@@ -27,6 +27,7 @@ extension Color {
     static let agentBorder = adaptive(light: 0x6B6151, dark: 0x786F62)
     static let actionAccent = adaptive(light: 0x141414, dark: 0xF5F6F3)
     static let cyAccent = adaptive(light: 0x9B3A2E, dark: 0x9B3A2E)
+    static let onCyAccent = adaptive(light: 0xF5F6F3, dark: 0xF5F6F3)
     static let onAccent = adaptive(light: 0xF5F6F3, dark: 0x141414)
     static let agentSuccess = adaptive(light: 0x2B6B4F, dark: 0x6FC49B)
     static let agentDestructive = adaptive(light: 0xB42318, dark: 0xFF8A80)
@@ -184,14 +185,13 @@ struct AgentCyFloatingButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.agentHeadline)
-            .padding(.horizontal, AgentSpacing.x4)
-            .frame(minHeight: 48)
-            .foregroundStyle(Color.agentCanvas)
-            .background(Color.cyAccent, in: .capsule)
+            .font(.system(size: 21, weight: .semibold))
+            .frame(width: 56, height: 56)
+            .foregroundStyle(Color.onCyAccent)
+            .background(Color.cyAccent, in: .circle)
             .shadow(color: Color.black.opacity(0.22), radius: 12, y: 5)
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }

@@ -122,6 +122,7 @@ final class CreativeBrief {
     var id: UUID = UUID()
     var title: String = "Untitled spark"
     var premise: String = ""
+    var notes: String = ""
     var audience: String = ""
     var creativeGoal: String = ""
     var takeaway: String = ""

@@ -57,6 +57,8 @@ Two equal paths create the same Spark-backed brief:
 
 Unselected directions disappear unless explicitly saved. Dialogue is capped at eight turns and always offers Compose now.
 
+Creators may also make a lightweight Post from Spark by choosing a title, optional pillar, platform, posting target, notes, and optional first task. The Post remains a Spark until developed; its draft posting target is visible in Agenda without advancing the master lifecycle.
+
 The ready brief contains:
 
 - Premise, audience, goal, takeaway, and assumptions.
@@ -73,13 +75,13 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 
 ## Navigation
 
-- Today is the launch view and contains rhythm, targeted outputs, next tasks, and mode-aware Cy guidance.
-- Agenda contains a copied weekly production rhythm and a platform-output posting layer.
+- Today is the warm daily launch view with a greeting, one focus, content going live today, today's tasks, and quick capture.
+- Agenda owns the current and next weekly content plan, copied production rhythm, pillar-color placement, and platform posting targets.
 - Tasks contains all brief-linked and standalone creator-work tasks.
 - Pillars contains manual, guided, or inferred themes. Unfiled briefs remain valid.
-- Library contains all briefs, lifecycle history, filters, search, and archived work.
+- Spark contains New Idea, New Post, three-angle ideation, on-device voice capture, and searchable/filterable Your work including archived content.
 - Ask Cy opens global context-aware conversation.
-- `+` captures a text or voice Spark or a creator-work task without opening chat.
+- `+` captures an Idea, Post, or creator-work Task without opening chat.
 
 ## Lifecycle
 
@@ -93,6 +95,7 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 - Archive is manual.
 
 Completing the designated filming task emits a content-free `recording_completed` milestone without adding a visible status.
+Tasks may be completed while linked content is still a Spark or Developing; task progress never silently advances the content lifecycle.
 
 ## Planning and reminders
 

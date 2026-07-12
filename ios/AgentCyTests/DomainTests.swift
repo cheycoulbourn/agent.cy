@@ -115,6 +115,58 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(model.tasks(for: brief, context: context).first?.targetDate, tuesday)
     }
 
+    func testQuickPostCreatesDraftOutputAndFlexibleTaskWithoutAdvancingLifecycle() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let pillar = Pillar(name: "Lifestyle", colorHex: "55705B")
+        context.insert(pillar)
+        let model = AppModel(reminderService: PreviewReminderService())
+        let postDate = Date(timeIntervalSince1970: 1_752_475_600)
+
+        let brief = try XCTUnwrap(model.createPost(
+            title: "A quiet morning reset",
+            notes: "Show the three things I do before opening my laptop.",
+            pillarID: pillar.id,
+            platform: .instagramReels,
+            targetDate: postDate,
+            firstTaskTitle: "List the three shots",
+            context: context
+        ))
+
+        XCTAssertEqual(brief.status, .spark)
+        XCTAssertEqual(brief.notes, "Show the three things I do before opening my laptop.")
+        XCTAssertEqual(brief.pillarID, pillar.id)
+        let output = try XCTUnwrap(model.outputs(for: brief, context: context).first)
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(output.targetDate, postDate)
+        let task = try XCTUnwrap(model.tasks(for: brief, context: context).first)
+        XCTAssertEqual(task.title, "List the three shots")
+
+        let movedDate = postDate.addingTimeInterval(86_400)
+        model.schedule(output: output, date: movedDate, context: context)
+        XCTAssertEqual(output.targetDate, movedDate)
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(brief.status, .spark)
+
+        model.toggleTask(task, context: context)
+        XCTAssertTrue(task.isCompleted)
+        XCTAssertEqual(brief.status, .spark)
+    }
+
+    func testEnsureWeekSupportsNextWeekWithoutDuplicates() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let model = AppModel(reminderService: PreviewReminderService())
+        let nextWeek = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: Date()) ?? Date()
+
+        let first = model.ensureWeek(startingAt: nextWeek, context: context)
+        let second = model.ensureWeek(startingAt: nextWeek.addingTimeInterval(86_400), context: context)
+
+        XCTAssertEqual(first.id, second.id)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WeekPlan>()).count, 1)
+    }
+
     func testAssistancePolicyControlsUnsolicitedPillarProposals() {
         XCTAssertEqual(AssistancePolicy(mode: .drive).pillarProposalLimit(explicitlyRequested: false), 0)
         XCTAssertEqual(AssistancePolicy(mode: .drive).pillarProposalLimit(explicitlyRequested: true), 3)
@@ -201,7 +253,7 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<PendingBriefProposal>()).isEmpty)
     }
 
-    func testDevelopingBriefCannotSchedulePostOrCompleteLinkedTask() {
+    func testDevelopingBriefCannotScheduleOrPostButCanCompleteLinkedTask() {
         let brief = CreativeBrief(title: "Not approved", premise: "A premise", status: .developing)
         let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .ready)
         let task = CreatorTask(briefID: brief.id, title: "Film", kind: .filming, isRecordingMilestoneDesignated: true)
@@ -211,8 +263,8 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(output.status, .ready)
         XCTAssertFalse(BriefLifecycle.togglePosted(output, brief: brief))
         XCTAssertNil(output.postedAt)
-        XCTAssertFalse(BriefLifecycle.toggleTask(task, brief: brief))
-        XCTAssertFalse(task.isCompleted)
+        XCTAssertTrue(BriefLifecycle.toggleTask(task, brief: brief))
+        XCTAssertTrue(task.isCompleted)
         BriefLifecycle.synchronize(brief, outputs: [output])
         XCTAssertEqual(brief.status, .developing)
 

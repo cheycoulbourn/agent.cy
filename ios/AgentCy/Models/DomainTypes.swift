@@ -233,7 +233,7 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
     case agenda
     case tasks
     case pillars
-    case library
+    case spark
 
     var id: String { rawValue }
     var title: String {
@@ -249,7 +249,7 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
         case .agenda: "calendar"
         case .tasks: "checkmark.circle"
         case .pillars: "square.grid.2x2"
-        case .library: "books.vertical"
+        case .spark: "sparkles"
         }
     }
 }

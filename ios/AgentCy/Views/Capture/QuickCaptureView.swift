@@ -5,6 +5,7 @@ import SwiftUI
 struct QuickCaptureView: View {
     private enum CaptureKind: String, CaseIterable, Identifiable {
         case spark = "Idea"
+        case post = "Post"
         case task = "Task"
         var id: String { rawValue }
     }
@@ -12,8 +13,15 @@ struct QuickCaptureView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query private var profiles: [CreatorProfile]
     @State private var kind: CaptureKind = .spark
     @State private var sparkText = ""
+    @State private var postTitle = ""
+    @State private var postNotes = ""
+    @State private var postPillarID: UUID?
+    @State private var postPlatform: CreatorPlatform = .instagramReels
+    @State private var postFirstTask = ""
     @State private var taskTitle = ""
     @State private var taskKind: CreatorTaskKind = .planning
     @State private var addTarget = false
@@ -31,8 +39,8 @@ struct QuickCaptureView: View {
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                     EditorialHeader(
                         kicker: "New",
-                        title: savedBrief == nil ? "Save an idea." : "Idea saved.",
-                        subtitle: savedBrief == nil ? "Type it or say it. You can shape it later." : "Keep it for later or build the brief now."
+                        title: headerTitle,
+                        subtitle: headerSubtitle
                     )
 
                     if let savedBrief {
@@ -40,7 +48,7 @@ struct QuickCaptureView: View {
                             NavigationLink {
                                 BriefDetailView(brief: savedBrief)
                             } label: {
-                                Label("Build with Cy", systemImage: "bubble.left.and.sparkles")
+                                Label("Develop with Cy", systemImage: "bubble.left.and.sparkles")
                             }
                             .buttonStyle(AgentPrimaryButtonStyle())
                             Button("Keep for later") { dismiss() }
@@ -52,7 +60,11 @@ struct QuickCaptureView: View {
                         }
                         .pickerStyle(.segmented)
 
-                        if kind == .spark { sparkComposer } else { taskComposer }
+                        switch kind {
+                        case .spark: sparkComposer
+                        case .post: postComposer
+                        case .task: taskComposer
+                        }
                     }
                 }
                 .padding(AgentSpacing.x6)
@@ -70,17 +82,30 @@ struct QuickCaptureView: View {
                 if let plannedDate = appModel.quickCaptureTargetDate {
                     targetDate = plannedDate
                 }
+                if let preferredPlatform = profiles.first?.selectedPlatforms.first {
+                    postPlatform = preferredPlatform
+                }
                 if appModel.quickCaptureStartsWithTask {
                     appModel.quickCaptureStartsWithTask = false
                     kind = .task
+                }
+                if appModel.quickCaptureStartsWithPost {
+                    appModel.quickCaptureStartsWithPost = false
+                    kind = .post
                 }
                 if appModel.quickCaptureStartsWithIdeas {
                     appModel.quickCaptureStartsWithIdeas = false
                     await loadIdeas()
                 }
+                if appModel.quickCaptureStartsRecording {
+                    appModel.quickCaptureStartsRecording = false
+                    kind = .spark
+                    await Task.yield()
+                    toggleRecording()
+                }
             }
             .onChange(of: kind) { _, newKind in
-                if newKind == .task, recorder.state.isActive { stopVoiceCapture() }
+                if newKind != .spark, recorder.state.isActive { stopVoiceCapture() }
             }
             .onDisappear {
                 speechTask?.cancel()
@@ -195,6 +220,84 @@ struct QuickCaptureView: View {
             }
             .buttonStyle(AgentPrimaryButtonStyle())
             .disabled(taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private var postComposer: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            AgentCaptureField(label: "Title", placeholder: "What are you posting?", text: $postTitle)
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                MetaLabel("Notes")
+                TextField("The angle, reminder, or rough direction", text: $postNotes, axis: .vertical)
+                    .font(.agentBody)
+                    .lineLimit(3...7)
+                    .padding(AgentSpacing.x4)
+                    .background(Color.agentSurface)
+                    .clipShape(.rect(cornerRadius: AgentRadius.control))
+                    .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+            }
+
+            Picker("Pillar", selection: $postPillarID) {
+                Text("No pillar").tag(UUID?.none)
+                ForEach(pillars.filter { !$0.isArchived }) { pillar in
+                    Label {
+                        Text(pillar.name)
+                    } icon: {
+                        Circle()
+                            .fill(Color(agentHex: pillar.colorHex))
+                            .frame(width: 12, height: 12)
+                    }
+                        .tag(Optional(pillar.id))
+                }
+            }
+
+            Picker("Platform", selection: $postPlatform) {
+                ForEach(CreatorPlatform.allCases) { platform in
+                    Label(platform.title, systemImage: platform.symbol).tag(platform)
+                }
+            }
+
+            DatePicker("Post on", selection: $targetDate, displayedComponents: [.date, .hourAndMinute])
+
+            AgentCaptureField(
+                label: "First task · optional",
+                placeholder: "e.g. Draft the opening",
+                text: $postFirstTask
+            )
+
+            Button("Save post", systemImage: "checkmark") {
+                savedBrief = appModel.createPost(
+                    title: postTitle,
+                    notes: postNotes,
+                    pillarID: postPillarID,
+                    platform: postPlatform,
+                    targetDate: targetDate,
+                    firstTaskTitle: postFirstTask,
+                    context: context
+                )
+                if savedBrief != nil { appModel.quickCaptureTargetDate = nil }
+            }
+            .buttonStyle(AgentPrimaryButtonStyle())
+            .disabled(postTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private var headerTitle: String {
+        if savedBrief != nil { return kind == .post ? "Post saved." : "Idea saved." }
+        return switch kind {
+        case .spark: "Save an idea."
+        case .post: "Plan a post."
+        case .task: "Add a task."
+        }
+    }
+
+    private var headerSubtitle: String {
+        if savedBrief != nil { return "Keep it here or develop it with Cy." }
+        return switch kind {
+        case .spark: "Type it or say it. Shape it later."
+        case .post: "Choose the essentials. Build the full brief when you need it."
+        case .task: "Capture one clear next action."
         }
     }
 

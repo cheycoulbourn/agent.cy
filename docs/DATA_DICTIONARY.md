@@ -43,7 +43,7 @@ The visible, editable interpretation of the creator's voice. Generated changes r
 The master content object across the full lifecycle. A new record begins as a Spark.
 
 - Identity: `id`, `source`, `status`, optional `pillarID`.
-- Intent: `title`, `premise`, `audience`, `creativeGoal`, `takeaway`.
+- Intent: `title`, `premise`, editable lightweight `notes`, `audience`, `creativeGoal`, `takeaway`.
 - Script: `durationSeconds`, `spokenHook`, `firstFrameText`, modular `scriptBeats`, `close`, `ctaIntent`.
 - Production: filming and editing guidance.
 - Trust: visible `assumptions` and `voiceConfidence` from 0 through 1.
@@ -70,6 +70,7 @@ Meaningful differences for one selected destination. It does not duplicate the m
 - `id`, `briefID`, `platform`, `status`.
 - `caption`, `openingAdjustment`, `titleOverride`, `cta`, `editChanges`.
 - Optional `targetDate` and `postedAt`.
+- A draft output may carry a flexible target while its master remains Spark or Developing. Scheduling lifecycle begins only after the master is Ready.
 
 ### CreatorTask
 

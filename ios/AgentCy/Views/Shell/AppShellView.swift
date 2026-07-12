@@ -20,8 +20,8 @@ struct AppShellView: View {
             Tab(AppTab.pillars.title, systemImage: AppTab.pillars.symbol, value: AppTab.pillars) {
                 NavigationStack { PillarsView().rootActions() }
             }
-            Tab(AppTab.library.title, systemImage: AppTab.library.symbol, value: AppTab.library) {
-                NavigationStack { LibraryView().rootActions() }
+            Tab(AppTab.spark.title, systemImage: AppTab.spark.symbol, value: AppTab.spark) {
+                NavigationStack { SparkView().rootActions() }
             }
         }
         .tint(.actionAccent)
@@ -40,11 +40,12 @@ struct AppShellView: View {
                 Button {
                     appModel.presentedSheet = .askCy
                 } label: {
-                    Label("Ask Cy", systemImage: "apple.intelligence")
+                    Image(systemName: "apple.intelligence")
                 }
                 .buttonStyle(AgentCyFloatingButtonStyle())
                 .padding(.trailing, AgentSpacing.x6)
                 .padding(.bottom, 92)
+                .accessibilityLabel("Ask Cy")
                 .accessibilityHint("Opens your AI creative assistant")
                 .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
             }
@@ -111,6 +112,8 @@ private struct RootActionsModifier: ViewModifier {
                     Button {
                         appModel.quickCaptureStartsWithIdeas = false
                         appModel.quickCaptureStartsWithTask = false
+                        appModel.quickCaptureStartsWithPost = false
+                        appModel.quickCaptureStartsRecording = false
                         appModel.presentedSheet = .quickCapture
                     } label: {
                         Image(systemName: "plus")

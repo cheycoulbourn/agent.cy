@@ -32,6 +32,8 @@ final class AppModel {
     var exportURL: URL?
     var quickCaptureStartsWithIdeas = false
     var quickCaptureStartsWithTask = false
+    var quickCaptureStartsWithPost = false
+    var quickCaptureStartsRecording = false
     var quickCaptureTargetDate: Date?
     var briefProposals: [UUID: BriefProposal] = [:]
     var revisionProposals: [UUID: BriefRevisionProposal] = [:]
@@ -394,6 +396,56 @@ final class AppModel {
         }
         try? context.save()
         return brief
+    }
+
+    @discardableResult
+    func createPost(
+        title: String,
+        notes: String,
+        pillarID: UUID?,
+        platform: CreatorPlatform,
+        targetDate: Date,
+        firstTaskTitle: String,
+        context: ModelContext
+    ) -> CreativeBrief? {
+        guard can(.createSpark, context: context) else { return nil }
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else {
+            notice = .error("Name the post before saving it.")
+            return nil
+        }
+
+        let cleanNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let brief = CreativeBrief(
+            title: cleanTitle,
+            premise: cleanNotes,
+            source: .text,
+            status: .spark
+        )
+        brief.notes = cleanNotes
+        brief.pillarID = pillarID
+        context.insert(brief)
+
+        let output = PlatformOutput(briefID: brief.id, platform: platform, status: .draft)
+        output.targetDate = targetDate
+        context.insert(output)
+
+        let cleanTask = firstTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanTask.isEmpty {
+            context.insert(CreatorTask(
+                briefID: brief.id,
+                title: cleanTask,
+                kind: .planning
+            ))
+        }
+
+        do {
+            try context.save()
+            return brief
+        } catch {
+            notice = .error("That post could not be saved.")
+            return nil
+        }
     }
 
     @discardableResult
@@ -871,8 +923,17 @@ final class AppModel {
 
     func schedule(output: PlatformOutput, date: Date?, context: ModelContext) {
         guard can(.schedule, context: context) else { return }
-        guard let brief = brief(id: output.briefID, context: context),
-              BriefLifecycle.schedule(output, for: date, brief: brief) else {
+        guard let brief = brief(id: output.briefID, context: context) else {
+            notice = .error("That post is no longer available.")
+            return
+        }
+        if [.spark, .developing].contains(brief.status), output.status == .draft {
+            output.targetDate = date
+            brief.updatedAt = Date()
+            try? context.save()
+            return
+        }
+        guard BriefLifecycle.schedule(output, for: date, brief: brief) else {
             notice = .info("Approve this brief before adding production or posting targets.")
             return
         }
@@ -893,9 +954,8 @@ final class AppModel {
 
     func toggleTask(_ task: CreatorTask, context: ModelContext) {
         let linkedBrief = task.briefID.flatMap { brief(id: $0, context: context) }
-        if task.briefID != nil,
-           !(linkedBrief.map { [.ready, .scheduled, .posted].contains($0.status) } ?? false) {
-            notice = .info("Approve this brief before completing its production tasks.")
+        if task.briefID != nil, linkedBrief == nil || linkedBrief?.status == .archived {
+            notice = .info("This task belongs to content that is no longer active.")
             return
         }
         let previousMilestoneExists: Bool
@@ -934,7 +994,28 @@ final class AppModel {
     }
 
     func replan(output: PlatformOutput, choice: ReplanChoice, context: ModelContext) {
-        guard let brief = brief(id: output.briefID, context: context), BriefLifecycle.canPlan(brief) else {
+        guard let brief = brief(id: output.briefID, context: context), brief.status != .archived else {
+            notice = .info("That content is no longer active.")
+            return
+        }
+        if output.status == .draft, [.spark, .developing].contains(brief.status) {
+            switch choice {
+            case .move:
+                output.targetDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+            case .simplify:
+                let note = "Simplify to the essential cut."
+                if !output.editChanges.localizedCaseInsensitiveContains(note) {
+                    output.editChanges = output.editChanges.isEmpty ? note : "\(output.editChanges)\n\(note)"
+                }
+            case .pause:
+                output.targetDate = nil
+            case .archive:
+                BriefLifecycle.archive(brief)
+            }
+            try? context.save()
+            return
+        }
+        guard BriefLifecycle.canPlan(brief) else {
             notice = .info("Approve this brief before adjusting its posting target.")
             return
         }
@@ -997,9 +1078,9 @@ final class AppModel {
         try? context.save()
     }
 
-    func ensureCurrentWeek(context: ModelContext) -> WeekPlan {
+    func ensureWeek(startingAt requestedStart: Date, context: ModelContext) -> WeekPlan {
         let calendar = Calendar.current
-        let start = calendar.dateInterval(of: .weekOfYear, for: Date())?.start ?? calendar.startOfDay(for: Date())
+        let start = calendar.dateInterval(of: .weekOfYear, for: requestedStart)?.start ?? calendar.startOfDay(for: requestedStart)
         let plans = (try? context.fetch(FetchDescriptor<WeekPlan>())) ?? []
         if let current = plans.first(where: { calendar.isDate($0.weekStart, inSameDayAs: start) }) { return current }
         let template = fetchOne(RhythmTemplate.self, context: context)
@@ -1007,6 +1088,10 @@ final class AppModel {
         context.insert(plan)
         try? context.save()
         return plan
+    }
+
+    func ensureCurrentWeek(context: ModelContext) -> WeekPlan {
+        ensureWeek(startingAt: Date(), context: context)
     }
 
     func saveWeekToTemplate(_ plan: WeekPlan, context: ModelContext) {

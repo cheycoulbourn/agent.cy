@@ -29,17 +29,25 @@ struct AgentCyApp: App {
         } else {
             creativeService = PreviewCreativeService()
         }
-        _appModel = State(
-            initialValue: AppModel(
-                creativeService: creativeService,
-                subscriptionService: subscriptionService,
-                credentialStore: credentialStore,
-                installationRedemptionClient: InstallationRedemptionClient(baseURL: APIConfiguration.baseURL, store: credentialStore),
-                privacyDeletionService: PrivacyDeletionClient(baseURL: APIConfiguration.baseURL),
-                requiresInstallationInvite: liveAI,
-                allowsOfflinePrivacyErase: !liveAI
-            )
+        let model = AppModel(
+            creativeService: creativeService,
+            subscriptionService: subscriptionService,
+            credentialStore: credentialStore,
+            installationRedemptionClient: InstallationRedemptionClient(baseURL: APIConfiguration.baseURL, store: credentialStore),
+            privacyDeletionService: PrivacyDeletionClient(baseURL: APIConfiguration.baseURL),
+            requiresInstallationInvite: liveAI,
+            allowsOfflinePrivacyErase: !liveAI
         )
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if usesPreviewData,
+           let marker = arguments.firstIndex(of: "-agentCyPreviewTab"),
+           arguments.indices.contains(marker + 1),
+           let tab = AppTab(rawValue: arguments[marker + 1]) {
+            model.selectedTab = tab
+        }
+        #endif
+        _appModel = State(initialValue: model)
     }
 
     var body: some Scene {
