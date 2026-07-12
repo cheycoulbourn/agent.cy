@@ -86,7 +86,7 @@ A first-class creator-work item stored once and queried into every relevant surf
 
 An optional content theme. Briefs without a pillar remain valid.
 
-- `id`, optional `parentPillarID`, `name`, `detail`, `colorHex`, assigned weekdays, `isArchived`, `createdAt`.
+- `id`, optional `parentPillarID`, `name`, legacy `detail`, `colorHex`, assigned weekdays, `isArchived`, `createdAt`. `detail` remains stored for migration compatibility but is no longer shown or edited.
 - A top-level pillar is an anchor. A branch inherits its active anchor's color and assigned weekdays.
 - If an anchor is missing, its former branches remain valid and display with their stored fallback color and weekdays.
 

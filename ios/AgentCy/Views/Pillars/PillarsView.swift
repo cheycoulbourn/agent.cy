@@ -58,7 +58,6 @@ struct PillarsView: View {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(proposal.name).font(.agentHeadline)
-                                        Text(proposal.detail).font(.agentBody).foregroundStyle(Color.agentSecondary)
                                     }
                                     Spacer()
                                     Button("Add pillar") { appModel.acceptPillar(proposal, context: context) }
@@ -93,7 +92,6 @@ struct NewPillarView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
     @State private var name = ""
-    @State private var detail = ""
     @State private var colorHex = PillarColorOption.sage.hex
     @State private var parentPillarID: UUID?
     @State private var assignedWeekdays: Set<PillarWeekday> = []
@@ -115,7 +113,6 @@ struct NewPillarView: View {
             Form {
                 Section("Pillar") {
                     TextField("Name", text: $name)
-                    TextField("Short description", text: $detail, axis: .vertical)
                     Picker("Type", selection: $parentPillarID) {
                         Text("Anchor pillar").tag(UUID?.none)
                         ForEach(anchors) { pillar in
@@ -131,8 +128,8 @@ struct NewPillarView: View {
                     Section("Color") {
                         PillarColorChooser(selectedHex: $colorHex)
                     }
-                    Section("Preferred days") {
-                        WeekdayChooser(selection: $assignedWeekdays)
+                    Section("Days") {
+                        WeekdayChooser(selection: $assignedWeekdays, accentHex: colorHex)
                     }
                 }
             }
@@ -145,7 +142,6 @@ struct NewPillarView: View {
                         let pillar = Pillar(
                             parentPillarID: parentPillarID,
                             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                            detail: detail.trimmingCharacters(in: .whitespacesAndNewlines),
                             colorHex: selectedParent?.resolvedColorHex(in: activePillars) ?? colorHex,
                             assignedWeekdays: selectedParent?.resolvedWeekdays(in: activePillars) ?? assignedWeekdays
                         )
@@ -180,13 +176,13 @@ private struct PillarRow: View {
                     .frame(width: 8, height: 48)
                 VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                     Text(pillar.name).font(.agentHeadline).foregroundStyle(Color.agentText)
-                    if !pillar.detail.isEmpty {
-                        Text(pillar.detail).font(.agentBody).foregroundStyle(Color.agentSecondary).lineLimit(2)
-                    }
                     HStack(spacing: AgentSpacing.x2) {
                         if !branches.isEmpty { MetaLabel("\(branches.count) branches") }
                         if !pillar.resolvedWeekdays(in: allPillars).isEmpty {
-                            MetaLabel(pillar.resolvedWeekdays(in: allPillars).sorted { $0.rawValue < $1.rawValue }.map(\.shortTitle).joined(separator: " · "))
+                            MetaLabel(PillarWeekday.mondayFirst
+                                .filter(pillar.resolvedWeekdays(in: allPillars).contains)
+                                .map(\.letter)
+                                .joined(separator: " · "))
                         }
                     }
                 }
@@ -237,12 +233,21 @@ struct PillarDetailView: View {
                         .frame(width: 18, height: 72)
                     EditorialHeader(
                         kicker: isAnchor ? "Anchor pillar" : "Branch of \(anchor.name)",
-                        title: pillar.name,
-                        subtitle: pillar.detail.isEmpty ? nil : pillar.detail
+                        title: pillar.name
                     )
                 }
 
-                PillarInheritancePreview(pillar: pillar, allPillars: activePillars)
+                if isAnchor {
+                    PillarInlineSettings(
+                        colorHex: colorBinding,
+                        assignedWeekdays: weekdaysBinding
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        SectionRuleHeader(title: "Uses \(anchor.name)")
+                        PillarInheritancePreview(pillar: pillar, allPillars: activePillars)
+                    }
+                }
 
                 if isAnchor {
                     VStack(alignment: .leading, spacing: 0) {
@@ -309,7 +314,7 @@ struct PillarDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Edit pillar", systemImage: "slider.horizontal.3") { showEditor = true }
+                    Button("Rename pillar", systemImage: "pencil") { showEditor = true }
                     Button("Archive pillar", systemImage: "archivebox", role: .destructive) { confirmArchive = true }
                 } label: { Image(systemName: "ellipsis") }
             }
@@ -325,6 +330,26 @@ struct PillarDetailView: View {
             Text("Its content stays available. Any branches remain valid as standalone pillars.")
         }
         .agentScreen()
+    }
+
+    private var colorBinding: Binding<String> {
+        Binding(
+            get: { pillar.colorHex },
+            set: { newValue in
+                pillar.colorHex = newValue
+                try? context.save()
+            }
+        )
+    }
+
+    private var weekdaysBinding: Binding<Set<PillarWeekday>> {
+        Binding(
+            get: { pillar.assignedWeekdays },
+            set: { newValue in
+                pillar.assignedWeekdays = newValue
+                try? context.save()
+            }
+        )
     }
 }
 
@@ -364,19 +389,12 @@ private struct PillarBriefSection: View {
 private struct PillarEditorView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
     let pillar: Pillar
     @State private var name: String
-    @State private var detail: String
-    @State private var colorHex: String
-    @State private var assignedWeekdays: Set<PillarWeekday>
 
     init(pillar: Pillar) {
         self.pillar = pillar
         _name = State(initialValue: pillar.name)
-        _detail = State(initialValue: pillar.detail)
-        _colorHex = State(initialValue: pillar.colorHex)
-        _assignedWeekdays = State(initialValue: pillar.assignedWeekdays)
     }
 
     var body: some View {
@@ -384,18 +402,9 @@ private struct PillarEditorView: View {
             Form {
                 Section("Pillar") {
                     TextField("Name", text: $name)
-                    TextField("Short description", text: $detail, axis: .vertical)
-                }
-                if let parent = parent {
-                    Section("Inherited from \(parent.name)") {
-                        PillarInheritancePreview(pillar: parent, allPillars: activePillars)
-                    }
-                } else {
-                    Section("Color") { PillarColorChooser(selectedHex: $colorHex) }
-                    Section("Preferred days") { WeekdayChooser(selection: $assignedWeekdays) }
                 }
             }
-            .navigationTitle(pillar.name)
+            .navigationTitle("Rename pillar")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -405,11 +414,6 @@ private struct PillarEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save", systemImage: "checkmark") {
                         pillar.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        pillar.detail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if parent == nil {
-                            pillar.colorHex = colorHex
-                            pillar.assignedWeekdays = assignedWeekdays
-                        }
                         try? context.save()
                         dismiss()
                     }
@@ -420,12 +424,6 @@ private struct PillarEditorView: View {
                 }
             }
         }
-    }
-
-    private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
-    private var parent: Pillar? {
-        guard let parentID = pillar.parentPillarID else { return nil }
-        return activePillars.first { $0.id == parentID }
     }
 }
 
@@ -447,23 +445,60 @@ private struct PillarInheritancePreview: View {
 
     private var daySummary: String {
         let days = pillar.resolvedWeekdays(in: allPillars)
-        return days.isEmpty ? "No preferred days" : days.sorted { $0.rawValue < $1.rawValue }.map(\.shortTitle).joined(separator: " · ")
+        return days.isEmpty
+            ? "No days selected"
+            : PillarWeekday.mondayFirst.filter(days.contains).map(\.letter).joined(separator: " · ")
+    }
+}
+
+private struct PillarInlineSettings: View {
+    @Binding var colorHex: String
+    @Binding var assignedWeekdays: Set<PillarWeekday>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                SectionRuleHeader(title: "Color")
+                PillarColorChooser(selectedHex: $colorHex)
+            }
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                SectionRuleHeader(title: "Days")
+                WeekdayChooser(selection: $assignedWeekdays, accentHex: colorHex)
+            }
+        }
     }
 }
 
 private struct WeekdayChooser: View {
     @Binding var selection: Set<PillarWeekday>
+    var accentHex: String = PillarColorOption.sage.hex
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+        HStack(spacing: AgentSpacing.x2) {
             ForEach(PillarWeekday.mondayFirst) { day in
-                Toggle(day.title, isOn: Binding(
-                    get: { selection.contains(day) },
-                    set: { enabled in
-                        if enabled { selection.insert(day) } else { selection.remove(day) }
+                Button {
+                    if selection.contains(day) {
+                        selection.remove(day)
+                    } else {
+                        selection.insert(day)
                     }
-                ))
-                .tint(.actionAccent)
+                } label: {
+                    Text(day.letter)
+                        .font(.agentHeadline)
+                        .foregroundStyle(Color.agentText)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(
+                                    selection.contains(day) ? Color(agentHex: accentHex) : Color.agentBorder,
+                                    lineWidth: selection.contains(day) ? 3 : 1
+                                )
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(day.title)
+                .accessibilityValue(selection.contains(day) ? "Selected" : "Not selected")
             }
         }
     }
@@ -471,46 +506,34 @@ private struct WeekdayChooser: View {
 
 private struct PillarColorChooser: View {
     @Binding var selectedHex: String
-    private let columns = [GridItem(.flexible()), GridItem(.flexible())]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            LazyVGrid(columns: columns, spacing: AgentSpacing.x2) {
-                ForEach(PillarColorOption.allCases) { option in
-                    Button {
-                        selectedHex = option.hex
-                    } label: {
-                        HStack(spacing: AgentSpacing.x2) {
+        HStack(spacing: AgentSpacing.x2) {
+            ForEach(Array(PillarColorOption.allCases.enumerated()), id: \.element.id) { index, option in
+                Button {
+                    selectedHex = option.hex
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color(agentHex: option.hex))
+                            .frame(width: 32, height: 32)
+                        if isSelected(option) {
                             Circle()
-                                .fill(Color(agentHex: option.hex))
-                                .frame(width: 24, height: 24)
-                                .overlay(Circle().stroke(Color.agentBorder, lineWidth: 1))
-                            Text(option.name)
-                                .font(.agentBody)
-                                .foregroundStyle(Color.agentText)
-                            Spacer(minLength: 0)
-                            if isSelected(option) {
-                                Image(systemName: "checkmark")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(Color.agentText)
-                            }
+                                .stroke(Color.agentText, lineWidth: 2)
+                                .frame(width: 40, height: 40)
                         }
-                        .padding(.horizontal, AgentSpacing.x3)
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: AgentRadius.control)
-                                .stroke(isSelected(option) ? Color.actionAccent : Color.agentBorder, lineWidth: isSelected(option) ? 2 : 1)
-                        )
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityValue(isSelected(option) ? "Selected" : "Not selected")
+                    .frame(maxWidth: .infinity, minHeight: 48)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Color option \(index + 1)")
+                .accessibilityValue(isSelected(option) ? "Selected" : "Not selected")
             }
 
             ColorPicker("Custom color", selection: customColor, supportsOpacity: false)
-                .font(.agentBody)
-                .frame(minHeight: 48)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .accessibilityLabel("Custom color")
                 .accessibilityHint("Opens the full color picker")
         }
         .padding(.vertical, AgentSpacing.x1)
@@ -537,16 +560,6 @@ private enum PillarColorOption: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var hex: String { rawValue }
-
-    var name: String {
-        switch self {
-        case .terracotta: "Terracotta"
-        case .ochre: "Ochre"
-        case .sage: "Sage"
-        case .blue: "Blue"
-        case .plum: "Plum"
-        }
-    }
 }
 
 private extension Color {

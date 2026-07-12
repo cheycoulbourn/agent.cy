@@ -225,6 +225,7 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(branch.resolvedAnchor(in: pillars).id, anchor.id)
         XCTAssertEqual(branch.resolvedColorHex(in: pillars), "9B3A2E")
         XCTAssertEqual(branch.resolvedWeekdays(in: pillars), [.monday, .wednesday])
+        XCTAssertEqual(PillarWeekday.mondayFirst.map(\.letter), ["M", "T", "W", "T", "F", "S", "S"])
 
         anchor.isArchived = true
         XCTAssertEqual(branch.resolvedAnchor(in: pillars).id, branch.id)

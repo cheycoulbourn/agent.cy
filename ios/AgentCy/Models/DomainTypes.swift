@@ -256,6 +256,10 @@ enum PillarWeekday: Int, CaseIterable, Codable, Identifiable, Sendable {
         Calendar.current.shortWeekdaySymbols[rawValue - 1]
     }
 
+    var letter: String {
+        String(title.prefix(1)).uppercased()
+    }
+
     static var mondayFirst: [PillarWeekday] {
         [.monday, .tuesday, .wednesday, .thursday, .friday, .saturday, .sunday]
     }

@@ -79,7 +79,7 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 - Agenda can move backward or forward one week at a time. Every day separates planned Posts from production Tasks, and pillar colors appear only when assigned.
 - Tasks contains all brief-linked and standalone creator-work tasks. Parent tasks may contain independently completable subtasks, which remain out of top-level lists.
 - Content placement and task scheduling are separate. A task date never places its linked post on Agenda.
-- Pillars contains manual, guided, or inferred themes. Anchors own color and preferred weekdays; branches inherit both. Unfiled briefs remain valid.
+- Pillars contains manual, guided, or inferred themes. Each anchor page edits its color through unlabeled swatches and its assigned weekdays through one-letter controls; branches inherit both. Pillar descriptions are not part of the interface. Unfiled briefs remain valid.
 - Pillar detail groups branches, ideas, scheduled work, and posted work, with a manual new-spark action for posted content.
 - Spark has one Create entry for ideas, posts, tasks, and on-device voice capture, plus a separate Find three ideas entry. Your work remains searchable and filterable, including archived content.
 - Ask Cy opens global context-aware conversation.
