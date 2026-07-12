@@ -92,7 +92,7 @@ struct TaskRow: View {
                 TaskDetailView(task: task)
             } label: {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    Label(task.kind.title, systemImage: task.kind.symbol)
+                    Text(task.kind.title)
                         .font(.agentMono)
                         .foregroundStyle(Color.agentSecondary)
                     Text(task.title)
