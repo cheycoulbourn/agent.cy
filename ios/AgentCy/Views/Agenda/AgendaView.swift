@@ -78,16 +78,10 @@ struct AgendaView: View {
                             Text(day.formatted(.dateTime.day()))
                                 .font(.agentHeadline)
                             HStack(spacing: 3) {
-                                if !dayBriefs.isEmpty {
-                                    ForEach(dayBriefs.prefix(3)) { brief in
-                                        Circle().fill(color(for: brief)).frame(width: 7, height: 7)
-                                    }
-                                } else if !dayPillars.isEmpty {
+                                if !dayPillars.isEmpty {
                                     ForEach(dayPillars.prefix(3)) { pillar in
                                         Circle().fill(Color(agentHex: pillar.colorHex)).frame(width: 7, height: 7)
                                     }
-                                } else {
-                                    Circle().fill(Color.agentBorder).frame(width: 5, height: 5)
                                 }
                             }
                             .frame(height: 8)
@@ -153,8 +147,9 @@ struct AgendaView: View {
                     }
                 }
             }
-            .padding(.trailing, 68)
+            .padding(.trailing, 52)
             .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
             .overlay(RoundedRectangle(cornerRadius: AgentRadius.panel).stroke(Color.agentBorder, lineWidth: 1))
             .overlay(alignment: .trailing) {
@@ -163,12 +158,10 @@ struct AgendaView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 27, weight: .regular))
-                        .frame(width: 56, height: 56)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.roundedRectangle(radius: 18))
-                .tint(Color.agentSurface)
-                .foregroundStyle(Color.agentText)
+                .buttonStyle(.plain)
                 .padding(.trailing, AgentSpacing.x3)
                 .accessibilityLabel("Add content")
             }
