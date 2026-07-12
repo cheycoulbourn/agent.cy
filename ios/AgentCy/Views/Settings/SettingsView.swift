@@ -105,6 +105,11 @@ struct SettingsView: View {
                 Section("Privacy") {
                     Text("Your content stays on your devices and private iCloud. Cy receives only the text needed for your request. Audio, screenshots, and Instagram links are never sent.")
                 }
+
+                Section("About") {
+                    LabeledContent("Version", value: versionLabel)
+                    LabeledContent("Release", value: "Paper redesign · Stage 3")
+                }
             }
             .scrollContentBackground(.hidden)
             .background(Color.agentCanvas)
@@ -158,6 +163,12 @@ struct SettingsView: View {
         return voiceExamples.filter {
             $0.profileID == profileID && $0.creatorConfirmed && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }.count
+    }
+
+    private var versionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "3"
+        return "\(version) (\(build))"
     }
 
     private func platformBinding(_ platform: CreatorPlatform, profile: CreatorProfile) -> Binding<Bool> {
