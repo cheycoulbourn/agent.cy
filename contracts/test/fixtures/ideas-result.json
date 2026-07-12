@@ -1,0 +1,31 @@
+{
+  "ideas": [
+    {
+      "directionId": "smallest-version",
+      "title": "Make the smallest version",
+      "premise": "Show how reducing scope helps a creator publish a useful first version.",
+      "opening": "The version you can finish teaches you more than the version you keep planning.",
+      "whyItFits": "It matches the creator's direct, practical teaching voice.",
+      "assumedTakeaway": "Reduce the promise until the video is filmable today.",
+      "assumptions": ["The creator has an example of over-scoping an idea."]
+    },
+    {
+      "directionId": "one-audience",
+      "title": "Choose one audience",
+      "premise": "Demonstrate how one audience makes the hook and example easier to choose.",
+      "opening": "If the opening feels vague, your video may be talking to too many people.",
+      "whyItFits": "It turns an abstract creative problem into one decision.",
+      "assumedTakeaway": "Name one person before writing the hook.",
+      "assumptions": []
+    },
+    {
+      "directionId": "proof-before-advice",
+      "title": "Start with proof",
+      "premise": "Use one lived moment before offering the lesson.",
+      "opening": "Advice lands differently after people can see where you learned it.",
+      "whyItFits": "It protects the creator's specific, human quality.",
+      "assumedTakeaway": "Lead with the moment that earned the lesson.",
+      "assumptions": ["The creator can share the story without exposing private details."]
+    }
+  ]
+}

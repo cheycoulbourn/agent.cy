@@ -1,0 +1,31 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Node / TypeScript
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+*.tsbuildinfo
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Xcode / Swift
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.moved-aside
+.swiftpm/
+.build/
+
+# Runtime artifacts
+server/data/
+tmp/
+logs/
+*.log
+*.zip

@@ -1,0 +1,15 @@
+.git
+.github
+.DS_Store
+.env
+.env.*
+node_modules
+**/node_modules
+**/dist
+**/coverage
+ios
+docs
+tmp
+logs
+*.log
+

@@ -1,0 +1,44 @@
+{
+  "brief": {
+    "briefId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "title": "Rescue one rough idea",
+    "premise": "Narrow a rough note to one audience and one takeaway.",
+    "audience": "Solo creators with an unfinished video note.",
+    "creativeGoal": "Make the next creative decision feel manageable.",
+    "desiredTakeaway": "Narrowing gives a rough idea enough structure to film.",
+    "durationSeconds": 30,
+    "spokenHook": "Your idea may not be bad. It may just have too many jobs.",
+    "firstFrameText": "Your idea has too many jobs",
+    "scriptBeats": [
+      {
+        "order": 0,
+        "label": "Narrow it",
+        "purpose": "Give one usable move.",
+        "script": "Choose the one person this is for and the one thing they should leave with."
+      }
+    ],
+    "close": "Now the next creative decision has somewhere to start.",
+    "ctaIntent": "Invite the viewer to narrow one saved note.",
+    "filmingGuidance": {
+      "setup": "Direct-to-camera at a desk.",
+      "shots": ["Medium direct-to-camera"],
+      "bRoll": ["Editing the rough note"],
+      "delivery": "Calm and direct.",
+      "editing": "Use one clean cut to the note.",
+      "audio": "Clear voice only.",
+      "onScreenText": ["One audience", "One takeaway"]
+    },
+    "proposedTasks": [],
+    "assumptions": [],
+    "voiceConfidence": 0.86,
+    "platformVariants": [
+      {
+        "platform": "instagramReels",
+        "caption": "One audience. One takeaway. Then make the next decision.",
+        "editChanges": []
+      }
+    ]
+  },
+  "changedFields": ["spokenHook", "firstFrameText"],
+  "explanation": "The opening is now shorter and names the tension immediately."
+}

@@ -1,0 +1,15 @@
+{
+  "assistantMessage": "There is enough here to compose a useful first version. I will keep the remaining assumption visible.",
+  "focusedQuestion": null,
+  "recommendedNextStep": "composeNow",
+  "readyToCompose": true,
+  "missingFields": [],
+  "workingState": {
+    "premise": "Show how one audience and one takeaway rescue a rough idea.",
+    "audience": "Emerging solo creators with half-written notes.",
+    "creativeGoal": "Help the viewer make their next creative decision.",
+    "proofOrStory": "A note that originally carried three different lessons.",
+    "desiredTakeaway": "Clarity comes from narrowing the job of the video.",
+    "constraints": ["Film at a desk", "Keep the result under 60 seconds"]
+  }
+}

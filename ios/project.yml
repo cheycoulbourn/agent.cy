@@ -1,0 +1,95 @@
+name: AgentCy
+options:
+  bundleIdPrefix: com.agentcy
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "26.0"
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_LANGUAGE: en
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    # Design tokens are programmatic so simulator/source builds and the asset
+    # catalog share one semantic API without generated Color redeclarations.
+    ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+configs:
+  Debug: debug
+  Release: release
+targets:
+  AgentCy:
+    type: application
+    platform: iOS
+    sources:
+      - path: AgentCy
+        excludes:
+          - Support/AgentCy.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.agentcy.app
+        PRODUCT_NAME: agent.cy
+        PRODUCT_MODULE_NAME: AgentCy
+        CODE_SIGN_ENTITLEMENTS: AgentCy/Support/AgentCy.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_CFBundleDisplayName: agent.cy
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+      configs:
+        Debug:
+          AGENTCY_API_BASE_URL: "http://127.0.0.1:3000"
+          AGENTCY_USE_LIVE_AI: NO
+        Release:
+          AGENTCY_API_BASE_URL: "https://replace-me.invalid"
+          AGENTCY_USE_LIVE_AI: YES
+    info:
+      path: AgentCy/Support/Info.plist
+      properties:
+        CFBundleDisplayName: agent.cy
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSMicrophoneUsageDescription: agent.cy uses the microphone only to transcribe spoken ideas and content examples on this device.
+        NSSpeechRecognitionUsageDescription: agent.cy transcribes your spoken ideas and content examples on this device.
+        AGENTCY_API_BASE_URL: "$(AGENTCY_API_BASE_URL)"
+        AGENTCY_USE_LIVE_AI: "$(AGENTCY_USE_LIVE_AI)"
+        UIBackgroundModes:
+          - remote-notification
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    entitlements:
+      path: AgentCy/Support/AgentCy.entitlements
+      properties:
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.agentcy.app
+        com.apple.developer.icloud-services:
+          - CloudKit
+  AgentCyTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AgentCyTests
+    dependencies:
+      - target: AgentCy
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.agentcy.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/agent.cy.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/agent.cy"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  AgentCy:
+    build:
+      targets:
+        AgentCy: all
+        AgentCyTests: [test]
+    test:
+      targets:
+        - AgentCyTests
+      gatherCoverageData: true

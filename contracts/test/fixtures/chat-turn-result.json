@@ -1,0 +1,13 @@
+{
+  "assistantMessage": "The smallest useful next move is to choose which unfinished spark has the clearest lived example.",
+  "suggestions": [
+    {
+      "label": "Compare two sparks",
+      "prompt": "Help me choose between my two most developed sparks."
+    }
+  ],
+  "proposedAction": {
+    "kind": "developSpark",
+    "summary": "Open the spark with the clearest firsthand example for development."
+  }
+}

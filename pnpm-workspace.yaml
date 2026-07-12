@@ -1,0 +1,6 @@
+packages:
+  - contracts
+  - server
+
+onlyBuiltDependencies:
+  - esbuild

@@ -1,0 +1,21 @@
+{
+  "name": "Two-video weekly rhythm",
+  "rationale": "Separating planning, filming, and editing keeps each work block focused while leaving room to move a target.",
+  "slots": [
+    {
+      "weekday": 2,
+      "startMinute": 600,
+      "durationMinutes": 45,
+      "kind": "scripting",
+      "label": "Ready two briefs"
+    },
+    {
+      "weekday": 4,
+      "startMinute": 600,
+      "durationMinutes": 60,
+      "kind": "filming",
+      "label": "Record both videos"
+    }
+  ],
+  "assumptions": ["Morning blocks are flexible targets rather than fixed deadlines."]
+}

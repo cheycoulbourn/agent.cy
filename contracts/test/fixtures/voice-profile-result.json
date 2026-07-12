@@ -1,0 +1,14 @@
+{
+  "profile": {
+    "summary": "Warm, direct teaching grounded in small concrete moments.",
+    "tone": ["warm", "plainspoken"],
+    "sentenceStyle": "Short declarative sentences followed by one practical example.",
+    "signatureQualities": ["specific", "encouraging"],
+    "phrasesToUse": ["start here"],
+    "phrasesToAvoid": ["you must"],
+    "guidance": ["Prefer one concrete next move over a long checklist."],
+    "confidence": 0.8
+  },
+  "assumptions": ["The examples represent the creator's current voice."],
+  "evidenceNotes": ["All traits were inferred from the supplied examples."]
+}

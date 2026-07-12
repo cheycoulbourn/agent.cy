@@ -1,0 +1,20 @@
+{
+  "tasks": [
+    {
+      "title": "Review the spoken hook",
+      "kind": "scripting",
+      "notes": "Read it aloud once and keep the natural version.",
+      "estimatedMinutes": 10,
+      "isRecordingMilestone": false,
+      "order": 0
+    },
+    {
+      "title": "Record the desk walkthrough",
+      "kind": "filming",
+      "estimatedMinutes": 25,
+      "isRecordingMilestone": true,
+      "order": 1
+    }
+  ],
+  "rationale": "These are the minimum distinct steps needed to move the approved brief into production."
+}

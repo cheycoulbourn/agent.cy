@@ -1,0 +1,74 @@
+{
+  "brief": {
+    "briefId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "title": "The 10-minute idea rescue",
+    "premise": "A rough idea becomes usable when the creator names one audience and one takeaway.",
+    "audience": "Solo creators staring at a half-written note",
+    "creativeGoal": "Help the viewer turn one vague note into a filmable short",
+    "desiredTakeaway": "Clarity comes from narrowing the idea, not waiting for inspiration.",
+    "durationSeconds": 45,
+    "spokenHook": "Your idea probably is not bad. It is just carrying too many jobs.",
+    "firstFrameText": "Rescue a rough idea in 10 minutes",
+    "scriptBeats": [
+      {
+        "order": 0,
+        "label": "Name the friction",
+        "purpose": "Make the creator feel understood",
+        "script": "When a note feels impossible to film, it usually has more than one audience or takeaway hiding inside it."
+      },
+      {
+        "order": 1,
+        "label": "Show the move",
+        "purpose": "Give one concrete action",
+        "script": "Circle the one person this is for, then finish this sentence: after watching, I want them to believe or do this one thing."
+      }
+    ],
+    "close": "That is enough structure to make the next creative decision.",
+    "ctaIntent": "Invite the viewer to try the narrowing prompt on a saved idea.",
+    "filmingGuidance": {
+      "setup": "Direct-to-camera at a desk with the original note visible.",
+      "shots": ["Medium direct-to-camera", "Close-up of the edited note"],
+      "bRoll": ["Crossing out a second audience", "Writing the final takeaway"],
+      "delivery": "Calm and matter-of-fact, with a pause before the narrowing prompt.",
+      "editing": "Use two clean cuts and hold the prompt long enough to read.",
+      "audio": "Prioritize clear voice; optional low instrumental bed.",
+      "onScreenText": ["One audience", "One takeaway"]
+    },
+    "proposedTasks": [
+      {
+        "title": "Record the desk walkthrough",
+        "kind": "filming",
+        "notes": "Capture the note close-up immediately after the talking-head take.",
+        "estimatedMinutes": 25,
+        "isRecordingMilestone": true,
+        "order": 0
+      },
+      {
+        "title": "Edit the 45-second cut",
+        "kind": "editing",
+        "estimatedMinutes": 35,
+        "isRecordingMilestone": false,
+        "order": 1
+      }
+    ],
+    "assumptions": ["The creator is comfortable appearing on camera."],
+    "voiceConfidence": 0.84,
+    "platformVariants": [
+      {
+        "platform": "instagramReels",
+        "caption": "One audience. One takeaway. That is enough to rescue the note.",
+        "editChanges": []
+      },
+      {
+        "platform": "tiktok",
+        "openingAdjustment": "Show the messy note before the first spoken word.",
+        "editChanges": ["Start with the note close-up for half a second."]
+      },
+      {
+        "platform": "youtubeShorts",
+        "title": "How to Rescue a Rough Video Idea",
+        "editChanges": []
+      }
+    ]
+  }
+}
