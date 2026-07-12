@@ -33,6 +33,12 @@
 	<string>agent.cy uses the microphone only to transcribe spoken ideas and content examples on this device.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>agent.cy transcribes your spoken ideas and content examples on this device.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>InterVariable.ttf</string>
+		<string>IBMPlexMono-Regular.ttf</string>
+		<string>IBMPlexMono-Medium.ttf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

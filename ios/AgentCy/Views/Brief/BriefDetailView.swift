@@ -15,6 +15,7 @@ struct BriefDetailView: View {
     @State private var showRevisionProposal = false
     @State private var confirmArchive = false
     @State private var showDetails = false
+    @State private var showTasks = false
     @State private var showPlatforms = false
     @State private var showHistory = false
     @State private var showNewPillar = false
@@ -34,7 +35,7 @@ struct BriefDetailView: View {
                     StatusTag(status: brief.status)
                     TextField("Brief title", text: $brief.title, axis: .vertical)
                         .font(.agentDisplay)
-                        .tracking(-1.1)
+                        .tracking(-0.64)
                     TextField("The core premise", text: $brief.premise, axis: .vertical)
                         .font(.agentBody)
                         .foregroundStyle(Color.agentSecondary)
@@ -67,7 +68,7 @@ struct BriefDetailView: View {
                             outputSection
                                 .padding(.top, AgentSpacing.x4)
                         } label: {
-                            BriefDisclosureLabel(title: "Platforms", detail: "\(postedCount) of \(outputs.count) posted")
+                            BriefDisclosureLabel(title: "Post versions", detail: "\(postedCount) of \(outputs.count) posted")
                         }
                     }
 
@@ -311,29 +312,36 @@ struct BriefDetailView: View {
     @ViewBuilder
     private var taskSection: some View {
         if !tasks.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                SectionRuleHeader(title: "Checklist")
-                ForEach(tasks) { task in
-                    EditorialRow {
-                        HStack(spacing: AgentSpacing.x3) {
-                            Button { appModel.toggleTask(task, context: context) } label: {
-                                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(task.isCompleted ? Color.agentSuccess : Color.agentSecondary)
-                            }
-                            .buttonStyle(.plain)
-                            .frame(width: 44, height: 44)
-                            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                Text(task.title).font(.agentBody).strikethrough(task.isCompleted)
-                                if !task.notes.isEmpty {
-                                    Text(task.notes).font(.agentBody).foregroundStyle(Color.agentSecondary)
+            DisclosureGroup(isExpanded: $showTasks) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(tasks) { task in
+                        EditorialRow {
+                            HStack(spacing: AgentSpacing.x3) {
+                                Button { appModel.toggleTask(task, context: context) } label: {
+                                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(task.isCompleted ? Color.agentSuccess : Color.agentSecondary)
                                 }
-                                if let minutes = task.estimatedMinutes {
-                                    MetaLabel("\(minutes) min")
+                                .buttonStyle(.plain)
+                                .frame(width: 44, height: 44)
+                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                    Text(task.title).font(.agentBody).strikethrough(task.isCompleted)
+                                    if !task.notes.isEmpty {
+                                        Text(task.notes).font(.agentBody).foregroundStyle(Color.agentSecondary)
+                                    }
+                                    if let minutes = task.estimatedMinutes {
+                                        MetaLabel("\(minutes) min")
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                .padding(.top, AgentSpacing.x3)
+            } label: {
+                BriefDisclosureLabel(
+                    title: "Tasks",
+                    detail: "\(tasks.filter(\.isCompleted).count) of \(tasks.count) complete"
+                )
             }
         }
     }
@@ -663,7 +671,7 @@ private struct BriefProposalReviewView: View {
                             }
                             .padding(.top, AgentSpacing.x4)
                         } label: {
-                            BriefDisclosureLabel(title: "Platforms", detail: "\(proposal.variants.count)")
+                            BriefDisclosureLabel(title: "Post versions", detail: "\(proposal.variants.count)")
                         }
                     }
 
@@ -691,7 +699,7 @@ private struct BriefProposalReviewView: View {
                             }
                             .padding(.top, AgentSpacing.x4)
                         } label: {
-                            BriefDisclosureLabel(title: "Checklist", detail: "\(proposal.tasks.count) tasks")
+                            BriefDisclosureLabel(title: "Tasks", detail: "\(proposal.tasks.count)")
                         }
                     }
 

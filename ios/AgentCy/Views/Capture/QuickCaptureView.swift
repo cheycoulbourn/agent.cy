@@ -43,7 +43,7 @@ struct QuickCaptureView: View {
                                 Label("Build with Cy", systemImage: "bubble.left.and.sparkles")
                             }
                             .buttonStyle(AgentPrimaryButtonStyle())
-                            Button("Done") { dismiss() }
+                            Button("Keep for later") { dismiss() }
                                 .buttonStyle(AgentSecondaryButtonStyle())
                         }
                     } else {

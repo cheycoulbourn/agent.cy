@@ -334,11 +334,11 @@ final class Pillar {
     var id: UUID = UUID()
     var name: String = ""
     var detail: String = ""
-    var colorHex: String = "9B3A2E"
+    var colorHex: String = "55705B"
     var isArchived: Bool = false
     var createdAt: Date = Date()
 
-    init(id: UUID = UUID(), name: String = "", detail: String = "", colorHex: String = "9B3A2E", createdAt: Date = Date()) {
+    init(id: UUID = UUID(), name: String = "", detail: String = "", colorHex: String = "55705B", createdAt: Date = Date()) {
         self.id = id
         self.name = name
         self.detail = detail

@@ -13,20 +13,21 @@ enum AgentSpacing {
 }
 
 enum AgentRadius {
-    static let structural: CGFloat = 2
+    static let structural: CGFloat = 8
     static let control: CGFloat = 8
     static let panel: CGFloat = 16
+    static let floating: CGFloat = 28
 }
 
 extension Color {
-    static let agentCanvas = adaptive(light: 0xEDE4D1, dark: 0x141414)
-    static let agentSurface = adaptive(light: 0xF6F0E6, dark: 0x1D1D1D)
-    static let agentText = adaptive(light: 0x141414, dark: 0xEDE4D1)
+    static let agentCanvas = adaptive(light: 0xF5F6F3, dark: 0x1A1A1A)
+    static let agentSurface = adaptive(light: 0xFDFDFB, dark: 0x141414)
+    static let agentText = adaptive(light: 0x141414, dark: 0xF5F6F3)
     static let agentSecondary = adaptive(light: 0x5C554B, dark: 0xC8BEAA)
     static let agentBorder = adaptive(light: 0x6B6151, dark: 0x786F62)
-    static let actionAccent = adaptive(light: 0x141414, dark: 0xEDE4D1)
-    static let cyAccent = adaptive(light: 0x9B3A2E, dark: 0xD98372)
-    static let onAccent = adaptive(light: 0xEDE4D1, dark: 0x141414)
+    static let actionAccent = adaptive(light: 0x141414, dark: 0xF5F6F3)
+    static let cyAccent = adaptive(light: 0x9B3A2E, dark: 0x9B3A2E)
+    static let onAccent = adaptive(light: 0xF5F6F3, dark: 0x141414)
     static let agentSuccess = adaptive(light: 0x2B6B4F, dark: 0x6FC49B)
     static let agentDestructive = adaptive(light: 0xB42318, dark: 0xFF8A80)
 
@@ -50,38 +51,45 @@ private extension UIColor {
 
 extension Font {
     static var agentDisplay: Font {
-        if UIFont(name: "InterTight-Bold", size: 42) != nil {
-            return .custom("InterTight-Bold", size: 42, relativeTo: .largeTitle)
+        if UIFont(name: "InterVariable-Bold", size: 32) != nil {
+            return .custom("InterVariable-Bold", size: 32, relativeTo: .largeTitle)
         }
-        return .system(.largeTitle, design: .default, weight: .bold).width(.condensed)
+        return .system(size: 32, weight: .bold, design: .default)
     }
 
     static var agentTitle: Font {
-        if UIFont(name: "InterTight-SemiBold", size: 28) != nil {
-            return .custom("InterTight-SemiBold", size: 28, relativeTo: .title)
+        if UIFont(name: "InterVariable-Bold", size: 22) != nil {
+            return .custom("InterVariable-Bold", size: 22, relativeTo: .title2)
         }
-        return .system(.title, design: .default, weight: .semibold).width(.condensed)
+        return .system(size: 22, weight: .bold, design: .default)
     }
 
     static var agentHeadline: Font {
-        if UIFont(name: "Inter-SemiBold", size: 17) != nil {
-            return .custom("Inter-SemiBold", size: 17, relativeTo: .headline)
+        if UIFont(name: "InterVariable-SemiBold", size: 18) != nil {
+            return .custom("InterVariable-SemiBold", size: 18, relativeTo: .headline)
         }
-        return .system(.headline, design: .default, weight: .semibold)
+        return .system(size: 18, weight: .semibold, design: .default)
     }
 
     static var agentBody: Font {
-        if UIFont(name: "Inter-Regular", size: 17) != nil {
-            return .custom("Inter-Regular", size: 17, relativeTo: .body)
+        if UIFont(name: "InterVariable", size: 15) != nil {
+            return .custom("InterVariable", size: 15, relativeTo: .body)
         }
-        return .body
+        return .system(size: 15, weight: .regular, design: .default)
+    }
+
+    static var agentSubtext: Font {
+        if UIFont(name: "InterVariable", size: 13) != nil {
+            return .custom("InterVariable", size: 13, relativeTo: .subheadline)
+        }
+        return .system(size: 13, weight: .regular, design: .default)
     }
 
     static var agentMono: Font {
-        if UIFont(name: "IBMPlexMono-Medium", size: 12) != nil {
-            return .custom("IBMPlexMono-Medium", size: 12, relativeTo: .caption)
+        if UIFont(name: "IBMPlexMono-Medm", size: 11) != nil {
+            return .custom("IBMPlexMono-Medm", size: 11, relativeTo: .caption)
         }
-        return .system(.caption, design: .monospaced, weight: .medium)
+        return .system(size: 11, weight: .medium, design: .monospaced)
     }
 }
 
@@ -191,7 +199,7 @@ struct AgentCyFloatingButtonStyle: ButtonStyle {
 extension Color {
     init(agentHex rawValue: String) {
         let cleaned = rawValue.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        let value = UInt64(cleaned, radix: 16) ?? 0x9B3A2E
+        let value = UInt64(cleaned, radix: 16) ?? 0x5D6B58
         self.init(
             red: Double((value >> 16) & 0xFF) / 255,
             green: Double((value >> 8) & 0xFF) / 255,
@@ -210,7 +218,7 @@ struct EditorialHeader: View {
             MetaLabel(kicker)
             Text(title)
                 .font(.agentDisplay)
-                .tracking(-1.1)
+                .tracking(-0.64)
                 .foregroundStyle(Color.agentText)
                 .fixedSize(horizontal: false, vertical: true)
             if let subtitle {

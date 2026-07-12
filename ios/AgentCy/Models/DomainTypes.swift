@@ -238,7 +238,7 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .today: "Home"
+        case .today: "Today"
         default: rawValue.capitalized
         }
     }

@@ -14,6 +14,7 @@
 		1CE9EC4536FC6249452EF451 /* PillarsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78D8460AC7ED44EB8D33E20 /* PillarsView.swift */; };
 		20A4E944BE4B386CC4E50F9D /* VoiceExampleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B173D7947488D50FC476EB0 /* VoiceExampleService.swift */; };
 		258DEA0997381331810985AF /* VoiceExampleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF8574EBD41FD1CECA143FD7 /* VoiceExampleTests.swift */; };
+		2E57FC40E99545BB22654143 /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */; };
 		30927005F3AC4A710EE763D1 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB3BBF9B7BFEFFA99BD9AA5 /* LibraryView.swift */; };
 		32CEEAC2741F7D2CA0C56788 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED042483D5E974837FB79516 /* AppModel.swift */; };
 		3DDB89466D5D0099AC367509 /* SpeechCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE11B52A9F529D18880915D0 /* SpeechCaptureService.swift */; };
@@ -33,15 +34,19 @@
 		8DE73C72890D98FD77EAD45C /* AskCyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14FEE69B8E39C4D7C9E1A67F /* AskCyView.swift */; };
 		8F030439668610DA12EEB160 /* AgendaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FCD77E5A7CC4A9D3D3B3C2C /* AgendaView.swift */; };
 		8F088C9A1CEA36BF895297DE /* ReminderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 974DEBD0CA292FD5B0254415 /* ReminderService.swift */; };
+		8F891736787AD1051E407432 /* InterVariable.ttf in Resources */ = {isa = PBXBuildFile; fileRef = CDEA0469B163CE1502C499B0 /* InterVariable.ttf */; };
 		95F2186A4F90D79DCA081880 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F71A3E596508328E9247A219 /* OnboardingView.swift */; };
 		9D4665975628B764D4CE5CA4 /* SpeechCaptureStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 644FBC72F0B2D4A41CA68DF1 /* SpeechCaptureStateTests.swift */; };
+		A57DAC9D72FCC6C1F4058698 /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */; };
 		AE17A524DA0D2F8C22B40F4C /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE99C98B1218FE6C538B215 /* AppShellView.swift */; };
 		B509F7DE05F9A9F6EBF09BE2 /* PrivacyDeletionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034112C8148006DF817FEA62 /* PrivacyDeletionService.swift */; };
+		BDD17153690F30CC2AD12A8F /* Inter-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 6E4A7DF43F4A2727DCF32A2D /* Inter-LICENSE.txt */; };
 		C046F087407B4F1C9E564A00 /* VoiceExamplesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6F0C250AB2DEA77B0A55654 /* VoiceExamplesView.swift */; };
 		C1EBDDC73D8B1C3781C7E041 /* ServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 697DF718190E3F3AF021CF11 /* ServiceTests.swift */; };
 		C795B2E6D442997689EB51D8 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF352C2A596447D02F12F292 /* APIClient.swift */; };
 		D04FD631F458EB3BB8602133 /* LifecycleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 248EE354EECA4376746664F1 /* LifecycleService.swift */; };
 		D18B1A5212EB8C92E1666078 /* PreviewData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6CA18FB2467A576D402C99 /* PreviewData.swift */; };
+		D3E6C8D5AAEF13FEE6000290 /* IBM-Plex-Mono-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = AF3A1AF3AB9AB17B76B21B6D /* IBM-Plex-Mono-LICENSE.txt */; };
 		D4772BDD90876F63D6C17D09 /* APIWireModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF46C6939E196A064EFBFE6F /* APIWireModels.swift */; };
 		D7C2FCCA8DF6F0CC4261C0C9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97CBFDCC0967A07B6FAC4CCE /* Assets.xcassets */; };
 		DBFDB1700FEA7159527DE024 /* RevisionTeachTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 378B77303EAD9DC559A3B401 /* RevisionTeachTests.swift */; };
@@ -83,6 +88,7 @@
 		644FBC72F0B2D4A41CA68DF1 /* SpeechCaptureStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechCaptureStateTests.swift; sourceTree = "<group>"; };
 		697DF718190E3F3AF021CF11 /* ServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceTests.swift; sourceTree = "<group>"; };
 		69ACDB75C9CF91DE0A2D4A76 /* LiveContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveContractTests.swift; sourceTree = "<group>"; };
+		6E4A7DF43F4A2727DCF32A2D /* Inter-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Inter-LICENSE.txt"; sourceTree = "<group>"; };
 		7016FC6AADCD6DCE85117470 /* PersistenceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceModels.swift; sourceTree = "<group>"; };
 		7A82ED71F777E8E20951F02A /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
 		8390A3692666C8E89EF49FD4 /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
@@ -94,12 +100,17 @@
 		97CBFDCC0967A07B6FAC4CCE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9EB246AA32BE0319A23F6424 /* QuickCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickCaptureView.swift; sourceTree = "<group>"; };
 		A0E8458229483D88EB768BD4 /* TasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksView.swift; sourceTree = "<group>"; };
-		ABAB4909D9C767854BBEA979 /* agent.cy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = agent.cy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A320D1AB470C9506D944E839 /* AgentCyLocalOnly.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AgentCyLocalOnly.entitlements; sourceTree = "<group>"; };
+		ABAB4909D9C767854BBEA979 /* AgentCy.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AgentCy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF3A1AF3AB9AB17B76B21B6D /* IBM-Plex-Mono-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "IBM-Plex-Mono-LICENSE.txt"; sourceTree = "<group>"; };
 		B9AD5543968F67623BD8F0F8 /* SpeechAudioPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechAudioPipelineTests.swift; sourceTree = "<group>"; };
+		B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Medium.ttf"; sourceTree = "<group>"; };
 		BF8574EBD41FD1CECA143FD7 /* VoiceExampleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceExampleTests.swift; sourceTree = "<group>"; };
 		C1759E0C4AC460805C96F5D6 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		C1A65D72577776031838A00C /* ModelContainerFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelContainerFactory.swift; sourceTree = "<group>"; };
+		C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Regular.ttf"; sourceTree = "<group>"; };
 		CAB3BBF9B7BFEFFA99BD9AA5 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		CDEA0469B163CE1502C499B0 /* InterVariable.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = InterVariable.ttf; sourceTree = "<group>"; };
 		CEB993766D86ACF3C2BE275F /* PrivacyEraseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyEraseTests.swift; sourceTree = "<group>"; };
 		D1765CA8A4F80549DF895168 /* DomainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainTests.swift; sourceTree = "<group>"; };
 		D6F0C250AB2DEA77B0A55654 /* VoiceExamplesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceExamplesView.swift; sourceTree = "<group>"; };
@@ -134,6 +145,7 @@
 		28AE988890A482B51A872EB7 /* Support */ = {
 			isa = PBXGroup;
 			children = (
+				A320D1AB470C9506D944E839 /* AgentCyLocalOnly.entitlements */,
 				3808084A83B1D4DD8AE659E2 /* Info.plist */,
 			);
 			path = Support;
@@ -142,6 +154,8 @@
 		295022BE3DAEF6B73BE25FCC /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				C12B8C86E6EFC4D71AA0B076 /* FontLicenses */,
+				DF3EE4A055F95AE444B81FA2 /* Fonts */,
 				97CBFDCC0967A07B6FAC4CCE /* Assets.xcassets */,
 			);
 			path = Resources;
@@ -258,6 +272,15 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
+		C12B8C86E6EFC4D71AA0B076 /* FontLicenses */ = {
+			isa = PBXGroup;
+			children = (
+				AF3A1AF3AB9AB17B76B21B6D /* IBM-Plex-Mono-LICENSE.txt */,
+				6E4A7DF43F4A2727DCF32A2D /* Inter-LICENSE.txt */,
+			);
+			path = FontLicenses;
+			sourceTree = "<group>";
+		};
 		C7357511F5951731CA296AE0 /* Agenda */ = {
 			isa = PBXGroup;
 			children = (
@@ -281,6 +304,16 @@
 				0B6CA18FB2467A576D402C99 /* PreviewData.swift */,
 			);
 			path = Preview;
+			sourceTree = "<group>";
+		};
+		DF3EE4A055F95AE444B81FA2 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */,
+				C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */,
+				CDEA0469B163CE1502C499B0 /* InterVariable.ttf */,
+			);
+			path = Fonts;
 			sourceTree = "<group>";
 		};
 		E190510A5EF74A2D3716D7CF = {
@@ -311,7 +344,7 @@
 		F439E3F74C96E87D200629DD /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				ABAB4909D9C767854BBEA979 /* agent.cy.app */,
+				ABAB4909D9C767854BBEA979 /* AgentCy.app */,
 				6408F21532954657F9497CCA /* AgentCyTests.xctest */,
 			);
 			name = Products;
@@ -369,7 +402,7 @@
 			packageProductDependencies = (
 			);
 			productName = AgentCy;
-			productReference = ABAB4909D9C767854BBEA979 /* agent.cy.app */;
+			productReference = ABAB4909D9C767854BBEA979 /* AgentCy.app */;
 			productType = "com.apple.product-type.application";
 		};
 		784A9371FCB33AE98FB34C7B /* AgentCyTests */ = {
@@ -398,6 +431,8 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+				};
 			};
 			buildConfigurationList = 9B451C864374E78D5377816B /* Build configuration list for PBXProject "AgentCy" */;
 			developmentRegion = en;
@@ -425,6 +460,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				D7C2FCCA8DF6F0CC4261C0C9 /* Assets.xcassets in Resources */,
+				D3E6C8D5AAEF13FEE6000290 /* IBM-Plex-Mono-LICENSE.txt in Resources */,
+				2E57FC40E99545BB22654143 /* IBMPlexMono-Medium.ttf in Resources */,
+				A57DAC9D72FCC6C1F4058698 /* IBMPlexMono-Regular.ttf in Resources */,
+				BDD17153690F30CC2AD12A8F /* Inter-LICENSE.txt in Resources */,
+				8F891736787AD1051E407432 /* InterVariable.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -672,7 +712,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = AgentCy/Support/AgentCy.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = AgentCy/Support/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = agent.cy;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -696,7 +735,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = AgentCy/Support/AgentCy.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = AgentCy/Support/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = agent.cy;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";

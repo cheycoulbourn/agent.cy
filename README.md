@@ -52,7 +52,7 @@ The production proxy can be built from the repository root with the included `Do
 - [Product requirements](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Data dictionary](docs/DATA_DICTIONARY.md)
-- [Figma implementation notes](docs/FIGMA_IMPLEMENTATION.md)
+- [Paper implementation guide](docs/PAPER_IMPLEMENTATION.md)
 - [Privacy](docs/PRIVACY.md)
 - [Prompt and contract rules](docs/PROMPT_CONTRACTS.md)
 - [Validation protocol](docs/VALIDATION.md)

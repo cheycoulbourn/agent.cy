@@ -43,7 +43,7 @@ struct TodayView: View {
             .padding(.top, AgentSpacing.x6)
             .padding(.bottom, AgentSpacing.x16)
         }
-        .navigationTitle("Home")
+        .navigationTitle("Today")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $planningDay) { day in
             DayPlannerSheet(day: day.date) {

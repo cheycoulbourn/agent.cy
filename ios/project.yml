@@ -57,6 +57,10 @@ targets:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: agent.cy uses the microphone only to transcribe spoken ideas and content examples on this device.
         NSSpeechRecognitionUsageDescription: agent.cy transcribes your spoken ideas and content examples on this device.
+        UIAppFonts:
+          - InterVariable.ttf
+          - IBMPlexMono-Regular.ttf
+          - IBMPlexMono-Medium.ttf
         AGENTCY_API_BASE_URL: "$(AGENTCY_API_BASE_URL)"
         AGENTCY_USE_LIVE_AI: "$(AGENTCY_USE_LIVE_AI)"
         UIBackgroundModes:

@@ -29,7 +29,7 @@ struct AppShellView: View {
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") {
+                Button("Hide keyboard") {
                     dismissKeyboard()
                 }
                 .fontWeight(.semibold)
@@ -60,7 +60,7 @@ struct AppShellView: View {
             get: { appModel.notice != nil },
             set: { if !$0 { appModel.notice = nil } }
         )) {
-            Button("OK") { appModel.notice = nil }
+            Button("Close") { appModel.notice = nil }
         } message: {
             Text(appModel.notice?.message ?? "")
         }

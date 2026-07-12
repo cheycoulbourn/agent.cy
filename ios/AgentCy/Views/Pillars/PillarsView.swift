@@ -74,7 +74,7 @@ struct PillarsView: View {
                                         Text(proposal.detail).font(.agentBody).foregroundStyle(Color.agentSecondary)
                                     }
                                     Spacer()
-                                    Button("Accept") { appModel.acceptPillar(proposal, context: context) }
+                                    Button("Add pillar") { appModel.acceptPillar(proposal, context: context) }
                                         .buttonStyle(AgentCompactSecondaryButtonStyle())
                                 }
                             }
@@ -109,7 +109,7 @@ struct NewPillarView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var detail = ""
-    @State private var colorHex = PillarColorOption.terracotta.hex
+    @State private var colorHex = PillarColorOption.sage.hex
     let onSave: (Pillar) -> Void
 
     init(onSave: @escaping (Pillar) -> Void = { _ in }) {
@@ -281,7 +281,7 @@ private extension Color {
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
         guard resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
-            return PillarColorOption.terracotta.hex
+            return PillarColorOption.sage.hex
         }
         return String(
             format: "%02X%02X%02X",
