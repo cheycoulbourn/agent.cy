@@ -111,10 +111,26 @@ enum InstagramPostReference {
     }
 }
 
+enum ContentFormat: String, CaseIterable, Codable, Identifiable, Sendable {
+    case shortForm
+    case longForm
+
+    var id: String { rawValue }
+    var title: String { self == .shortForm ? "Short-form" : "Long-form" }
+    var durationOptions: [Int] {
+        switch self {
+        case .shortForm: [15, 30, 45, 60, 90]
+        case .longForm: [180, 300, 480, 600, 900]
+        }
+    }
+    var defaultDuration: Int { self == .shortForm ? 45 : 480 }
+}
+
 enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case instagramReels
     case tiktok
     case youtubeShorts
+    case youtubeVideo
 
     var id: String { rawValue }
 
@@ -123,6 +139,7 @@ enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .instagramReels: "Instagram Reels"
         case .tiktok: "TikTok"
         case .youtubeShorts: "YouTube Shorts"
+        case .youtubeVideo: "YouTube"
         }
     }
 
@@ -131,6 +148,7 @@ enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .instagramReels: "Reels"
         case .tiktok: "TikTok"
         case .youtubeShorts: "Shorts"
+        case .youtubeVideo: "YouTube"
         }
     }
 
@@ -138,8 +156,16 @@ enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .instagramReels: "camera.aperture"
         case .tiktok: "music.note"
-        case .youtubeShorts: "play.rectangle.fill"
+        case .youtubeShorts, .youtubeVideo: "play.rectangle.fill"
         }
+    }
+
+    var format: ContentFormat {
+        self == .youtubeVideo ? .longForm : .shortForm
+    }
+
+    static func choices(for format: ContentFormat) -> [CreatorPlatform] {
+        allCases.filter { $0.format == format }
     }
 }
 

@@ -11,7 +11,7 @@ The single local creator configuration.
 - `id`: stable UUID.
 - `name`: creator-facing display name.
 - `goal`: primary creator goal used in relevant Cy requests.
-- `selectedPlatforms`: one or more supported destinations.
+- `selectedPlatforms`: one or more supported destinations: `instagramReels`, `tiktok`, `youtubeShorts`, or `youtubeVideo`.
 - `assistanceMode`: `drive`, `collaborate`, or `lead`.
 - `adultConfirmed`: required age gate.
 - `telemetryConsent`: optional content-free product telemetry consent.
@@ -44,7 +44,7 @@ The master content object across the full lifecycle. A new record begins as a Sp
 
 - Identity: `id`, `source`, `status`, optional `pillarID`.
 - Intent: `title`, `premise`, editable lightweight `notes`, `audience`, `creativeGoal`, `takeaway`.
-- Script: `durationSeconds`, `spokenHook`, `firstFrameText`, modular `scriptBeats`, `close`, `ctaIntent`.
+- Script: format-aware `durationSeconds`, `spokenHook`, `firstFrameText`, modular `scriptBeats`, `close`, `ctaIntent`. Short-form durations are 15–90 seconds; long-form YouTube durations are 3–15 minutes.
 - Production: filming and editing guidance.
 - Trust: visible `assumptions` and `voiceConfidence` from 0 through 1.
 - `readyBriefPayloadJSON`: the last approved canonical `ReadyBrief` contract, overlaid with creator edits before later scoped revisions.

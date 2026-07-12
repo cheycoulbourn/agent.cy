@@ -398,6 +398,7 @@ final class AppModel {
         notes: String,
         pillarID: UUID?,
         platform: CreatorPlatform,
+        durationSeconds: Int,
         targetDate: Date,
         firstTaskTitle: String,
         context: ModelContext
@@ -418,6 +419,9 @@ final class AppModel {
         )
         brief.notes = cleanNotes
         brief.pillarID = pillarID
+        brief.durationSeconds = platform.format.durationOptions.contains(durationSeconds)
+            ? durationSeconds
+            : platform.format.defaultDuration
         brief.agendaDate = targetDate
         context.insert(brief)
 

@@ -23,7 +23,7 @@ struct SparkView: View {
                 EditorialHeader(
                     kicker: "Spark",
                     title: "Make something.",
-                    subtitle: "Start with an idea, a post, or three directions from Cy."
+                    subtitle: "Capture something new or ask Cy for three directions."
                 )
 
                 captureSection
@@ -56,35 +56,19 @@ struct SparkView: View {
             SectionRuleHeader(title: "Start")
 
             SparkActionButton(
-                title: "New idea",
-                detail: "Type or shape a rough thought.",
-                symbol: "lightbulb"
+                title: "Create",
+                detail: "Write, record, plan a post, or add a task.",
+                symbol: "plus"
             ) {
                 openCapture()
             }
 
             SparkActionButton(
-                title: "New post",
-                detail: "Plan a title, platform, and posting day.",
-                symbol: "calendar.badge.plus"
-            ) {
-                openCapture(post: true)
-            }
-
-            SparkActionButton(
-                title: "Find three angles",
+                title: "Find three ideas",
                 detail: "Get three directions grounded in your work.",
                 symbol: "sparkles"
             ) {
                 openCapture(ideas: true)
-            }
-
-            SparkActionButton(
-                title: "Record an idea",
-                detail: "Capture your words on-device.",
-                symbol: "mic"
-            ) {
-                openCapture(recording: true)
             }
         }
     }
@@ -145,13 +129,13 @@ struct SparkView: View {
         }
     }
 
-    private func openCapture(post: Bool = false, ideas: Bool = false, recording: Bool = false) {
+    private func openCapture(ideas: Bool = false) {
         appModel.quickCaptureTargetDate = nil
         appModel.quickCapturePillarID = nil
         appModel.quickCaptureStartsWithTask = false
-        appModel.quickCaptureStartsWithPost = post
+        appModel.quickCaptureStartsWithPost = false
         appModel.quickCaptureStartsWithIdeas = ideas
-        appModel.quickCaptureStartsRecording = recording
+        appModel.quickCaptureStartsRecording = false
         appModel.presentedSheet = .quickCapture
     }
 }

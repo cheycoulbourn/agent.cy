@@ -58,14 +58,15 @@
         },
         "selectedPlatforms": {
           "minItems": 1,
-          "maxItems": 3,
+          "maxItems": 4,
           "type": "array",
           "items": {
             "type": "string",
             "enum": [
               "instagramReels",
               "tiktok",
-              "youtubeShorts"
+              "youtubeShorts",
+              "youtubeVideo"
             ]
           }
         },
@@ -261,14 +262,15 @@
               },
               "platforms": {
                 "minItems": 1,
-                "maxItems": 3,
+                "maxItems": 4,
                 "type": "array",
                 "items": {
                   "type": "string",
                   "enum": [
                     "instagramReels",
                     "tiktok",
-                    "youtubeShorts"
+                    "youtubeShorts",
+                    "youtubeVideo"
                   ]
                 }
               }
@@ -420,14 +422,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -623,14 +626,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -835,14 +839,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -1038,14 +1043,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -1217,14 +1223,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -1420,14 +1427,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -1814,14 +1822,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -2017,14 +2026,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -2227,19 +2237,40 @@
             {
               "type": "number",
               "const": 90
+            },
+            {
+              "type": "number",
+              "const": 180
+            },
+            {
+              "type": "number",
+              "const": 300
+            },
+            {
+              "type": "number",
+              "const": 480
+            },
+            {
+              "type": "number",
+              "const": 600
+            },
+            {
+              "type": "number",
+              "const": 900
             }
           ]
         },
         "selectedPlatforms": {
           "minItems": 1,
-          "maxItems": 3,
+          "maxItems": 4,
           "type": "array",
           "items": {
             "type": "string",
             "enum": [
               "instagramReels",
               "tiktok",
-              "youtubeShorts"
+              "youtubeShorts",
+              "youtubeVideo"
             ]
           }
         },
@@ -2322,6 +2353,26 @@
                 {
                   "type": "number",
                   "const": 90
+                },
+                {
+                  "type": "number",
+                  "const": 180
+                },
+                {
+                  "type": "number",
+                  "const": 300
+                },
+                {
+                  "type": "number",
+                  "const": 480
+                },
+                {
+                  "type": "number",
+                  "const": 600
+                },
+                {
+                  "type": "number",
+                  "const": 900
                 }
               ]
             },
@@ -2520,7 +2571,8 @@
                     "enum": [
                       "instagramReels",
                       "tiktok",
-                      "youtubeShorts"
+                      "youtubeShorts",
+                      "youtubeVideo"
                     ]
                   },
                   "caption": {
@@ -2634,14 +2686,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -2837,14 +2890,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -2925,6 +2979,26 @@
                 {
                   "type": "number",
                   "const": 90
+                },
+                {
+                  "type": "number",
+                  "const": 180
+                },
+                {
+                  "type": "number",
+                  "const": 300
+                },
+                {
+                  "type": "number",
+                  "const": 480
+                },
+                {
+                  "type": "number",
+                  "const": 600
+                },
+                {
+                  "type": "number",
+                  "const": 900
                 }
               ]
             },
@@ -3123,7 +3197,8 @@
                     "enum": [
                       "instagramReels",
                       "tiktok",
-                      "youtubeShorts"
+                      "youtubeShorts",
+                      "youtubeVideo"
                     ]
                   },
                   "caption": {
@@ -3288,6 +3363,26 @@
                 {
                   "type": "number",
                   "const": 90
+                },
+                {
+                  "type": "number",
+                  "const": 180
+                },
+                {
+                  "type": "number",
+                  "const": 300
+                },
+                {
+                  "type": "number",
+                  "const": 480
+                },
+                {
+                  "type": "number",
+                  "const": 600
+                },
+                {
+                  "type": "number",
+                  "const": 900
                 }
               ]
             },
@@ -3486,7 +3581,8 @@
                     "enum": [
                       "instagramReels",
                       "tiktok",
-                      "youtubeShorts"
+                      "youtubeShorts",
+                      "youtubeVideo"
                     ]
                   },
                   "caption": {
@@ -3633,14 +3729,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -3836,14 +3933,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -4042,14 +4140,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -4245,14 +4344,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -4497,14 +4597,15 @@
             },
             "selectedPlatforms": {
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 4,
               "type": "array",
               "items": {
                 "type": "string",
                 "enum": [
                   "instagramReels",
                   "tiktok",
-                  "youtubeShorts"
+                  "youtubeShorts",
+                  "youtubeVideo"
                 ]
               }
             },
@@ -4700,14 +4801,15 @@
                   },
                   "platforms": {
                     "minItems": 1,
-                    "maxItems": 3,
+                    "maxItems": 4,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "instagramReels",
                         "tiktok",
-                        "youtubeShorts"
+                        "youtubeShorts",
+                        "youtubeVideo"
                       ]
                     }
                   }
@@ -4788,6 +4890,26 @@
                 {
                   "type": "number",
                   "const": 90
+                },
+                {
+                  "type": "number",
+                  "const": 180
+                },
+                {
+                  "type": "number",
+                  "const": 300
+                },
+                {
+                  "type": "number",
+                  "const": 480
+                },
+                {
+                  "type": "number",
+                  "const": 600
+                },
+                {
+                  "type": "number",
+                  "const": 900
                 }
               ]
             },
@@ -4986,7 +5108,8 @@
                     "enum": [
                       "instagramReels",
                       "tiktok",
-                      "youtubeShorts"
+                      "youtubeShorts",
+                      "youtubeVideo"
                     ]
                   },
                   "caption": {
@@ -5793,6 +5916,26 @@
                                     {
                                       "type": "number",
                                       "const": 90
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 180
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 300
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 480
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 600
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 900
                                     }
                                   ]
                                 },
@@ -5991,7 +6134,8 @@
                                         "enum": [
                                           "instagramReels",
                                           "tiktok",
-                                          "youtubeShorts"
+                                          "youtubeShorts",
+                                          "youtubeVideo"
                                         ]
                                       },
                                       "caption": {
@@ -6130,6 +6274,26 @@
                                     {
                                       "type": "number",
                                       "const": 90
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 180
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 300
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 480
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 600
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 900
                                     }
                                   ]
                                 },
@@ -6328,7 +6492,8 @@
                                         "enum": [
                                           "instagramReels",
                                           "tiktok",
-                                          "youtubeShorts"
+                                          "youtubeShorts",
+                                          "youtubeVideo"
                                         ]
                                       },
                                       "caption": {
@@ -7404,6 +7569,26 @@
                                 {
                                   "type": "number",
                                   "const": 90
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 180
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 300
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 480
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 600
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 900
                                 }
                               ]
                             },
@@ -7602,7 +7787,8 @@
                                     "enum": [
                                       "instagramReels",
                                       "tiktok",
-                                      "youtubeShorts"
+                                      "youtubeShorts",
+                                      "youtubeVideo"
                                     ]
                                   },
                                   "caption": {
@@ -7741,6 +7927,26 @@
                                 {
                                   "type": "number",
                                   "const": 90
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 180
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 300
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 480
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 600
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 900
                                 }
                               ]
                             },
@@ -7939,7 +8145,8 @@
                                     "enum": [
                                       "instagramReels",
                                       "tiktok",
-                                      "youtubeShorts"
+                                      "youtubeShorts",
+                                      "youtubeVideo"
                                     ]
                                   },
                                   "caption": {
@@ -8880,7 +9087,8 @@
                         "enum": [
                           "instagramReels",
                           "tiktok",
-                          "youtubeShorts"
+                          "youtubeShorts",
+                          "youtubeVideo"
                         ]
                       },
                       "from": {

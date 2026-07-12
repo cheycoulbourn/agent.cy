@@ -144,6 +144,7 @@ final class DomainTests: XCTestCase {
             notes: "Show the three things I do before opening my laptop.",
             pillarID: pillar.id,
             platform: .instagramReels,
+            durationSeconds: 45,
             targetDate: postDate,
             firstTaskTitle: "List the three shots",
             context: context
@@ -182,6 +183,29 @@ final class DomainTests: XCTestCase {
 
         XCTAssertEqual(first.id, second.id)
         XCTAssertEqual(try context.fetch(FetchDescriptor<WeekPlan>()).count, 1)
+    }
+
+    func testLongFormYouTubePostKeepsFormatAwareDuration() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let brief = try XCTUnwrap(model.createPost(
+            title: "A complete creator workflow",
+            notes: "Walk through the full process with examples.",
+            pillarID: nil,
+            platform: .youtubeVideo,
+            durationSeconds: 480,
+            targetDate: Date(),
+            firstTaskTitle: "Outline the chapters",
+            context: context
+        ))
+
+        XCTAssertEqual(brief.durationSeconds, 480)
+        XCTAssertEqual(model.outputs(for: brief, context: context).first?.platform, .youtubeVideo)
+        XCTAssertEqual(CreatorPlatform.choices(for: .longForm), [.youtubeVideo])
+        XCTAssertEqual(ContentFormat.longForm.durationOptions, [180, 300, 480, 600, 900])
     }
 
     func testBranchPillarInheritsAnchorColorAndDaysThenFallsBackSafely() {

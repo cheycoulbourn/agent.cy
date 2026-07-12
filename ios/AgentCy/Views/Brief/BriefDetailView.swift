@@ -21,6 +21,10 @@ struct BriefDetailView: View {
     @State private var showNewPillar = false
     @State private var showPillarPicker = false
 
+    private var contentFormat: ContentFormat {
+        outputs.contains { $0.platform == .youtubeVideo } ? .longForm : .shortForm
+    }
+
     init(brief: CreativeBrief) {
         self.brief = brief
         let id = brief.id
@@ -216,7 +220,7 @@ struct BriefDetailView: View {
     private var essentialSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             SectionRuleHeader(title: "Video")
-            AgentDurationPicker(seconds: $brief.durationSeconds)
+            AgentDurationPicker(seconds: $brief.durationSeconds, format: contentFormat)
             BriefField(label: "Hook", text: $brief.spokenHook)
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 MetaLabel("Script")
@@ -548,6 +552,10 @@ private struct BriefProposalReviewView: View {
     @State private var showTasks = false
     private let revisionProposal: BriefRevisionProposal?
 
+    private var contentFormat: ContentFormat {
+        proposal.variants.contains { $0.platform == .youtubeVideo } ? .longForm : .shortForm
+    }
+
     init(brief: CreativeBrief, initialProposal: BriefProposal) {
         self.brief = brief
         revisionProposal = nil
@@ -590,7 +598,7 @@ private struct BriefProposalReviewView: View {
                         }
                     }
                     BriefField(label: "Title", text: $proposal.draft.title)
-                    AgentDurationPicker(seconds: $proposal.draft.durationSeconds)
+                    AgentDurationPicker(seconds: $proposal.draft.durationSeconds, format: contentFormat)
                     BriefField(label: "Hook", text: $proposal.draft.spokenHook)
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                         MetaLabel("Script")
@@ -785,7 +793,9 @@ private struct PlatformOutputEditor: View {
             VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                 BriefField(label: "Caption", text: $output.caption)
                 BriefField(label: "Opening adjustment", text: $output.openingAdjustment)
-                if output.platform == .youtubeShorts { BriefField(label: "Title", text: $output.titleOverride) }
+                if output.platform == .youtubeShorts || output.platform == .youtubeVideo {
+                    BriefField(label: "Title", text: $output.titleOverride)
+                }
                 BriefField(label: "CTA", text: $output.cta)
                 BriefField(label: "Edit differences", text: $output.editChanges)
                 if canPlan {

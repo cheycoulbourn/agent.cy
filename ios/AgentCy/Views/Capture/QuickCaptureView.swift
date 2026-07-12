@@ -20,7 +20,9 @@ struct QuickCaptureView: View {
     @State private var postTitle = ""
     @State private var postNotes = ""
     @State private var postPillarID: UUID?
+    @State private var postFormat: ContentFormat = .shortForm
     @State private var postPlatform: CreatorPlatform = .instagramReels
+    @State private var postDurationSeconds = ContentFormat.shortForm.defaultDuration
     @State private var postFirstTask = ""
     @State private var taskTitle = ""
     @State private var taskKind: CreatorTaskKind = .planning
@@ -89,10 +91,13 @@ struct QuickCaptureView: View {
                 appModel.quickCapturePillarID = nil
                 if let preferredPlatform = profiles.first?.selectedPlatforms.first {
                     postPlatform = preferredPlatform
+                    postFormat = preferredPlatform.format
+                    postDurationSeconds = preferredPlatform.format.defaultDuration
                 }
                 if appModel.quickCaptureStartsWithTask {
                     appModel.quickCaptureStartsWithTask = false
                     kind = .task
+                    addTarget = appModel.quickCaptureTargetDate != nil
                 }
                 if appModel.quickCaptureStartsWithPost {
                     appModel.quickCaptureStartsWithPost = false
@@ -188,8 +193,8 @@ struct QuickCaptureView: View {
                 }
                 .buttonStyle(AgentSecondaryButtonStyle())
                 .disabled(isFindingIdeas)
-                ForEach(ideas) { idea in
-                    IdeaDirectionRow(idea: idea) {
+                ForEach(Array(ideas.enumerated()), id: \.element.id) { index, idea in
+                    IdeaDirectionRow(number: index + 1, idea: idea) {
                         if recorder.state.isActive { stopVoiceCapture() }
                         savedBrief = appModel.createSpark(
                             text: idea.premise,
@@ -220,6 +225,7 @@ struct QuickCaptureView: View {
             }
             Button("Save task", systemImage: "checkmark") {
                 if appModel.createTask(title: taskTitle, kind: taskKind, targetDate: addTarget ? targetDate : nil, context: context) != nil {
+                    appModel.quickCaptureTargetDate = nil
                     dismiss()
                 }
             }
@@ -257,11 +263,23 @@ struct QuickCaptureView: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                MetaLabel("Format")
+                Picker("Format", selection: $postFormat) {
+                    ForEach(ContentFormat.allCases) { format in
+                        Text(format.title).tag(format)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
             Picker("Platform", selection: $postPlatform) {
-                ForEach(CreatorPlatform.allCases) { platform in
+                ForEach(CreatorPlatform.choices(for: postFormat)) { platform in
                     Label(platform.title, systemImage: platform.symbol).tag(platform)
                 }
             }
+
+            AgentDurationPicker(seconds: $postDurationSeconds, format: postFormat)
 
             DatePicker("Post on", selection: $targetDate, displayedComponents: [.date, .hourAndMinute])
 
@@ -277,6 +295,7 @@ struct QuickCaptureView: View {
                     notes: postNotes,
                     pillarID: postPillarID,
                     platform: postPlatform,
+                    durationSeconds: postDurationSeconds,
                     targetDate: targetDate,
                     firstTaskTitle: postFirstTask,
                     context: context
@@ -285,6 +304,14 @@ struct QuickCaptureView: View {
             }
             .buttonStyle(AgentPrimaryButtonStyle())
             .disabled(postTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .onChange(of: postFormat) { _, format in
+            if !CreatorPlatform.choices(for: format).contains(postPlatform) {
+                postPlatform = CreatorPlatform.choices(for: format).first ?? .instagramReels
+            }
+            if !format.durationOptions.contains(postDurationSeconds) {
+                postDurationSeconds = format.defaultDuration
+            }
         }
     }
 
@@ -340,23 +367,47 @@ struct QuickCaptureView: View {
 }
 
 private struct IdeaDirectionRow: View {
+    let number: Int
     let idea: IdeaDirection
     let select: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            HStack {
-                Text(idea.title).font(.agentHeadline)
-                Spacer()
-                Button("Choose") { select() }
-                    .buttonStyle(AgentCompactSecondaryButtonStyle())
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            MetaLabel("Direction \(number)")
+            Text(idea.title)
+                .font(.agentTitle)
+                .foregroundStyle(Color.agentText)
+
+            Text(idea.premise)
+                .font(.agentBody)
+                .foregroundStyle(Color.agentText)
+
+            HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                Image(systemName: "quote.opening")
+                    .font(.agentHeadline)
+                    .foregroundStyle(Color.actionAccent)
+                Text(idea.opening)
+                    .font(.agentBody)
+                    .italic()
+                    .foregroundStyle(Color.agentText)
             }
-            Text(idea.premise).font(.agentBody)
-            Text("“\(idea.opening)”").font(.agentBody).italic().foregroundStyle(Color.agentSecondary)
-            MetaLabel(idea.assumption)
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                MetaLabel("Why it fits")
+                Text(idea.assumption)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+
+            Button("Choose this idea", systemImage: "arrow.right") { select() }
+                .buttonStyle(AgentSecondaryButtonStyle())
         }
-        .padding(.vertical, AgentSpacing.x4)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .overlay(RoundedRectangle(cornerRadius: AgentRadius.panel).stroke(Color.agentBorder, lineWidth: 1))
     }
 }
 

@@ -24,6 +24,7 @@ export const PlatformSchema = z.enum([
   "instagramReels",
   "tiktok",
   "youtubeShorts",
+  "youtubeVideo",
 ]);
 export const BriefStatusSchema = z.enum([
   "spark",
@@ -60,12 +61,17 @@ export const DurationSecondsSchema = z.union([
   z.literal(45),
   z.literal(60),
   z.literal(90),
+  z.literal(180),
+  z.literal(300),
+  z.literal(480),
+  z.literal(600),
+  z.literal(900),
 ]);
 
 export const SelectedPlatformsSchema = z
   .array(PlatformSchema)
   .min(1)
-  .max(3)
+  .max(4)
   .refine((platforms) => new Set(platforms).size === platforms.length, {
     message: "Selected platforms must be unique",
   });

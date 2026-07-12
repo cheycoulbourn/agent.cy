@@ -2,14 +2,14 @@
 
 ## Product definition
 
-agent.cy is an iPhone-only creative copilot for adult, English-speaking solo creators who already publish short-form content but struggle to turn rough ideas into ready work.
+agent.cy is an iPhone-only creative copilot for adult, English-speaking solo creators who already publish but struggle to turn rough ideas into ready work.
 
 The promise is **From spark to ready**.
 
 The three product jobs are:
 
 1. Ideation: capture a text or voice spark, or ask Cy for three directions grounded in the creator's own context.
-2. Creation: develop one direction into a personalized short-form video brief.
+2. Creation: develop one direction into a personalized video brief.
 3. Execution: schedule, produce, track, and manually publish the work without shame-based mechanics.
 
 ## Audience
@@ -18,7 +18,7 @@ The three product jobs are:
 - Emerging solo creators, not teams.
 - English-only in v1.
 - Three genuine captions, scripts, posts, or transcripts are required before Cy extracts a voice profile, but they are not required to begin creating.
-- Supported destinations are Instagram Reels, TikTok, and YouTube Shorts.
+- Short-form destinations are Instagram Reels, TikTok, and YouTube Shorts. Long-form YouTube is also supported.
 
 ## Onboarding
 
@@ -62,7 +62,7 @@ Creators may also make a lightweight Post from Spark by choosing a title, option
 The ready brief contains:
 
 - Premise, audience, goal, takeaway, and assumptions.
-- A 15, 30, 45, 60, or 90 second target, defaulting to 45.
+- A format-aware duration target. Short-form offers 15, 30, 45, 60, or 90 seconds and defaults to 45. Long-form YouTube offers 3, 5, 8, 10, or 15 minutes and defaults to 8.
 - Spoken hook and first-frame text.
 - Flexible script with modular beats.
 - Close and CTA intent.
@@ -76,12 +76,12 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 ## Navigation
 
 - Today is the warm daily launch view with a greeting, one focus, content going live today, today's tasks, and quick capture.
-- Agenda owns the current and next weekly content plan and pillar-color placement. Each content item appears once on its planned day.
+- Agenda can move backward or forward one week at a time. Every day separates planned Posts from production Tasks, and pillar colors appear only when assigned.
 - Tasks contains all brief-linked and standalone creator-work tasks. Parent tasks may contain independently completable subtasks, which remain out of top-level lists.
 - Content placement and task scheduling are separate. A task date never places its linked post on Agenda.
 - Pillars contains manual, guided, or inferred themes. Anchors own color and preferred weekdays; branches inherit both. Unfiled briefs remain valid.
 - Pillar detail groups branches, ideas, scheduled work, and posted work, with a manual new-spark action for posted content.
-- Spark contains New Idea, New Post, three-angle ideation, on-device voice capture, and searchable/filterable Your work including archived content.
+- Spark has one Create entry for ideas, posts, tasks, and on-device voice capture, plus a separate Find three ideas entry. Your work remains searchable and filterable, including archived content.
 - Ask Cy opens global context-aware conversation.
 - `+` captures an Idea, Post, or creator-work Task without opening chat.
 

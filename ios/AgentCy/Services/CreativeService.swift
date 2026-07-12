@@ -133,7 +133,9 @@ struct PreviewCreativeService: CreativeServicing {
             audience: audience,
             goal: goal.isEmpty ? "Make one useful idea easy to act on" : goal,
             takeaway: brief.takeaway.isEmpty ? "Start with the smallest version that creates real momentum." : brief.takeaway,
-            durationSeconds: [15, 30, 45, 60, 90].contains(brief.durationSeconds) ? brief.durationSeconds : 45,
+            durationSeconds: (ContentFormat.shortForm.durationOptions + ContentFormat.longForm.durationOptions).contains(brief.durationSeconds)
+                ? brief.durationSeconds
+                : ContentFormat.shortForm.defaultDuration,
             spokenHook: hook,
             firstFrameText: brief.firstFrameText.isEmpty ? title.uppercased() : brief.firstFrameText,
             scriptBeats: [
@@ -190,7 +192,9 @@ struct PreviewCreativeService: CreativeServicing {
         case .desiredTakeaway:
             revised = replacing(revised, desiredTakeaway: revised.desiredTakeaway + suffix)
         case .durationSeconds:
-            let durations = [15, 30, 45, 60, 90]
+            let durations = revised.durationSeconds >= 120
+                ? ContentFormat.longForm.durationOptions
+                : ContentFormat.shortForm.durationOptions
             let next = durations[(durations.firstIndex(of: revised.durationSeconds).map { ($0 + 1) % durations.count }) ?? 2]
             revised = replacing(revised, durationSeconds: next)
         case .spokenHook:
@@ -285,6 +289,8 @@ struct PreviewCreativeService: CreativeServicing {
                 PlatformVariantDraft(platform: platform, caption: draft.takeaway, openingAdjustment: "Start mid-thought and deliver the hook in the first breath.", titleOverride: "", cta: "What would your smallest version look like?", editChanges: "Favor conversational pacing and one pattern interrupt after the proof beat.")
             case .youtubeShorts:
                 PlatformVariantDraft(platform: platform, caption: draft.takeaway, openingAdjustment: "State the promise cleanly before adding context.", titleOverride: draft.title, cta: "Subscribe for more practical creator systems.", editChanges: "Keep the title searchable and the close self-contained.")
+            case .youtubeVideo:
+                PlatformVariantDraft(platform: platform, caption: draft.takeaway, openingAdjustment: "Open with the clearest promise, then preview the path through the full video.", titleOverride: draft.title, cta: "Subscribe for the next practical creator guide.", editChanges: "Use chapters, room for examples, and a deliberate closing recap.")
             }
         }
     }
@@ -434,7 +440,7 @@ struct RemoteCreativeService: CreativeServicing {
 
     func composeProposal(from brief: CreativeBrief, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> BriefProposal {
         try validateContext(context)
-        guard [15, 30, 45, 60, 90].contains(brief.durationSeconds) else {
+        guard (ContentFormat.shortForm.durationOptions + ContentFormat.longForm.durationOptions).contains(brief.durationSeconds) else {
             throw CreativeServiceError.invalidLiveResponse("the selected duration is unsupported")
         }
         let request = ComposeBriefRequestWire(
@@ -607,7 +613,7 @@ struct RemoteCreativeService: CreativeServicing {
         guard !context.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !context.primaryGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !context.selectedPlatforms.isEmpty,
-              context.selectedPlatforms.count <= 3,
+              context.selectedPlatforms.count <= 4,
               context.voiceExamples.count <= 5,
               context.voiceExamples.allSatisfy(\.creatorConfirmed),
               context.pillars.count <= 10,

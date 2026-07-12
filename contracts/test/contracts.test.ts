@@ -8,6 +8,7 @@ import {
   ChatTurnResultSchema,
   ComposeBriefResultSchema,
   CreatorContextSchema,
+  DurationSecondsSchema,
   IdeasResultSchema,
   PlatformSchema,
   PrivacyDeleteRequestSchema,
@@ -94,6 +95,8 @@ describe("wire enums", () => {
     expect(PlatformSchema.parse("instagramReels")).toBe("instagramReels");
     expect(PlatformSchema.parse("tiktok")).toBe("tiktok");
     expect(PlatformSchema.parse("youtubeShorts")).toBe("youtubeShorts");
+    expect(PlatformSchema.parse("youtubeVideo")).toBe("youtubeVideo");
+    expect(DurationSecondsSchema.parse(480)).toBe(480);
   });
 
   it("rejects renamed wire values", () => {

@@ -249,24 +249,43 @@ struct MetaLabel: View {
 }
 
 struct AgentDurationPicker: View {
-    static let options = [15, 30, 45, 60, 90]
-
     @Binding var seconds: Int
+    var format: ContentFormat = .shortForm
+
+    private var options: [Int] { format.durationOptions }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             MetaLabel("Duration")
             Picker("Duration", selection: $seconds) {
-                ForEach(Self.options, id: \.self) { duration in
-                    Text("\(duration) SEC")
+                ForEach(options, id: \.self) { duration in
+                    Text(durationLabel(duration))
                         .font(.agentMono)
                         .lineLimit(1)
                         .tag(duration)
-                        .accessibilityLabel("\(duration) seconds")
+                        .accessibilityLabel(accessibilityDurationLabel(duration))
                 }
             }
             .pickerStyle(.segmented)
+            .onAppear {
+                if !format.durationOptions.contains(seconds) {
+                    seconds = format.defaultDuration
+                }
+            }
+            .onChange(of: format) { _, newFormat in
+                if !newFormat.durationOptions.contains(seconds) {
+                    seconds = newFormat.defaultDuration
+                }
+            }
         }
+    }
+
+    private func durationLabel(_ duration: Int) -> String {
+        duration < 120 ? "\(duration) SEC" : "\(duration / 60) MIN"
+    }
+
+    private func accessibilityDurationLabel(_ duration: Int) -> String {
+        duration < 120 ? "\(duration) seconds" : "\(duration / 60) minutes"
     }
 }
 
