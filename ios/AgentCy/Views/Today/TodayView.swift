@@ -26,6 +26,11 @@ struct TodayView: View {
         }
     }
 
+    private var focusBrief: CreativeBrief? {
+        let goingLiveBriefIDs = Set(todayOutputs.map(\.briefID))
+        return activeBriefs.first { !goingLiveBriefIDs.contains($0.id) }
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: AgentSpacing.x8) {
@@ -57,18 +62,7 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             SectionRuleHeader(title: "Today's focus")
 
-            if let output = todayOutputs.first, let brief = brief(for: output) {
-                NavigationLink {
-                    BriefDetailView(brief: brief)
-                } label: {
-                    focusCard(
-                        kicker: output.status == .posted ? "Posted" : "Going live",
-                        title: brief.title,
-                        symbol: output.platform.symbol
-                    )
-                }
-                .buttonStyle(.plain)
-            } else if let brief = activeBriefs.first {
+            if let brief = focusBrief {
                 NavigationLink {
                     BriefDetailView(brief: brief)
                 } label: {
