@@ -2,5 +2,5 @@ packages:
   - contracts
   - server
 
-onlyBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true
