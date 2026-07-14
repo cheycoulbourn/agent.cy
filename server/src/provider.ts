@@ -27,6 +27,19 @@ export interface AiProvider {
   generate(request: ProviderRequest): Promise<ProviderResult>;
 }
 
+export interface ProviderFailureDiagnostic {
+  readonly event: "anthropic_request_failed";
+  readonly operation: AiOperation;
+  readonly status: number | null;
+  readonly errorType: string;
+  readonly requestId: string | null;
+  readonly retryable: boolean;
+}
+
+export type ProviderFailureDiagnosticSink = (
+  diagnostic: ProviderFailureDiagnostic,
+) => void;
+
 type FixtureResolver =
   | unknown
   | ((payload: unknown, operation: AiOperation) => unknown | Promise<unknown>);
@@ -140,30 +153,93 @@ export class AnthropicAiProvider implements AiProvider {
         throw new AppError("cancelled", "The request was cancelled.");
       }
 
-      const status = readNumberProperty(error, "status");
-      const retryAfterSeconds = readRetryAfterSeconds(error);
-      if (status === 429) {
-        throw new AppError(
-          "rate_limited",
-          "Cy is receiving too many requests right now. Please try again shortly.",
-          {
-            retryable: true,
-            retryAfterSeconds,
-            cause: error,
-          },
-        );
-      }
-      throw new AppError(
-        "upstream_unavailable",
-        "Cy is unavailable right now. Your work is safe. Please try again.",
-        {
-          retryable: status === undefined || status >= 500,
-          retryAfterSeconds,
-          cause: error,
-        },
-      );
+      throw classifyAnthropicFailure(request.operation, error);
     }
   }
+}
+
+export function classifyAnthropicFailure(
+  operation: AiOperation,
+  error: unknown,
+  diagnosticSink: ProviderFailureDiagnosticSink = writeProviderFailureDiagnostic,
+): AppError {
+  const status = readNumberProperty(error, "status");
+  const errorType = safeDiagnosticIdentifier(
+    readStringProperty(error, "type"),
+    status === undefined ? "connection_error" : `http_${status}`,
+  );
+  const requestId = safeDiagnosticIdentifier(
+    readStringProperty(error, "requestID"),
+    null,
+  );
+  const retryAfterSeconds = readRetryAfterSeconds(error);
+  const retryable =
+    status === undefined ||
+    status === 408 ||
+    status === 429 ||
+    status >= 500;
+
+  diagnosticSink({
+    event: "anthropic_request_failed",
+    operation,
+    status: status ?? null,
+    errorType,
+    requestId,
+    retryable,
+  });
+
+  if (status === 429 || errorType === "rate_limit_error") {
+    return new AppError(
+      "rate_limited",
+      "Cy is receiving too many requests right now. Please try again shortly.",
+      {
+        retryable: true,
+        retryAfterSeconds,
+        cause: error,
+      },
+    );
+  }
+
+  const message = providerFailureMessage(status, errorType);
+  return new AppError("upstream_unavailable", message, {
+    retryable,
+    retryAfterSeconds,
+    cause: error,
+  });
+}
+
+function providerFailureMessage(
+  status: number | undefined,
+  errorType: string,
+): string {
+  if (status === 401 || errorType === "authentication_error") {
+    return "Cy’s server credential needs attention. Your work is safe.";
+  }
+  if (errorType === "billing_error") {
+    return "Cy’s API billing is unavailable. Check the funded Anthropic workspace used by the app.";
+  }
+  if (status === 403 || errorType === "permission_error") {
+    return "Cy’s Anthropic workspace does not currently allow this request.";
+  }
+  if (status === 404 || errorType === "not_found_error") {
+    return "Cy’s configured AI model is unavailable to this Anthropic workspace.";
+  }
+  if (
+    status === 400 ||
+    status === 422 ||
+    errorType === "invalid_request_error"
+  ) {
+    return "Cy’s request was rejected by the AI provider. Your work is safe.";
+  }
+  return "Cy is unavailable right now. Your work is safe. Please try again.";
+}
+
+function writeProviderFailureDiagnostic(
+  diagnostic: ProviderFailureDiagnostic,
+): void {
+  process.stderr.write(
+    `[agent-cy-provider] ${JSON.stringify(diagnostic)}\n`,
+  );
 }
 
 function readNumberProperty(error: unknown, property: string): number | undefined {
@@ -172,6 +248,24 @@ function readNumberProperty(error: unknown, property: string): number | undefine
   }
   const value = error[property as keyof typeof error];
   return typeof value === "number" ? value : undefined;
+}
+
+function readStringProperty(error: unknown, property: string): string | undefined {
+  if (typeof error !== "object" || error === null || !(property in error)) {
+    return undefined;
+  }
+  const value = error[property as keyof typeof error];
+  return typeof value === "string" ? value : undefined;
+}
+
+function safeDiagnosticIdentifier<T extends string | null>(
+  value: string | undefined,
+  fallback: T,
+): string | T {
+  if (value === undefined || !/^[A-Za-z0-9_.:-]{1,160}$/.test(value)) {
+    return fallback;
+  }
+  return value;
 }
 
 function readRetryAfterSeconds(error: unknown): number | null {
