@@ -57,6 +57,15 @@ describe("StateRepository", () => {
     ).resolves.toMatchObject({ id: installation.id });
   });
 
+  it("promotes active free pilot installations without reviving erased records", async () => {
+    const { repository, installation } = await repositoryWithInstallation();
+    await repository.promoteActiveFreeJourneysToComped();
+
+    await expect(
+      repository.findActiveInstallationByTokenHash("token-hash"),
+    ).resolves.toMatchObject({ id: installation.id, access: "comped" });
+  });
+
   it("consumes a free allowance only after a successful generation", async () => {
     const { repository, installation } = await repositoryWithInstallation();
     const input = {

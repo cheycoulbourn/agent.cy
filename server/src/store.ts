@@ -244,6 +244,7 @@ export class StateRepository {
     codeHash: string,
     tokenHash: string,
     now: Date,
+    access: SubscriptionAccess = "freeJourney",
   ): Promise<InstallationRecord> {
     return this.transact((state) => {
       const invite = state.invites[codeHash];
@@ -257,7 +258,7 @@ export class StateRepository {
       const installation: InstallationRecord = {
         id: randomUUID(),
         tokenHash,
-        access: "freeJourney",
+        access,
         createdAt: now.toISOString(),
         deletedAt: null,
         allowanceCounts: {},
@@ -266,6 +267,16 @@ export class StateRepository {
       invite.installationId = installation.id;
       state.installations[installation.id] = installation;
       return structuredClone(installation);
+    });
+  }
+
+  async promoteActiveFreeJourneysToComped(): Promise<void> {
+    await this.transact((state) => {
+      for (const installation of Object.values(state.installations)) {
+        if (installation.deletedAt === null && installation.access === "freeJourney") {
+          installation.access = "comped";
+        }
+      }
     });
   }
 

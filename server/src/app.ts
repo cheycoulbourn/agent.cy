@@ -90,6 +90,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await repository.seedInviteHashes(
     config.inviteCodes.map((inviteCode) => inviteIdentity.hash(inviteCode)),
   );
+  if (config.pilotCompedAccess) {
+    await repository.promoteActiveFreeJourneysToComped();
+  }
   await repository.purgeTelemetryBefore(
     new Date(clock().getTime() - config.telemetryRetentionDays * 86_400_000),
   );
@@ -147,6 +150,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         inviteIdentity.hash(parsed.data.inviteCode),
         installationIdentity.hash(rawCredential),
         clock(),
+        config.pilotCompedAccess ? "comped" : "freeJourney",
       );
       const result = InstallationRedeemResultSchema.parse({
         installationId: installation.id,

@@ -70,4 +70,21 @@ describe("server secret configuration", () => {
       14,
     );
   });
+
+  it("enables promotional access for the current production pilot", () => {
+    const config = loadConfig({
+      NODE_ENV: "production",
+      AI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "test-key",
+      INVITE_HASH_SECRET: "a".repeat(32),
+      INSTALLATION_HASH_SECRET: "b".repeat(32),
+      REVENUECAT_ENTITLEMENT_ID: "creator_access",
+    });
+    expect(config.pilotCompedAccess).toBe(true);
+    expect(loadConfig({ NODE_ENV: "development" }).pilotCompedAccess).toBe(false);
+    expect(
+      loadConfig({ NODE_ENV: "development", PILOT_COMPED_ACCESS: "true" })
+        .pilotCompedAccess,
+    ).toBe(true);
+  });
 });

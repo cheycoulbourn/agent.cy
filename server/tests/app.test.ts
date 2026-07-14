@@ -31,6 +31,7 @@ const config: ServerConfig = {
   inviteHashSecret: "test-invite-secret-long-enough-for-hmac",
   installationHashSecrets: ["test-install-secret-long-enough-for-hmac"],
   inviteCodes: ["FOUNDER-ONE"],
+  pilotCompedAccess: false,
   revenueCatWebhookSecret: "revenuecat-test-secret",
   revenueCatEntitlementId: "creator_access",
   requestTimeoutMs: 5_000,
