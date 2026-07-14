@@ -205,6 +205,7 @@ describe("AI contracts", () => {
       opening: "A concrete opening.",
       whyItFits: "It matches the creator goal.",
       assumedTakeaway: "One useful takeaway.",
+      suggestedPillarId: null,
       assumptions: [],
     };
     expect(

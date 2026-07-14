@@ -33,6 +33,7 @@ export const developmentFixtures: Partial<Record<AiOperation, (body: unknown) =>
   ideas: (body) => {
     const request = as<IdeasRequest>(body);
     const topic = request.startingPoint ?? request.creatorContext.primaryGoal;
+    const suggestedPillarId = request.creatorContext.pillars[0]?.pillarId ?? null;
     return {
       ideas: [
         {
@@ -42,6 +43,7 @@ export const developmentFixtures: Partial<Record<AiOperation, (body: unknown) =>
           opening: "Here’s the part I wish someone had made simpler.",
           whyItFits: "It uses a direct, teaching-led format.",
           assumedTakeaway: "The viewer leaves knowing one next move.",
+          suggestedPillarId,
           assumptions: ["The creator has a firsthand lesson to share."],
         },
         {
@@ -51,6 +53,7 @@ export const developmentFixtures: Partial<Record<AiOperation, (body: unknown) =>
           opening: "I used to think this was the hard part. It wasn’t.",
           whyItFits: "It creates a clear story turn without manufacturing drama.",
           assumedTakeaway: "The viewer can avoid the creator’s earlier mistake.",
+          suggestedPillarId,
           assumptions: ["There is an honest before-and-after insight available."],
         },
         {
@@ -60,6 +63,7 @@ export const developmentFixtures: Partial<Record<AiOperation, (body: unknown) =>
           opening: "If you only change one thing, make it this.",
           whyItFits: "It is focused enough for a short, executable video.",
           assumedTakeaway: "The viewer remembers a single decision rule.",
+          suggestedPillarId,
           assumptions: ["The topic can be narrowed to one responsible recommendation."],
         },
       ],

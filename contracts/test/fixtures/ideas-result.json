@@ -7,6 +7,7 @@
       "opening": "The version you can finish teaches you more than the version you keep planning.",
       "whyItFits": "It matches the creator's direct, practical teaching voice.",
       "assumedTakeaway": "Reduce the promise until the video is filmable today.",
+      "suggestedPillarId": "11111111-1111-4111-8111-111111111111",
       "assumptions": ["The creator has an example of over-scoping an idea."]
     },
     {
@@ -16,6 +17,7 @@
       "opening": "If the opening feels vague, your video may be talking to too many people.",
       "whyItFits": "It turns an abstract creative problem into one decision.",
       "assumedTakeaway": "Name one person before writing the hook.",
+      "suggestedPillarId": null,
       "assumptions": []
     },
     {
@@ -25,6 +27,7 @@
       "opening": "Advice lands differently after people can see where you learned it.",
       "whyItFits": "It protects the creator's specific, human quality.",
       "assumedTakeaway": "Lead with the moment that earned the lesson.",
+      "suggestedPillarId": "22222222-2222-4222-8222-222222222222",
       "assumptions": ["The creator can share the story without exposing private details."]
     }
   ]

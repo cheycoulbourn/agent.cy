@@ -87,7 +87,7 @@ export const operationDefinitions = [
     effort: "low",
     maxTokens: 900,
     reservationCostMicros: 20_000,
-    systemPrompt: `${sharedSystemPrompt}\nReturn exactly three genuinely distinct directions tailored to the creator. Do not fabricate external evidence or trend claims.`,
+    systemPrompt: `${sharedSystemPrompt}\nReturn exactly three genuinely distinct directions tailored to the creator. For each direction, suggest the single best matching pillar by returning its exact pillarId from creatorContext.pillars, or null when no supplied pillar is a clear fit. Never invent a pillar ID. Do not fabricate external evidence or trend claims.`,
     allowanceFor: allowance("ideas", 3),
   },
   {

@@ -73,6 +73,7 @@ export const IdeaDirectionSchema = z
     opening: mediumText,
     whyItFits: mediumText,
     assumedTakeaway: mediumText,
+    suggestedPillarId: z.uuid().nullable(),
     assumptions: z.array(mediumText).max(5),
   })
   .strict();
