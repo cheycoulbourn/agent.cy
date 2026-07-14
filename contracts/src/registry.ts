@@ -18,6 +18,7 @@ import {
   VoiceProfileRequestSchema,
   VoiceProfileResultSchema,
 } from "./ai.js";
+import { ComposeBriefV2RequestSchema, ComposeBriefV2ResultSchema, ReviseBriefV2RequestSchema, ReviseBriefV2ResultSchema } from "./ai-v2.js";
 import {
   AiRequestMetadataSchema,
   CreatorContextSchema,
@@ -56,8 +57,12 @@ export const ContractSchemaRegistry = {
   SparkTurnResult: SparkTurnResultSchema,
   ComposeBriefRequest: ComposeBriefRequestSchema,
   ComposeBriefResult: ComposeBriefResultSchema,
+  ComposeBriefV2Request: ComposeBriefV2RequestSchema,
+  ComposeBriefV2Result: ComposeBriefV2ResultSchema,
   ReviseBriefRequest: ReviseBriefRequestSchema,
   ReviseBriefResult: ReviseBriefResultSchema,
+  ReviseBriefV2Request: ReviseBriefV2RequestSchema,
+  ReviseBriefV2Result: ReviseBriefV2ResultSchema,
   ChatTurnRequest: ChatTurnRequestSchema,
   ChatTurnResult: ChatTurnResultSchema,
   RhythmProposalRequest: RhythmProposalRequestSchema,
@@ -107,6 +112,16 @@ export const AiEndpointRegistry = {
     path: "/v1/ai/brief/revise",
     requestSchema: "ReviseBriefRequest",
     resultSchema: "ReviseBriefResult",
+  },
+  composeBriefV2: {
+    path: "/v2/ai/brief/compose",
+    requestSchema: "ComposeBriefV2Request",
+    resultSchema: "ComposeBriefV2Result",
+  },
+  reviseBriefV2: {
+    path: "/v2/ai/brief/revise",
+    requestSchema: "ReviseBriefV2Request",
+    resultSchema: "ReviseBriefV2Result",
   },
   chatTurn: {
     path: "/v1/ai/chat/turn",

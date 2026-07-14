@@ -32,9 +32,6 @@ struct OnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Step = .welcome
     @State private var draft = OnboardingDraft()
-    @State private var recorder = OnDeviceSpeechCapture()
-    @State private var dictatingExampleID: UUID?
-    @State private var speechTask: Task<Void, Never>?
     @State private var inviteCode = ""
     @State private var didDeferVoiceExamples = false
 
@@ -59,14 +56,14 @@ struct OnboardingView: View {
                     .tint(.actionAccent)
                     .accessibilityLabel("Onboarding progress")
             }
-            .padding(.horizontal, AgentSpacing.x6)
+            .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x4)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                     stepContent
                 }
-                .padding(.horizontal, AgentSpacing.x6)
+                .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.top, AgentSpacing.x8)
                 .padding(.bottom, AgentSpacing.x16)
             }
@@ -74,20 +71,14 @@ struct OnboardingView: View {
         }
         .safeAreaInset(edge: .bottom) {
             navigationControls
-                .padding(.horizontal, AgentSpacing.x6)
+                .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.vertical, AgentSpacing.x3)
                 .background(Color.agentCanvas)
                 .overlay(alignment: .top) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
         }
         .agentScreen()
-        .task { await appModel.refreshInstallationCredentialStatus() }
-        .onChange(of: recorder.state) { _, newState in
-            if !newState.isActive { dictatingExampleID = nil }
-        }
-        .onDisappear {
-            speechTask?.cancel()
-            Task { await recorder.stop() }
-        }
+        .agentKeyboardDismissal()
+        .task { await appModel.refreshInstallationCredentialStatus(context: context) }
     }
 
     @ViewBuilder
@@ -115,7 +106,7 @@ struct OnboardingView: View {
                 }
                 .tint(.actionAccent)
             }
-            CyCallout {
+            CyCallout(heading: .keepsItPrivate) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                     MetaLabel("Your privacy")
                     Text("Your work stays on your devices and private iCloud. Cy receives only the text needed for a request. Audio and screenshots are never uploaded.")
@@ -192,7 +183,7 @@ struct OnboardingView: View {
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                 Button {
-                    Task { await appModel.redeemInstallationInvite(inviteCode) }
+                    Task { await appModel.redeemInstallationInvite(inviteCode, context: context) }
                 } label: {
                     Label(
                         appModel.hasInstallationCredential ? "Connected" : "Use invite",
@@ -207,7 +198,7 @@ struct OnboardingView: View {
                         .font(.agentBody)
                 }
             }
-            CyCallout {
+            CyCallout(heading: .keepsItPrivate) {
                 Text("Your invite is checked before any content is sent.")
                     .font(.agentBody)
             }
@@ -218,22 +209,19 @@ struct OnboardingView: View {
                 title: "Show Cy your voice.",
                 subtitle: "Add three real examples, or do this later."
             )
-            CyCallout {
+            CyCallout(heading: .noticed) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                     MetaLabel("\(usableExampleCount) of 3 ready")
-                    Text("Paste, record, link an Instagram post, or use a screenshot.")
+                    Text("Paste text, link an Instagram post, or use a screenshot.")
                         .font(.agentBody)
                 }
             }
             VStack(spacing: AgentSpacing.x6) {
                 ForEach(Array(draft.voiceExamples.enumerated()), id: \.element.id) { index, example in
-                    VoiceExampleInputCard(
-                        example: exampleBinding(for: example.id),
-                        number: index + 1,
-                        isDictating: dictatingExampleID == example.id && recorder.state.isActive,
-                        otherExampleIsDictating: recorder.state.isActive && dictatingExampleID != example.id,
-                        onToggleDictation: { toggleExampleDictation(example.id) },
-                        onRemove: draft.voiceExamples.count > 3 ? { removeExample(id: example.id) } : nil,
+                        VoiceExampleInputCard(
+                            example: exampleBinding(for: example.id),
+                            number: index + 1,
+                            onRemove: draft.voiceExamples.count > 3 ? { removeExample(id: example.id) } : nil,
                         onNotice: { appModel.notice = .info($0) }
                     )
                     .disabled(appModel.isWorking)
@@ -245,10 +233,6 @@ struct OnboardingView: View {
                     .frame(minHeight: 44)
                     .disabled(appModel.isWorking)
                 }
-                SpeechCaptureStatusView(
-                    state: recorder.state,
-                    context: dictatingExampleNumber.map { "Voice example \($0)" }
-                )
             }
 
         case .voice:
@@ -266,11 +250,8 @@ struct OnboardingView: View {
                         ForEach(6..<22, id: \.self) { hour in Text(hourLabel(hour)).tag(hour) }
                     }
                 }
-                Toggle("Weekly reset", isOn: $draft.weeklyReminderEnabled).font(.agentHeadline).tint(.actionAccent)
+                Toggle("New week", isOn: $draft.weeklyReminderEnabled).font(.agentHeadline).tint(.actionAccent)
                 if draft.weeklyReminderEnabled {
-                    Picker("Day", selection: $draft.weeklyReminderWeekday) {
-                        Text("Sunday").tag(1); Text("Monday").tag(2); Text("Friday").tag(6)
-                    }
                     Picker("Time", selection: $draft.weeklyReminderHour) {
                         ForEach(6..<22, id: \.self) { hour in Text(hourLabel(hour)).tag(hour) }
                     }
@@ -299,7 +280,7 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(AgentSecondaryButtonStyle())
             }
-            CyCallout {
+            CyCallout(heading: .says) {
                 Text("Either choice creates the same simple brief.")
                     .font(.agentBody)
             }
@@ -318,14 +299,14 @@ struct OnboardingView: View {
                     }
                     Button(step == .examples ? "Build my voice profile" : "Continue") { moveForward() }
                         .buttonStyle(AgentPrimaryButtonStyle())
-                        .disabled(!isStepValid || appModel.isWorking || recorder.state.isActive)
+                        .disabled(!isStepValid || appModel.isWorking)
                         .overlay { if appModel.isWorking { ProgressView().tint(.onAccent) } }
                 }
                 if step == .examples {
                     Button("Add these later") { deferVoiceExamples() }
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .font(.agentHeadline)
-                        .disabled(appModel.isWorking || recorder.state.isActive)
+                        .disabled(appModel.isWorking)
                 }
             }
         }
@@ -372,11 +353,6 @@ struct OnboardingView: View {
     }
 
     private func setStep(_ newStep: Step) {
-        if step == .examples, newStep != .examples, recorder.state.isActive {
-            speechTask?.cancel()
-            speechTask = Task { await recorder.stop() }
-            dictatingExampleID = nil
-        }
         if reduceMotion { step = newStep } else { withAnimation(.easeInOut(duration: 0.22)) { step = newStep } }
     }
 
@@ -385,40 +361,8 @@ struct OnboardingView: View {
             appModel.quickCaptureStartsWithIdeas = startWithIdeas
             appModel.quickCaptureStartsWithTask = false
             appModel.quickCaptureStartsWithPost = false
-            appModel.quickCaptureStartsRecording = false
             if await appModel.completeOnboarding(draft, context: context) {
                 appModel.presentedSheet = .quickCapture
-            }
-        }
-    }
-
-    private func toggleExampleDictation(_ id: UUID) {
-        if dictatingExampleID == id, recorder.state.isActive {
-            speechTask?.cancel()
-            speechTask = Task {
-                await recorder.stop()
-                dictatingExampleID = nil
-            }
-            return
-        }
-
-        speechTask?.cancel()
-        speechTask = Task {
-            if recorder.state.isActive { await recorder.stop() }
-            guard draft.voiceExamples.contains(where: { $0.id == id }) else { return }
-            dictatingExampleID = id
-            do {
-                let initialTranscript = draft.voiceExamples.first(where: { $0.id == id })?.text ?? ""
-                try await recorder.start(initialTranscript: initialTranscript) { transcript in
-                    guard let index = draft.voiceExamples.firstIndex(where: { $0.id == id }) else { return }
-                    draft.voiceExamples[index].text = transcript
-                    draft.voiceExamples[index].source = .text
-                }
-            } catch is CancellationError {
-                if dictatingExampleID == id { dictatingExampleID = nil }
-            } catch {
-                dictatingExampleID = nil
-                appModel.notice = .info(error.localizedDescription)
             }
         }
     }
@@ -429,12 +373,6 @@ struct OnboardingView: View {
 
     private var usableExampleCount: Int {
         draft.voiceExamples.filter(\.isUsableEvidence).count
-    }
-
-    private var dictatingExampleNumber: Int? {
-        guard let dictatingExampleID,
-              let index = draft.voiceExamples.firstIndex(where: { $0.id == dictatingExampleID }) else { return nil }
-        return index + 1
     }
 
     private func exampleBinding(for id: UUID) -> Binding<VoiceExampleDraft> {
@@ -458,11 +396,6 @@ struct OnboardingView: View {
 
     private func removeExample(id: UUID) {
         guard let index = draft.voiceExamples.firstIndex(where: { $0.id == id }), draft.voiceExamples.count > 3 else { return }
-        if dictatingExampleID == id {
-            speechTask?.cancel()
-            speechTask = Task { await recorder.stop() }
-            dictatingExampleID = nil
-        }
         draft.voiceExamples.remove(at: index)
     }
 }
@@ -472,17 +405,30 @@ private struct AgentLabeledField: View {
     let placeholder: String
     @Binding var text: String
     var axis: Axis = .horizontal
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            MetaLabel(label)
-            TextField(placeholder, text: $text, axis: axis)
-                .font(.agentBody)
-                .lineLimit(axis == .vertical ? 2...6 : 1...1)
-                .padding(AgentSpacing.x4)
-                .background(Color.agentSurface)
-                .clipShape(.rect(cornerRadius: AgentRadius.control))
-                .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+            if axis == .vertical {
+                AgentInputHeader(title: label, isEditing: isFocused) { isFocused = false }
+                TextField(placeholder, text: $text, axis: .vertical)
+                    .font(.agentBody)
+                    .lineLimit(2...6)
+                    .focused($isFocused)
+                    .padding(AgentSpacing.x4)
+                    .background(Color.agentSurface)
+                    .clipShape(.rect(cornerRadius: AgentRadius.control))
+                    .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+            } else {
+                MetaLabel(label)
+                TextField(placeholder, text: $text)
+                    .font(.agentBody)
+                    .agentSingleLineSubmit()
+                    .padding(AgentSpacing.x4)
+                    .background(Color.agentSurface)
+                    .clipShape(.rect(cornerRadius: AgentRadius.control))
+                    .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+            }
         }
     }
 }

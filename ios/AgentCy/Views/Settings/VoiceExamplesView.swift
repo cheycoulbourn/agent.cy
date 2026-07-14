@@ -6,18 +6,29 @@ struct VoiceExamplesView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @State private var drafts: [VoiceExampleDraft] = []
-    @State private var recorder = OnDeviceSpeechCapture()
-    @State private var dictatingExampleID: UUID?
-    @State private var speechTask: Task<Void, Never>?
     @State private var proposal: InitialVoiceProfileProposal?
     @State private var didLoad = false
+    let embeddedInNavigation: Bool
+
+    init(embeddedInNavigation: Bool = false) {
+        self.embeddedInNavigation = embeddedInNavigation
+    }
 
     private var usableCount: Int { drafts.filter(\.isUsableEvidence).count }
     private var approvedProfile: VoiceProfile? { appModel.approvedVoiceProfile(context: context) }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        Group {
+            if embeddedInNavigation {
+                content
+            } else {
+                NavigationStack { content }
+            }
+        }
+    }
+
+    private var content: some View {
+        ScrollView {
                 LazyVStack(alignment: .leading, spacing: AgentSpacing.x6) {
                     EditorialHeader(
                         kicker: "\(usableCount) of 3 examples",
@@ -29,9 +40,6 @@ struct VoiceExamplesView: View {
                         VoiceExampleInputCard(
                             example: exampleBinding(for: example.id),
                             number: index + 1,
-                            isDictating: dictatingExampleID == example.id && recorder.state.isActive,
-                            otherExampleIsDictating: recorder.state.isActive && dictatingExampleID != example.id,
-                            onToggleDictation: { toggleDictation(example.id) },
                             onRemove: { removeDraft(id: example.id) },
                             onNotice: { appModel.notice = .info($0) }
                         )
@@ -46,31 +54,26 @@ struct VoiceExamplesView: View {
                         .disabled(appModel.isWorking)
                     }
 
-                    SpeechCaptureStatusView(
-                        state: recorder.state,
-                        context: dictatingExampleNumber.map { "Content example \($0)" }
-                    )
-
                     VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                         Button("Save examples", systemImage: "checkmark") {
                             _ = appModel.saveVoiceExamples(drafts, context: context)
                         }
                         .buttonStyle(AgentSecondaryButtonStyle())
-                        .disabled(appModel.isWorking || recorder.state.isActive)
+                        .disabled(appModel.isWorking)
 
                         if approvedProfile == nil {
                             Button("Build voice profile", systemImage: "waveform.and.person.filled") {
                                 buildVoiceProfile()
                             }
                             .buttonStyle(AgentPrimaryButtonStyle())
-                            .disabled(usableCount < 3 || appModel.isWorking || recorder.state.isActive)
+                            .disabled(usableCount < 3 || appModel.isWorking)
                             if usableCount < 3 {
                                 Text("Add \(3 - usableCount) more \(usableCount == 2 ? "example" : "examples").")
                                     .font(.agentMono)
                                     .foregroundStyle(Color.agentSecondary)
                             }
                         } else if let approvedProfile, appModel.isVoiceProfileStale(approvedProfile, context: context) {
-                            CyCallout {
+                            CyCallout(heading: .noticed) {
                                 Text("Examples saved. Use Teach Cy in Settings when you want to update your voice profile.")
                                     .font(.agentBody)
                             }
@@ -79,34 +82,32 @@ struct VoiceExamplesView: View {
                 }
                 .padding(AgentSpacing.x6)
                 .padding(.bottom, AgentSpacing.x16)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .background(Color.agentCanvas)
-            .navigationTitle("Content examples")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
-                }
-            }
-            .task {
-                guard !didLoad else { return }
-                didLoad = true
-                drafts = appModel.voiceExampleDrafts(context: context)
-                while drafts.count < 3 { drafts.append(VoiceExampleDraft()) }
-                proposal = appModel.initialVoiceProfileProposal(context: context)
-            }
-            .onChange(of: recorder.state) { _, newState in
-                if !newState.isActive { dictatingExampleID = nil }
-            }
-            .onDisappear {
-                speechTask?.cancel()
-                Task { await recorder.stop() }
-            }
-            .sheet(item: $proposal) { proposal in
-                InitialVoiceProfileReviewView(initialProposal: proposal)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(Color.agentCanvas)
+        .navigationTitle(embeddedInNavigation ? "Settings" : "Content examples")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(embeddedInNavigation)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(
+                    embeddedInNavigation ? "Back" : "Close",
+                    systemImage: embeddedInNavigation ? "chevron.left" : "xmark"
+                ) { dismiss() }
+                .labelStyle(.iconOnly)
             }
         }
+        .task {
+            guard !didLoad else { return }
+            didLoad = true
+            drafts = appModel.voiceExampleDrafts(context: context)
+            while drafts.count < 3 { drafts.append(VoiceExampleDraft()) }
+            proposal = appModel.initialVoiceProfileProposal(context: context)
+        }
+        .sheet(item: $proposal) { proposal in
+            InitialVoiceProfileReviewView(initialProposal: proposal)
+        }
+        .agentKeyboardDismissal()
     }
 
     private func buildVoiceProfile() {
@@ -118,50 +119,8 @@ struct VoiceExamplesView: View {
 
     private func removeDraft(id: UUID) {
         guard let index = drafts.firstIndex(where: { $0.id == id }) else { return }
-        if dictatingExampleID == id {
-            speechTask?.cancel()
-            speechTask = Task { await recorder.stop() }
-            dictatingExampleID = nil
-        }
         drafts.remove(at: index)
         if drafts.isEmpty { drafts.append(VoiceExampleDraft()) }
-    }
-
-    private func toggleDictation(_ id: UUID) {
-        if dictatingExampleID == id, recorder.state.isActive {
-            speechTask?.cancel()
-            speechTask = Task {
-                await recorder.stop()
-                dictatingExampleID = nil
-            }
-            return
-        }
-
-        speechTask?.cancel()
-        speechTask = Task {
-            if recorder.state.isActive { await recorder.stop() }
-            guard drafts.contains(where: { $0.id == id }) else { return }
-            dictatingExampleID = id
-            do {
-                let initialTranscript = drafts.first(where: { $0.id == id })?.text ?? ""
-                try await recorder.start(initialTranscript: initialTranscript) { transcript in
-                    guard let index = drafts.firstIndex(where: { $0.id == id }) else { return }
-                    drafts[index].text = transcript
-                    drafts[index].source = .text
-                }
-            } catch is CancellationError {
-                if dictatingExampleID == id { dictatingExampleID = nil }
-            } catch {
-                dictatingExampleID = nil
-                appModel.notice = .info(error.localizedDescription)
-            }
-        }
-    }
-
-    private var dictatingExampleNumber: Int? {
-        guard let dictatingExampleID,
-              let index = drafts.firstIndex(where: { $0.id == dictatingExampleID }) else { return nil }
-        return index + 1
     }
 
     private func exampleBinding(for id: UUID) -> Binding<VoiceExampleDraft> {
@@ -232,6 +191,7 @@ private struct InitialVoiceProfileReviewView: View {
                 }
             }
         }
+        .agentKeyboardDismissal()
     }
 
     private func listBinding(_ keyPath: WritableKeyPath<VoiceProfileDraft, [String]>) -> Binding<String> {
@@ -250,10 +210,11 @@ private struct InitialVoiceProfileReviewView: View {
 private struct InitialProfileTextField: View {
     let label: String
     @Binding var text: String
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            MetaLabel(label)
+            AgentInputHeader(title: label, isEditing: isFocused) { isFocused = false }
             TextField(label, text: $text, axis: .vertical)
                 .lineLimit(2...8)
                 .font(.agentBody)
@@ -261,6 +222,7 @@ private struct InitialProfileTextField: View {
                 .background(Color.agentSurface)
                 .clipShape(.rect(cornerRadius: AgentRadius.control))
                 .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+                .focused($isFocused)
         }
     }
 }

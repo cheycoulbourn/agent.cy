@@ -4,15 +4,13 @@ import SwiftUI
 struct VoiceExampleInputCard: View {
     @Binding var example: VoiceExampleDraft
     let number: Int
-    let isDictating: Bool
-    let otherExampleIsDictating: Bool
-    let onToggleDictation: () -> Void
     let onRemove: (() -> Void)?
     let onNotice: (String) -> Void
 
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var isReadingScreenshot = false
     @State private var importMessage: String?
+    @FocusState private var exampleTextIsFocused: Bool
 
     private var canonicalInstagramURL: URL? {
         InstagramPostReference.canonicalURL(from: example.sourceURLString)
@@ -51,6 +49,7 @@ struct VoiceExampleInputCard: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .agentSingleLineSubmit()
                     .padding(AgentSpacing.x3)
                     .background(Color.agentCanvas)
                     .clipShape(.rect(cornerRadius: AgentRadius.control))
@@ -76,24 +75,30 @@ struct VoiceExampleInputCard: View {
                 }
             }
 
-            ZStack(alignment: .topLeading) {
-                if example.text.isEmpty {
-                    Text("Paste or record something you wrote")
-                        .font(.agentBody)
-                        .foregroundStyle(Color.agentSecondary)
-                        .padding(.horizontal, AgentSpacing.x3 + 4)
-                        .padding(.vertical, AgentSpacing.x3 + 8)
-                        .allowsHitTesting(false)
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                AgentInputHeader(title: "Your words", isEditing: exampleTextIsFocused) {
+                    exampleTextIsFocused = false
                 }
-                TextEditor(text: $example.text)
-                    .font(.agentBody)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 128)
-                    .padding(AgentSpacing.x3)
-                    .background(Color.agentCanvas)
-                    .clipShape(.rect(cornerRadius: AgentRadius.control))
-                    .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
-                    .accessibilityLabel("Content example \(number)")
+                ZStack(alignment: .topLeading) {
+                    if example.text.isEmpty {
+                        Text("Paste something you wrote")
+                            .font(.agentBody)
+                            .foregroundStyle(Color.agentSecondary)
+                            .padding(.horizontal, AgentSpacing.x3 + 4)
+                            .padding(.vertical, AgentSpacing.x3 + 8)
+                            .allowsHitTesting(false)
+                    }
+                    TextEditor(text: $example.text)
+                        .font(.agentBody)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 128)
+                        .padding(AgentSpacing.x3)
+                        .background(Color.agentCanvas)
+                        .clipShape(.rect(cornerRadius: AgentRadius.control))
+                        .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+                        .accessibilityLabel("Content example \(number)")
+                        .focused($exampleTextIsFocused)
+                }
             }
 
             HStack {
@@ -107,21 +112,12 @@ struct VoiceExampleInputCard: View {
             }
             .font(.agentMono)
 
-            HStack(spacing: AgentSpacing.x2) {
-                Button(action: onToggleDictation) {
-                    Label(isDictating ? "Stop" : "Dictate", systemImage: isDictating ? "stop.fill" : "mic")
-                }
-                .buttonStyle(AgentCompactSecondaryButtonStyle())
-                .disabled(otherExampleIsDictating)
-                .frame(minHeight: 44)
-
-                PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                    Label(screenshotButtonTitle, systemImage: "text.viewfinder")
-                }
-                .buttonStyle(AgentCompactSecondaryButtonStyle())
-                .disabled(isReadingScreenshot)
-                .frame(minHeight: 44)
+            PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                Label(screenshotButtonTitle, systemImage: "text.viewfinder")
             }
+            .buttonStyle(AgentCompactSecondaryButtonStyle())
+            .disabled(isReadingScreenshot)
+            .frame(minHeight: 44)
 
             if let importMessage {
                 Text(importMessage)

@@ -1,4 +1,5 @@
 export * from "./ai.js";
+export * from "./ai-v2.js";
 export * from "./common.js";
 export * from "./registry.js";
 export * from "./sse.js";

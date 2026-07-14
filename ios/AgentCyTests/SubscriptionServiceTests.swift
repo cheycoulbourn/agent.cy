@@ -59,13 +59,19 @@ final class SubscriptionServiceTests: XCTestCase {
         XCTAssertEqual(state.access, .freeJourney)
     }
 
-    func testRuntimeFactoryNeverUsesPreviewForLiveAI() {
-        XCTAssertTrue(SubscriptionServiceFactory.runtime(useLiveAI: true) is UnavailableLiveSubscriptionService)
+#if DEBUG
+    func testRuntimeFactoryUsesPromotionalAccessWithoutSwitchingOffLiveAI() {
+        let service = SubscriptionServiceFactory.runtime(useLiveAI: true)
+        XCTAssertTrue(service is LocalDevelopmentSubscriptionService)
+        XCTAssertFalse(service is PreviewSubscriptionService)
     }
 
-#if DEBUG
     func testRuntimeFactoryUsesPreviewOnlyForDebugNonLiveRuns() {
         XCTAssertTrue(SubscriptionServiceFactory.runtime(useLiveAI: false) is PreviewSubscriptionService)
+    }
+#else
+    func testRuntimeFactoryFailsClosedWhenLivePurchaseVerificationIsUnavailable() {
+        XCTAssertTrue(SubscriptionServiceFactory.runtime(useLiveAI: true) is UnavailableLiveSubscriptionService)
     }
 #endif
 }

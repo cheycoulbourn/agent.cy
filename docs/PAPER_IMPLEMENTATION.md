@@ -51,10 +51,18 @@ All roles scale relative to an iOS text style. Inter Tight is not used.
 - Radii use 8 points for controls, 16 for panels, 28 for floating surfaces, and capsules where appropriate.
 - Interactive targets remain at least 44 by 44 points.
 - Resting content is flat or separated by a solid hairline. Shadows are reserved for floating controls.
-- The native liquid-glass tab bar, sheets, menus, and floating Cy control are preserved.
+- The native liquid-glass tab bar, sheets, and menus are preserved. The separate `+` chip opens creation; Cy is the fifth tab.
 
 ## Information architecture
 
-The five tabs are Today, Agenda, Tasks, Pillars, and Spark. Cy remains a separate floating control. Spark contains creation entry points and a searchable Your work section that replaces the former Library tab.
+The five tabs are Today, Agenda, Tasks, Pillars, and Cy. The separate `+` chip opens a creation hub for ideas, posts, tasks, three-angle ideation, and Idea Bank. Cy owns persistent global conversation and contextual recommendations.
 
 Today is the warm daily home. Agenda owns weekly planning. Briefs lead with title, duration, hook, script, and ending; secondary production and strategy fields remain collapsed until requested.
+
+Tasks are never inferred from posts. `Pillar tasks` and `Production` are separate lanes; tasks have explicit status, date, and priority and can progress independently of a post.
+
+Publishing uses destination + format rather than a fixed platform enum. Built-ins are Instagram, TikTok, and YouTube; creators may add custom destinations and formats. Creator Profile also holds manually managed profile links, including multiple owned accounts for the same destination. One account may be the default while every post version can select a different account. Video formats own their duration choices. A post version can be added, edited, scheduled, posted, or deleted independently.
+
+There is exactly one active anchor pillar. Supporting pillars retain their own color and preferred weekdays. Pillar controls stay inline: circle-only color choices, a custom color picker, and one-letter days.
+
+The Settings page and its Paper subpage artboards are canonical for account, assistance mode, appearance, publishing destinations, voice examples, access, export, and destructive erase. Notifications is a first-class Settings destination; Daily focus and Weekly reset live together in its Reminders section.

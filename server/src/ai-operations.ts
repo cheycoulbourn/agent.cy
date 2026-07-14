@@ -16,6 +16,10 @@ import {
   TasksProposalResultSchema,
   VoiceProfileRequestSchema,
   VoiceProfileResultSchema,
+  ComposeBriefV2RequestSchema,
+  ComposeBriefV2ResultSchema,
+  ReviseBriefV2RequestSchema,
+  ReviseBriefV2ResultSchema,
 } from "@agent-cy/contracts";
 import type {
   ComposeBriefRequest,
@@ -25,6 +29,10 @@ import type {
   ReviseBriefResult,
   VoiceProfileRequest,
   VoiceProfileResult,
+  ComposeBriefV2Request,
+  ComposeBriefV2Result,
+  ReviseBriefV2Request,
+  ReviseBriefV2Result,
 } from "@agent-cy/contracts";
 import { isDeepStrictEqual } from "node:util";
 import type { z } from "zod";
@@ -130,6 +138,32 @@ export const operationDefinitions = [
     allowanceFor: allowance("reviseBrief", 3),
   },
   {
+    path: "/v2/ai/brief/compose",
+    operation: "compose_brief",
+    promptVersion: "compose-brief.v2",
+    resultSchemaVersion: "compose-brief.result.v2",
+    requestSchema: ComposeBriefV2RequestSchema,
+    resultSchema: ComposeBriefV2ResultSchema,
+    effort: "medium",
+    maxTokens: 5_000,
+    reservationCostMicros: 100_000,
+    systemPrompt: `${sharedSystemPrompt}\nCompose one complete master brief and return exactly one meaningful variant for every selected destination-format pair. Destination names are creator-provided labels, not evidence of an account connection. Respect each selected format and duration.`,
+    allowanceFor: allowance("composeBrief", 1),
+  },
+  {
+    path: "/v2/ai/brief/revise",
+    operation: "revise_brief",
+    promptVersion: "revise-brief.v2",
+    resultSchemaVersion: "revise-brief.result.v2",
+    requestSchema: ReviseBriefV2RequestSchema,
+    resultSchema: ReviseBriefV2ResultSchema,
+    effort: "medium",
+    maxTokens: 5_000,
+    reservationCostMicros: 100_000,
+    systemPrompt: `${sharedSystemPrompt}\nApply the scoped revision and return a complete brief. Preserve the selected destination-format set and fields outside the requested scope unless consistency requires a declared related change.`,
+    allowanceFor: allowance("reviseBrief", 3),
+  },
+  {
     path: "/v1/ai/chat/turn",
     operation: "chat_turn",
     promptVersion: "chat-turn.v1",
@@ -201,6 +235,14 @@ export function operationResultIntegrityIssue(
   }
 
   if (operation === "compose_brief") {
+    if ("selectedDestinations" in (request as Record<string, unknown>)) {
+      const composeRequest = request as ComposeBriefV2Request;
+      const composeResult = result as ComposeBriefV2Result;
+      if (composeResult.brief.briefId !== composeRequest.briefId) return "brief ID changed";
+      if (!sameDestinationSet(composeResult.brief.destinationVariants, composeRequest.selectedDestinations)) return "destination variants do not match the selected destinations";
+      if (composeResult.brief.durationSeconds !== composeRequest.durationSeconds) return "duration changed from the creator selection";
+      return null;
+    }
     const composeRequest = request as ComposeBriefRequest;
     const composeResult = result as ComposeBriefResult;
     if (composeResult.brief.briefId !== composeRequest.briefId) {
@@ -221,11 +263,29 @@ export function operationResultIntegrityIssue(
   }
 
   if (operation === "revise_brief") {
+    if ("destinationVariants" in (request as ReviseBriefV2Request).brief) {
+      return revisionV2IntegrityIssue(request as ReviseBriefV2Request, result as ReviseBriefV2Result);
+    }
     return revisionIntegrityIssue(
       request as ReviseBriefRequest,
       result as ReviseBriefResult,
     );
   }
+  return null;
+}
+
+function sameDestinationSet(
+  actual: readonly { destinationId: string; formatId: string }[],
+  expected: readonly { destinationId: string; formatId: string }[],
+): boolean {
+  const keys = (items: readonly { destinationId: string; formatId: string }[]) => items.map((item) => `${item.destinationId}:${item.formatId}`).sort();
+  return isDeepStrictEqual(keys(actual), keys(expected));
+}
+
+function revisionV2IntegrityIssue(request: ReviseBriefV2Request, result: ReviseBriefV2Result): string | null {
+  if (result.brief.briefId !== request.brief.briefId) return "brief ID changed";
+  if (!sameDestinationSet(result.brief.destinationVariants, request.brief.destinationVariants)) return "destination variants changed the selected destination set";
+  if (isDeepStrictEqual(request.brief, result.brief)) return "revision made no material change";
   return null;
 }
 

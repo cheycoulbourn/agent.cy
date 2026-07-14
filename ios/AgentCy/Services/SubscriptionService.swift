@@ -59,13 +59,41 @@ enum SubscriptionServiceFactory {
     @MainActor
     static func runtime(useLiveAI: Bool) -> any SubscriptionServicing {
 #if DEBUG
-        if !useLiveAI {
-            return PreviewSubscriptionService()
-        }
-#endif
+        if useLiveAI { return LocalDevelopmentSubscriptionService() }
+        return PreviewSubscriptionService()
+#else
         return UnavailableLiveSubscriptionService()
+#endif
     }
 }
+
+#if DEBUG
+@MainActor
+struct LocalDevelopmentSubscriptionService: SubscriptionServicing {
+    let offering = SubscriptionOffering(monthlyPrice: "$8.99", trialDays: 14, isPromotionalCohort: true)
+
+    func refresh(state: SubscriptionState) async {
+        grantTestingAccess(to: state)
+    }
+
+    func startTrial(state: SubscriptionState) async throws {
+        grantTestingAccess(to: state)
+    }
+
+    func restore(state: SubscriptionState) async throws {
+        grantTestingAccess(to: state)
+    }
+
+    private func grantTestingAccess(to state: SubscriptionState) {
+        let now = Date()
+        state.access = .comped
+        if state.trialEnd.map({ $0 <= now }) != false {
+            state.trialEnd = Calendar.current.date(byAdding: .day, value: 28, to: now)
+        }
+        state.updatedAt = now
+    }
+}
+#endif
 
 @MainActor
 struct PreviewSubscriptionService: SubscriptionServicing {

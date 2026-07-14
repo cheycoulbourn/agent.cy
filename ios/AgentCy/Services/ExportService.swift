@@ -24,10 +24,18 @@ struct LocalExportService: ExportServicing {
         let messages = try context.fetch(FetchDescriptor<ConversationMessage>())
         let reminders = try context.fetch(FetchDescriptor<ReminderSettings>())
         let subscriptions = try context.fetch(FetchDescriptor<SubscriptionState>())
+        let destinations = try context.fetch(FetchDescriptor<PublishingDestination>())
+        let formats = try context.fetch(FetchDescriptor<PublishingFormat>())
+        let socialAccounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>())
+        let focusTemplates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())
+        let focusOverrides = try context.fetch(FetchDescriptor<DailyFocusOverride>())
+        let focusDayDetails = try context.fetch(FetchDescriptor<DailyFocusDayDetail>())
+        let weekProposals = try context.fetch(FetchDescriptor<PendingWeekProposal>())
+        let attachments = try context.fetch(FetchDescriptor<CreatorAttachment>())
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 6,
+            "schemaVersion": 10,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -110,12 +118,22 @@ struct LocalExportService: ExportServicing {
                     "id": output.id.uuidString,
                     "briefID": output.briefID.uuidString,
                     "platform": output.platform.rawValue,
+                    "destinationID": output.destinationID?.uuidString ?? NSNull(),
+                    "formatID": output.formatID?.uuidString ?? NSNull(),
+                    "socialAccountID": output.socialAccountID?.uuidString ?? NSNull(),
                     "caption": output.caption,
                     "openingAdjustment": output.openingAdjustment,
                     "titleOverride": output.titleOverride,
                     "cta": output.cta,
                     "editChanges": output.editChanges,
                     "status": output.status.rawValue,
+                    "seriesName": output.seriesName,
+                    "recurrence": output.recurrence.rawValue,
+                    "recurrenceWeekdays": output.recurrenceWeekdays.map(\.rawValue).sorted(),
+                    "recurrenceMonthDay": output.recurrenceMonthDay ?? NSNull(),
+                    "recurrenceEndDate": output.recurrenceEndDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "includesTargetTime": output.includesTargetTime,
+                    "seriesRootOutputID": output.seriesRootOutputID?.uuidString ?? NSNull(),
                     "targetDate": output.targetDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "postedAt": output.postedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
                 ] as [String: Any]
@@ -132,6 +150,11 @@ struct LocalExportService: ExportServicing {
                     "estimatedMinutes": task.estimatedMinutes ?? NSNull(),
                     "isCompleted": task.isCompleted,
                     "targetDate": task.targetDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "dailyFocusDate": task.dailyFocusDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "dailyFocusTitle": task.dailyFocusTitle ?? NSNull(),
+                    "dailyFocusTemplateEntryID": task.dailyFocusTemplateEntryID?.uuidString ?? NSNull(),
+                    "recurrence": task.recurrence.rawValue,
+                    "recurrenceRootTaskID": task.recurrenceRootTaskID?.uuidString ?? NSNull(),
                     "completedAt": task.completedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "recordingMilestoneEmitted": task.recordingMilestoneEmitted,
                     "isRecordingMilestoneDesignated": task.isRecordingMilestoneDesignated
@@ -154,14 +177,36 @@ struct LocalExportService: ExportServicing {
             "conversationMessages": messages.map { ["id": $0.id.uuidString, "threadID": $0.threadID.uuidString, "role": $0.role.rawValue, "text": $0.text, "createdAt": ISO8601DateFormatter().string(from: $0.createdAt)] },
             "reminderSettings": reminders.map { ["id": $0.id.uuidString, "dailyEnabled": $0.dailyEnabled, "dailyHour": $0.dailyHour, "weeklyEnabled": $0.weeklyEnabled, "weeklyWeekday": $0.weeklyWeekday, "weeklyHour": $0.weeklyHour] as [String: Any] },
             "subscriptionStates": subscriptions.map { ["id": $0.id.uuidString, "access": $0.access.rawValue, "trialEnd": $0.trialEnd.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(), "freeBriefConsumed": $0.freeBriefConsumed, "ideationRequestsUsed": $0.ideationRequestsUsed, "revisionRequestsUsed": $0.revisionRequestsUsed, "teachCyUpdatesUsed": $0.teachCyUpdatesUsed] as [String: Any] }
+            ,"publishingDestinations": destinations.map { ["id": $0.id.uuidString, "name": $0.name, "builtInKind": $0.builtInKindRaw, "isArchived": $0.isArchived] as [String: Any] }
+            ,"publishingFormats": formats.map { ["id": $0.id.uuidString, "destinationID": $0.destinationID.uuidString, "name": $0.name, "kind": $0.kind.rawValue, "isArchived": $0.isArchived] as [String: Any] }
+            ,"socialAccounts": socialAccounts.map { ["id": $0.id.uuidString, "profileID": $0.profileID.uuidString, "destinationID": $0.destinationID.uuidString, "label": $0.label, "profileURL": $0.profileURLString, "isPrimary": $0.isPrimary, "isArchived": $0.isArchived] as [String: Any] }
+            ,"dailyFocusTemplates": focusTemplates.map { ["id": $0.id.uuidString, "weekday": $0.weekday.rawValue, "kind": $0.kind.rawValue, "title": $0.title, "note": $0.note] as [String: Any] }
+            ,"dailyFocusOverrides": focusOverrides.map { ["id": $0.id.uuidString, "date": ISO8601DateFormatter().string(from: $0.date), "isCleared": $0.isCleared, "title": $0.title] as [String: Any] }
+            ,"dailyFocusDayDetails": focusDayDetails.map {
+                [
+                    "id": $0.id.uuidString,
+                    "date": ISO8601DateFormatter().string(from: $0.date),
+                    "note": $0.note,
+                    "reminderEnabled": $0.reminderEnabled,
+                    "reminderDate": $0.reminderDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+                ] as [String: Any]
+            }
+            ,"pendingWeekProposals": weekProposals.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "status": $0.statusRaw, "payloadJSON": $0.payloadJSON] as [String: Any] }
+            ,"attachments": attachments.map { ["id": $0.id.uuidString, "briefID": $0.briefID.uuidString, "fileName": $0.fileName, "kind": $0.kind.rawValue, "contentType": $0.uniformTypeIdentifier, "byteCount": $0.byteCount] as [String: Any] }
         ]
 
         let json = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         let markdown = makeMarkdown(briefs: briefs, outputs: outputs, tasks: tasks)
-        let archive = StoredZIP.make(entries: [
+        var entries: [StoredZIP.Entry] = [
             .init(path: "agentcy-export.json", data: json),
             .init(path: "briefs.md", data: Data(markdown.utf8))
-        ])
+        ]
+        for attachment in attachments {
+            if let data = attachment.cloudData {
+                entries.append(.init(path: "attachments/\(attachment.id.uuidString)-\(attachment.fileName)", data: data))
+            }
+        }
+        let archive = StoredZIP.make(entries: entries)
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentcy-export-\(Int(Date().timeIntervalSince1970))")
             .appendingPathExtension("zip")

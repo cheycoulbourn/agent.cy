@@ -22,6 +22,7 @@ import {
   VoiceProfileRequestSchema,
   VoiceProfileResultSchema,
   VoiceExampleSchema,
+  SelectedDestinationsSchema,
 } from "../src/index.js";
 
 const operationId = "11111111-1111-4111-8111-111111111111";
@@ -106,6 +107,19 @@ describe("wire enums", () => {
 });
 
 describe("AI contracts", () => {
+  it("accepts unique destination-format pairs and rejects duplicates", () => {
+    const destination = {
+      destinationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      formatId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      destinationName: "Newsletter",
+      formatName: "Essay",
+      format: "nonVideo",
+      durationSeconds: null,
+    };
+    expect(SelectedDestinationsSchema.safeParse([destination]).success).toBe(true);
+    expect(SelectedDestinationsSchema.safeParse([destination, destination]).success).toBe(false);
+  });
+
   it("allows creator examples to be deferred", () => {
     expect(
       CreatorContextSchema.safeParse({

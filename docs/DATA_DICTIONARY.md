@@ -1,5 +1,18 @@
 # Data dictionary
 
+## Paper redesign additions
+
+- `PublishingDestination` stores built-in and creator-defined destinations. `PublishingFormat` stores one or more formats per destination, including short video, long video, and non-video. Legacy `PlatformOutput.platformRaw` remains dual-written; new output identity uses `destinationID` + `formatID`.
+- `CreatorSocialAccount` stores a creator-owned profile name or handle and its public HTTPS profile link. Multiple accounts may share one destination; one may be the default for new post versions.
+- `CreatorTask.laneRaw` separates Pillar tasks from Production without changing the legacy task kind vocabulary. `pillarID` and `platformOutputID` are optional links; task lifecycle remains independent from content lifecycle.
+- `DailyFocusTemplateEntry` stores recurring weekday focus. `DailyFocusOverride` stores one-day replacement or clear behavior.
+- `CreatorAttachment` stores private creator reference files with external SwiftData storage and a 25 MB client cap. Attachment bytes never enter AI requests.
+- `PendingWeekProposal` stores a reviewable, unapplied Cy week proposal. It is not applied until explicit creator confirmation.
+- `ConversationThread.contextKindRaw` and `contextID` provide optional brief, task, pillar, or day context while preserving global threads.
+- `Pillar.roleRaw` identifies the one anchor pillar and supporting pillars. Supporting pillars own their color and weekdays; they do not inherit those values.
+
+All additions are CloudKit-safe: stable UUIDs, no unique constraints, defaulted or optional properties, and app-level idempotent backfill.
+
 All local records use stable UUIDs. SwiftData uniqueness is enforced in application code rather than with unique constraints so the first schema remains compatible with private CloudKit mirroring. Creator-authored content is local and may mirror to the creator's private iCloud database.
 
 ## Local entities
@@ -29,6 +42,17 @@ One genuine creator-authored caption, script, post, or transcript. The creator c
 - No screenshot image, thumbnail, EXIF, page HTML, or cookie data is persisted.
 - AI-visible evidence fingerprints include only the ordered example identifier, confirmed source label, confirmation state, and reviewed text. Local source URLs are deliberately excluded.
 - Reviewed text is capped at 20,000 UTF-16 units per example and 40,000 UTF-8 bytes across the request context.
+
+### CreatorSocialAccount
+
+A manually managed reference to one social profile the creator owns. This record is not an OAuth connection and does not authorize reading or publishing.
+
+- `id`, `profileID`, and `destinationID`: stable local identity and ownership links.
+- `label`: editable account name or handle, such as `@cheycreates`.
+- `profileURLString`: normalized public HTTPS profile link.
+- `isPrimary`: preferred account for new outputs on this destination. Other accounts remain selectable per post.
+- `isArchived`, `sortOrder`, `createdAt`, and `updatedAt`: additive lifecycle and display fields.
+- Multiple active records may use the same `destinationID`, allowing multiple Instagram, TikTok, YouTube, or custom accounts.
 
 ### VoiceProfile
 
@@ -68,9 +92,11 @@ A locally persisted initial extraction or Teach Cy proposal. `proposalKind` dist
 
 Meaningful differences for one selected destination. It does not duplicate the master script.
 
-- `id`, `briefID`, `platform`, `status`.
+- `id`, `briefID`, `platform`, `destinationID`, `formatID`, optional `socialAccountID`, and `status`.
 - `caption`, `openingAdjustment`, `titleOverride`, `cta`, `editChanges`.
-- Optional `targetDate` and `postedAt`.
+- Optional `targetDate` and `postedAt`; `includesTargetTime` distinguishes a precise date-and-time target from date-only planning.
+- `seriesName`, recurrence frequency and day fields, optional `recurrenceEndDate`, and `seriesRootOutputID` define a recurring series. The first scheduled output is the stable root; each future occurrence is a separate scheduled brief/output so it can be edited and completed independently.
+- An open-ended recurrence materializes the next 12 future posts. An end date materializes every matching occurrence through that date, subject to a defensive 500-occurrence cap.
 - A draft output may carry a flexible target while its master remains Spark or Developing. Scheduling lifecycle begins only after the master is Ready.
 
 ### CreatorTask
@@ -116,6 +142,15 @@ Local notification choices. iOS permission is requested only after at least one 
 - Daily: `dailyEnabled`, `dailyHour`.
 - Weekly: `weeklyEnabled`, `weeklyWeekday`, `weeklyHour`.
 - Identity: `id`, `updatedAt`.
+
+### CalendarIntegrationPreferences
+
+Device-local EventKit connection preferences. These values do not enter SwiftData or private CloudKit because calendar identifiers are specific to one device.
+
+- Selected writable calendar identifier and display title.
+- Independent `syncScheduledPosts` and `syncTasks` switches.
+- A local mapping from agent.cy post/task UUIDs to EventKit event identifiers for one-way reconciliation and cleanup.
+- No Google credential, OAuth token, or unrelated calendar event content.
 
 ### SubscriptionState
 

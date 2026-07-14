@@ -14,6 +14,7 @@ final class LiveContractTests: XCTestCase {
         let result = try decodeFixture("ideas-result", as: IdeasResultWire.self)
         XCTAssertEqual(result.ideas.count, 3)
         XCTAssertEqual(Set(result.ideas.map(\.directionId)).count, 3)
+        XCTAssertEqual(result.ideas.first?.suggestedPillarId, UUID(uuidString: "11111111-1111-4111-8111-111111111111"))
     }
 
     func testCanonicalSparkTurnFixtureDecodesNullableQuestionAndState() throws {
@@ -231,7 +232,7 @@ final class LiveContractTests: XCTestCase {
             let data = try XCTUnwrap(StubURLProtocol.bodyData(for: request))
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             XCTAssertEqual(Set(object.keys), Set(["requestId", "installationId", "appBuild", "scope", "confirmation"]))
-            XCTAssertEqual(object["installationId"] as? String, installationID.uuidString)
+            XCTAssertEqual(object["installationId"] as? String, installationID.uuidString.lowercased())
             XCTAssertEqual(object["appBuild"] as? String, "0.1 (99)")
             XCTAssertEqual(object["scope"] as? String, "serverMetadata")
             XCTAssertEqual(object["confirmation"] as? String, "ERASE")

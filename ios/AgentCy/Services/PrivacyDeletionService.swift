@@ -2,7 +2,7 @@ import Foundation
 
 struct PrivacyDeleteRequest: Codable, Equatable, Sendable {
     let requestId: UUID
-    let installationId: UUID
+    let installationId: String
     let appBuild: String
     let scope: String
     let confirmation: String
@@ -13,7 +13,7 @@ struct PrivacyDeleteRequest: Codable, Equatable, Sendable {
         appBuild: String = APIConfiguration.appBuild
     ) {
         self.requestId = requestId
-        self.installationId = installationId
+        self.installationId = installationId.uuidString.lowercased()
         self.appBuild = appBuild
         self.scope = "serverMetadata"
         self.confirmation = "ERASE"

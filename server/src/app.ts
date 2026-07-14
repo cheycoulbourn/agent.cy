@@ -90,6 +90,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await repository.seedInviteHashes(
     config.inviteCodes.map((inviteCode) => inviteIdentity.hash(inviteCode)),
   );
+  if (config.pilotCompedAccess) {
+    await repository.promoteActiveFreeJourneysToComped();
+  }
   await repository.purgeTelemetryBefore(
     new Date(clock().getTime() - config.telemetryRetentionDays * 86_400_000),
   );
@@ -147,6 +150,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         inviteIdentity.hash(parsed.data.inviteCode),
         installationIdentity.hash(rawCredential),
         clock(),
+        config.pilotCompedAccess ? "comped" : "freeJourney",
       );
       const result = InstallationRedeemResultSchema.parse({
         installationId: installation.id,
@@ -167,7 +171,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         installationIdentity,
       );
       const parsed = TelemetryEventsRequestSchema.safeParse(request.body);
-      if (!parsed.success || parsed.data.installationId !== installation.id) {
+      if (!parsed.success || !sameUuid(parsed.data.installationId, installation.id)) {
         throw new AppError("invalid_input", "The telemetry envelope is invalid.");
       }
       const receivedAt = clock();
@@ -196,7 +200,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         installationIdentity,
       );
       const parsed = PrivacyDeleteRequestSchema.safeParse(request.body);
-      if (!parsed.success || parsed.data.installationId !== installation.id) {
+      if (!parsed.success || !sameUuid(parsed.data.installationId, installation.id)) {
         throw new AppError("invalid_input", "The deletion request is invalid.");
       }
       const deletedAt = clock();
@@ -660,6 +664,10 @@ function readOperationId(body: unknown): string {
     return body.operationId;
   }
   return randomUUID();
+}
+
+function sameUuid(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function readAppBuild(body: unknown): string {

@@ -2,160 +2,178 @@ import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
-    @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [CreatorProfile]
     @Query private var voiceExamples: [VoiceExample]
-    @Query private var voiceProfiles: [VoiceProfile]
     @Query private var subscriptions: [SubscriptionState]
-    @State private var confirmErase = false
-    @State private var showTeachRequest = false
-    @State private var showVoiceProposal = false
-    @State private var showVoiceExamples = false
+    @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
+    @Query private var reminders: [ReminderSettings]
+    @AppStorage(CalendarIntegrationPreferences.selectedCalendarTitleKey) private var calendarTitle = ""
+    @AppStorage(CalendarIntegrationPreferences.syncScheduledPostsKey) private var syncCalendarPosts = false
+    @AppStorage(CalendarIntegrationPreferences.syncTasksKey) private var syncCalendarTasks = false
+    @State private var showAddAccount = false
 
     var body: some View {
         NavigationStack {
-            Form {
-                if let profile = profiles.first {
-                    Section("Creator") {
-                        TextField("Name", text: Bindable(profile).name)
-                        TextField("Goal", text: Bindable(profile).goal, axis: .vertical)
-                        Picker("How Cy helps", selection: Bindable(profile).assistanceModeRaw) {
-                            ForEach(AssistanceMode.allCases) { Text($0.title).tag($0.rawValue) }
-                        }
-                    }
-                    Section("Platforms") {
-                        ForEach(CreatorPlatform.allCases) { platform in
-                            Toggle(platform.title, isOn: platformBinding(platform, profile: profile))
-                        }
-                    }
-                }
+            ScrollView {
+                VStack(spacing: 0) {
+                    EditorialHeader(
+                        kicker: "Account",
+                        title: "Settings",
+                        subtitle: "Make agent.cy feel like yours."
+                    )
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(.top, AgentSpacing.x8)
+                    .padding(.bottom, AgentSpacing.x6)
 
-                Section("Content examples") {
-                    LabeledContent("Examples", value: "\(readyExampleCount) of 3")
-                    Button(
-                        currentVoiceProfile == nil ? "Add voice examples" : "Edit examples",
-                        systemImage: "text.badge.plus"
-                    ) {
-                        showVoiceExamples = true
-                    }
-                    .frame(minHeight: 44)
-                    if currentVoiceProfile == nil {
-                        Text("Optional. Add writing, post links, dictation, or screenshots when you are ready.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else if let currentVoiceProfile, appModel.isVoiceProfileStale(currentVoiceProfile, context: context) {
-                        Text("Your examples changed. Approve an update when you want Cy to relearn your voice.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                    VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                        if let profile = profiles.first {
+                            SettingsIndexSection(title: "Profile") {
+                                NavigationLink {
+                                    CreatorProfileSettingsView(profile: profile)
+                                } label: {
+                                    SettingsIndexRow(title: "Creator profile", value: profile.name.isEmpty ? "Add name" : profile.name)
+                                }
+                                NavigationLink {
+                                    CyAssistanceSettingsView(profile: profile)
+                                } label: {
+                                    SettingsIndexRow(title: "How Cy helps", value: profile.assistanceMode.title)
+                                }
+                                NavigationLink {
+                                    AppearanceSettingsView(profile: profile)
+                                } label: {
+                                    SettingsIndexRow(title: "Appearance", value: profile.appearance.title, isLast: true)
+                                }
+                            }
 
-                if let voiceProfile = currentVoiceProfile {
-                    Section("Voice profile · v\(voiceProfile.version)") {
-                        LabeledContent("Summary") {
-                            Text(voiceProfile.summary).multilineTextAlignment(.trailing)
-                        }
-                        LabeledContent("Traits") {
-                            Text(voiceProfile.traitsText).multilineTextAlignment(.trailing)
-                        }
-                        if !voiceProfile.avoidText.isEmpty {
-                            LabeledContent("Avoid") {
-                                Text(voiceProfile.avoidText).multilineTextAlignment(.trailing)
+                            SettingsIndexSection(title: "Accounts") {
+                                NavigationLink {
+                                    AccountSwitcherSettingsView(profile: profile)
+                                } label: {
+                                    SettingsIndexRow(title: "Switch account", value: accountSummary(for: profile))
+                                }
+                                Button {
+                                    showAddAccount = true
+                                } label: {
+                                    SettingsIndexRow(title: "Add account", value: "", isLast: true)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                        if appModel.voiceProfileProposal(context: context) != nil {
-                            Button("Review voice update", systemImage: "doc.text.magnifyingglass") {
-                                showVoiceProposal = true
+
+                        SettingsIndexSection(title: "Publishing") {
+                            NavigationLink {
+                                PublishingSettingsView()
+                            } label: {
+                                SettingsIndexRow(title: "Destinations & formats", value: "\(activeDestinationCount)")
                             }
-                            .frame(minHeight: 44)
-                        } else {
-                            Button("Teach Cy", systemImage: "quote.bubble") { showTeachRequest = true }
-                                .frame(minHeight: 44)
-                                .disabled(!appModel.allows(.teachCy, context: context))
-                            Text("Cy changes your voice profile only after you approve it.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+                            NavigationLink {
+                                CalendarIntegrationSettingsView()
+                            } label: {
+                                SettingsIndexRow(title: "Calendar", value: calendarSummary)
+                            }
+                            NavigationLink {
+                                NotificationSettingsView()
+                            } label: {
+                                SettingsIndexRow(title: "Notifications", value: reminderSummary, isLast: true)
+                            }
                         }
-                    }
-                }
 
-                if let subscription = subscriptions.first {
-                    Section("Access") {
-                        LabeledContent("Plan", value: subscription.access.rawValue.capitalized)
-                        if subscription.access == .freeJourney || subscription.access == .expired {
-                            Button("Start 14-day trial") { Task { await appModel.startTrial(context: context) } }
+                        SettingsIndexSection(title: "AI") {
+                            NavigationLink {
+                                AIConnectionsSettingsView()
+                            } label: {
+                                SettingsIndexRow(
+                                    title: "Cy connection",
+                                    value: "Connected",
+                                    isLast: true
+                                )
+                            }
                         }
-                        Button("Restore purchases") { Task { await appModel.restorePurchases(context: context) } }
-                        Text("$8.99 a month after the trial. TestFlight access is promotional.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+
+                        SettingsIndexSection(title: "Shortcuts & widgets") {
+                            NavigationLink {
+                                CaptureIdeaShortcutSettingsView()
+                            } label: {
+                                SettingsIndexRow(
+                                    title: "Idea Capture Shortcut",
+                                    value: "Setup",
+                                    isLast: true
+                                )
+                            }
+                        }
+
+                        SettingsIndexSection(title: "Cy & your data") {
+                            NavigationLink {
+                                VoiceExamplesView(embeddedInNavigation: true)
+                            } label: {
+                                SettingsIndexRow(title: "Voice examples", value: "\(readyExampleCount)")
+                            }
+                            NavigationLink {
+                                AccessSettingsView()
+                            } label: {
+                                SettingsIndexRow(title: "Access", value: accessSummary)
+                            }
+                            NavigationLink {
+                                ExportSettingsView()
+                            } label: {
+                                SettingsIndexRow(title: "Export data", value: "↗", isLast: true, showsChevron: false)
+                            }
+                        }
+
+                        SettingsIndexSection(title: "Reset") {
+                            NavigationLink {
+                                ResetPostsAndTasksSettingsView()
+                            } label: {
+                                SettingsIndexRow(
+                                    title: "Reset posts & tasks",
+                                    value: "",
+                                    tint: .agentDestructive,
+                                    secondaryTint: .agentDestructive
+                                )
+                            }
+                            NavigationLink {
+                                EraseDataSettingsView(onErased: { dismiss() })
+                            } label: {
+                                SettingsIndexRow(
+                                    title: "Erase all data",
+                                    value: "",
+                                    isLast: true,
+                                    tint: .agentDestructive,
+                                    secondaryTint: .agentDestructive
+                                )
+                            }
+                        }
+
+                        Text("Version \(versionLabel)")
+                            .font(.agentMono)
+                            .foregroundStyle(Color.agentSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, AgentSpacing.x2)
                     }
-                }
-
-                Section("Your data") {
-                    Button("Export data", systemImage: "square.and.arrow.up") { appModel.export(context: context) }
-                    if let exportURL = appModel.exportURL {
-                        ShareLink(item: exportURL) { Label("Share export ZIP", systemImage: "archivebox") }
-                    }
-                    Button("Erase all data", systemImage: "trash", role: .destructive) { confirmErase = true }
-                }
-
-                Section("Privacy") {
-                    Text("Your content stays on your devices and private iCloud. Cy receives only the text needed for your request. Audio, screenshots, and Instagram links are never sent.")
-                }
-
-                Section("About") {
-                    LabeledContent("Version", value: versionLabel)
-                    LabeledContent("Release", value: "Paper redesign · Stage 3")
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(.top, AgentSpacing.x3)
+                    .padding(.bottom, AgentSpacing.x12)
+                    .background(Color.agentSurface)
+                    .clipShape(.rect(cornerRadius: AgentRadius.floating))
                 }
             }
-            .scrollContentBackground(.hidden)
+            .scrollIndicators(.hidden)
             .background(Color.agentCanvas)
-            .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
                 }
             }
-            .confirmationDialog("Erase all agent.cy data?", isPresented: $confirmErase, titleVisibility: .visible) {
-                Button("Erase everything", role: .destructive) {
-                    Task { await appModel.eraseAll(context: context); dismiss() }
-                }
-            } message: {
-                Text("This removes local data, private iCloud records when synchronization completes, temporary audio, reminders, and locally cached access state. This cannot be undone.")
-            }
-            .sheet(isPresented: $showTeachRequest, onDismiss: {
-                if appModel.voiceProfileProposal(context: context) != nil { showVoiceProposal = true }
-            }) {
-                TeachCyRequestView(freeUpdatesRemaining: freeTeachUpdatesRemaining)
-            }
-            .sheet(isPresented: $showVoiceProposal) {
-                if let proposal = appModel.voiceProfileProposal(context: context) {
-                    VoiceProfileProposalReviewView(initialProposal: proposal)
-                }
-            }
-            .sheet(isPresented: $showVoiceExamples) {
-                VoiceExamplesView()
+        }
+        .agentKeyboardDismissal()
+        .sheet(isPresented: $showAddAccount) {
+            if let profile = profiles.first {
+                SocialAccountEditorView(profile: profile)
             }
         }
-    }
-
-    private var currentVoiceProfile: VoiceProfile? {
-        voiceProfiles
-            .filter(\.isApproved)
-            .sorted {
-                if $0.version == $1.version { return $0.updatedAt > $1.updatedAt }
-                return $0.version > $1.version
-            }
-            .first
-    }
-
-    private var freeTeachUpdatesRemaining: Int? {
-        guard let state = subscriptions.first, state.access == .freeJourney else { return nil }
-        return max(0, 1 - state.teachCyUpdatesUsed)
     }
 
     private var readyExampleCount: Int {
@@ -165,26 +183,82 @@ struct SettingsView: View {
         }.count
     }
 
-    private var versionLabel: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "3"
-        return "\(version) (\(build))"
+    private var activeDestinationCount: Int {
+        destinations.filter { !$0.isArchived }.count
     }
 
-    private func platformBinding(_ platform: CreatorPlatform, profile: CreatorProfile) -> Binding<Bool> {
-        Binding(
-            get: { profile.selectedPlatforms.contains(platform) },
-            set: { enabled in
-                var platforms = profile.selectedPlatforms
-                if enabled {
-                    if !platforms.contains(platform) { platforms.append(platform) }
-                } else if platforms.count > 1 {
-                    platforms.removeAll { $0 == platform }
+    private var reminderSummary: String {
+        guard let reminder = reminders.first else { return "Off" }
+        if reminder.dailyEnabled && reminder.weeklyEnabled { return "2 on" }
+        if reminder.dailyEnabled || reminder.weeklyEnabled { return "1 on" }
+        return "Off"
+    }
+
+    private var calendarSummary: String {
+        guard !calendarTitle.isEmpty else { return "Off" }
+        guard syncCalendarPosts || syncCalendarTasks else { return "Connected" }
+        return calendarTitle
+    }
+
+    private func accountSummary(for profile: CreatorProfile) -> String {
+        let active = socialAccounts.filter { $0.profileID == profile.id && !$0.isArchived }
+        if let primary = active.first(where: \.isPrimary) { return primary.label }
+        if let first = active.first { return first.label }
+        return "None"
+    }
+
+    private var accessSummary: String {
+        guard let subscription = subscriptions.first else { return "Free" }
+        return switch subscription.access {
+        case .freeJourney: "Free"
+        case .trial: "Trial"
+        case .paid: "Paid"
+        case .comped: "Promotional"
+        case .expired: "Expired"
+        }
+    }
+
+    private var versionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "18"
+        return "\(version) (\(build))"
+    }
+}
+
+struct NewDestinationView: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var formatName = "Post"
+    @State private var kind: PublishingFormatKind = .nonVideo
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Destination") { TextField("Name", text: $name).agentSingleLineSubmit() }
+                Section("Default format") {
+                    TextField("Format name", text: $formatName)
+                        .agentSingleLineSubmit()
+                    Picker("Type", selection: $kind) {
+                        ForEach(PublishingFormatKind.allCases) { Text($0.title).tag($0) }
+                    }
                 }
-                profile.selectedPlatforms = platforms
-                try? context.save()
             }
-        )
+            .navigationTitle("New destination")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        let destination = PublishingDestination(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+                        context.insert(destination)
+                        context.insert(PublishingFormat(destinationID: destination.id, name: formatName.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind))
+                        try? context.save(); dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || formatName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .agentKeyboardDismissal()
     }
 }
 
@@ -199,8 +273,12 @@ private struct TeachCyRequestView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("For example: Keep my openings shorter and less polished", text: $instruction, axis: .vertical)
-                        .lineLimit(3...8)
+                    AgentMultilineField(
+                        label: "Guidance",
+                        placeholder: "For example: Keep my openings shorter and less polished",
+                        text: $instruction,
+                        lineLimit: 3...8
+                    )
                 } header: {
                     Text("What should Cy learn?")
                 } footer: {
@@ -230,6 +308,7 @@ private struct TeachCyRequestView: View {
                 }
             }
         }
+        .agentKeyboardDismissal()
     }
 }
 
@@ -308,6 +387,7 @@ private struct VoiceProfileProposalReviewView: View {
             }
             .agentScreen()
         }
+        .agentKeyboardDismissal()
     }
 
     private func listBinding(_ keyPath: WritableKeyPath<VoiceProfileDraft, [String]>) -> Binding<String> {
@@ -326,10 +406,11 @@ private struct VoiceProfileProposalReviewView: View {
 private struct ProfileTextField: View {
     let label: String
     @Binding var text: String
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            MetaLabel(label)
+            AgentInputHeader(title: label, isEditing: isFocused) { isFocused = false }
             TextField(label, text: $text, axis: .vertical)
                 .font(.agentBody)
                 .lineLimit(2...8)
@@ -337,6 +418,7 @@ private struct ProfileTextField: View {
                 .background(Color.agentSurface)
                 .clipShape(.rect(cornerRadius: AgentRadius.control))
                 .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+                .focused($isFocused)
         }
     }
 }

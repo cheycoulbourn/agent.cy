@@ -3,7 +3,7 @@ import {
   VoiceProfileResultSchema,
 } from "@agent-cy/contracts";
 import { describe, expect, it } from "vitest";
-import { operationResultIntegrityIssue } from "../src/ai-operations.js";
+import { operationDefinitions, operationResultIntegrityIssue } from "../src/ai-operations.js";
 
 const profile = {
   summary: "Clear, grounded teaching.",
@@ -58,6 +58,14 @@ const request = VoiceProfileRequestSchema.parse({
 });
 
 describe("AI result integrity", () => {
+  it("keeps v1 and v2 brief endpoints available during migration", () => {
+    const paths = operationDefinitions.map((definition) => definition.path);
+    expect(paths).toContain("/v1/ai/brief/compose");
+    expect(paths).toContain("/v1/ai/brief/revise");
+    expect(paths).toContain("/v2/ai/brief/compose");
+    expect(paths).toContain("/v2/ai/brief/revise");
+  });
+
   it("rejects a no-op Teach Cy result before allowance settlement", () => {
     const result = VoiceProfileResultSchema.parse({
       profile,

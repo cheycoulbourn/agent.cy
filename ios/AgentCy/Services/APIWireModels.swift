@@ -83,6 +83,37 @@ struct SparkDevelopmentStateWire: Codable, Sendable {
     let proofOrStory: String?
     let desiredTakeaway: String?
     let constraints: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case premise
+        case audience
+        case creativeGoal
+        case proofOrStory
+        case desiredTakeaway
+        case constraints
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try encodeNullable(premise, forKey: .premise, into: &container)
+        try encodeNullable(audience, forKey: .audience, into: &container)
+        try encodeNullable(creativeGoal, forKey: .creativeGoal, into: &container)
+        try encodeNullable(proofOrStory, forKey: .proofOrStory, into: &container)
+        try encodeNullable(desiredTakeaway, forKey: .desiredTakeaway, into: &container)
+        try container.encode(constraints, forKey: .constraints)
+    }
+
+    private func encodeNullable(
+        _ value: String?,
+        forKey key: CodingKeys,
+        into container: inout KeyedEncodingContainer<CodingKeys>
+    ) throws {
+        if let value {
+            try container.encode(value, forKey: key)
+        } else {
+            try container.encodeNil(forKey: key)
+        }
+    }
 }
 
 enum AIContractVersion {
@@ -136,6 +167,7 @@ struct IdeaDirectionWire: Codable, Sendable {
     let opening: String
     let whyItFits: String
     let assumedTakeaway: String
+    let suggestedPillarId: UUID?
     let assumptions: [String]
 }
 
@@ -438,7 +470,7 @@ enum BriefRevisionFieldWire: String, CaseIterable, Codable, Identifiable, Sendab
         case .scriptBeats: "Script beats"
         case .ctaIntent: "CTA intent"
         case .filmingGuidance: "Production guidance"
-        case .proposedTasks: "Production tasks"
+        case .proposedTasks: "Focus tasks"
         case .platformVariants: "Platform differences"
         case .wholeBrief: "Whole brief"
         default: rawValue.capitalized

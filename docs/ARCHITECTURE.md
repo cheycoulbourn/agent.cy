@@ -1,5 +1,9 @@
 # Architecture
 
+## Redesign migration rule
+
+The Paper redesign uses additive SwiftData evolution only. `StoreBootstrapService` seeds and deduplicates the publishing catalog and backfills legacy outputs, profile destinations, task lanes/priorities, and pillar roles on every launch. It never deletes creator content. The v1 AI routes remain live while v2 destination-aware compose and revise routes are deployed server-first.
+
 ## System boundary
 
 ```text
@@ -20,11 +24,15 @@ Anthropic Messages API, pinned claude-sonnet-5
 
 There is no agent.cy account and no Supabase dependency.
 
+Social profiles are manual local references, not connected identities. Multiple creator-owned accounts can point at the same publishing destination, and `PlatformOutput.socialAccountID` records which account a specific post version targets. No social-platform OAuth token, platform cookie, profile scraping, or automatic publishing is introduced.
+
+Calendar integration uses EventKit on the creator's iPhone. The creator grants full Calendar access only when enabling the feature and chooses a writable calendar already configured on the device, including Google calendars connected through iOS. Calendar selection, sync toggles, and EventKit identifiers are device-local preferences rather than CloudKit records. agent.cy is the one-way source of truth: scheduled or posted platform outputs and dated top-level production tasks create or update calendar events, while calendar edits never silently mutate SwiftData.
+
 ## Client modules
 
 - Domain: SwiftData entities, lifecycle rules, task and planning logic.
 - Features: onboarding, ideation, briefs, Today, Agenda, Tasks, anchor/branch Pillars, Spark/Your work, Cy, settings.
-- Services: AI transport, speech, notifications, entitlements, telemetry, export, erasure, and installation identity.
+- Services: AI transport, speech, notifications, EventKit calendar sync, entitlements, telemetry, export, erasure, and installation identity.
 - DesignSystem: colors, typography, spacing, motion, components, and accessibility behavior.
 
 SwiftData models use stable UUIDs, application-level deduplication, optional relationships where CloudKit requires them, explicit inverses, and migration-safe defaults. Private CloudKit mirroring is configured from the first shipping schema.

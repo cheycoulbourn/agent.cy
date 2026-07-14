@@ -4,6 +4,227 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testRecurringScheduleBuildsFutureDatesAndSupportsDateOnlyTargets() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let first = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 13,
+            hour: 9,
+            minute: 45
+        )))
+
+        let openEnded = RecurringPostSchedule.futureDates(
+            after: first,
+            frequency: .daily,
+            includesTime: false,
+            calendar: calendar
+        )
+        XCTAssertEqual(openEnded.count, 12)
+        XCTAssertTrue(openEnded.allSatisfy { calendar.component(.hour, from: $0) == 12 })
+
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 27)))
+        let weekly = RecurringPostSchedule.futureDates(
+            after: first,
+            frequency: .weekly,
+            weekdays: [.monday],
+            endDate: end,
+            calendar: calendar
+        )
+        XCTAssertEqual(weekly.map { calendar.component(.day, from: $0) }, [20, 27])
+        XCTAssertTrue(weekly.allSatisfy { calendar.component(.hour, from: $0) == 9 })
+    }
+
+    func testSchedulingSeriesCreatesSeparateFutureScheduledPosts() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        let calendar = Calendar.current
+        let first = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 13,
+            hour: 9,
+            minute: 45
+        )))
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 27)))
+        let brief = CreativeBrief(title: "Weekly series", premise: "One useful post each Monday")
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels)
+        output.recurrence = .weekly
+        output.recurrenceWeekdays = [.monday]
+        output.recurrenceEndDate = end
+        output.includesTargetTime = false
+        let task = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Draft the opening",
+            kind: .scripting,
+            targetDate: first
+        )
+        context.insert(brief)
+        context.insert(output)
+        context.insert(task)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        XCTAssertTrue(model.schedulePostSeries(output: output, date: first, context: context))
+
+        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        XCTAssertEqual(briefs.count, 3)
+        XCTAssertEqual(outputs.count, 3)
+        XCTAssertEqual(tasks.count, 3)
+        XCTAssertTrue(briefs.allSatisfy { $0.status == .scheduled })
+        XCTAssertTrue(outputs.allSatisfy { $0.status == .scheduled })
+        XCTAssertTrue(outputs.allSatisfy { $0.targetDate.map { calendar.component(.hour, from: $0) == 12 } ?? false })
+        XCTAssertEqual(outputs.filter { $0.seriesRootOutputID == output.id }.count, 3)
+    }
+
+    func testTodayKeepsDraftWorkOutOfGoingLive() {
+        XCTAssertEqual(
+            TodayOutputPresentation.section(outputStatus: .draft, briefStatus: .spark),
+            .drafted
+        )
+        XCTAssertEqual(
+            TodayOutputPresentation.section(outputStatus: .scheduled, briefStatus: .developing),
+            .drafted
+        )
+        XCTAssertEqual(
+            TodayOutputPresentation.section(outputStatus: .scheduled, briefStatus: .scheduled),
+            .goingLive
+        )
+        XCTAssertEqual(
+            TodayOutputPresentation.section(outputStatus: .posted, briefStatus: .posted),
+            .goingLive
+        )
+    }
+
+    func testDraftPostResumesEditorEvenIfItsOutputWasMarkedScheduled() {
+        XCTAssertTrue(PostDraftResumePolicy.shouldResume(briefStatus: .spark))
+        XCTAssertTrue(PostDraftResumePolicy.shouldResume(briefStatus: .developing))
+        XCTAssertFalse(PostDraftResumePolicy.shouldResume(briefStatus: .ready))
+        XCTAssertTrue(
+            PostDraftResumePolicy.shouldResume(
+                briefStatus: .scheduled,
+                outputStatus: .draft
+            )
+        )
+        XCTAssertEqual(
+            PostDraftResumePolicy.outputStatus(briefStatus: .developing, current: .scheduled),
+            .draft
+        )
+    }
+
+    func testIdeaBankIdeaOpensAsOneUnscheduledPostDraft() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey", goal: "Create", selectedPlatforms: [.youtubeShorts])
+        let idea = CreativeBrief(title: "The one-job idea", premise: "A useful note to carry into the post.")
+        context.insert(profile)
+        context.insert(idea)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        let first = try XCTUnwrap(model.ensurePostDraft(for: idea, context: context))
+        let second = try XCTUnwrap(model.ensurePostDraft(for: idea, context: context))
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
+
+        XCTAssertEqual(first.id, second.id)
+        XCTAssertEqual(outputs.count, 1)
+        XCTAssertEqual(first.status, .draft)
+        XCTAssertEqual(first.platform, .youtubeShorts)
+        XCTAssertNil(first.targetDate)
+        XCTAssertNil(idea.agendaDate)
+        XCTAssertEqual(idea.title, "The one-job idea")
+        XCTAssertEqual(idea.notes, "A useful note to carry into the post.")
+    }
+
+    func testSuggestedAgendaDayIsNotPersistedUntilCreatorCommitsIt() {
+        XCTAssertFalse(PostDraftTargetPersistencePolicy.shouldWriteTargetDate(
+            hadPersistedTargetDate: false,
+            explicitlyCommitted: false
+        ))
+        XCTAssertTrue(PostDraftTargetPersistencePolicy.shouldWriteTargetDate(
+            hadPersistedTargetDate: false,
+            explicitlyCommitted: true
+        ))
+        XCTAssertTrue(PostDraftTargetPersistencePolicy.shouldWriteTargetDate(
+            hadPersistedTargetDate: true,
+            explicitlyCommitted: false
+        ))
+    }
+
+    func testDraftCanMoveBackToIdeaBankWithoutLosingItsContent() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+        let date = Date(timeIntervalSince1970: 1_752_475_600)
+        let draft = try XCTUnwrap(model.beginPostDraft(
+            pillarID: nil,
+            platform: .instagramReels,
+            durationSeconds: 45,
+            targetDate: date,
+            context: context
+        ))
+        draft.brief.title = "A useful unfinished idea"
+        draft.brief.notes = "Keep this creative direction."
+        draft.output.recurrence = .weekly
+        draft.output.recurrenceWeekdays = [.monday]
+
+        XCTAssertTrue(model.movePostDraftToIdeaBank(
+            brief: draft.brief,
+            output: draft.output,
+            context: context
+        ))
+        XCTAssertEqual(draft.brief.status, .spark)
+        XCTAssertNil(draft.brief.agendaDate)
+        XCTAssertNil(draft.output.targetDate)
+        XCTAssertEqual(draft.output.status, .draft)
+        XCTAssertEqual(draft.output.recurrence, .none)
+        XCTAssertEqual(draft.brief.title, "A useful unfinished idea")
+        XCTAssertEqual(draft.brief.notes, "Keep this creative direction.")
+    }
+
+    @MainActor
+    func testStoreBootstrapBackfillsLegacyDataAndIsIdempotent() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey", goal: "Teach", selectedPlatforms: [.instagramReels, .youtubeVideo])
+        let brief = CreativeBrief(title: "Legacy", premise: "A legacy post")
+        let output = PlatformOutput(briefID: brief.id, platform: .youtubeVideo)
+        output.durationSeconds = 0
+        let task = CreatorTask(title: "Plan the pillar", kind: .planning, priority: .medium)
+        let first = Pillar(name: "First", colorHex: "55705B")
+        let second = Pillar(name: "Second", colorHex: "416B85")
+        context.insert(profile)
+        context.insert(brief)
+        context.insert(output)
+        context.insert(task)
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+        let firstDestinationCount = try context.fetch(FetchDescriptor<PublishingDestination>()).count
+        let firstFormatCount = try context.fetch(FetchDescriptor<PublishingFormat>()).count
+        try StoreBootstrapService.run(context: context)
+
+        XCTAssertEqual(firstDestinationCount, 3)
+        XCTAssertEqual(firstFormatCount, 8)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PublishingDestination>()).count, 3)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PublishingFormat>()).count, 8)
+        XCTAssertEqual(output.destinationID, PublishingCatalog.youtubeID)
+        XCTAssertEqual(output.formatID, PublishingCatalog.youtubeVideoID)
+        XCTAssertEqual(output.durationSeconds, brief.durationSeconds)
+        XCTAssertEqual(task.priority, .none)
+        XCTAssertEqual(task.lane, .pillar)
+        XCTAssertEqual(profile.selectedDestinationIDs.count, 2)
+        XCTAssertEqual([first, second].filter { $0.role == .anchor }.count, 1)
+    }
     func testStoreUsesCloudKitOnlyWhenTheBuildExplicitlyEnablesIt() {
         XCTAssertTrue(ModelContainerFactory.shouldUseCloudKit(
             cloudKitEnabled: true,
@@ -130,7 +351,29 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
     }
 
-    func testQuickPostCreatesDraftOutputAndFlexibleTaskWithoutAdvancingLifecycle() throws {
+    func testIdeaCaptureKeepsExplicitTitleNotesAndPillar() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let pillar = Pillar(name: "Lifestyle", colorHex: "55705B")
+        context.insert(pillar)
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let brief = try XCTUnwrap(model.createSpark(
+            text: "A short note about the idea.",
+            source: .text,
+            title: "Morning reset",
+            notes: "A short note about the idea.",
+            pillarID: pillar.id,
+            context: context
+        ))
+
+        XCTAssertEqual(brief.title, "Morning reset")
+        XCTAssertEqual(brief.notes, "A short note about the idea.")
+        XCTAssertEqual(brief.pillarID, pillar.id)
+    }
+
+    func testQuickPostCreatesDraftOutputWithoutCreatingDuplicateTaskOrAdvancingLifecycle() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         context.insert(SubscriptionState(access: .paid))
@@ -146,7 +389,6 @@ final class DomainTests: XCTestCase {
             platform: .instagramReels,
             durationSeconds: 45,
             targetDate: postDate,
-            firstTaskTitle: "List the three shots",
             context: context
         ))
 
@@ -157,8 +399,7 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(output.status, .draft)
         XCTAssertEqual(output.targetDate, postDate)
         XCTAssertEqual(brief.agendaDate, postDate)
-        let task = try XCTUnwrap(model.tasks(for: brief, context: context).first)
-        XCTAssertEqual(task.title, "List the three shots")
+        XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
 
         let movedDate = postDate.addingTimeInterval(86_400)
         model.schedule(output: output, date: movedDate, context: context)
@@ -167,9 +408,265 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(output.status, .draft)
         XCTAssertEqual(brief.status, .spark)
 
-        model.toggleTask(task, context: context)
-        XCTAssertTrue(task.isCompleted)
         XCTAssertEqual(brief.status, .spark)
+    }
+
+    func testQuickPostCanOpenDirectlyIntoAnEmptyResumableDraft() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+        let postDate = Date(timeIntervalSince1970: 1_752_475_600)
+
+        let draft = try XCTUnwrap(model.beginPostDraft(
+            pillarID: nil,
+            platform: .instagramReels,
+            destinationID: PublishingCatalog.instagramID,
+            formatID: PublishingCatalog.instagramReelID,
+            durationSeconds: 45,
+            targetDate: postDate,
+            context: context
+        ))
+
+        XCTAssertTrue(draft.brief.title.isEmpty)
+        XCTAssertEqual(draft.brief.status, .spark)
+        XCTAssertEqual(draft.brief.agendaDate, postDate)
+        XCTAssertEqual(draft.output.status, .draft)
+        XCTAssertEqual(draft.output.targetDate, postDate)
+        XCTAssertEqual(draft.output.destinationID, PublishingCatalog.instagramID)
+        XCTAssertEqual(draft.output.formatID, PublishingCatalog.instagramReelID)
+    }
+
+    func testPostDraftDuplicateCreatesAnIndependentEditableCopy() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+        let postDate = Date(timeIntervalSince1970: 1_752_475_600)
+        let original = try XCTUnwrap(model.beginPostDraft(
+            pillarID: nil,
+            platform: .instagramReels,
+            durationSeconds: 45,
+            targetDate: postDate,
+            context: context
+        ))
+        original.brief.title = "A clear creative habit"
+        original.brief.notes = "Show the habit in three simple beats."
+        original.output.caption = "Save this for your next filming day."
+        let task = CreatorTask(
+            briefID: original.brief.id,
+            platformOutputID: original.output.id,
+            title: "Film the opening",
+            kind: .filming,
+            lane: .production,
+            priority: .high
+        )
+        context.insert(task)
+        context.insert(CreatorAttachment(
+            ownerKind: .postMedia,
+            briefID: original.brief.id,
+            platformOutputID: original.output.id,
+            fileName: "reference.jpg",
+            kind: .photo,
+            uniformTypeIdentifier: "public.jpeg",
+            byteCount: 3,
+            localRelativePath: "",
+            cloudData: Data([1, 2, 3]),
+            syncState: .synced
+        ))
+        try context.save()
+
+        let duplicated = try XCTUnwrap(model.duplicatePostDraft(
+            brief: original.brief,
+            output: original.output,
+            context: context
+        ))
+
+        XCTAssertNotEqual(duplicated.brief.id, original.brief.id)
+        XCTAssertNotEqual(duplicated.output.id, original.output.id)
+        XCTAssertEqual(duplicated.brief.title, "A clear creative habit copy")
+        XCTAssertEqual(duplicated.brief.notes, original.brief.notes)
+        XCTAssertEqual(duplicated.brief.status, .spark)
+        XCTAssertEqual(duplicated.output.caption, original.output.caption)
+        XCTAssertEqual(duplicated.output.status, .draft)
+        XCTAssertEqual(duplicated.output.targetDate, postDate)
+
+        let copiedTasks = model.tasks(for: duplicated.brief, context: context)
+        XCTAssertEqual(copiedTasks.count, 1)
+        XCTAssertEqual(copiedTasks.first?.title, "Film the opening")
+        XCTAssertEqual(copiedTasks.first?.platformOutputID, duplicated.output.id)
+
+        let copyBriefID = duplicated.brief.id
+        let copiedAttachments = try context.fetch(FetchDescriptor<CreatorAttachment>(
+            predicate: #Predicate { $0.briefID == copyBriefID }
+        ))
+        XCTAssertEqual(copiedAttachments.count, 1)
+        XCTAssertEqual(copiedAttachments.first?.platformOutputID, duplicated.output.id)
+    }
+
+    func testOnlyCompletelyEmptyDraftOffersDirectTrashAction() {
+        let brief = CreativeBrief(title: "", status: .spark)
+        let output = PlatformOutput(briefID: brief.id, status: .draft)
+        output.targetDate = Date()
+        output.destinationID = PublishingCatalog.instagramID
+        output.formatID = PublishingCatalog.instagramReelID
+
+        XCTAssertTrue(EmptyPostDraftDeletionPolicy.shouldOfferDirectDelete(
+            brief: brief,
+            output: output,
+            taskCount: 0,
+            attachmentCount: 0
+        ))
+
+        brief.notes = "A rough direction"
+        XCTAssertFalse(EmptyPostDraftDeletionPolicy.shouldOfferDirectDelete(
+            brief: brief,
+            output: output,
+            taskCount: 0,
+            attachmentCount: 0
+        ))
+
+        brief.notes = ""
+        XCTAssertFalse(EmptyPostDraftDeletionPolicy.shouldOfferDirectDelete(
+            brief: brief,
+            output: output,
+            taskCount: 1,
+            attachmentCount: 0
+        ))
+
+        output.status = .scheduled
+        XCTAssertFalse(EmptyPostDraftDeletionPolicy.shouldOfferDirectDelete(
+            brief: brief,
+            output: output,
+            taskCount: 0,
+            attachmentCount: 0
+        ))
+    }
+
+    func testDeletingDraftRemovesItsLinkedWorkOnly() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let draft = CreativeBrief(title: "Draft", premise: "A premise", status: .developing)
+        let otherBrief = CreativeBrief(title: "Keep", premise: "Another premise", status: .ready)
+        let output = PlatformOutput(briefID: draft.id, platform: .instagramReels, status: .draft)
+        let task = CreatorTask(briefID: draft.id, title: "Write caption", kind: .scripting)
+        let attachment = CreatorAttachment(
+            ownerKind: .referenceFile,
+            briefID: draft.id,
+            fileName: "reference.txt",
+            kind: .document,
+            uniformTypeIdentifier: "public.plain-text",
+            byteCount: 8,
+            localRelativePath: "references/reference.txt"
+        )
+        let proposal = PendingBriefProposal(
+            briefID: draft.id,
+            payloadJSON: "{}",
+            proposalKindRaw: "composition"
+        )
+        let thread = ConversationThread(briefID: draft.id, contextKind: .brief, contextID: draft.id)
+        let message = ConversationMessage(threadID: thread.id, role: .creator, text: "Help")
+        context.insert(draft)
+        context.insert(otherBrief)
+        context.insert(output)
+        context.insert(task)
+        context.insert(attachment)
+        context.insert(proposal)
+        context.insert(thread)
+        context.insert(message)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        XCTAssertTrue(model.deleteDraft(draft, context: context))
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).map(\.id), [otherBrief.id])
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PlatformOutput>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorAttachment>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PendingBriefProposal>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ConversationThread>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ConversationMessage>()).isEmpty)
+    }
+
+    func testPostRecurrenceKeepsOnlyRelevantDaySelections() {
+        let output = PlatformOutput()
+
+        output.seriesName = "Weekly creator diary"
+        output.recurrence = .weekly
+        output.recurrenceWeekdays = [.monday, .thursday]
+
+        XCTAssertEqual(output.seriesName, "Weekly creator diary")
+        XCTAssertEqual(output.recurrence, .weekly)
+        XCTAssertEqual(output.recurrenceWeekdays, [.monday, .thursday])
+
+        output.recurrence = .monthly
+        output.recurrenceMonthDay = 14
+
+        XCTAssertTrue(output.recurrenceWeekdays.isEmpty)
+        XCTAssertEqual(output.recurrenceMonthDay, 14)
+
+        output.recurrence = .none
+
+        XCTAssertNil(output.recurrenceMonthDay)
+    }
+
+    func testSocialProfileLinksNormalizeAndNewPostsUseThePrimaryAccount() throws {
+        XCTAssertEqual(
+            CreatorSocialAccount.normalizedURLString("instagram.com/cheycreates"),
+            "https://instagram.com/cheycreates"
+        )
+        XCTAssertNil(CreatorSocialAccount.normalizedURLString("not a profile link"))
+
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey", goal: "Teach")
+        let primary = CreatorSocialAccount(
+            profileID: profile.id,
+            destinationID: PublishingCatalog.instagramID,
+            label: "@cheycreates",
+            profileURLString: "instagram.com/cheycreates",
+            isPrimary: true,
+            sortOrder: 0
+        )
+        let second = CreatorSocialAccount(
+            profileID: profile.id,
+            destinationID: PublishingCatalog.instagramID,
+            label: "@cheybts",
+            profileURLString: "https://instagram.com/cheybts",
+            sortOrder: 1
+        )
+        context.insert(profile)
+        context.insert(primary)
+        context.insert(second)
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let defaultPost = try XCTUnwrap(model.createPost(
+            title: "Primary account post",
+            notes: "",
+            pillarID: nil,
+            platform: .instagramReels,
+            destinationID: PublishingCatalog.instagramID,
+            formatID: PublishingCatalog.instagramReelID,
+            durationSeconds: 45,
+            targetDate: Date(),
+            context: context
+        ))
+        XCTAssertEqual(model.outputs(for: defaultPost, context: context).first?.socialAccountID, primary.id)
+
+        let secondAccountPost = try XCTUnwrap(model.createPost(
+            title: "Second account post",
+            notes: "",
+            pillarID: nil,
+            platform: .instagramReels,
+            destinationID: PublishingCatalog.instagramID,
+            formatID: PublishingCatalog.instagramReelID,
+            socialAccountID: second.id,
+            durationSeconds: 45,
+            targetDate: Date(),
+            context: context
+        ))
+        XCTAssertEqual(model.outputs(for: secondAccountPost, context: context).first?.socialAccountID, second.id)
     }
 
     func testEnsureWeekSupportsNextWeekWithoutDuplicates() throws {
@@ -198,7 +695,6 @@ final class DomainTests: XCTestCase {
             platform: .youtubeVideo,
             durationSeconds: 480,
             targetDate: Date(),
-            firstTaskTitle: "Outline the chapters",
             context: context
         ))
 
@@ -267,7 +763,7 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(model.outputs(for: brief, context: context).isEmpty)
     }
 
-    func testBranchPillarInheritsAnchorColorAndDaysThenFallsBackSafely() {
+    func testSupportingPillarKeepsOwnColorAndDaysAndFallsBackSafely() {
         let anchor = Pillar(
             name: "Teaching",
             colorHex: "9B3A2E",
@@ -282,8 +778,8 @@ final class DomainTests: XCTestCase {
         let pillars = [anchor, branch]
 
         XCTAssertEqual(branch.resolvedAnchor(in: pillars).id, anchor.id)
-        XCTAssertEqual(branch.resolvedColorHex(in: pillars), "9B3A2E")
-        XCTAssertEqual(branch.resolvedWeekdays(in: pillars), [.monday, .wednesday])
+        XCTAssertEqual(branch.resolvedColorHex(in: pillars), "416B85")
+        XCTAssertEqual(branch.resolvedWeekdays(in: pillars), [.friday])
         XCTAssertEqual(PillarWeekday.mondayFirst.map(\.letter), ["M", "T", "W", "T", "F", "S", "S"])
 
         anchor.isArchived = true
@@ -509,4 +1005,261 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(lead[0].contains("Recommended first step"))
         XCTAssertTrue(lead[0].contains("Assumption"))
     }
+
+    func testDeniedNotificationPermissionTurnsReminderSettingsBackOff() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let settings = ReminderSettings(dailyEnabled: true, weeklyEnabled: true)
+        context.insert(settings)
+        let model = AppModel(reminderService: DeniedReminderService())
+
+        await model.applyReminderSettings(settings, context: context)
+
+        XCTAssertFalse(settings.dailyEnabled)
+        XCTAssertFalse(settings.weeklyEnabled)
+        XCTAssertEqual(model.notice?.message, "Notifications stayed off because permission was not available.")
+    }
+
+    func testSocialProfileLinksAreGeneratedFromHandles() {
+        XCTAssertEqual(
+            CreatorSocialAccount.profileURLString(forHandle: "@fromcheywithlove", destination: .instagram),
+            "https://www.instagram.com/fromcheywithlove/"
+        )
+        XCTAssertEqual(
+            CreatorSocialAccount.profileURLString(forHandle: "@chey.creates", destination: .tiktok),
+            "https://www.tiktok.com/@chey.creates"
+        )
+        XCTAssertEqual(
+            CreatorSocialAccount.profileURLString(forHandle: "CheyCreates", destination: .youtube),
+            "https://www.youtube.com/@CheyCreates"
+        )
+        XCTAssertNil(CreatorSocialAccount.profileURLString(forHandle: "not a handle", destination: .instagram))
+    }
+
+    func testAgendaCompactsElapsedDaysUnlessARealScheduledPostWasMissed() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 12)))
+        let past = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 14, hour: 9)))
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 9)))
+
+        XCTAssertTrue(AgendaDayPresentation.shouldCompact(day: past, outputs: [], now: now, calendar: calendar))
+        XCTAssertTrue(AgendaDayPresentation.shouldCompact(
+            day: past,
+            outputs: [AgendaOutputState(outputStatus: .posted, briefStatus: .posted)],
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(AgendaDayPresentation.shouldCompact(
+            day: past,
+            outputs: [AgendaOutputState(outputStatus: .draft, briefStatus: .spark)],
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(AgendaDayPresentation.shouldCompact(
+            day: past,
+            outputs: [AgendaOutputState(outputStatus: .scheduled, briefStatus: .developing)],
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(AgendaDayPresentation.shouldCompact(
+            day: past,
+            outputs: [AgendaOutputState(outputStatus: .posted, briefStatus: .posted),
+                      AgendaOutputState(outputStatus: .scheduled, briefStatus: .scheduled)],
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(AgendaDayPresentation.shouldCompact(
+            day: today,
+            outputs: [AgendaOutputState(outputStatus: .posted, briefStatus: .posted)],
+            now: now,
+            calendar: calendar
+        ))
+    }
+
+    func testAgendaOffersTaskCreationOnlyTodayAndLater() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 12)))
+        let past = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 15)))
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16)))
+        let future = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 17)))
+
+        XCTAssertFalse(AgendaDayPresentation.allowsTaskCreation(day: past, now: now, calendar: calendar))
+        XCTAssertTrue(AgendaDayPresentation.allowsTaskCreation(day: today, now: now, calendar: calendar))
+        XCTAssertTrue(AgendaDayPresentation.allowsTaskCreation(day: future, now: now, calendar: calendar))
+    }
+
+    func testAgendaMarksOnlyUnpostedPastTargetsOverdue() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 12)))
+        let past = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 15, hour: 18)))
+        let future = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 17, hour: 8)))
+
+        XCTAssertTrue(AgendaDayPresentation.isOverdue(targetDate: past, status: .scheduled, now: now, calendar: calendar))
+        XCTAssertFalse(AgendaDayPresentation.isOverdue(targetDate: past, status: .posted, now: now, calendar: calendar))
+        XCTAssertFalse(AgendaDayPresentation.isOverdue(targetDate: future, status: .scheduled, now: now, calendar: calendar))
+        XCTAssertFalse(AgendaDayPresentation.isOverdue(targetDate: nil, status: .draft, now: now, calendar: calendar))
+    }
+
+    func testAgendaUsesEarliestTaskTimeForUpcomingMetadata() throws {
+        let first = Date(timeIntervalSince1970: 100)
+        let second = Date(timeIntervalSince1970: 200)
+        XCTAssertEqual(AgendaDayPresentation.firstTaskDate(in: [second, nil, first]), first)
+        XCTAssertNil(AgendaDayPresentation.firstTaskDate(in: [nil, nil]))
+    }
+
+    func testCollapsedPastDayPostCountUsesCorrectPluralization() {
+        XCTAssertEqual(AgendaDayPresentation.postCountLabel(0), "0 posts")
+        XCTAssertEqual(AgendaDayPresentation.postCountLabel(1), "1 post")
+        XCTAssertEqual(AgendaDayPresentation.postCountLabel(2), "2 posts")
+    }
+
+    func testOnlyPastDayDrillDownShowsExplicitSaveControl() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 14, hour: 12)))
+        let past = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: now))
+        let future = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: now))
+
+        XCTAssertTrue(AgendaDayPresentation.showsPastDaySaveControl(day: past, now: now, calendar: calendar))
+        XCTAssertFalse(AgendaDayPresentation.showsPastDaySaveControl(day: now, now: now, calendar: calendar))
+        XCTAssertFalse(AgendaDayPresentation.showsPastDaySaveControl(day: future, now: now, calendar: calendar))
+        XCTAssertFalse(AgendaDayPresentation.showsSaveControl(day: past, now: now, hasChanges: false, calendar: calendar))
+        XCTAssertTrue(AgendaDayPresentation.showsSaveControl(day: past, now: now, hasChanges: true, calendar: calendar))
+        XCTAssertFalse(AgendaDayPresentation.showsSaveControl(day: now, now: now, hasChanges: true, calendar: calendar))
+    }
+
+    func testEmptyAgendaDayUsesPlusInsteadOfChevron() {
+        XCTAssertEqual(AgendaDayPresentation.trailingActionSymbol(hasPosts: false), "plus")
+        XCTAssertEqual(AgendaDayPresentation.trailingActionSymbol(hasPosts: true), "chevron.right")
+    }
+
+    func testDayPillarAssignmentOverwritesTheWeekdayAndScheduledPostPillars() {
+        let original = Pillar(name: "Original", colorHex: "55705B", assignedWeekdays: [.monday])
+        let replacement = Pillar(name: "Replacement", colorHex: "416B85")
+        let scheduledBrief = CreativeBrief(title: "Scheduled post", status: .scheduled)
+        let untouchedBrief = CreativeBrief(title: "Another day", status: .scheduled)
+        scheduledBrief.pillarID = original.id
+        untouchedBrief.pillarID = original.id
+
+        AgendaPillarAssignment.apply(
+            selectedPillarID: replacement.id,
+            weekday: .monday,
+            pillars: [original, replacement],
+            briefs: [scheduledBrief, untouchedBrief],
+            affectedBriefIDs: [scheduledBrief.id]
+        )
+
+        XCTAssertFalse(original.assignedWeekdays.contains(.monday))
+        XCTAssertTrue(replacement.assignedWeekdays.contains(.monday))
+        XCTAssertEqual(scheduledBrief.pillarID, replacement.id)
+        XCTAssertEqual(untouchedBrief.pillarID, original.id)
+    }
+
+    func testAgendaAlwaysSortsDraftsAfterScheduledPosts() {
+        XCTAssertEqual(
+            AgendaOutputOrdering.rank(outputStatus: .scheduled, briefStatus: .scheduled),
+            0
+        )
+        XCTAssertEqual(
+            AgendaOutputOrdering.rank(outputStatus: .posted, briefStatus: .posted),
+            0
+        )
+        XCTAssertEqual(
+            AgendaOutputOrdering.rank(outputStatus: .draft, briefStatus: .spark),
+            1
+        )
+        XCTAssertEqual(
+            AgendaOutputOrdering.rank(outputStatus: .scheduled, briefStatus: .developing),
+            1
+        )
+    }
+
+    func testDayAgendaHidesArchivedBriefOutputsAndTheirTasks() {
+        let activeID = UUID()
+        let archivedID = UUID()
+        let activeBriefIDs: Set<UUID> = [activeID]
+
+        XCTAssertTrue(AgendaContentVisibility.includesOutput(
+            briefID: activeID,
+            activeBriefIDs: activeBriefIDs
+        ))
+        XCTAssertFalse(AgendaContentVisibility.includesOutput(
+            briefID: archivedID,
+            activeBriefIDs: activeBriefIDs
+        ))
+        XCTAssertTrue(AgendaContentVisibility.includesTask(
+            briefID: nil,
+            activeBriefIDs: activeBriefIDs
+        ))
+        XCTAssertTrue(AgendaContentVisibility.includesTask(
+            briefID: activeID,
+            activeBriefIDs: activeBriefIDs
+        ))
+        XCTAssertFalse(AgendaContentVisibility.includesTask(
+            briefID: archivedID,
+            activeBriefIDs: activeBriefIDs
+        ))
+    }
+
+    func testPillarChipColorsAreAdjustedWhenTheyBlendIntoTheSurface() {
+        let paleYellow = AgentChipContrast.adjustedHex(pillarHex: "FFFFD8", against: "FDFDFB")
+        let darkGray = AgentChipContrast.adjustedHex(pillarHex: "141414", against: "141414")
+
+        XCTAssertNotEqual(paleYellow, "FFFFD8")
+        XCTAssertNotEqual(darkGray, "141414")
+        XCTAssertEqual(AgentChipContrast.foregroundHex(on: paleYellow), "141414")
+        XCTAssertEqual(AgentChipContrast.foregroundHex(on: "141414"), "F5F6F3")
+    }
+
+    func testAgendaPillarDotsPreserveTheCreatorsExactColor() {
+        XCTAssertEqual(
+            AgendaPillarDotPresentation.displayedHex(storedHex: "FFFFD8"),
+            "FFFFD8"
+        )
+        XCTAssertEqual(
+            AgendaPillarDotPresentation.displayedHex(storedHex: "416B85"),
+            "416B85"
+        )
+    }
+
+    func testCaptureDraftResolverIgnoresEmptyFormsAndNamesNotesOnlyPosts() {
+        XCTAssertNil(CaptureDraftResolver.ideaText("  \n "))
+        XCTAssertEqual(CaptureDraftResolver.ideaText("  A useful idea  "), "A useful idea")
+        XCTAssertNil(CaptureDraftResolver.postTitle(title: "", notes: "  "))
+        XCTAssertEqual(
+            CaptureDraftResolver.postTitle(title: "", notes: "  A rough post angle\nwith a second line  "),
+            "A rough post angle with a second line"
+        )
+        XCTAssertEqual(CaptureDraftResolver.postTitle(title: "Named post", notes: "ignored"), "Named post")
+    }
+
+    func testCyUsesContextualPersonalityHeadings() {
+        XCTAssertEqual(CyVoiceHeading.forMessage("What would feel easiest to film?", index: 0), .wantsToKnow)
+        XCTAssertEqual(CyVoiceHeading.forMessage("I recommend starting with the hook.", index: 0), .thinksYouShould)
+        XCTAssertEqual(CyVoiceHeading.forMessage("I noticed a pattern in your strongest ideas.", index: 0), .noticed)
+        XCTAssertEqual(CyVoiceHeading.forMessage("Here is a clean first draft.", index: 0), .says)
+        XCTAssertEqual(CyVoiceHeading.forMessage("Here is another direction.", index: 1), .hasAnIdea)
+    }
+}
+
+@MainActor
+private final class DeniedReminderService: ReminderServicing {
+    func apply(_ settings: ReminderSettings) async throws {
+        throw ReminderServiceError.permissionDenied
+    }
+
+    func applyFocusReminder(
+        id: UUID,
+        enabled: Bool,
+        date: Date?,
+        title: String,
+        body: String
+    ) async throws {
+        throw ReminderServiceError.permissionDenied
+    }
+
+    func cancelAll() async {}
 }

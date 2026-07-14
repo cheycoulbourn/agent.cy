@@ -55,6 +55,19 @@ enum VoiceExampleSource: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum VoiceSourceRole: String, CaseIterable, Codable, Identifiable, Sendable {
+    case ownVoice
+    case inspiration
+
+    var id: String { rawValue }
+    var title: String { self == .ownVoice ? "Your voice" : "Inspiration" }
+    var detail: String {
+        self == .ownVoice
+            ? "Counts toward the three examples Cy needs to learn your voice."
+            : "Guides high-level traits only. Cy will not copy wording."
+    }
+}
+
 struct VoiceExampleDraft: Identifiable, Equatable, Sendable {
     var id: UUID
     var text: String
@@ -124,6 +137,44 @@ enum ContentFormat: String, CaseIterable, Codable, Identifiable, Sendable {
         }
     }
     var defaultDuration: Int { self == .shortForm ? 45 : 480 }
+}
+
+enum PublishingFormatKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case shortVideo
+    case longVideo
+    case nonVideo
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .shortVideo: "Short video"
+        case .longVideo: "Long video"
+        case .nonVideo: "Non-video"
+        }
+    }
+    var contentFormat: ContentFormat? {
+        switch self {
+        case .shortVideo: .shortForm
+        case .longVideo: .longForm
+        case .nonVideo: nil
+        }
+    }
+    var defaultDurationSeconds: Int? {
+        switch self {
+        case .shortVideo: 45
+        case .longVideo: 480
+        case .nonVideo: nil
+        }
+    }
+}
+
+enum BuiltInDestinationKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case instagram
+    case tiktok
+    case youtube
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
 }
 
 enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -208,6 +259,42 @@ enum PlatformOutputStatus: String, CaseIterable, Codable, Sendable {
     case posted
 }
 
+enum PostRecurrenceFrequency: String, CaseIterable, Codable, Identifiable, Sendable {
+    case none
+    case daily
+    case weekly
+    case monthly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .none: "Does not repeat"
+        case .daily: "Daily"
+        case .weekly: "Weekly"
+        case .monthly: "Monthly"
+        }
+    }
+}
+
+enum TaskRecurrenceFrequency: String, CaseIterable, Codable, Identifiable, Sendable {
+    case none
+    case daily
+    case weekly
+    case monthly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .none: "One time"
+        case .daily: "Daily"
+        case .weekly: "Weekly"
+        case .monthly: "Monthly"
+        }
+    }
+}
+
 enum CreatorTaskKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case planning
     case scripting
@@ -237,13 +324,181 @@ enum CreatorTaskKind: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum TaskLane: String, CaseIterable, Codable, Identifiable, Sendable {
+    case pillar
+    case production
+
+    var id: String { rawValue }
+    var title: String { self == .pillar ? "Pillar" : "Focus" }
+    var shortTitle: String { self == .pillar ? "Pillar" : "Focus" }
+}
+
 enum TaskPriority: String, CaseIterable, Codable, Identifiable, Sendable {
+    case none
+    case high
+    case urgent
+    // Retained only so populated stores decode before the idempotent backfill.
     case low
     case medium
-    case high
+
+    var id: String { rawValue }
+    static var selectableCases: [TaskPriority] { [.none, .high, .urgent] }
+    var title: String {
+        switch self {
+        case .none, .low, .medium: "None"
+        case .high: "High"
+        case .urgent: "Urgent"
+        }
+    }
+    var normalized: TaskPriority {
+        switch self {
+        case .low, .medium: .none
+        default: self
+        }
+    }
+}
+
+enum DailyFocusKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case planning
+    case scripting
+    case filming
+    case editing
+    case publishing
+    case community
+    case businessAdmin
+
+    // Kept so existing stores migrate without losing earlier focus choices.
+    case posting
+    case admin
+    case custom
+
+    var id: String { rawValue }
+
+    static let selectableCases: [DailyFocusKind] = [
+        .planning,
+        .scripting,
+        .filming,
+        .editing,
+        .publishing,
+        .community,
+        .businessAdmin,
+    ]
+
+    var title: String {
+        switch self {
+        case .planning: "Planning"
+        case .scripting: "Scripting"
+        case .filming: "Filming"
+        case .editing: "Editing"
+        case .publishing, .posting: "Publishing"
+        case .community: "Community"
+        case .businessAdmin, .admin: "Business/Admin"
+        case .custom: "Custom"
+        }
+    }
+
+    var taskKind: CreatorTaskKind? {
+        switch self {
+        case .planning: .planning
+        case .scripting: .scripting
+        case .filming: .filming
+        case .editing: .editing
+        case .publishing, .posting: .publishing
+        case .community, .businessAdmin, .admin: .creatorBusiness
+        case .custom: nil
+        }
+    }
+
+    var directive: String {
+        switch self {
+        case .planning:
+            "Choose what to make and map the next steps."
+        case .scripting:
+            "Write hooks, beats, and calls to action."
+        case .filming:
+            "Batch record while your setup is ready."
+        case .editing:
+            "Shape footage into clean, finished cuts."
+        case .publishing, .posting:
+            "Finish captions, covers, and posting details."
+        case .community:
+            "Reply, engage, and connect with your audience."
+        case .businessAdmin, .admin:
+            "Handle the work that keeps your creator business moving."
+        case .custom:
+            "Use this day for the work that matters most."
+        }
+    }
+
+    static func combinedTitle(_ kinds: [DailyFocusKind]) -> String {
+        let unique = kinds.reduce(into: [DailyFocusKind]()) { values, kind in
+            if !values.contains(kind) { values.append(kind) }
+        }
+        guard let first = unique.first else { return "Rest" }
+        guard unique.count > 1 else { return first.title }
+        return "\(first.title) & \(unique[1].title.lowercased())"
+    }
+
+    static func combinedDirective(_ kinds: [DailyFocusKind]) -> String {
+        let unique = kinds.reduce(into: [DailyFocusKind]()) { values, kind in
+            if !values.contains(kind) { values.append(kind) }
+        }
+        guard !unique.isEmpty else { return "Recover, reset, or leave the day open." }
+        return unique.prefix(2).map(\.directive).joined(separator: " ")
+    }
+}
+
+enum PillarRole: String, CaseIterable, Codable, Identifiable, Sendable {
+    case anchor
+    case supporting
+
+    var id: String { rawValue }
+    var title: String { self == .anchor ? "Anchor pillar" : "Supporting pillar" }
+}
+
+enum CompensationType: String, CaseIterable, Codable, Identifiable, Sendable {
+    case paid
+    case gifted
+    case both
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+}
+
+enum AttachmentOwnerKind: String, Codable, Sendable {
+    case referenceFile
+    case postMedia
+}
+
+enum AttachmentKind: String, Codable, Sendable {
+    case photo
+    case video
+    case document
+    case other
+}
+
+enum AttachmentSyncState: String, Codable, Sendable {
+    case localOnly
+    case eligible
+    case synced
+    case failed
+}
+
+enum AppearancePreference: String, CaseIterable, Codable, Identifiable, Sendable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+enum ConversationContextKind: String, Codable, Sendable {
+    case none
+    case brief
+    case task
+    case pillar
+    case day
 }
 
 enum PillarWeekday: Int, CaseIterable, Codable, Identifiable, Sendable {
@@ -286,22 +541,56 @@ enum SubscriptionAccess: String, CaseIterable, Codable, Sendable {
     var canEditExisting: Bool { true }
 }
 
+enum AIConnectionMode: String, CaseIterable, Codable, Identifiable, Sendable {
+    case cyIncluded
+    case claudeSubscription
+
+    static let storageKey = "agentCy.aiConnectionMode"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cyIncluded: "Cy included"
+        case .claudeSubscription: "Claude subscription"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .cyIncluded: "Cy included"
+        case .claudeSubscription: "Claude handoff"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .cyIncluded:
+            "Ask Cy and keep the full conversation inside agent.cy."
+        case .claudeSubscription:
+            "Send a prepared prompt to the official Claude app, then bring the response back."
+        }
+    }
+}
+
 enum ConversationRole: String, Codable, Sendable {
     case creator
     case cy
+    case claude
 }
 
 enum AppTab: String, CaseIterable, Identifiable, Sendable {
     case today
-    case agenda
     case tasks
     case pillars
-    case spark
+    case ideaBank
+    case cy
 
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .today: "Today"
+        case .today: "Plan"
+        case .ideaBank: "Idea Bank"
         default: rawValue.capitalized
         }
     }
@@ -309,11 +598,29 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
     var symbol: String {
         switch self {
         case .today: "house.fill"
-        case .agenda: "calendar"
         case .tasks: "checkmark.circle"
         case .pillars: "square.grid.2x2"
-        case .spark: "sparkles"
+        case .ideaBank: "lightbulb"
+        case .cy: "sparkles"
         }
+    }
+}
+
+enum WeeklyPlanningCue {
+    static let lastOpenedStorageKey = "agentcy.cy.weekly-planning.last-opened-week"
+
+    static func weekKey(for date: Date, calendar: Calendar = .current) -> String {
+        let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
+        return "\(components.yearForWeekOfYear ?? 0)-\(components.weekOfYear ?? 0)"
+    }
+
+    static func shouldPulse(
+        on date: Date,
+        lastOpenedWeekKey: String,
+        calendar: Calendar = .current
+    ) -> Bool {
+        calendar.component(.weekday, from: date) == 2 &&
+            lastOpenedWeekKey != weekKey(for: date, calendar: calendar)
     }
 }
 
@@ -339,13 +646,22 @@ struct IdeaDirection: Identifiable, Equatable, Sendable {
     let premise: String
     let opening: String
     let assumption: String
+    let suggestedPillarID: UUID?
 
-    init(id: UUID = UUID(), title: String, premise: String, opening: String, assumption: String) {
+    init(
+        id: UUID = UUID(),
+        title: String,
+        premise: String,
+        opening: String,
+        assumption: String,
+        suggestedPillarID: UUID? = nil
+    ) {
         self.id = id
         self.title = title
         self.premise = premise
         self.opening = opening
         self.assumption = assumption
+        self.suggestedPillarID = suggestedPillarID
     }
 }
 

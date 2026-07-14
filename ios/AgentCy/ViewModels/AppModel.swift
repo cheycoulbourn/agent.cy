@@ -3,6 +3,7 @@ import Observation
 import SwiftData
 
 enum AppSheet: String, Identifiable {
+    case creationHub
     case quickCapture
     case askCy
     case settings
@@ -21,10 +22,17 @@ enum AppNotice: Equatable {
     }
 }
 
+enum IdeaSuggestionOutcome {
+    case success([IdeaDirection])
+    case unavailable(message: String, requiresUpgrade: Bool)
+    case cancelled
+}
+
 @MainActor
 @Observable
 final class AppModel {
     var selectedTab: AppTab = .today
+    var appearancePreference: AppearancePreference = .system
     var presentedSheet: AppSheet?
     var notice: AppNotice?
     var isWorking = false
@@ -33,19 +41,25 @@ final class AppModel {
     var quickCaptureStartsWithIdeas = false
     var quickCaptureStartsWithTask = false
     var quickCaptureStartsWithPost = false
-    var quickCaptureStartsRecording = false
     var quickCaptureTargetDate: Date?
     var quickCapturePillarID: UUID?
+    var quickCaptureTaskLane: TaskLane?
+    var quickCaptureTaskFocus: DailyFocusTaskAssignment?
+    var widgetAgendaDay: Date?
+    var widgetBriefID: UUID?
+    var requestedPlanMode: PlanMode?
     var briefProposals: [UUID: BriefProposal] = [:]
     var revisionProposals: [UUID: BriefRevisionProposal] = [:]
     var voiceProfileChangeProposal: VoiceProfileChangeProposal?
     var hasInstallationCredential = false
+    var isInstallationCredentialStatusResolved = false
     var isRedeemingInvite = false
 
     @ObservationIgnored let requiresInstallationInvite: Bool
 
     @ObservationIgnored private let creativeService: any CreativeServicing
     @ObservationIgnored private let reminderService: any ReminderServicing
+    @ObservationIgnored private let calendarSyncService: any CalendarSyncServicing
     @ObservationIgnored private let subscriptionService: any SubscriptionServicing
     @ObservationIgnored private let exportService: any ExportServicing
     @ObservationIgnored private let credentialStore: any InstallationCredentialStoring
@@ -56,6 +70,7 @@ final class AppModel {
     init(
         creativeService: any CreativeServicing = PreviewCreativeService(),
         reminderService: any ReminderServicing = LocalReminderService(),
+        calendarSyncService: any CalendarSyncServicing = EventKitCalendarSyncService.shared,
         subscriptionService: any SubscriptionServicing = PreviewSubscriptionService(),
         exportService: any ExportServicing = LocalExportService(),
         credentialStore: any InstallationCredentialStoring = DeviceOnlyKeychainCredentialStore.shared,
@@ -66,6 +81,7 @@ final class AppModel {
     ) {
         self.creativeService = creativeService
         self.reminderService = reminderService
+        self.calendarSyncService = calendarSyncService
         self.subscriptionService = subscriptionService
         self.exportService = exportService
         self.credentialStore = credentialStore
@@ -75,7 +91,8 @@ final class AppModel {
         self.allowsOfflinePrivacyErase = allowsOfflinePrivacyErase
     }
 
-    func refreshInstallationCredentialStatus() async {
+    func refreshInstallationCredentialStatus(context: ModelContext? = nil) async {
+        defer { isInstallationCredentialStatusResolved = true }
         guard requiresInstallationInvite else {
             hasInstallationCredential = true
             return
@@ -86,6 +103,9 @@ final class AppModel {
                 return
             }
             hasInstallationCredential = identity.credentialExpiresAt.map { $0 > Date() } ?? true
+            if let context {
+                synchronizeSubscriptionAccess(with: identity, context: context)
+            }
         } catch {
             hasInstallationCredential = false
             notice = .error(error.localizedDescription)
@@ -93,7 +113,8 @@ final class AppModel {
     }
 
     @discardableResult
-    func redeemInstallationInvite(_ code: String) async -> Bool {
+    func redeemInstallationInvite(_ code: String, context: ModelContext? = nil) async -> Bool {
+        defer { isInstallationCredentialStatusResolved = true }
         guard requiresInstallationInvite else {
             hasInstallationCredential = true
             return true
@@ -101,14 +122,43 @@ final class AppModel {
         isRedeemingInvite = true
         defer { isRedeemingInvite = false }
         do {
-            _ = try await installationRedemptionClient.redeem(inviteCode: code)
+            let identity = try await installationRedemptionClient.redeem(inviteCode: code)
             hasInstallationCredential = true
+            if let context {
+                synchronizeSubscriptionAccess(with: identity, context: context)
+            }
             return true
         } catch {
             hasInstallationCredential = false
             notice = .error(error.localizedDescription)
             return false
         }
+    }
+
+    private func synchronizeSubscriptionAccess(
+        with identity: InstallationIdentity,
+        context: ModelContext
+    ) {
+        guard let state = subscriptionState(context) else { return }
+#if DEBUG
+        if APIConfiguration.useLiveAI {
+            state.access = .comped
+            state.trialEnd = Calendar.current.date(byAdding: .day, value: 28, to: Date())
+            state.updatedAt = Date()
+            try? context.save()
+            return
+        }
+#endif
+        if let entitlementEnd = identity.promotionalEntitlementEndsAt,
+           entitlementEnd <= Date(),
+           identity.access == .comped {
+            state.access = .expired
+        } else {
+            state.access = identity.access
+        }
+        state.trialEnd = identity.promotionalEntitlementEndsAt ?? state.trialEnd
+        state.updatedAt = Date()
+        try? context.save()
     }
 
     func prepareVoiceProfile(from draft: OnboardingDraft) async -> VoiceProfileExtraction? {
@@ -356,7 +406,7 @@ final class AppModel {
             dailyEnabled: draft.dailyReminderEnabled,
             dailyHour: draft.dailyReminderHour,
             weeklyEnabled: draft.weeklyReminderEnabled,
-            weeklyWeekday: draft.weeklyReminderWeekday,
+            weeklyWeekday: 2,
             weeklyHour: draft.weeklyReminderHour
         )
         context.insert(settings)
@@ -371,10 +421,102 @@ final class AppModel {
         return true
     }
 
+    func applyReminderSettings(_ settings: ReminderSettings, context: ModelContext) async {
+        settings.updatedAt = Date()
+        do {
+            try context.save()
+            try await reminderService.apply(settings)
+        } catch {
+            settings.dailyEnabled = false
+            settings.weeklyEnabled = false
+            settings.updatedAt = Date()
+            try? context.save()
+            notice = .info("Notifications stayed off because permission was not available.")
+        }
+    }
+
+    func refreshReminderSchedule(context: ModelContext) async {
+        guard let settings = try? context.fetch(FetchDescriptor<ReminderSettings>()).first else { return }
+        try? await reminderService.apply(settings)
+    }
+
+    var calendarAuthorization: AgentCalendarAuthorization {
+        calendarSyncService.authorization
+    }
+
+    func requestCalendarAccess() async -> Bool {
+        do {
+            return try await calendarSyncService.requestFullAccess()
+        } catch {
+            notice = .error(error.localizedDescription)
+            return false
+        }
+    }
+
+    func availableCalendars() -> [AgentCalendarChoice] {
+        calendarSyncService.availableCalendars()
+    }
+
+    func refreshCalendarSync(context: ModelContext, showConfirmation: Bool = false) {
+        do {
+            try calendarSyncService.reconcile(context: context)
+            if showConfirmation {
+                notice = .info("Your calendar is up to date.")
+            }
+        } catch {
+            if showConfirmation {
+                notice = .error(error.localizedDescription)
+            }
+        }
+    }
+
+    func disconnectCalendar(context: ModelContext) {
+        do {
+            try calendarSyncService.disconnect()
+            notice = .info("Calendar disconnected. Your agent.cy schedule is unchanged.")
+        } catch {
+            notice = .error("Calendar could not be disconnected: \(error.localizedDescription)")
+        }
+    }
+
+    func queueCalendarSync(context: ModelContext) {
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            WidgetSnapshotService.refresh(context: context)
+            self?.refreshCalendarSync(context: context)
+        }
+    }
+
+    func applyFocusReminder(
+        _ details: DailyFocusDayDetail,
+        focusTitle: String,
+        context: ModelContext
+    ) async {
+        details.updatedAt = Date()
+        do {
+            try context.save()
+            try await reminderService.applyFocusReminder(
+                id: details.id,
+                enabled: details.reminderEnabled,
+                date: details.reminderDate,
+                title: focusTitle,
+                body: details.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        } catch {
+            details.reminderEnabled = false
+            details.updatedAt = Date()
+            try? context.save()
+            notice = .info(error.localizedDescription)
+        }
+    }
+
     @discardableResult
     func createSpark(
         text: String,
         source: SparkSource,
+        title explicitTitle: String? = nil,
+        notes: String = "",
+        pillarID: UUID? = nil,
         targetDate: Date? = nil,
         context: ModelContext
     ) -> CreativeBrief? {
@@ -384,12 +526,294 @@ final class AppModel {
             notice = .error("Add an idea before saving.")
             return nil
         }
-        let title = titleFromSpark(premise)
+        let cleanedTitle = explicitTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let title = cleanedTitle.isEmpty ? titleFromSpark(premise) : cleanedTitle
         let brief = CreativeBrief(title: title, premise: premise, source: source)
+        brief.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        brief.pillarID = pillarID
         brief.agendaDate = targetDate
         context.insert(brief)
         try? context.save()
         return brief
+    }
+
+    @discardableResult
+    func ensurePostDraft(
+        for brief: CreativeBrief,
+        context: ModelContext
+    ) -> PlatformOutput? {
+        let briefID = brief.id
+        if let existing = try? context.fetch(FetchDescriptor<PlatformOutput>(
+            predicate: #Predicate { $0.briefID == briefID },
+            sortBy: [SortDescriptor(\.createdAt)]
+        )).first {
+            existing.status = .draft
+            if brief.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                brief.notes = brief.premise
+            }
+            brief.updatedAt = Date()
+            try? context.save()
+            return existing
+        }
+
+        guard brief.status == .spark || brief.status == .developing else { return nil }
+        let profile = try? context.fetch(FetchDescriptor<CreatorProfile>()).first
+        let platform = profile?.selectedPlatforms.first ?? .instagramReels
+        let catalogIDs = PublishingCatalog.identifiers(for: platform)
+        let duration = platform.format.durationOptions.contains(brief.durationSeconds)
+            ? brief.durationSeconds
+            : platform.format.defaultDuration
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: platform,
+            destinationID: catalogIDs.destination,
+            formatID: catalogIDs.format,
+            socialAccountID: preferredSocialAccountID(for: catalogIDs.destination, context: context),
+            durationSeconds: duration,
+            status: .draft
+        )
+        output.targetDate = brief.agendaDate
+        if brief.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            brief.notes = brief.premise
+        }
+        brief.durationSeconds = duration
+        brief.updatedAt = Date()
+        context.insert(output)
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            return output
+        } catch {
+            context.delete(output)
+            notice = .error("That idea could not be opened as a post draft.")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func beginPostDraft(
+        pillarID: UUID?,
+        platform: CreatorPlatform,
+        destinationID: UUID? = nil,
+        formatID: UUID? = nil,
+        socialAccountID: UUID? = nil,
+        durationSeconds: Int,
+        targetDate: Date,
+        context: ModelContext
+    ) -> (brief: CreativeBrief, output: PlatformOutput)? {
+        guard can(.createSpark, context: context) else { return nil }
+
+        let normalizedDuration = platform.format.durationOptions.contains(durationSeconds)
+            ? durationSeconds
+            : platform.format.defaultDuration
+        let brief = CreativeBrief(title: "", premise: "", source: .text, status: .spark)
+        brief.pillarID = pillarID
+        brief.durationSeconds = normalizedDuration
+        brief.agendaDate = targetDate
+        context.insert(brief)
+
+        let catalogIDs = PublishingCatalog.identifiers(for: platform)
+        let resolvedDestinationID = destinationID ?? catalogIDs.destination
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: platform,
+            destinationID: resolvedDestinationID,
+            formatID: formatID ?? catalogIDs.format,
+            socialAccountID: socialAccountID ?? preferredSocialAccountID(
+                for: resolvedDestinationID,
+                context: context
+            ),
+            durationSeconds: normalizedDuration,
+            status: .draft
+        )
+        output.targetDate = targetDate
+        context.insert(output)
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            return (brief, output)
+        } catch {
+            context.delete(output)
+            context.delete(brief)
+            notice = .error("That draft could not be started.")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func duplicatePostDraft(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        context: ModelContext
+    ) -> (brief: CreativeBrief, output: PlatformOutput)? {
+        guard can(.createSpark, context: context),
+              PostDraftResumePolicy.shouldResume(
+                briefStatus: brief.status,
+                outputStatus: output.status
+              ) else { return nil }
+
+        let now = Date()
+        let cleanTitle = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let copy = CreativeBrief(
+            title: cleanTitle.isEmpty ? "Untitled post copy" : "\(cleanTitle) copy",
+            premise: brief.premise,
+            source: brief.source,
+            status: .spark,
+            createdAt: now
+        )
+        copy.notes = brief.notes
+        copy.scriptEnabled = brief.scriptEnabled
+        copy.audience = brief.audience
+        copy.creativeGoal = brief.creativeGoal
+        copy.takeaway = brief.takeaway
+        copy.durationSeconds = brief.durationSeconds
+        copy.spokenHook = brief.spokenHook
+        copy.firstFrameText = brief.firstFrameText
+        copy.scriptBeatsText = brief.scriptBeatsText
+        copy.close = brief.close
+        copy.ctaIntent = brief.ctaIntent
+        copy.filmingGuidance = brief.filmingGuidance
+        copy.editingGuidance = brief.editingGuidance
+        copy.assumptionsText = brief.assumptionsText
+        copy.voiceConfidence = brief.voiceConfidence
+        copy.readyBriefPayloadJSON = brief.readyBriefPayloadJSON
+        copy.pillarID = brief.pillarID
+        copy.isBrandCollaboration = brief.isBrandCollaboration
+        copy.brandName = brief.brandName
+        copy.compensationType = brief.compensationType
+        copy.compensationAmount = brief.compensationAmount
+        copy.compensationCurrencyCode = brief.compensationCurrencyCode
+        copy.giftedProductDescription = brief.giftedProductDescription
+        copy.giftedEstimatedValue = brief.giftedEstimatedValue
+        copy.promoCode = brief.promoCode
+        copy.promoLinkString = brief.promoLinkString
+        copy.agendaDate = brief.agendaDate
+        context.insert(copy)
+
+        let outputCopy = PlatformOutput(
+            briefID: copy.id,
+            platform: output.platform,
+            destinationID: output.destinationID,
+            formatID: output.formatID,
+            socialAccountID: output.socialAccountID,
+            durationSeconds: output.durationSeconds,
+            status: .draft,
+            createdAt: now
+        )
+        outputCopy.caption = output.caption
+        outputCopy.openingAdjustment = output.openingAdjustment
+        outputCopy.titleOverride = output.titleOverride
+        outputCopy.cta = output.cta
+        outputCopy.editChanges = output.editChanges
+        outputCopy.targetDate = output.targetDate
+        outputCopy.seriesName = output.seriesName
+        outputCopy.recurrence = output.recurrence
+        outputCopy.recurrenceWeekdays = output.recurrenceWeekdays
+        outputCopy.recurrenceMonthDay = output.recurrenceMonthDay
+        outputCopy.recurrenceEndDate = output.recurrenceEndDate
+        outputCopy.includesTargetTime = output.includesTargetTime
+        context.insert(outputCopy)
+
+        let sourceBriefID = brief.id
+        let sourceTasks = (try? context.fetch(FetchDescriptor<CreatorTask>(
+            predicate: #Predicate { $0.briefID == sourceBriefID },
+            sortBy: [SortDescriptor(\CreatorTask.sortOrder)]
+        ))) ?? []
+        var taskCopiesBySourceID: [UUID: CreatorTask] = [:]
+        for task in sourceTasks {
+            let taskCopy = CreatorTask(
+                briefID: copy.id,
+                pillarID: task.pillarID,
+                platformOutputID: task.platformOutputID == output.id ? outputCopy.id : nil,
+                title: task.title,
+                kind: task.kind,
+                lane: task.lane,
+                priority: task.priority,
+                notes: task.notes,
+                estimatedMinutes: task.estimatedMinutes,
+                targetDate: task.targetDate,
+                dailyFocusDate: task.dailyFocusDate,
+                dailyFocusTitle: task.dailyFocusTitle,
+                dailyFocusTemplateEntryID: task.dailyFocusTemplateEntryID,
+                sortOrder: task.sortOrder,
+                isRecordingMilestoneDesignated: task.isRecordingMilestoneDesignated,
+                createdAt: now
+            )
+            taskCopiesBySourceID[task.id] = taskCopy
+            context.insert(taskCopy)
+        }
+        for task in sourceTasks {
+            guard let parentID = task.parentTaskID,
+                  let taskCopy = taskCopiesBySourceID[task.id] else { continue }
+            taskCopy.parentTaskID = taskCopiesBySourceID[parentID]?.id
+        }
+
+        let sourceAttachments = (try? context.fetch(FetchDescriptor<CreatorAttachment>(
+            predicate: #Predicate { $0.briefID == sourceBriefID },
+            sortBy: [SortDescriptor(\CreatorAttachment.createdAt)]
+        ))) ?? []
+        for attachment in sourceAttachments {
+            context.insert(CreatorAttachment(
+                ownerKind: attachment.ownerKind,
+                briefID: copy.id,
+                platformOutputID: attachment.platformOutputID == output.id ? outputCopy.id : nil,
+                fileName: attachment.fileName,
+                kind: attachment.kind,
+                uniformTypeIdentifier: attachment.uniformTypeIdentifier,
+                byteCount: attachment.byteCount,
+                localRelativePath: attachment.localRelativePath,
+                cloudData: attachment.cloudData,
+                syncState: attachment.syncState,
+                createdAt: now
+            ))
+        }
+
+        do {
+            try context.save()
+            return (copy, outputCopy)
+        } catch {
+            context.delete(outputCopy)
+            context.delete(copy)
+            notice = .error("That post could not be duplicated.")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func movePostDraftToIdeaBank(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        context: ModelContext
+    ) -> Bool {
+        guard PostDraftResumePolicy.shouldResume(
+            briefStatus: brief.status,
+            outputStatus: output.status
+        ) else {
+            notice = .info("Only drafts can be moved to the Idea Bank.")
+            return false
+        }
+
+        brief.status = .spark
+        brief.agendaDate = nil
+        brief.updatedAt = Date()
+        output.status = .draft
+        output.targetDate = nil
+        output.recurrence = .none
+        output.recurrenceWeekdays = []
+        output.recurrenceMonthDay = nil
+        output.recurrenceEndDate = nil
+
+        do {
+            try context.save()
+            notice = .info("Saved to your Idea Bank.")
+            queueCalendarSync(context: context)
+            return true
+        } catch {
+            notice = .error("That post could not be moved to your Idea Bank.")
+            return false
+        }
     }
 
     @discardableResult
@@ -398,9 +822,11 @@ final class AppModel {
         notes: String,
         pillarID: UUID?,
         platform: CreatorPlatform,
+        destinationID: UUID? = nil,
+        formatID: UUID? = nil,
+        socialAccountID: UUID? = nil,
         durationSeconds: Int,
         targetDate: Date,
-        firstTaskTitle: String,
         context: ModelContext
     ) -> CreativeBrief? {
         guard can(.createSpark, context: context) else { return nil }
@@ -425,21 +851,25 @@ final class AppModel {
         brief.agendaDate = targetDate
         context.insert(brief)
 
-        let output = PlatformOutput(briefID: brief.id, platform: platform, status: .draft)
+        let catalogIDs = PublishingCatalog.identifiers(for: platform)
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: platform,
+            destinationID: destinationID ?? catalogIDs.destination,
+            formatID: formatID ?? catalogIDs.format,
+            socialAccountID: socialAccountID ?? preferredSocialAccountID(
+                for: destinationID ?? catalogIDs.destination,
+                context: context
+            ),
+            durationSeconds: durationSeconds,
+            status: .draft
+        )
         output.targetDate = targetDate
         context.insert(output)
 
-        let cleanTask = firstTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanTask.isEmpty {
-            context.insert(CreatorTask(
-                briefID: brief.id,
-                title: cleanTask,
-                kind: .planning
-            ))
-        }
-
         do {
             try context.save()
+            queueCalendarSync(context: context)
             return brief
         } catch {
             notice = .error("That post could not be saved.")
@@ -462,16 +892,33 @@ final class AppModel {
     }
 
     @discardableResult
-    func createTask(title: String, kind: CreatorTaskKind, priority: TaskPriority = .medium, targetDate: Date?, context: ModelContext) -> CreatorTask? {
+    func createTask(title: String, kind: CreatorTaskKind, lane: TaskLane = .pillar, priority: TaskPriority = .none, targetDate: Date?, focusAssignment: DailyFocusTaskAssignment? = nil, recurrence: TaskRecurrenceFrequency = .none, context: ModelContext) -> CreatorTask? {
         guard can(.createTask, context: context) else { return nil }
         let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
             notice = .error("Give the task a clear next action.")
             return nil
         }
-        let task = CreatorTask(title: cleaned, kind: kind, priority: priority, targetDate: targetDate)
+        let task = CreatorTask(
+            title: cleaned,
+            kind: focusAssignment?.taskKind ?? kind,
+            lane: focusAssignment == nil ? lane : .production,
+            priority: priority.normalized,
+            targetDate: targetDate,
+            dailyFocusDate: focusAssignment?.date,
+            dailyFocusTitle: focusAssignment?.title,
+            dailyFocusTemplateEntryID: focusAssignment?.templateEntryID,
+            recurrence: recurrence
+        )
+        if recurrence != .none { task.recurrenceRootTaskID = task.id }
         context.insert(task)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            notice = .error("That task could not be created.")
+            return nil
+        }
+        queueCalendarSync(context: context)
         return task
     }
 
@@ -490,10 +937,16 @@ final class AppModel {
         let siblings = subtasks(for: parent, context: context)
         let subtask = CreatorTask(
             briefID: parent.briefID,
+            pillarID: parent.pillarID,
+            platformOutputID: parent.platformOutputID,
             parentTaskID: parent.id,
             title: cleaned,
             kind: parent.kind,
+            lane: parent.lane,
             priority: parent.priority,
+            dailyFocusDate: parent.dailyFocusDate,
+            dailyFocusTitle: parent.dailyFocusTitle,
+            dailyFocusTemplateEntryID: parent.dailyFocusTemplateEntryID,
             sortOrder: siblings.count
         )
         context.insert(subtask)
@@ -502,8 +955,36 @@ final class AppModel {
     }
 
     func findIdeas(context: ModelContext) async -> [IdeaDirection] {
-        guard can(.ideate, context: context) else { return [] }
-        guard let profile = fetchOne(CreatorProfile.self, context: context) else { return [] }
+        switch await findIdeaSuggestions(context: context) {
+        case .success(let ideas):
+            return ideas
+        case .unavailable(let message, _):
+            notice = .error(message)
+            return []
+        case .cancelled:
+            return []
+        }
+    }
+
+    func findIdeaSuggestions(context: ModelContext) async -> IdeaSuggestionOutcome {
+        guard let state = subscriptionState(context) else {
+            return .unavailable(
+                message: "Cy access could not be confirmed.",
+                requiresUpgrade: false
+            )
+        }
+        guard AccessPolicy.allows(.ideate, state: state) else {
+            return .unavailable(
+                message: "Your three free idea sessions have been used.",
+                requiresUpgrade: true
+            )
+        }
+        guard let profile = fetchOne(CreatorProfile.self, context: context) else {
+            return .unavailable(
+                message: "Finish your creator profile before asking Cy for ideas.",
+                requiresUpgrade: false
+            )
+        }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -515,14 +996,42 @@ final class AppModel {
             state?.ideationRequestsUsed += 1
             state?.updatedAt = Date()
             try? context.save()
-            return ideas
+            return .success(ideas)
+        } catch is CancellationError {
+            return .cancelled
+        } catch let error as URLError where error.code == .cancelled {
+            return .cancelled
         } catch {
-            notice = .error(error.localizedDescription)
-            return []
+            let requiresUpgrade = ideaSuggestionsRequireUpgrade(for: error)
+            return .unavailable(
+                message: requiresUpgrade
+                    ? "You’ve reached your included Cy ideas. Upgrade to Pro to keep generating personalized ideas."
+                    : error.localizedDescription,
+                requiresUpgrade: requiresUpgrade
+            )
         }
     }
 
-    func sendDialogueTurn(brief: CreativeBrief, answer: String, context: ModelContext) async {
+    private func ideaSuggestionsRequireUpgrade(for error: Error) -> Bool {
+        guard let apiError = error as? AgentCyAPIError,
+              case .server(let serverError) = apiError else { return false }
+        switch serverError.code {
+        case .entitlementRequired, .usageLimit:
+            return true
+        case .quotaExceeded:
+            return !serverError.retryable || ["free", "brief", "allowance", "credit", "used"]
+                .contains { serverError.message.localizedCaseInsensitiveContains($0) }
+        default:
+            return false
+        }
+    }
+
+    func sendDialogueTurn(
+        brief: CreativeBrief,
+        answer: String,
+        postContext: String? = nil,
+        context: ModelContext
+    ) async {
         guard can(.sparkDialogue, context: context) else { return }
         let cleaned = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
@@ -547,7 +1056,8 @@ final class AppModel {
                 answer: cleaned,
                 mode: profile.assistanceMode,
                 context: creatorContext,
-                conversation: conversation
+                conversation: conversation,
+                postContext: postContext
             )
             context.insert(ConversationMessage(threadID: thread.id, role: .cy, text: response))
             thread.turnCount += 1
@@ -926,6 +1436,7 @@ final class AppModel {
             profile.onboardingCompleted = true
         }
         try? context.save()
+        queueCalendarSync(context: context)
     }
 
     func noteManualDevelopment(of brief: CreativeBrief, context: ModelContext) {
@@ -946,15 +1457,64 @@ final class AppModel {
             if brief.agendaDate == nil || brief.agendaDate == previousDate { brief.agendaDate = date }
             brief.updatedAt = Date()
             try? context.save()
+            queueCalendarSync(context: context)
             return
         }
         guard BriefLifecycle.schedule(output, for: date, brief: brief) else {
-            notice = .info("Approve this brief before adding production or posting targets.")
+            notice = .info("Approve this brief before adding focus tasks or posting targets.")
             return
         }
         if brief.agendaDate == nil || brief.agendaDate == previousDate { brief.agendaDate = date }
         BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
         try? context.save()
+        queueCalendarSync(context: context)
+    }
+
+    @discardableResult
+    func schedulePostSeries(output: PlatformOutput, date: Date, context: ModelContext) -> Bool {
+        guard can(.schedule, context: context) else { return false }
+        guard let brief = brief(id: output.briefID, context: context) else {
+            notice = .error("That post is no longer available.")
+            return false
+        }
+
+        let scheduledDate = RecurringPostSchedule.normalizedTargetDate(
+            date,
+            includesTime: output.includesTargetTime
+        )
+        if brief.status == .spark || brief.status == .developing {
+            BriefLifecycle.approve(brief)
+            if let profile = fetchOne(CreatorProfile.self, context: context), !profile.onboardingCompleted {
+                profile.onboardingCompleted = true
+            }
+        }
+        guard BriefLifecycle.schedule(output, for: scheduledDate, brief: brief) else {
+            notice = .info("Finish this post before scheduling it.")
+            return false
+        }
+        brief.agendaDate = scheduledDate
+        BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
+
+        do {
+            try context.save()
+            let futureCount = try RecurringPostMaterializer.createFutureOccurrences(
+                rootBrief: brief,
+                rootOutput: output,
+                firstDate: scheduledDate,
+                context: context
+            )
+            try context.save()
+            if futureCount > 0 {
+                let total = futureCount + 1
+                notice = .info("Scheduled \(total) posts in this series.")
+            }
+            queueCalendarSync(context: context)
+            return output.status == .scheduled
+        } catch {
+            notice = .error("The first post is scheduled, but the future series could not be created: \(error.localizedDescription)")
+            queueCalendarSync(context: context)
+            return output.status == .scheduled
+        }
     }
 
     func togglePosted(output: PlatformOutput, context: ModelContext) {
@@ -966,6 +1526,7 @@ final class AppModel {
         }
         BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
         try? context.save()
+        queueCalendarSync(context: context)
     }
 
     func toggleTask(_ task: CreatorTask, context: ModelContext) {
@@ -987,12 +1548,69 @@ final class AppModel {
         } else if previousMilestoneExists && task.recordingMilestoneEmitted {
             task.recordingMilestoneEmitted = false
         }
-        try? context.save()
+        do {
+            if task.isCompleted {
+                try RecurringTaskMaterializer.createNextOccurrence(after: task, context: context)
+            }
+            try context.save()
+            queueCalendarSync(context: context)
+        } catch {
+            notice = .error("That task could not be updated.")
+        }
     }
 
     func archive(_ brief: CreativeBrief, context: ModelContext) {
         BriefLifecycle.archive(brief)
         try? context.save()
+        queueCalendarSync(context: context)
+    }
+
+    @discardableResult
+    func deleteDraft(_ brief: CreativeBrief, context: ModelContext) -> Bool {
+        guard [.spark, .developing].contains(brief.status) else {
+            notice = .info("Only drafts can be deleted here.")
+            return false
+        }
+
+        let briefID = brief.id
+        do {
+            let outputs = try context.fetch(FetchDescriptor<PlatformOutput>(
+                predicate: #Predicate { $0.briefID == briefID }
+            ))
+            let tasks = try context.fetch(FetchDescriptor<CreatorTask>(
+                predicate: #Predicate { $0.briefID == briefID }
+            ))
+            let attachments = try context.fetch(FetchDescriptor<CreatorAttachment>(
+                predicate: #Predicate { $0.briefID == briefID }
+            ))
+            let proposals = try context.fetch(FetchDescriptor<PendingBriefProposal>(
+                predicate: #Predicate { $0.briefID == briefID }
+            ))
+            let threads = try context.fetch(FetchDescriptor<ConversationThread>(
+                predicate: #Predicate { $0.briefID == briefID }
+            ))
+            let threadIDs = Set(threads.map(\.id))
+            let messages = try context.fetch(FetchDescriptor<ConversationMessage>())
+                .filter { threadIDs.contains($0.threadID) }
+
+            messages.forEach(context.delete)
+            threads.forEach(context.delete)
+            proposals.forEach(context.delete)
+            attachments.forEach(context.delete)
+            tasks.forEach(context.delete)
+            outputs.forEach(context.delete)
+            context.delete(brief)
+            try context.save()
+
+            briefProposals.removeValue(forKey: briefID)
+            revisionProposals.removeValue(forKey: briefID)
+            queueCalendarSync(context: context)
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That draft could not be deleted.")
+            return false
+        }
     }
 
     func replan(task: CreatorTask, choice: ReplanChoice, context: ModelContext) {
@@ -1006,12 +1624,14 @@ final class AppModel {
             return
         }
         try? context.save()
+        queueCalendarSync(context: context)
     }
 
     func deleteTask(_ task: CreatorTask, context: ModelContext) {
         subtasks(for: task, context: context).forEach(context.delete)
         context.delete(task)
         try? context.save()
+        queueCalendarSync(context: context)
     }
 
     func removeLegacySimplifyPrefixes(context: ModelContext) {
@@ -1043,6 +1663,7 @@ final class AppModel {
                 brief.agendaDate = output.targetDate
             }
             try? context.save()
+            queueCalendarSync(context: context)
             return
         }
         guard BriefLifecycle.canPlan(brief) else {
@@ -1065,6 +1686,7 @@ final class AppModel {
             brief.agendaDate = output.targetDate
         }
         try? context.save()
+        queueCalendarSync(context: context)
     }
 
     func createRepurposedSpark(from brief: CreativeBrief, context: ModelContext) -> CreativeBrief? {
@@ -1078,7 +1700,14 @@ final class AppModel {
                   let creatorContext = creatorContextWire(profile: profile, context: context) else {
                 throw CreativeServiceError.invalidLiveResponse("the approved creator context is incomplete")
             }
-            let resolvedConversation = conversation ?? [ConversationMessageWire(messageId: UUID(), role: .user, content: message)]
+            var resolvedConversation = conversation ?? []
+            let latestMessageIsCurrent = resolvedConversation.last.map {
+                $0.role == .user && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == message.trimmingCharacters(in: .whitespacesAndNewlines)
+            } ?? false
+            if !latestMessageIsCurrent {
+                resolvedConversation.append(ConversationMessageWire(messageId: UUID(), role: .user, content: message))
+            }
+            resolvedConversation = Array(resolvedConversation.suffix(24))
             return try await creativeService.reply(
                 to: message,
                 mode: profile.assistanceMode,
@@ -1168,6 +1797,91 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    func saveWeeklyFocus(
+        _ assignments: [PillarWeekday: [DailyFocusKind]],
+        context: ModelContext
+    ) -> Bool {
+        let existing = (try? context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())) ?? []
+        let now = Date()
+
+        for weekday in PillarWeekday.mondayFirst {
+            let selected = Array((assignments[weekday] ?? []).prefix(2))
+            let entry = existing.first(where: { $0.weekday == weekday })
+                ?? DailyFocusTemplateEntry(weekday: weekday, kind: .custom, title: "Rest")
+            if entry.modelContext == nil { context.insert(entry) }
+
+            let previous = DailyFocusResolver.normalizedKinds(
+                primary: entry.kind,
+                secondary: entry.secondaryKind,
+                storedTitle: entry.title
+            )
+
+            entry.weekday = weekday
+            entry.kind = selected.first ?? .custom
+            entry.secondaryKind = selected.count > 1 ? selected[1] : nil
+            entry.title = DailyFocusKind.combinedTitle(selected)
+            entry.isActive = !selected.isEmpty
+            if previous != selected {
+                entry.note = ""
+            }
+            if selected.isEmpty {
+                entry.note = ""
+                entry.durationMinutes = nil
+                entry.startMinutesFromMidnight = nil
+            }
+            entry.updatedAt = now
+        }
+
+        do {
+            try context.save()
+            return true
+        } catch {
+            notice = .error("Weekly focus could not be saved: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @discardableResult
+    func resetPostsAndTasks(context: ModelContext) -> Bool {
+        let resetThreads = ((try? context.fetch(FetchDescriptor<ConversationThread>())) ?? [])
+            .filter { thread in
+                thread.briefID != nil || thread.contextKind == .brief || thread.contextKind == .task || thread.contextKind == .day
+            }
+        let resetThreadIDs = Set(resetThreads.map(\.id))
+        let messages = (try? context.fetch(FetchDescriptor<ConversationMessage>())) ?? []
+        messages.filter { resetThreadIDs.contains($0.threadID) }.forEach(context.delete)
+        resetThreads.forEach(context.delete)
+
+        deleteAll(PendingBriefProposal.self, context: context)
+        deleteAll(PendingWeekProposal.self, context: context)
+        deleteAll(CreatorAttachment.self, context: context)
+        deleteAll(PlatformOutput.self, context: context)
+        deleteAll(CreatorTask.self, context: context)
+        deleteAll(CreativeBrief.self, context: context)
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+        } catch {
+            notice = .error("Posts and tasks could not be reset: \(error.localizedDescription)")
+            return false
+        }
+
+        briefProposals.removeAll()
+        revisionProposals.removeAll()
+        quickCaptureStartsWithIdeas = false
+        quickCaptureStartsWithTask = false
+        quickCaptureStartsWithPost = false
+        quickCaptureTargetDate = nil
+        quickCapturePillarID = nil
+        quickCaptureTaskLane = nil
+        quickCaptureTaskFocus = nil
+        recordingMilestones = 0
+        notice = .info("Posts and tasks were reset. Your pillars, profile, and settings were kept.")
+        return true
+    }
+
     func eraseAll(context: ModelContext) async {
         var completionNotice: AppNotice?
         let identity: InstallationIdentity?
@@ -1219,6 +1933,7 @@ final class AppModel {
 
     private func finishLocalErase(context: ModelContext, completionNotice: AppNotice?) async {
         await reminderService.cancelAll()
+        try? calendarSyncService.disconnect()
         removeExportArchives()
         var credentialNotice: AppNotice?
         do {
@@ -1233,8 +1948,16 @@ final class AppModel {
         deleteAll(PendingBriefProposal.self, context: context)
         deleteAll(PendingVoiceProfileProposal.self, context: context)
         deleteAll(PlatformOutput.self, context: context)
+        deleteAll(CreatorSocialAccount.self, context: context)
         deleteAll(CreatorTask.self, context: context)
         deleteAll(Pillar.self, context: context)
+        deleteAll(PublishingFormat.self, context: context)
+        deleteAll(PublishingDestination.self, context: context)
+        deleteAll(DailyFocusTemplateEntry.self, context: context)
+        deleteAll(DailyFocusOverride.self, context: context)
+        deleteAll(DailyFocusDayDetail.self, context: context)
+        deleteAll(PendingWeekProposal.self, context: context)
+        deleteAll(CreatorAttachment.self, context: context)
         deleteAll(RhythmTemplate.self, context: context)
         deleteAll(WeekPlan.self, context: context)
         deleteAll(ConversationThread.self, context: context)
@@ -1252,6 +1975,7 @@ final class AppModel {
         revisionProposals.removeAll()
         voiceProfileChangeProposal = nil
         hasInstallationCredential = false
+        isInstallationCredentialStatusResolved = true
         notice = localDeletionNotice ?? credentialNotice ?? completionNotice
     }
 
@@ -1285,9 +2009,13 @@ final class AppModel {
             return nil
         }
 
+        let catalogIDs = PublishingCatalog.identifiers(for: platform)
         let output = PlatformOutput(
             briefID: brief.id,
             platform: platform,
+            destinationID: catalogIDs.destination,
+            formatID: catalogIDs.format,
+            socialAccountID: preferredSocialAccountID(for: catalogIDs.destination, context: context),
             status: [.ready, .scheduled, .posted].contains(brief.status) ? .ready : .draft
         )
         if let source = existing.first {
@@ -1311,6 +2039,39 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    func addPublishingOutput(
+        to brief: CreativeBrief,
+        destination: PublishingDestination,
+        format: PublishingFormat,
+        context: ModelContext
+    ) -> PlatformOutput? {
+        guard can(.editExisting, context: context), brief.status != .archived else { return nil }
+        let existing = outputs(for: brief, context: context)
+        guard !existing.contains(where: { $0.destinationID == destination.id && $0.formatID == format.id }) else {
+            notice = .info("That post version is already part of this brief.")
+            return nil
+        }
+        let legacy = PublishingCatalog.legacyPlatform(destinationID: destination.id, formatID: format.id)
+            ?? (format.kind == .longVideo ? .youtubeVideo : .instagramReels)
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: legacy,
+            destinationID: destination.id,
+            formatID: format.id,
+            socialAccountID: preferredSocialAccountID(for: destination.id, context: context),
+            durationSeconds: format.kind.defaultDurationSeconds ?? brief.durationSeconds,
+            status: [.ready, .scheduled, .posted].contains(brief.status) ? .ready : .draft
+        )
+        if let source = existing.first { output.caption = source.caption; output.cta = source.cta }
+        else { output.cta = brief.ctaIntent }
+        output.titleOverride = brief.title
+        context.insert(output)
+        brief.updatedAt = Date()
+        do { try context.save(); return output }
+        catch { context.delete(output); notice = .error("That post version could not be added."); return nil }
+    }
+
     func deletePlatformOutput(
         _ output: PlatformOutput,
         from brief: CreativeBrief,
@@ -1329,6 +2090,7 @@ final class AppModel {
         brief.updatedAt = Date()
         do {
             try context.save()
+            queueCalendarSync(context: context)
         } catch {
             notice = .error("That platform could not be deleted.")
         }
@@ -1847,6 +2609,17 @@ final class AppModel {
                 content: message.text
             )
         }
+    }
+
+    private func preferredSocialAccountID(for destinationID: UUID, context: ModelContext) -> UUID? {
+        let profileID = (try? context.fetch(FetchDescriptor<CreatorProfile>()))?.first?.id
+        let accounts = ((try? context.fetch(FetchDescriptor<CreatorSocialAccount>(sortBy: [SortDescriptor(\.sortOrder)]))) ?? [])
+            .filter { account in
+                account.destinationID == destinationID &&
+                    !account.isArchived &&
+                    profileID.map { account.profileID == $0 } != false
+            }
+        return accounts.first(where: \.isPrimary)?.id ?? accounts.first?.id
     }
 
     private func deleteAll<T: PersistentModel>(_ type: T.Type, context: ModelContext) {

@@ -4,6 +4,8 @@ import SwiftUI
 struct SparkView: View {
     @Environment(AppModel.self) private var appModel
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
+    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var outputs: [PlatformOutput]
     @State private var search = ""
     @State private var status: BriefStatus?
 
@@ -21,19 +23,19 @@ struct SparkView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 EditorialHeader(
-                    kicker: "Spark",
-                    title: "Make something.",
+                    kicker: "Idea Bank",
+                    title: "Let’s make something.",
                     subtitle: "Capture something new or ask Cy for three directions."
                 )
 
                 captureSection
                 workSection
             }
-            .padding(.horizontal, AgentSpacing.x6)
+            .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
             .padding(.bottom, AgentSpacing.x16)
         }
-        .navigationTitle("Spark")
+        .navigationTitle("Idea Bank")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Search your work")
         .toolbar {
@@ -57,7 +59,7 @@ struct SparkView: View {
 
             SparkActionButton(
                 title: "Create",
-                detail: "Write, record, plan a post, or add a task.",
+                detail: "Write an idea, plan a post, or add a task.",
                 symbol: "plus"
             ) {
                 openCapture()
@@ -98,22 +100,30 @@ struct SparkView: View {
             } else {
                 ForEach(filteredBriefs) { brief in
                     NavigationLink {
-                        BriefDetailView(brief: brief)
+                        if brief.status == .spark || brief.status == .developing {
+                            IdeaPostDraftView(brief: brief)
+                        } else if let output = outputs.first(where: {
+                            $0.briefID == brief.id && PostOutputDetailPolicy.usesFinalizedView(
+                                outputStatus: $0.status,
+                                targetDate: $0.targetDate
+                            )
+                        }) {
+                            PostOutputDetailView(brief: brief, output: output)
+                        } else {
+                            BriefDetailView(brief: brief)
+                        }
                     } label: {
                         EditorialRow {
                             HStack(spacing: AgentSpacing.x3) {
-                                Image(systemName: brief.status.symbol)
-                                    .foregroundStyle(Color.actionAccent)
-                                    .frame(width: 28)
                                 VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                                     Text(brief.title)
                                         .font(.agentHeadline)
                                         .foregroundStyle(Color.agentText)
-                                    if !brief.premise.isEmpty {
-                                        Text(brief.premise)
+                                    if let pillarName = pillarName(for: brief) {
+                                        Text(pillarName)
                                             .font(.agentSubtext)
                                             .foregroundStyle(Color.agentSecondary)
-                                            .lineLimit(2)
+                                            .lineLimit(1)
                                     }
                                     MetaLabel("\(brief.status.title) · \(brief.updatedAt.formatted(.relative(presentation: .named)))")
                                 }
@@ -135,8 +145,15 @@ struct SparkView: View {
         appModel.quickCaptureStartsWithTask = false
         appModel.quickCaptureStartsWithPost = false
         appModel.quickCaptureStartsWithIdeas = ideas
-        appModel.quickCaptureStartsRecording = false
         appModel.presentedSheet = .quickCapture
+    }
+
+    private func pillarName(for brief: CreativeBrief) -> String? {
+        guard let pillarID = brief.pillarID,
+              let pillar = pillars.first(where: { $0.id == pillarID && !$0.isArchived }) else {
+            return nil
+        }
+        return pillar.name
     }
 }
 

@@ -4,7 +4,7 @@ import Foundation
 protocol CreativeServicing {
     func extractVoiceProfile(context: CreatorContextWire, mode: AssistanceMode) async throws -> VoiceProfileExtraction
     func findIdeas(context: CreatorContextWire, mode: AssistanceMode) async throws -> [IdeaDirection]
-    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> String
+    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], postContext: String?) async throws -> String
     func composeProposal(from brief: CreativeBrief, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> BriefProposal
     func proposeRevision(
         of brief: ReadyBriefWire,
@@ -83,13 +83,15 @@ struct PreviewCreativeService: CreativeServicing {
                 title: "The small shift",
                 premise: "Show one overlooked change that makes \(goal.lowercased()) easier.",
                 opening: "The thing that finally made this click wasn’t what I expected.",
-                assumption: "Your audience values a practical change they can try today."
+                assumption: "Your audience values a practical change they can try today.",
+                suggestedPillarID: context.pillars.first?.pillarId
             ),
             IdeaDirection(
                 title: "Behind the decision",
                 premise: "Walk through a decision from \(anchor.lowercased()) and explain the tradeoff honestly.",
                 opening: "I almost chose the obvious option. Here’s why I didn’t.",
-                assumption: "Your audience learns from seeing your judgment, not just the finished result."
+                assumption: "Your audience learns from seeing your judgment, not just the finished result.",
+                suggestedPillarID: context.pillars.first?.pillarId
             ),
             IdeaDirection(
                 title: "What I’d do first",
@@ -100,7 +102,7 @@ struct PreviewCreativeService: CreativeServicing {
         ]
     }
 
-    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> String {
+    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], postContext: String?) async throws -> String {
         guard turn < 8 else { throw CreativeServiceError.dialogueLimit }
         if mode == .drive {
             return "Got it. Ask about one part, or build the brief when you are ready."
@@ -404,17 +406,19 @@ struct RemoteCreativeService: CreativeServicing {
               Set(result.ideas.map(\.title)).count == 3 else {
             throw CreativeServiceError.invalidLiveResponse("ideation must return three distinct directions")
         }
+        let validPillarIDs = Set(context.pillars.map(\.pillarId))
         return result.ideas.map { idea in
             IdeaDirection(
                 title: idea.title,
                 premise: idea.premise,
                 opening: idea.opening,
-                assumption: idea.assumptions.first ?? idea.assumedTakeaway
+                assumption: idea.assumptions.first ?? idea.assumedTakeaway,
+                suggestedPillarID: idea.suggestedPillarId.flatMap { validPillarIDs.contains($0) ? $0 : nil }
             )
         }
     }
 
-    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> String {
+    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], postContext: String?) async throws -> String {
         guard turn < 8 else { throw CreativeServiceError.dialogueLimit }
         guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CreativeServiceError.missingInput }
         try validateContext(context)
@@ -425,7 +429,7 @@ struct RemoteCreativeService: CreativeServicing {
             appBuild: APIConfiguration.appBuild,
             assistanceMode: mode,
             creatorContext: context,
-            spark: spark(from: brief),
+            spark: spark(from: brief, postContext: postContext),
             turnNumber: turn + 1,
             composeNow: false,
             conversation: Array(conversation.suffix(16)),
@@ -451,7 +455,7 @@ struct RemoteCreativeService: CreativeServicing {
             assistanceMode: mode,
             creatorContext: context,
             briefId: brief.id,
-            spark: spark(from: brief),
+            spark: spark(from: brief, postContext: nil),
             conversation: Array(conversation.suffix(16)),
             workingState: developmentState(from: brief),
             durationSeconds: brief.durationSeconds,
@@ -622,8 +626,11 @@ struct RemoteCreativeService: CreativeServicing {
         }
     }
 
-    private func spark(from brief: CreativeBrief) -> SparkWire {
-        SparkWire(sparkId: brief.id, source: brief.source, text: brief.premise, sourceBriefId: nil)
+    private func spark(from brief: CreativeBrief, postContext: String?) -> SparkWire {
+        let base = brief.premise.trimmingCharacters(in: .whitespacesAndNewlines)
+        let context = postContext?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = [base, context].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return SparkWire(sparkId: brief.id, source: brief.source, text: text, sourceBriefId: nil)
     }
 
     private func developmentState(from brief: CreativeBrief) -> SparkDevelopmentStateWire {

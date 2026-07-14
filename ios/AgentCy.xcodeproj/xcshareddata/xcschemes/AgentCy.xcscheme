@@ -34,6 +34,20 @@
                ReferencedContainer = "container:AgentCy.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "496E3E1A1599D5B15C095137"
+               BuildableName = "agent.cy Widgets.appex"
+               BlueprintName = "AgentCyWidgets"
+               ReferencedContainer = "container:AgentCy.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

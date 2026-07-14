@@ -2,6 +2,10 @@ import Foundation
 import SwiftData
 
 enum ModelContainerFactory {
+    /// The app and its App Intents share one container so a shortcut can save
+    /// directly into the same offline-first store without opening a second copy.
+    static let shared = make()
+
     static func make(isStoredInMemoryOnly: Bool = false) -> ModelContainer {
         let schema = AgentCySchema.schema
         if isStoredInMemoryOnly {
@@ -22,6 +26,7 @@ enum ModelContainerFactory {
             "AgentCyStore",
             schema: schema,
             isStoredInMemoryOnly: false,
+            groupContainer: .none,
             cloudKitDatabase: database
         )
         do {

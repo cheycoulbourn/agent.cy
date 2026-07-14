@@ -18,10 +18,20 @@ final class PrivacyEraseTests: XCTestCase {
         let privacyService = OrderedPrivacyService(recorder: recorder)
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
-        context.insert(CreatorProfile(name: "Ari", goal: "Teach", adultConfirmed: true, onboardingCompleted: true))
+        let profile = CreatorProfile(name: "Ari", goal: "Teach", adultConfirmed: true, onboardingCompleted: true)
+        context.insert(profile)
         let brief = CreativeBrief(title: "Pending", premise: "A premise", status: .developing)
         context.insert(brief)
         context.insert(PendingBriefProposal(briefID: brief.id, payloadJSON: "{}"))
+        let destination = PublishingDestination(name: "Newsletter")
+        context.insert(destination)
+        context.insert(CreatorSocialAccount(
+            profileID: profile.id,
+            destinationID: destination.id,
+            label: "Ari Writes",
+            profileURLString: "https://example.com/ari"
+        ))
+        context.insert(CreatorAttachment(ownerKind: .referenceFile, briefID: brief.id, fileName: "notes.txt", kind: .document, uniformTypeIdentifier: "public.plain-text", byteCount: 5, localRelativePath: "", cloudData: Data("notes".utf8), syncState: .synced))
         context.insert(SubscriptionState(access: .comped))
         try context.save()
         let model = AppModel(
@@ -44,6 +54,9 @@ final class PrivacyEraseTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorProfile>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<PendingBriefProposal>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PublishingDestination>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorSocialAccount>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorAttachment>()).isEmpty)
         XCTAssertNil(remainingIdentity)
     }
 

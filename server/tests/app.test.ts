@@ -31,6 +31,7 @@ const config: ServerConfig = {
   inviteHashSecret: "test-invite-secret-long-enough-for-hmac",
   installationHashSecrets: ["test-install-secret-long-enough-for-hmac"],
   inviteCodes: ["FOUNDER-ONE"],
+  pilotCompedAccess: false,
   revenueCatWebhookSecret: "revenuecat-test-secret",
   revenueCatEntitlementId: "creator_access",
   requestTimeoutMs: 5_000,
@@ -614,7 +615,7 @@ describe("agent.cy server", () => {
       url: "/v1/telemetry/events",
       headers: auth(identity.credential),
       payload: {
-        installationId: identity.installationId,
+        installationId: identity.installationId.toUpperCase(),
         events: [
           {
             eventId: randomUUID(),
@@ -639,7 +640,7 @@ describe("agent.cy server", () => {
       headers: auth(identity.credential),
       payload: {
         requestId,
-        installationId: identity.installationId,
+        installationId: identity.installationId.toUpperCase(),
         appBuild: "1.0 (1)",
         scope: "serverMetadata",
         confirmation: "ERASE",

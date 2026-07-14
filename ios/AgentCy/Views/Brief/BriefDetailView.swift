@@ -1,14 +1,19 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct BriefDetailView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Bindable var brief: CreativeBrief
     @Query private var outputs: [PlatformOutput]
     @Query private var tasks: [CreatorTask]
+    @Query private var attachments: [CreatorAttachment]
     @Query private var subscriptions: [SubscriptionState]
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
+    @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
     @State private var showDevelopment = false
     @State private var showProposal = false
     @State private var showRevisionRequest = false
@@ -20,9 +25,26 @@ struct BriefDetailView: View {
     @State private var showHistory = false
     @State private var showNewPillar = false
     @State private var showPillarPicker = false
+    @State private var showFileImporter = false
+    @FocusState private var focusedLongField: LongField?
+
+    private enum LongField: Hashable {
+        case premise
+        case script
+        case assumptions
+    }
 
     private var contentFormat: ContentFormat {
         outputs.contains { $0.platform == .youtubeVideo } ? .longForm : .shortForm
+    }
+
+    private var resumablePostOutput: PlatformOutput? {
+        outputs.first {
+            PostDraftResumePolicy.shouldResume(
+                briefStatus: brief.status,
+                outputStatus: $0.status
+            )
+        }
     }
 
     init(brief: CreativeBrief) {
@@ -30,28 +52,61 @@ struct BriefDetailView: View {
         let id = brief.id
         _outputs = Query(filter: #Predicate<PlatformOutput> { $0.briefID == id }, sort: \PlatformOutput.createdAt)
         _tasks = Query(filter: #Predicate<CreatorTask> { $0.briefID == id }, sort: \CreatorTask.sortOrder)
+        _attachments = Query(filter: #Predicate<CreatorAttachment> { $0.briefID == id }, sort: \CreatorAttachment.createdAt)
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            if let resumablePostOutput {
+                ResumablePostEditorView(
+                    brief: brief,
+                    output: resumablePostOutput,
+                    onSpark: { showDevelopment = true }
+                )
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x4)
+                .padding(.bottom, 120)
+            } else {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     StatusTag(status: brief.status)
-                    TextField("Brief title", text: $brief.title, axis: .vertical)
-                        .font(.agentDisplay)
-                        .tracking(-0.64)
-                    TextField("The core premise", text: $brief.premise, axis: .vertical)
-                        .font(.agentBody)
-                        .foregroundStyle(Color.agentSecondary)
+                    TextField("Brief title", text: $brief.title)
+                        .font(.agentBriefTitle)
+                        .tracking(-0.4)
+                        .agentSingleLineSubmit()
+                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                        AgentInputHeader(title: "Premise", isEditing: focusedLongField == .premise) {
+                            focusedLongField = nil
+                        }
+                        TextField("The core premise", text: $brief.premise, axis: .vertical)
+                            .font(.agentBody)
+                            .foregroundStyle(Color.agentSecondary)
+                            .lineLimit(2...5)
+                            .focused($focusedLongField, equals: .premise)
+                    }
                 }
 
                 actionBlock
 
                 if canRequestRevision {
-                    Button("Ask Cy to revise", systemImage: "wand.and.stars") {
+                    Button {
                         showRevisionRequest = true
+                    } label: {
+                        HStack(spacing: AgentSpacing.x3) {
+                            CyAsterisk(color: .onCyAccent, size: 13, strokeWidth: 1.4)
+                            Text("Revise with Cy")
+                                .font(.agentBody.weight(.semibold))
+                            Spacer()
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .foregroundStyle(Color.onCyAccent)
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                        .background(Color.cyAccent, in: .rect(cornerRadius: AgentRadius.control))
+                        .shadow(color: Color.cyAccent.opacity(0.18), radius: 12, y: 4)
                     }
-                    .buttonStyle(AgentSecondaryButtonStyle())
+                    .buttonStyle(.plain)
                     .accessibilityHint("Opens a revision request. Your brief changes only after you accept it.")
                 }
 
@@ -64,6 +119,8 @@ struct BriefDetailView: View {
                     } label: {
                         BriefDisclosureLabel(title: "Details", detail: "Audience, pillar, filming")
                     }
+
+                    attachmentSection
 
                     taskSection
 
@@ -85,35 +142,39 @@ struct BriefDetailView: View {
                 if brief.status == .posted {
                     Button("Create a new idea from this", systemImage: "arrow.triangle.branch") {
                         if appModel.createRepurposedSpark(from: brief, context: context) != nil {
-                            appModel.selectedTab = .spark
-                            appModel.notice = .info("A new idea is waiting in Your work.")
+                            appModel.selectedTab = .ideaBank
+                            appModel.notice = .info("A new idea is waiting in your Idea Bank.")
                         }
                     }
                     .buttonStyle(AgentSecondaryButtonStyle())
                 }
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x6)
+                .padding(.bottom, AgentSpacing.x16)
             }
-            .padding(.horizontal, AgentSpacing.x6)
-            .padding(.top, AgentSpacing.x6)
-            .padding(.bottom, AgentSpacing.x16)
         }
-        .navigationTitle(brief.title)
+        .scrollDismissesKeyboard(.interactively)
+        .navigationTitle(resumablePostOutput == nil ? brief.title : "New Post")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    if hasComposedContent {
-                        Button("Ask Cy to revise", systemImage: "wand.and.stars") { showRevisionRequest = true }
-                            .disabled(!appModel.allows(.revise, context: context))
-                    } else {
-                        Button("Ask Cy about this brief", systemImage: "bubble.left.and.sparkles") { showDevelopment = true }
+            if resumablePostOutput == nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        if hasComposedContent {
+                            Button("Ask Cy to revise", systemImage: "wand.and.stars") { showRevisionRequest = true }
+                                .disabled(!appModel.allows(.revise, context: context))
+                        }
+                        Button("Archive", systemImage: "archivebox", role: .destructive) { confirmArchive = true }
+                    } label: {
+                        Image(systemName: "ellipsis")
                     }
-                    Button("Archive", systemImage: "archivebox", role: .destructive) { confirmArchive = true }
-                } label: {
-                    Image(systemName: "ellipsis")
                 }
             }
         }
-        .sheet(isPresented: $showDevelopment) { DevelopBriefView(brief: brief) }
+        .sheet(isPresented: $showDevelopment) {
+            DevelopBriefView(brief: brief, output: resumablePostOutput ?? outputs.first)
+        }
         .sheet(isPresented: $showProposal) {
             if let proposal = appModel.proposal(for: brief, context: context) {
                 BriefProposalReviewView(brief: brief, initialProposal: proposal)
@@ -152,28 +213,30 @@ struct BriefDetailView: View {
         } message: {
             Text("Archive is always manual. You can still find this content in Your work.")
         }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image, .pdf, .plainText, .movie, .audio], allowsMultipleSelection: false) { result in
+            importAttachment(result)
+        }
         .onChange(of: manualDevelopmentFingerprint) { oldValue, newValue in
             guard oldValue != newValue, brief.status == .spark else { return }
             appModel.noteManualDevelopment(of: brief, context: context)
         }
         .agentScreen()
+        .agentKeyboardDismissal()
     }
 
     @ViewBuilder
     private var actionBlock: some View {
         if appModel.proposal(for: brief, context: context) != nil {
-            CyCallout {
+            CyCallout(heading: .madeThisForYou) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                    MetaLabel("Draft ready")
                     Text("Your draft is ready to review.").font(.agentBody)
                     Button("Review draft", systemImage: "doc.text.magnifyingglass") { showProposal = true }
                         .buttonStyle(AgentCompactPrimaryButtonStyle())
                 }
             }
         } else if appModel.revisionProposal(for: brief, context: context) != nil {
-            CyCallout {
+            CyCallout(heading: .madeThisForYou) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                    MetaLabel("Revision waiting")
                     Text("Your requested change is ready.").font(.agentBody)
                     Button("Review revision", systemImage: "doc.text.magnifyingglass") { showRevisionProposal = true }
                         .buttonStyle(AgentCompactPrimaryButtonStyle())
@@ -181,15 +244,11 @@ struct BriefDetailView: View {
             }
         } else { switch brief.status {
         case .spark:
-            VStack(spacing: AgentSpacing.x3) {
-                Button("Build with Cy", systemImage: "bubble.left.and.sparkles") { showDevelopment = true }
-                    .buttonStyle(AgentPrimaryButtonStyle())
-                Button("Build brief now", systemImage: "wand.and.sparkles") { Task { await appModel.compose(brief: brief, context: context) } }
-                    .buttonStyle(AgentSecondaryButtonStyle())
-            }
+            Button("Develop with Cy", systemImage: "sparkles") { showDevelopment = true }
+                .buttonStyle(AgentCyPrimaryButtonStyle())
         case .developing:
             if hasComposedContent {
-                CyCallout {
+                CyCallout(heading: .thinksYouShould) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                         Text("Read it once, edit anything, then mark it ready.").font(.agentBody)
                         Button("Approve brief", systemImage: "checkmark") { appModel.approve(brief: brief, context: context) }
@@ -197,19 +256,15 @@ struct BriefDetailView: View {
                     }
                 }
             } else {
-                VStack(spacing: AgentSpacing.x3) {
-                    Button("Continue with Cy", systemImage: "bubble.left.and.sparkles") { showDevelopment = true }
-                        .buttonStyle(AgentPrimaryButtonStyle())
-                    Button("Build brief now", systemImage: "wand.and.sparkles") { Task { await appModel.compose(brief: brief, context: context) } }
-                        .buttonStyle(AgentSecondaryButtonStyle())
-                }
+                Button("Continue with Cy", systemImage: "sparkles") { showDevelopment = true }
+                    .buttonStyle(AgentCyPrimaryButtonStyle())
             }
         case .ready:
-            CyCallout { Text("Ready to film. Add it to your week when you want.").font(.agentBody) }
+            BriefGuidanceRow(text: "Ready to film. Add it to your week when you want.")
         case .scheduled:
-            CyCallout { Text("Planned for your week. Move it anytime.").font(.agentBody) }
+            BriefGuidanceRow(text: "Planned for your week. Move it anytime.")
         case .posted:
-            CyCallout { Text("\(postedCount) of \(outputs.count) platforms posted.").font(.agentBody) }
+            BriefGuidanceRow(text: "\(postedCount) of \(outputs.count) platforms posted.")
         case .archived:
             Text("Archived and read-only.").font(.agentBody).foregroundStyle(Color.agentSecondary)
         } }
@@ -221,7 +276,9 @@ struct BriefDetailView: View {
             AgentDurationPicker(seconds: $brief.durationSeconds, format: contentFormat)
             BriefField(label: "Hook", text: $brief.spokenHook)
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                MetaLabel("Script")
+                AgentInputHeader(title: "Script", isEditing: focusedLongField == .script) {
+                    focusedLongField = nil
+                }
                 TextEditor(text: $brief.scriptBeatsText)
                     .font(.agentBody)
                     .scrollContentBackground(.hidden)
@@ -230,6 +287,7 @@ struct BriefDetailView: View {
                     .background(Color.agentSurface)
                     .clipShape(.rect(cornerRadius: AgentRadius.control))
                     .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+                    .focused($focusedLongField, equals: .script)
             }
             BriefField(label: "Ending", text: $brief.close)
         }
@@ -303,6 +361,57 @@ struct BriefDetailView: View {
         }
     }
 
+    private var attachmentSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            SectionRuleHeader(title: "Files", trailing: "\(attachments.count)")
+            ForEach(attachments) { attachment in
+                HStack {
+                    Text(attachment.fileName).font(.agentBody).lineLimit(1)
+                    Spacer()
+                    Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file)).font(.agentMono).foregroundStyle(Color.agentSecondary)
+                    Button(role: .destructive) { context.delete(attachment); try? context.save() } label: { Image(systemName: "trash") }
+                        .accessibilityLabel("Delete \(attachment.fileName)")
+                }
+                .frame(minHeight: 44)
+            }
+            if brief.status != .archived {
+                Button("Add file", systemImage: "paperclip") { showFileImporter = true }
+                    .buttonStyle(AgentSecondaryButtonStyle())
+            }
+            Text("Files stay in your private app data and are never sent to Cy.")
+                .font(.agentMono).foregroundStyle(Color.agentSecondary)
+        }
+    }
+
+    private func importAttachment(_ result: Result<[URL], Error>) {
+        do {
+            guard let url = try result.get().first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url)
+            guard data.count <= 25 * 1_024 * 1_024 else {
+                appModel.notice = .info("Choose a file smaller than 25 MB.")
+                return
+            }
+            let type = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType) ?? .data
+            let kind: AttachmentKind = type.conforms(to: .image) ? .photo : (type.conforms(to: .movie) ? .video : (type.conforms(to: .pdf) ? .document : .other))
+            context.insert(CreatorAttachment(
+                ownerKind: .referenceFile,
+                briefID: brief.id,
+                fileName: url.lastPathComponent,
+                kind: kind,
+                uniformTypeIdentifier: type.identifier,
+                byteCount: Int64(data.count),
+                localRelativePath: "",
+                cloudData: data,
+                syncState: .synced
+            ))
+            try context.save()
+        } catch {
+            appModel.notice = .error("That file could not be added.")
+        }
+    }
+
     @ViewBuilder
     private var outputSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
@@ -313,11 +422,11 @@ struct BriefDetailView: View {
                     canPlan: [.ready, .scheduled, .posted].contains(brief.status)
                 )
             }
-            if brief.status != .archived, !availablePlatforms.isEmpty {
+            if brief.status != .archived, !availablePublishingChoices.isEmpty {
                 Menu {
-                    ForEach(availablePlatforms) { platform in
-                        Button(platform.title) {
-                            _ = appModel.addPlatformOutput(to: brief, platform: platform, context: context)
+                    ForEach(availablePublishingChoices, id: \.format.id) { choice in
+                        Button("\(choice.destination.name) · \(choice.format.name)") {
+                            _ = appModel.addPublishingOutput(to: brief, destination: choice.destination, format: choice.format, context: context)
                         }
                     }
                 } label: {
@@ -350,7 +459,13 @@ struct BriefDetailView: View {
 
     private var assumptionsSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            SectionRuleHeader(title: "Cy notes", trailing: "Voice \(Int(brief.voiceConfidence * 100))%")
+            HStack(alignment: .firstTextBaseline) {
+                AgentInputHeader(title: "Cy notes", isEditing: focusedLongField == .assumptions) {
+                    focusedLongField = nil
+                }
+                Spacer()
+                MetaLabel("Voice \(Int(brief.voiceConfidence * 100))%")
+            }
             TextEditor(text: $brief.assumptionsText)
                 .font(.agentBody)
                 .scrollContentBackground(.hidden)
@@ -360,6 +475,7 @@ struct BriefDetailView: View {
                 .clipShape(.rect(cornerRadius: AgentRadius.control))
                 .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
                 .accessibilityLabel("Visible assumptions, one per line")
+                .focused($focusedLongField, equals: .assumptions)
             Slider(value: $brief.voiceConfidence, in: 0...1, step: 0.01)
                 .accessibilityLabel("Voice confidence")
                 .accessibilityValue("\(Int(brief.voiceConfidence * 100)) percent")
@@ -373,7 +489,7 @@ struct BriefDetailView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             ForEach(brief.lifecycleHistory.reversed()) { entry in
                 HStack(alignment: .firstTextBaseline) {
-                    Label(entry.status.title, systemImage: entry.status.symbol)
+                    Text(entry.status.title)
                         .font(.agentBody)
                     Spacer()
                     Text(entry.date, format: .dateTime.month(.abbreviated).day().year().hour().minute())
@@ -390,9 +506,13 @@ struct BriefDetailView: View {
     private var selectedPillar: Pillar? { activePillars.first { $0.id == brief.pillarID } }
     private var topLevelTasks: [CreatorTask] { tasks.filter { $0.parentTaskID == nil } }
     private var postedCount: Int { outputs.filter { $0.status == .posted }.count }
-    private var availablePlatforms: [CreatorPlatform] {
-        CreatorPlatform.choices(for: contentFormat)
-            .filter { platform in !outputs.contains { $0.platform == platform } }
+    private var availablePublishingChoices: [(destination: PublishingDestination, format: PublishingFormat)] {
+        formats.compactMap { format in
+            guard !format.isArchived,
+                  let destination = destinations.first(where: { $0.id == format.destinationID && !$0.isArchived }),
+                  !outputs.contains(where: { $0.destinationID == destination.id && $0.formatID == format.id }) else { return nil }
+            return (destination, format)
+        }
     }
     private var platformSummary: String {
         if outputs.isEmpty { return "None added" }
@@ -426,6 +546,24 @@ struct BriefDetailView: View {
             brief.editingGuidance,
             brief.assumptionsText
         ].joined(separator: "\u{1F}") + "|\(brief.durationSeconds)"
+    }
+}
+
+enum PostDraftResumePolicy {
+    static func shouldResume(briefStatus: BriefStatus) -> Bool {
+        briefStatus == .spark || briefStatus == .developing
+    }
+
+    static func shouldResume(
+        briefStatus: BriefStatus,
+        outputStatus: PlatformOutputStatus
+    ) -> Bool {
+        if outputStatus == .posted { return false }
+        return outputStatus == .draft || shouldResume(briefStatus: briefStatus)
+    }
+
+    static func outputStatus(briefStatus: BriefStatus, current: PlatformOutputStatus) -> PlatformOutputStatus {
+        shouldResume(briefStatus: briefStatus, outputStatus: current) ? .draft : current
     }
 }
 
@@ -496,7 +634,7 @@ private struct PillarSelectionView: View {
     }
 }
 
-private struct BriefDisclosureLabel: View {
+struct BriefDisclosureLabel: View {
     let title: String
     let detail: String
 
@@ -526,8 +664,12 @@ private struct BriefRevisionRequestView: View {
                     Picker("Scope", selection: $scope) {
                         ForEach(BriefRevisionFieldWire.allCases) { field in Text(field.title).tag(field) }
                     }
-                    TextField("What should change?", text: $instruction, axis: .vertical)
-                        .lineLimit(3...8)
+                    AgentMultilineField(
+                        label: "Change",
+                        placeholder: "What should change?",
+                        text: $instruction,
+                        lineLimit: 3...8
+                    )
                 } header: {
                     Text("Focused instruction")
                 } footer: {
@@ -559,6 +701,7 @@ private struct BriefRevisionRequestView: View {
                 }
             }
         }
+        .agentKeyboardDismissal()
     }
 }
 
@@ -601,7 +744,7 @@ private struct BriefProposalReviewView: View {
                         subtitle: "Edit anything. Nothing changes until you accept."
                     )
                     if let revisionProposal {
-                        CyCallout {
+                        CyCallout(heading: .madeThisForYou) {
                             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                                 MetaLabel("Changed · \(revisionProposal.requestedScope.title)")
                                 Text(revisionProposal.explanation).font(.agentBody)
@@ -626,12 +769,12 @@ private struct BriefProposalReviewView: View {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                         MetaLabel("Script")
                         ForEach(proposal.draft.scriptBeats.indices, id: \.self) { index in
-                            TextField("Beat \(index + 1)", text: $proposal.draft.scriptBeats[index], axis: .vertical)
-                                .font(.agentBody)
-                                .padding(AgentSpacing.x4)
-                                .background(Color.agentSurface)
-                                .clipShape(.rect(cornerRadius: AgentRadius.control))
-                                .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+                            AgentMultilineField(
+                                label: "Beat \(index + 1)",
+                                placeholder: "Write this part of the script",
+                                text: $proposal.draft.scriptBeats[index],
+                                lineLimit: 2...8
+                            )
                         }
                     }
                     BriefField(label: "Ending", text: $proposal.draft.close)
@@ -655,12 +798,11 @@ private struct BriefProposalReviewView: View {
                     DisclosureGroup(isExpanded: $showCyNotes) {
                         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                             ForEach(proposal.draft.assumptions.indices, id: \.self) { index in
-                                TextField("Note \(index + 1)", text: $proposal.draft.assumptions[index], axis: .vertical)
-                                    .font(.agentBody)
-                                    .padding(AgentSpacing.x3)
-                                    .background(Color.agentSurface)
-                                    .clipShape(.rect(cornerRadius: AgentRadius.control))
-                                    .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+                                AgentMultilineField(
+                                    label: "Note \(index + 1)",
+                                    placeholder: "Edit Cy's note",
+                                    text: $proposal.draft.assumptions[index]
+                                )
                             }
                             LabeledContent("Voice match", value: "\(Int(proposal.draft.voiceConfidence * 100))%")
                             Slider(value: $proposal.draft.voiceConfidence, in: 0...1, step: 0.01)
@@ -697,12 +839,19 @@ private struct BriefProposalReviewView: View {
                                 ForEach(proposal.tasks.indices, id: \.self) { index in
                                     VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                                         TextField("Task", text: $proposal.tasks[index].title)
+                                            .agentSingleLineSubmit()
                                             .font(.agentBody)
                                         Picker("Kind", selection: $proposal.tasks[index].kind) {
                                             ForEach(CreatorTaskKind.allCases) { Text($0.title).tag($0) }
                                         }
-                                        TextField("Notes", text: $proposal.tasks[index].notes, axis: .vertical)
+                                        AgentMultilineField(
+                                            label: "Notes",
+                                            placeholder: "Add task notes",
+                                            text: $proposal.tasks[index].notes,
+                                            lineLimit: 2...5
+                                        )
                                         TextField("Minutes", value: estimatedMinutesBinding(index), format: .number)
+                                            .agentSingleLineSubmit()
                                             .keyboardType(.numberPad)
                                         Toggle("Marks filming complete", isOn: recordingMilestoneBinding(index))
                                             .disabled(proposal.tasks[index].kind != .filming)
@@ -748,6 +897,7 @@ private struct BriefProposalReviewView: View {
             }
             .agentScreen()
         }
+        .agentKeyboardDismissal()
     }
 
     private func estimatedMinutesBinding(_ index: Int) -> Binding<Int> {
@@ -774,32 +924,63 @@ private struct StatusTag: View {
     let status: BriefStatus
 
     var body: some View {
-        Label(status.title, systemImage: status.symbol)
+        Text(status.title)
             .font(.agentMono)
             .textCase(.uppercase)
-            .padding(.horizontal, AgentSpacing.x3)
-            .frame(minHeight: 32)
-            .foregroundStyle(Color.agentText)
-            .background(Color.agentSurface)
-            .clipShape(.rect(cornerRadius: AgentRadius.control))
-            .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+            .tracking(1.2)
+            .foregroundStyle(Color.cyAccent)
+            .accessibilityLabel(status.title)
     }
 }
 
-private struct BriefField: View {
+private struct BriefGuidanceRow: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: AgentSpacing.x3) {
+            CyAsterisk(size: 12, strokeWidth: 1.3)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                MetaLabel("Cy")
+                    .foregroundStyle(Color.cyAccent)
+                Text(text)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, AgentSpacing.x3)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct BriefField: View {
     let label: String
     @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    private var visiblePlaceholder: String {
+        label.localizedCaseInsensitiveContains("note") ? "" : label
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            MetaLabel(label)
-            TextField(label, text: $text, axis: .vertical)
+            AgentInputHeader(title: label, isEditing: isFocused) { isFocused = false }
+            TextField(visiblePlaceholder, text: $text, axis: .vertical)
                 .font(.agentBody)
                 .lineLimit(2...8)
                 .padding(AgentSpacing.x4)
                 .background(Color.agentSurface)
                 .clipShape(.rect(cornerRadius: AgentRadius.control))
                 .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).strokeBorder(Color.agentBorder, lineWidth: 1))
+                .focused($isFocused)
         }
     }
 }
@@ -809,6 +990,9 @@ private struct PlatformOutputEditor: View {
     @Environment(\.modelContext) private var context
     let brief: CreativeBrief
     @Bindable var output: PlatformOutput
+    @Query private var destinations: [PublishingDestination]
+    @Query private var formats: [PublishingFormat]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
     let canPlan: Bool
     @State private var targetDate = Date()
     @State private var confirmDelete = false
@@ -816,22 +1000,30 @@ private struct PlatformOutputEditor: View {
     var body: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                if !availableSocialAccounts.isEmpty {
+                    Picker("Account", selection: $output.socialAccountID) {
+                        Text("No account").tag(UUID?.none)
+                        ForEach(availableSocialAccounts) { account in
+                            Text(account.label).tag(Optional(account.id))
+                        }
+                    }
+                }
                 BriefField(label: "Caption", text: $output.caption)
                 BriefField(label: "Opening adjustment", text: $output.openingAdjustment)
-                if output.platform == .youtubeShorts || output.platform == .youtubeVideo {
+                if selectedDestination?.builtInKind == .youtube || output.platform == .youtubeShorts || output.platform == .youtubeVideo {
                     BriefField(label: "Title", text: $output.titleOverride)
                 }
                 BriefField(label: "CTA", text: $output.cta)
                 BriefField(label: "Edit differences", text: $output.editChanges)
                 if canPlan {
                     if output.targetDate == nil {
-                        Button("Add flexible posting target", systemImage: "calendar.badge.plus") {
+                        Button("Set a due date", systemImage: "calendar.badge.plus") {
                             targetDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
                             appModel.schedule(output: output, date: targetDate, context: context)
                         }
                         .buttonStyle(AgentCompactSecondaryButtonStyle())
                     } else {
-                        DatePicker("Post-by target", selection: $targetDate, displayedComponents: [.date, .hourAndMinute])
+                        DatePicker("Date and time", selection: $targetDate, displayedComponents: [.date, .hourAndMinute])
                             .onChange(of: targetDate) { _, date in appModel.schedule(output: output, date: date, context: context) }
                         Button("Remove target") { appModel.schedule(output: output, date: nil, context: context) }
                     }
@@ -858,7 +1050,7 @@ private struct PlatformOutputEditor: View {
             .padding(.top, AgentSpacing.x4)
         } label: {
             HStack {
-                Label(output.platform.title, systemImage: output.platform.symbol).font(.agentHeadline)
+                Text(outputLabel).font(.agentHeadline)
                 Spacer()
                 MetaLabel(output.status.rawValue)
             }
@@ -867,7 +1059,7 @@ private struct PlatformOutputEditor: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
         .onAppear { targetDate = output.targetDate ?? Date() }
         .confirmationDialog(
-            "Delete \(output.platform.title)?",
+            "Delete \(outputLabel)?",
             isPresented: $confirmDelete,
             titleVisibility: .visible
         ) {
@@ -877,5 +1069,20 @@ private struct PlatformOutputEditor: View {
         } message: {
             Text("This removes only this platform. Your brief stays intact.")
         }
+    }
+
+    private var selectedDestination: PublishingDestination? { destinations.first { $0.id == output.destinationID } }
+    private var selectedFormat: PublishingFormat? { formats.first { $0.id == output.formatID } }
+    private var availableSocialAccounts: [CreatorSocialAccount] {
+        guard let destinationID = output.destinationID else { return [] }
+        return socialAccounts.filter { $0.destinationID == destinationID && !$0.isArchived }
+    }
+    private var outputLabel: String {
+        let base = if let destination = selectedDestination, let format = selectedFormat {
+            "\(destination.name) · \(format.name)"
+        } else {
+            output.platform.title
+        }
+        return base
     }
 }

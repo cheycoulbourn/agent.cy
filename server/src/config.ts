@@ -13,6 +13,7 @@ export interface ServerConfig {
   /** First value signs new credentials; later values verify credentials minted before rotation. */
   readonly installationHashSecrets: readonly [string, ...string[]];
   readonly inviteCodes: readonly string[];
+  readonly pilotCompedAccess: boolean;
   readonly revenueCatWebhookSecret: string | undefined;
   readonly revenueCatEntitlementId: string;
   readonly requestTimeoutMs: number;
@@ -35,6 +36,28 @@ function integer(
     throw new Error(`${name} must be an integer of at least ${minimum}`);
   }
   return parsed;
+}
+
+function boolean(
+  value: string | undefined,
+  fallback: boolean,
+  name: string,
+): boolean {
+  if (value === undefined || value === "") return fallback;
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      throw new Error(`${name} must be true or false`);
+  }
 }
 
 export function loadConfig(
@@ -129,6 +152,13 @@ export function loadConfig(
     inviteHashSecret,
     installationHashSecrets,
     inviteCodes,
+    // The current external pilot is intentionally promotional. Set this to
+    // false when the production App Store billing cohort begins.
+    pilotCompedAccess: boolean(
+      environment.PILOT_COMPED_ACCESS,
+      production,
+      "PILOT_COMPED_ACCESS",
+    ),
     revenueCatWebhookSecret: environment.REVENUECAT_WEBHOOK_SECRET,
     revenueCatEntitlementId,
     requestTimeoutMs: integer(
