@@ -9,10 +9,9 @@ The Paper redesign uses additive SwiftData evolution only. `StoreBootstrapServic
 ```text
 iPhone app
   SwiftUI + SwiftData + private CloudKit mirroring
-  on-device speech transcription
   local creator content and conversations
         |
-        | request-scoped HTTPS/SSE, transcript text only
+        | request-scoped HTTPS/SSE, scoped creator text only
         v
 Fastify proxy on Railway
   authentication, entitlements, quotas, schemas, prompts
@@ -32,7 +31,7 @@ Calendar integration uses EventKit on the creator's iPhone. The creator grants f
 
 - Domain: SwiftData entities, lifecycle rules, task and planning logic.
 - Features: onboarding, ideation, briefs, Today, Agenda, Tasks, anchor/branch Pillars, Spark/Your work, Cy, settings.
-- Services: AI transport, speech, notifications, EventKit calendar sync, entitlements, telemetry, export, erasure, and installation identity.
+- Services: AI transport, notifications, EventKit calendar sync, entitlements, telemetry, export, erasure, and installation identity.
 - DesignSystem: colors, typography, spacing, motion, components, and accessibility behavior.
 
 SwiftData models use stable UUIDs, application-level deduplication, optional relationships where CloudKit requires them, explicit inverses, and migration-safe defaults. Private CloudKit mirroring is configured from the first shipping schema.

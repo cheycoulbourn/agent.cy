@@ -8,7 +8,7 @@ The promise is **From spark to ready**.
 
 The three product jobs are:
 
-1. Ideation: capture a text or voice spark, or ask Cy for three directions grounded in the creator's own context.
+1. Ideation: capture a text spark or ask Cy for three directions grounded in the creator's own context.
 2. Creation: develop one direction into a personalized video brief.
 3. Execution: schedule, produce, track, and manually publish the work without shame-based mechanics.
 
@@ -52,7 +52,7 @@ The global default can be overridden per brief, week, or task flow.
 
 Two equal paths create the same Spark-backed brief:
 
-- Bring a spark through text or on-device voice transcription.
+- Bring a spark through text.
 - Find a spark by asking Cy for three distinct directions based only on local creator summaries.
 
 Unselected directions disappear unless explicitly saved. Dialogue is capped at eight turns and always offers Compose now.
@@ -82,7 +82,7 @@ Creators edit inline or invoke scoped Ask Cy revisions. Teach Cy proposes visibl
 - Content placement and task scheduling are separate. A task date never places its linked post on Agenda.
 - Pillars contains manual, guided, or inferred themes. Each anchor page edits its color through unlabeled swatches and its assigned weekdays through one-letter controls; branches inherit both. Pillar descriptions are not part of the interface. Unfiled briefs remain valid.
 - Pillar detail groups branches, ideas, scheduled work, and posted work, with a manual new-spark action for posted content.
-- Spark has one Create entry for ideas, posts, tasks, and on-device voice capture, plus a separate Find three ideas entry. Your work remains searchable and filterable, including archived content.
+- Idea Bank has one Create entry for ideas, posts, and tasks, plus a separate Find three ideas entry. Your work remains searchable and filterable, including archived content.
 - Ask Cy opens global context-aware conversation.
 - `+` captures an Idea, Post, or creator-work Task without opening chat.
 

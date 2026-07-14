@@ -1,6 +1,6 @@
 # agent.cy
 
-agent.cy is an iPhone creative copilot that turns a rough text or voice spark into a personalized, ready-to-create short-form video brief, then helps the creator execute it.
+agent.cy is an iPhone creative copilot that turns a rough idea into a personalized, ready-to-create content plan, then helps the creator execute it.
 
 The repository is a monorepo:
 
@@ -11,7 +11,7 @@ The repository is a monorepo:
 
 ## Product boundary
 
-Version 1 covers ideation, creation, and execution. It does not connect to social platforms, publish content, inspect analytics, search live trends, or upload raw voice recordings or screenshots. Instagram links may be kept locally as creator-supplied references; Cy receives only creator-confirmed text.
+Version 1 covers ideation, creation, and execution. It does not connect to social platforms, publish content, inspect analytics, search live trends, or send creator-added files, audio, or screenshots to Cy. Social links may be kept locally as creator-supplied references; Cy receives only creator-confirmed text.
 
 ## Local development
 

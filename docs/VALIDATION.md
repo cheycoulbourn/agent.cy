@@ -34,7 +34,7 @@ Revisit the product wedge before adding features if:
 
 Allowed events include onboarding steps, voice-example completion, app-open day, AI operation outcome, proposal accept/edit/dismiss, lifecycle transition, recording milestone, output posted, error class, paywall view, trial intent, and entitlement state.
 
-No event may contain creator text, prompts, generated content, captions, URLs, pillar names, or raw audio.
+No event may contain creator text, prompts, generated content, captions, URLs, or pillar names.
 
 ## Paid pilot
 

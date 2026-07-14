@@ -12,13 +12,6 @@ Calendar integration is optional and device-local. When enabled, agent.cy uses A
 
 Creator-added reference files are copied into the private SwiftData store, capped at 25 MB per file, included in export and erase, and never attached to an AI request. SwiftData private CloudKit mirroring is store-wide; the app does not claim per-file selective sync.
 
-## Voice capture
-
-- Audio is transcribed on-device.
-- Only transcript text may be sent to the AI proxy.
-- Temporary audio is deleted after transcript acceptance unless the creator explicitly keeps it.
-- Raw audio is never uploaded in v1.
-
 ## AI requests
 
 The client sends only the context required for the current operation. The proxy must not log request bodies, response bodies, voice examples, scripts, captions, pillar names, URLs, authorization headers, or query strings containing user content.
@@ -49,7 +42,7 @@ Erase All Data removes:
 
 - Local SwiftData.
 - Private CloudKit records.
-- Temporary audio and export files.
+- Export files.
 - Keychain installation credentials.
 - Local entitlement cache.
 - Device-local calendar preferences and linked calendar events created by agent.cy.
