@@ -10,7 +10,6 @@ private enum WidgetPalette {
     static let border = Color.widgetAdaptive(light: 0xD7D8D3, dark: 0x383838)
     static let hairline = Color.widgetAdaptive(light: 0xE6E7E2, dark: 0x2D2D2D)
     static let cy = Color(hex: "9B3A2E")
-    static let greenTint = Color.widgetAdaptive(light: 0xEDF1EC, dark: 0x202A23)
 }
 
 private struct WidgetSurface<Content: View>: View {
@@ -342,6 +341,7 @@ struct IdeaBankWidgetView: View {
 }
 
 struct ProductionQueueWidgetView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let entry: AgentCyWidgetEntry
 
     var body: some View {
@@ -357,86 +357,133 @@ struct ProductionQueueWidgetView: View {
                             .minimumScaleFactor(0.8)
                     }
                     Spacer()
-                    Text(queueProgress).widgetMeta()
-                        .padding(.top, 4)
+                    if entry.snapshot.nextPost != nil {
+                        Text(queueProgress).widgetMeta()
+                            .padding(.top, 4)
+                    }
                 }
-                .padding(.bottom, 22)
+
+                if entry.snapshot.nextPost == nil {
+                    Rectangle()
+                        .fill(WidgetPalette.hairline)
+                        .frame(height: 1)
+                        .padding(.top, 18)
+                        .padding(.bottom, 14)
+                } else {
+                    Spacer().frame(height: 22)
+                }
 
                 if let post = entry.snapshot.nextPost {
                     Link(destination: AgentCyDeepLink.brief(post.id).url) {
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                HStack(spacing: 7) {
-                                    Circle().fill(Color(hex: post.pillarColorHex ?? "5E8069")).frame(width: 7, height: 7)
+                            HStack(alignment: .top, spacing: 12) {
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(postAccent(post))
+                                        .frame(width: 7, height: 7)
                                     Text(post.pillarName.uppercased()).widgetMeta()
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
                                 Spacer()
-                                Text(postTime(post)).widgetMeta(color: WidgetPalette.cy)
+                                Text(post.status.uppercased())
+                                    .font(.widgetMono(size: 10))
+                                    .tracking(0.4)
+                                    .foregroundStyle(WidgetPalette.ink)
+                                    .padding(.horizontal, 8)
+                                    .frame(minHeight: 24)
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(WidgetPalette.ink.opacity(0.20), lineWidth: 1)
+                                    }
                             }
+
                             Text(post.title)
-                                .font(.widgetInter(size: 18, weight: .bold))
+                                .font(.widgetInter(size: 17, weight: .semibold))
+                                .tracking(-0.17)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.85)
+                                .minimumScaleFactor(0.8)
+
+                            HStack(spacing: 8) {
+                                Text(postMetadata(post)).widgetMeta(color: WidgetPalette.ink)
+                                    .tracking(0.4)
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                Text("›")
+                                    .font(.widgetInter(size: 15, weight: .regular))
+                                    .foregroundStyle(WidgetPalette.ink)
+                            }
+                            .padding(.top, 2)
                         }
                         .foregroundStyle(WidgetPalette.ink)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 17)
-                        .background(WidgetPalette.greenTint, in: .rect(cornerRadius: 16))
+                        .padding(16)
+                        .background(postBackground(post), in: .rect(cornerRadius: 12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(postBorder(post), lineWidth: 1)
+                        }
                     }
                 } else {
                     Link(destination: AgentCyDeepLink.quickPost.url) {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 7) {
                             HStack {
-                                Text("TODAY’S FOCUS").widgetMeta()
+                                Text("TODAY’S POSTS").widgetMeta()
                                 Spacer()
-                                Text("+ CREATE POST").widgetMeta(color: WidgetPalette.ink)
+                                Text("0").widgetMeta()
                             }
-                            Text(todayFocusTitle)
-                                .font(.widgetInter(size: 18, weight: .bold))
-                                .lineLimit(1)
-                            Text("Nothing planned for today")
-                                .font(.widgetInter(size: 12, weight: .regular))
+
+                            Text("Nothing planned for today.")
+                                .font(.widgetInter(size: 17, weight: .semibold))
+                                .lineLimit(2)
+
+                            Text("Start with one clear idea.")
+                                .font(.widgetInter(size: 13, weight: .regular))
                                 .foregroundStyle(WidgetPalette.secondary)
+
+                            Text("+ CREATE POST")
+                                .font(.widgetMono(size: 10))
+                                .tracking(1)
+                                .foregroundStyle(WidgetPalette.cy)
+                                .padding(.top, 3)
                         }
                         .foregroundStyle(WidgetPalette.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
+                        .padding(.vertical, 15)
                         .background(WidgetPalette.canvas, in: .rect(cornerRadius: 16))
                         .overlay {
                             RoundedRectangle(cornerRadius: 16)
-                                .stroke(WidgetPalette.border, lineWidth: 0.75)
+                                .stroke(WidgetPalette.border, lineWidth: 1)
                         }
                     }
                 }
 
                 HStack {
-                    Text("NEXT TASKS").widgetMeta()
+                    Text(tasks.isEmpty ? "TASKS" : "NEXT TASKS").widgetMeta()
                     Spacer()
-                    Text("\(openTaskCount) LEFT").widgetMeta()
+                    Text(tasks.isEmpty ? "0" : "\(openTaskCount) LEFT").widgetMeta()
                 }
-                .frame(height: 41)
-                .padding(.top, 4)
+                .padding(.top, tasks.isEmpty ? 15 : 19)
+                .padding(.bottom, tasks.isEmpty ? 10 : 8)
 
                 VStack(spacing: 0) {
                     if tasks.isEmpty {
                         Link(destination: AgentCyDeepLink.quickTask.url) {
                             HStack {
-                                Text(emptyTaskMessage)
-                                    .font(.widgetInter(size: 14, weight: .regular))
-                                    .foregroundStyle(WidgetPalette.secondary)
+                                Text("+ Add task")
+                                    .font(.widgetInter(size: 14, weight: .semibold))
+                                    .foregroundStyle(WidgetPalette.ink)
                                 Spacer()
-                                Text("+ CREATE TASK")
-                                    .font(.widgetMono(size: 10))
-                                    .foregroundStyle(WidgetPalette.surface)
-                                    .padding(.horizontal, 11)
-                                    .frame(minHeight: 28)
-                                    .background(WidgetPalette.ink, in: .capsule)
+                                Text("→")
+                                    .font(.widgetInter(size: 17, weight: .regular))
+                                    .foregroundStyle(WidgetPalette.secondary)
                             }
-                            .frame(height: 45)
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 43)
+                            .background(WidgetPalette.canvas, in: .rect(cornerRadius: 12))
                         }
                     } else {
-                        ForEach(tasks.prefix(3)) { task in
+                        ForEach(tasks.prefix(2)) { task in
                             Link(destination: AgentCyDeepLink.tasks.url) {
                                 HStack(spacing: 12) {
                                     taskCheckbox(task)
@@ -462,6 +509,9 @@ struct ProductionQueueWidgetView: View {
     }
 
     private var queueTitle: String {
+        if entry.snapshot.nextPost == nil {
+            return todayFocusTitle
+        }
         if entry.taskLane == .pillar {
             return "Pillar tasks"
         }
@@ -470,7 +520,10 @@ struct ProductionQueueWidgetView: View {
     }
 
     private var queueLabel: String {
-        entry.taskLane == .production ? "FOCUS TASKS" : "PILLAR TASKS"
+        if entry.snapshot.nextPost == nil {
+            return "TODAY’S FOCUS"
+        }
+        return entry.taskLane == .production ? "PRODUCTION QUEUE" : "PILLAR TASKS"
     }
 
     private var queueProgress: String {
@@ -486,18 +539,33 @@ struct ProductionQueueWidgetView: View {
         tasks.filter { !$0.isCompleted }.count
     }
 
-    private var emptyTaskMessage: String {
-        entry.taskLane == .production ? "No focus tasks yet" : "No pillar tasks yet"
-    }
-
     private var todayFocusTitle: String {
         let title = entry.snapshot.focus?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return title.isEmpty ? "Rest" : title
     }
 
-    private func postTime(_ post: WidgetPostSnapshot) -> String {
-        post.targetDate?.formatted(date: .omitted, time: .shortened).uppercased()
-            ?? post.status.uppercased()
+    private func postAccent(_ post: WidgetPostSnapshot) -> Color {
+        Color(hex: post.pillarColorHex ?? "514D47")
+    }
+
+    private func postBackground(_ post: WidgetPostSnapshot) -> Color {
+        guard post.status.caseInsensitiveCompare("Draft") != .orderedSame else {
+            return WidgetPalette.surface
+        }
+        return postAccent(post).opacity(colorScheme == .dark ? 0.24 : 0.10)
+    }
+
+    private func postBorder(_ post: WidgetPostSnapshot) -> Color {
+        guard post.status.caseInsensitiveCompare("Draft") != .orderedSame else {
+            return WidgetPalette.ink.opacity(0.28)
+        }
+        return postAccent(post).opacity(colorScheme == .dark ? 0.82 : 0.68)
+    }
+
+    private func postMetadata(_ post: WidgetPostSnapshot) -> String {
+        let platform = post.platformLabel.uppercased()
+        guard let targetDate = post.targetDate else { return platform }
+        return "\(platform) · \(targetDate.formatted(date: .omitted, time: .shortened).uppercased())"
     }
 
     @ViewBuilder
