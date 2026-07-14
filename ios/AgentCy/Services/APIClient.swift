@@ -83,11 +83,11 @@ actor PreviewCredentialStore: InstallationCredentialStoring {
 enum APIConfiguration {
     static var baseURL: URL {
         if let value = ProcessInfo.processInfo.environment["AGENTCY_API_BASE_URL"],
-           let url = validatedBaseURL(value) {
+           let url = validatedBaseURL(value, allowInsecureLocalhost: allowsInsecureLocalhost) {
             return url
         }
         if let value = Bundle.main.object(forInfoDictionaryKey: "AGENTCY_API_BASE_URL") as? String,
-           let url = validatedBaseURL(value) {
+           let url = validatedBaseURL(value, allowInsecureLocalhost: allowsInsecureLocalhost) {
             return url
         }
 #if DEBUG
@@ -119,15 +119,26 @@ enum APIConfiguration {
 #endif
     }
 
-    private static func validatedBaseURL(_ value: String) -> URL? {
+    static func validatedBaseURL(_ value: String, allowInsecureLocalhost: Bool) -> URL? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               !trimmed.contains("$("),
               let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              url.host != nil else { return nil }
+              let host = url.host?.lowercased() else { return nil }
+        if scheme == "https" { return url }
+        guard scheme == "http",
+              allowInsecureLocalhost,
+              ["localhost", "127.0.0.1", "::1"].contains(host) else { return nil }
         return url
+    }
+
+    private static var allowsInsecureLocalhost: Bool {
+#if DEBUG
+        true
+#else
+        false
+#endif
     }
 
     private static func parseBoolean(_ value: String) -> Bool? {
@@ -243,7 +254,7 @@ protocol AIRequestIdentifying: Encodable, Sendable {
     var operationId: UUID { get }
 }
 
-enum AIErrorCodeWire: String, Decodable, Sendable {
+enum AIErrorCodeWire: String, Decodable, Sendable, Equatable {
     case invalidInput = "invalid_input"
     case payloadTooLarge = "payload_too_large"
     case installationInvalid = "installation_invalid"
@@ -258,6 +269,15 @@ enum AIErrorCodeWire: String, Decodable, Sendable {
     case usageLimit = "usage_limit"
     case cancelled
     case conflict
+}
+
+enum AIQuotaScopeWire: String, Decodable, Sendable, Equatable {
+    case freeAllowance
+    case installationShortWindow
+    case installationDaily
+    case globalDailySpend
+    case providerRateLimit
+    case providerCredits
 }
 
 enum AIFieldPathComponentWire: Decodable, Sendable, Equatable {
@@ -284,9 +304,14 @@ struct AIWireError: Decodable, LocalizedError, Sendable {
     let message: String
     let retryable: Bool
     let retryAfterSeconds: Int?
+    let quotaScope: AIQuotaScopeWire?
     let fieldIssues: [AIFieldIssueWire]?
 
     var errorDescription: String? { message }
+
+    var requiresSubscriptionUpgrade: Bool {
+        code == .entitlementRequired || quotaScope == .freeAllowance
+    }
 }
 
 enum AgentCyAPIError: LocalizedError {

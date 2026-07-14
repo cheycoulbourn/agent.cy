@@ -36,7 +36,10 @@ struct UnavailableLiveSubscriptionService: SubscriptionServicing {
         case .freeJourney, .expired:
             isVerifiedLocally = true
         case .comped:
-            isVerifiedLocally = state.trialEnd.map { $0 > now } ?? false
+            // Older pilot credentials did not carry an end date. Preserve the
+            // server-granted comped state instead of expiring those creators
+            // locally; newer redemptions include a concrete promotional end.
+            isVerifiedLocally = state.trialEnd.map { $0 > now } ?? true
         case .trial, .paid:
             isVerifiedLocally = false
         }
@@ -59,41 +62,11 @@ enum SubscriptionServiceFactory {
     @MainActor
     static func runtime(useLiveAI: Bool) -> any SubscriptionServicing {
 #if DEBUG
-        if useLiveAI { return LocalDevelopmentSubscriptionService() }
-        return PreviewSubscriptionService()
-#else
+        if !useLiveAI { return PreviewSubscriptionService() }
+#endif
         return UnavailableLiveSubscriptionService()
-#endif
     }
 }
-
-#if DEBUG
-@MainActor
-struct LocalDevelopmentSubscriptionService: SubscriptionServicing {
-    let offering = SubscriptionOffering(monthlyPrice: "$8.99", trialDays: 14, isPromotionalCohort: true)
-
-    func refresh(state: SubscriptionState) async {
-        grantTestingAccess(to: state)
-    }
-
-    func startTrial(state: SubscriptionState) async throws {
-        grantTestingAccess(to: state)
-    }
-
-    func restore(state: SubscriptionState) async throws {
-        grantTestingAccess(to: state)
-    }
-
-    private func grantTestingAccess(to state: SubscriptionState) {
-        let now = Date()
-        state.access = .comped
-        if state.trialEnd.map({ $0 <= now }) != false {
-            state.trialEnd = Calendar.current.date(byAdding: .day, value: 28, to: now)
-        }
-        state.updatedAt = now
-    }
-}
-#endif
 
 @MainActor
 struct PreviewSubscriptionService: SubscriptionServicing {

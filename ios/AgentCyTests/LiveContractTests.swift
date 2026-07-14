@@ -129,6 +129,7 @@ final class LiveContractTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let installationID = UUID()
         let credential = String(repeating: "c", count: 48)
+        let promotionalEnd = "2026-08-11T12:00:00.000Z"
         StubURLProtocol.handler = { request in
             let response = HTTPURLResponse(
                 url: try XCTUnwrap(request.url),
@@ -139,7 +140,8 @@ final class LiveContractTests: XCTestCase {
             let data = try JSONSerialization.data(withJSONObject: [
                 "installationId": installationID.uuidString,
                 "credential": credential,
-                "access": "comped"
+                "access": "comped",
+                "promotionalEntitlementEndsAt": promotionalEnd
             ])
             return (response, data)
         }
@@ -154,6 +156,9 @@ final class LiveContractTests: XCTestCase {
         let identity = try await client.redeem(inviteCode: "PILOT-123")
         XCTAssertEqual(identity.installationID, installationID)
         XCTAssertEqual(identity.access, .comped)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        XCTAssertEqual(identity.promotionalEntitlementEndsAt, formatter.date(from: promotionalEnd))
         let saved = await store.load()
         XCTAssertEqual(saved, identity)
         XCTAssertEqual(StubURLProtocol.lastRequest?.url?.path, "/v1/installations/redeem")
@@ -219,6 +224,186 @@ final class LiveContractTests: XCTestCase {
         let result = try await client.perform(operation: .ideas, request: request, result: IdeasResultWire.self)
         XCTAssertEqual(result.ideas.count, 3)
         XCTAssertEqual(StubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer \(String(repeating: "a", count: 48))")
+    }
+
+    @MainActor
+    func testRemoteIdeasRetryReusesOperationIDAfterInterruptedStream() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let fixture = try JSONSerialization.jsonObject(with: fixtureData("ideas-result"))
+        let fixtureData = try JSONSerialization.data(withJSONObject: fixture, options: [.sortedKeys])
+        let resultJSON = String(decoding: fixtureData, as: UTF8.self)
+        let recorder = RequestOperationRecorder()
+
+        StubURLProtocol.handler = { request in
+            let body = try XCTUnwrap(StubURLProtocol.bodyData(for: request))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let operationID = try XCTUnwrap(object["operationId"] as? String)
+            let attempt = recorder.append(operationID)
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "text/event-stream"]
+            )!
+            let prefix = """
+            event: meta
+            data: {"operationId":"\(operationID)","requestId":"\(UUID().uuidString)","operation":"ideas","schemaVersion":"ideas.result.v1","model":"claude-sonnet-5","startedAt":"2026-07-11T12:00:00Z"}
+
+            event: phase
+            data: {"operationId":"\(operationID)","phase":"accepted"}
+
+            """
+            guard attempt > 1 else { return (response, Data(prefix.utf8)) }
+            let suffix = """
+            event: result
+            data: {"operationId":"\(operationID)","payload":{"operation":"ideas","result":\(resultJSON)}}
+
+            event: done
+            data: {"operationId":"\(operationID)","status":"succeeded","completedAt":"2026-07-11T12:00:01Z"}
+
+            """
+            return (response, Data((prefix + suffix).utf8))
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let credentialStore = PreviewCredentialStore(
+            identity: InstallationIdentity(
+                installationID: UUID(),
+                credential: String(repeating: "r", count: 48),
+                access: .comped,
+                credentialExpiresAt: nil,
+                promotionalEntitlementEndsAt: nil
+            )
+        )
+        let suite = "LiveContractTests.retry.\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        let service = RemoteCreativeService(
+            client: AgentCyAPIClient(
+                baseURL: URL(string: "https://unit.test")!,
+                session: session,
+                store: credentialStore
+            ),
+            operationIDs: AIOperationIDRegistry(defaultsSuiteName: suite, storageKey: "retry")
+        )
+        let context = creatorContext()
+
+        do {
+            _ = try await service.findIdeas(context: context, mode: .collaborate)
+            XCTFail("Expected the interrupted stream to fail")
+        } catch {
+            guard let apiError = error as? AgentCyAPIError,
+                  case .invalidStream = apiError else {
+                return XCTFail("Expected an interrupted stream, got \(error)")
+            }
+        }
+        let ideas = try await service.findIdeas(context: context, mode: .collaborate)
+
+        XCTAssertEqual(ideas.count, 3)
+        let operationIDs = recorder.snapshot()
+        XCTAssertEqual(operationIDs.count, 2)
+        XCTAssertEqual(operationIDs[0], operationIDs[1])
+    }
+
+    @MainActor
+    func testRemoteIdeasRetryReusesOperationIDAfterRetryableConflict() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let fixture = try JSONSerialization.jsonObject(with: fixtureData("ideas-result"))
+        let fixtureData = try JSONSerialization.data(withJSONObject: fixture, options: [.sortedKeys])
+        let resultJSON = String(decoding: fixtureData, as: UTF8.self)
+        let recorder = RequestOperationRecorder()
+
+        StubURLProtocol.handler = { request in
+            let body = try XCTUnwrap(StubURLProtocol.bodyData(for: request))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let operationID = try XCTUnwrap(object["operationId"] as? String)
+            let attempt = recorder.append(operationID)
+            guard attempt > 1 else {
+                let response = HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: 409,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                let data = try JSONSerialization.data(withJSONObject: [
+                    "error": [
+                        "code": "conflict",
+                        "message": "This generation is still in progress.",
+                        "retryable": true,
+                        "retryAfterSeconds": 1
+                    ]
+                ])
+                return (response, data)
+            }
+
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "text/event-stream"]
+            )!
+            let stream = """
+            event: meta
+            data: {"operationId":"\(operationID)","requestId":"\(UUID().uuidString)","operation":"ideas","schemaVersion":"ideas.result.v1","model":"claude-sonnet-5","startedAt":"2026-07-11T12:00:00Z"}
+
+            event: phase
+            data: {"operationId":"\(operationID)","phase":"accepted"}
+
+            event: result
+            data: {"operationId":"\(operationID)","payload":{"operation":"ideas","result":\(resultJSON)}}
+
+            event: done
+            data: {"operationId":"\(operationID)","status":"succeeded","completedAt":"2026-07-11T12:00:01Z"}
+
+            """
+            return (response, Data(stream.utf8))
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let credentialStore = PreviewCredentialStore(
+            identity: InstallationIdentity(
+                installationID: UUID(),
+                credential: String(repeating: "r", count: 48),
+                access: .comped,
+                credentialExpiresAt: nil,
+                promotionalEntitlementEndsAt: nil
+            )
+        )
+        let suite = "LiveContractTests.conflict-retry.\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        let service = RemoteCreativeService(
+            client: AgentCyAPIClient(
+                baseURL: URL(string: "https://unit.test")!,
+                session: session,
+                store: credentialStore
+            ),
+            operationIDs: AIOperationIDRegistry(defaultsSuiteName: suite, storageKey: "retry")
+        )
+        let context = creatorContext()
+
+        do {
+            _ = try await service.findIdeas(context: context, mode: .collaborate)
+            XCTFail("Expected the active generation conflict to fail")
+        } catch {
+            guard let apiError = error as? AgentCyAPIError,
+                  case .server(let wireError) = apiError else {
+                return XCTFail("Expected a structured server error, got \(error)")
+            }
+            XCTAssertEqual(wireError.code, .conflict)
+            XCTAssertTrue(wireError.retryable)
+        }
+
+        let ideas = try await service.findIdeas(context: context, mode: .collaborate)
+
+        XCTAssertEqual(ideas.count, 3)
+        let operationIDs = recorder.snapshot()
+        XCTAssertEqual(operationIDs.count, 2)
+        XCTAssertEqual(operationIDs[0], operationIDs[1])
     }
 
     func testPrivacyDeletionUsesExactAuthenticatedContract() async throws {
@@ -301,6 +486,24 @@ final class LiveContractTests: XCTestCase {
             .deletingLastPathComponent()
         let url = root.appending(path: "contracts/test/fixtures/\(name).json")
         return try Data(contentsOf: url)
+    }
+}
+
+private final class RequestOperationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var operationIDs: [String] = []
+
+    func append(_ operationID: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        operationIDs.append(operationID)
+        return operationIDs.count
+    }
+
+    func snapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return operationIDs
     }
 }
 

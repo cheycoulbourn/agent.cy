@@ -64,8 +64,8 @@ final class AppModel {
     @ObservationIgnored private let exportService: any ExportServicing
     @ObservationIgnored private let credentialStore: any InstallationCredentialStoring
     @ObservationIgnored private let installationRedemptionClient: InstallationRedemptionClient
-    @ObservationIgnored private let privacyDeletionService: (any PrivacyDeletionServicing)?
-    @ObservationIgnored private let allowsOfflinePrivacyErase: Bool
+    @ObservationIgnored private let privacyEraseCoordinator: PrivacyEraseCoordinator
+    @ObservationIgnored private let contentResetService: any ContentResetServicing
 
     init(
         creativeService: any CreativeServicing = PreviewCreativeService(),
@@ -76,6 +76,10 @@ final class AppModel {
         credentialStore: any InstallationCredentialStoring = DeviceOnlyKeychainCredentialStore.shared,
         installationRedemptionClient: InstallationRedemptionClient? = nil,
         privacyDeletionService: (any PrivacyDeletionServicing)? = nil,
+        privacyEraseProgressStore: any PrivacyEraseProgressStoring = UserDefaultsPrivacyEraseProgressStore(),
+        localDataEraser: any LocalCreatorDataErasing = SwiftDataLocalCreatorDataEraser(),
+        exportArchiveCleaner: any ExportArchiveCleaning = LocalExportArchiveCleaner(),
+        contentResetService: any ContentResetServicing = ContentResetService(),
         requiresInstallationInvite: Bool = false,
         allowsOfflinePrivacyErase: Bool = true
     ) {
@@ -86,13 +90,29 @@ final class AppModel {
         self.exportService = exportService
         self.credentialStore = credentialStore
         self.installationRedemptionClient = installationRedemptionClient ?? InstallationRedemptionClient(store: credentialStore)
-        self.privacyDeletionService = privacyDeletionService
         self.requiresInstallationInvite = requiresInstallationInvite
-        self.allowsOfflinePrivacyErase = allowsOfflinePrivacyErase
+        self.contentResetService = contentResetService
+        self.privacyEraseCoordinator = PrivacyEraseCoordinator(
+            credentialStore: credentialStore,
+            privacyDeletionService: privacyDeletionService,
+            progressStore: privacyEraseProgressStore,
+            localDataEraser: localDataEraser,
+            reminderService: reminderService,
+            calendarSyncService: calendarSyncService,
+            archiveCleaner: exportArchiveCleaner,
+            allowsOfflineErase: allowsOfflinePrivacyErase
+        )
     }
 
     func refreshInstallationCredentialStatus(context: ModelContext? = nil) async {
         defer { isInstallationCredentialStatusResolved = true }
+        if let context {
+            let eraseOutcome = await privacyEraseCoordinator.resumeIfNeeded(
+                context: context,
+                currentExportURL: exportURL
+            )
+            if applyPrivacyEraseOutcome(eraseOutcome) { return }
+        }
         guard requiresInstallationInvite else {
             hasInstallationCredential = true
             return
@@ -140,15 +160,6 @@ final class AppModel {
         context: ModelContext
     ) {
         guard let state = subscriptionState(context) else { return }
-#if DEBUG
-        if APIConfiguration.useLiveAI {
-            state.access = .comped
-            state.trialEnd = Calendar.current.date(byAdding: .day, value: 28, to: Date())
-            state.updatedAt = Date()
-            try? context.save()
-            return
-        }
-#endif
         if let entitlementEnd = identity.promotionalEntitlementEndsAt,
            entitlementEnd <= Date(),
            identity.access == .comped {
@@ -156,7 +167,9 @@ final class AppModel {
         } else {
             state.access = identity.access
         }
-        state.trialEnd = identity.promotionalEntitlementEndsAt ?? state.trialEnd
+        state.trialEnd = identity.access == .comped
+            ? identity.promotionalEntitlementEndsAt
+            : nil
         state.updatedAt = Date()
         try? context.save()
     }
@@ -480,11 +493,11 @@ final class AppModel {
     }
 
     func queueCalendarSync(context: ModelContext) {
-        Task { @MainActor [weak self] in
-            await Task.yield()
-            WidgetSnapshotService.refresh(context: context)
-            self?.refreshCalendarSync(context: context)
-        }
+        // ModelContext is tied to its container and must not escape into an
+        // unstructured task. In-memory stores used by tests (and stores being
+        // reset in production) may be torn down before that task resumes.
+        WidgetSnapshotService.refresh(context: context)
+        refreshCalendarSync(context: context)
     }
 
     func applyFocusReminder(
@@ -1015,15 +1028,7 @@ final class AppModel {
     private func ideaSuggestionsRequireUpgrade(for error: Error) -> Bool {
         guard let apiError = error as? AgentCyAPIError,
               case .server(let serverError) = apiError else { return false }
-        switch serverError.code {
-        case .entitlementRequired, .usageLimit:
-            return true
-        case .quotaExceeded:
-            return !serverError.retryable || ["free", "brief", "allowance", "credit", "used"]
-                .contains { serverError.message.localizedCaseInsensitiveContains($0) }
-        default:
-            return false
-        }
+        return serverError.requiresSubscriptionUpgrade
     }
 
     func sendDialogueTurn(
@@ -1844,24 +1849,8 @@ final class AppModel {
 
     @discardableResult
     func resetPostsAndTasks(context: ModelContext) -> Bool {
-        let resetThreads = ((try? context.fetch(FetchDescriptor<ConversationThread>())) ?? [])
-            .filter { thread in
-                thread.briefID != nil || thread.contextKind == .brief || thread.contextKind == .task || thread.contextKind == .day
-            }
-        let resetThreadIDs = Set(resetThreads.map(\.id))
-        let messages = (try? context.fetch(FetchDescriptor<ConversationMessage>())) ?? []
-        messages.filter { resetThreadIDs.contains($0.threadID) }.forEach(context.delete)
-        resetThreads.forEach(context.delete)
-
-        deleteAll(PendingBriefProposal.self, context: context)
-        deleteAll(PendingWeekProposal.self, context: context)
-        deleteAll(CreatorAttachment.self, context: context)
-        deleteAll(PlatformOutput.self, context: context)
-        deleteAll(CreatorTask.self, context: context)
-        deleteAll(CreativeBrief.self, context: context)
-
         do {
-            try context.save()
+            try contentResetService.reset(context: context)
             queueCalendarSync(context: context)
         } catch {
             notice = .error("Posts and tasks could not be reset: \(error.localizedDescription)")
@@ -1882,101 +1871,80 @@ final class AppModel {
         return true
     }
 
-    func eraseAll(context: ModelContext) async {
-        var completionNotice: AppNotice?
-        let identity: InstallationIdentity?
-        do {
-            identity = try await credentialStore.load()
-        } catch {
-            if allowsOfflinePrivacyErase {
-                identity = nil
-                completionNotice = .info("Local data will be erased. This Debug or fixture run could not read a live installation credential.")
-            } else {
-                notice = .error("Erase paused because the installation credential could not be read. Local data and the credential were left intact so you can retry.")
-                return
-            }
-        }
-
-        if let identity {
-            guard let privacyDeletionService else {
-                if allowsOfflinePrivacyErase {
-                    completionNotice = .info("Local data was erased. This Debug or fixture run did not have a live privacy service configured.")
-                } else {
-                    notice = .error("Erase paused because the privacy service is unavailable. Local data and the credential were left intact so you can retry.")
-                    return
-                }
-                await finishLocalErase(context: context, completionNotice: completionNotice)
-                return
-            }
-            do {
-                _ = try await privacyDeletionService.deleteServerMetadata(for: identity)
-                completionNotice = .info("Your local and server-linked data were erased. Only non-content anti-abuse and entitlement records remain on the server.")
-            } catch {
-                if allowsOfflinePrivacyErase {
-                    completionNotice = .info("Local data was erased. This Debug or fixture run could not reach the privacy service.")
-                } else {
-                    notice = .error("Erase paused because server metadata could not be deleted: \(error.localizedDescription) Your local data and device credential were left intact so you can retry.")
-                    return
-                }
-            }
-        } else if completionNotice == nil {
-            if allowsOfflinePrivacyErase {
-                completionNotice = .info("Local data was erased. No live installation credential was present in this Debug or fixture run.")
-            } else {
-                notice = .error("Erase paused because no installation credential was available. Local data was left intact so you can retry after restoring access.")
-                return
-            }
-        }
-
-        await finishLocalErase(context: context, completionNotice: completionNotice)
+    @discardableResult
+    func eraseAll(context: ModelContext) async -> Bool {
+        let outcome = await privacyEraseCoordinator.eraseAll(
+            context: context,
+            currentExportURL: exportURL
+        )
+        _ = applyPrivacyEraseOutcome(outcome)
+        if case .completed = outcome { return true }
+        return false
     }
 
-    private func finishLocalErase(context: ModelContext, completionNotice: AppNotice?) async {
-        await reminderService.cancelAll()
-        try? calendarSyncService.disconnect()
-        removeExportArchives()
-        var credentialNotice: AppNotice?
-        do {
-            try await credentialStore.delete()
-        } catch {
-            credentialNotice = .error("Creator data was erased, but the device credential could not be removed: \(error.localizedDescription)")
+    @discardableResult
+    private func applyPrivacyEraseOutcome(_ outcome: PrivacyEraseOutcome) -> Bool {
+        switch outcome {
+        case .notNeeded:
+            return false
+        case .completed(let reason, _):
+            clearErasedLocalState()
+            hasInstallationCredential = false
+            isInstallationCredentialStatusResolved = true
+            notice = .info(privacyEraseCompletionMessage(reason))
+            return true
+        case .paused(let reason, let deletedLocalData, let credentialPresent):
+            if deletedLocalData || reason.followsLocalDeletion {
+                clearErasedLocalState()
+            }
+            if let credentialPresent {
+                hasInstallationCredential = credentialPresent
+                isInstallationCredentialStatusResolved = true
+            }
+            notice = .error(privacyErasePauseMessage(reason))
+            return true
         }
-        deleteAll(CreatorProfile.self, context: context)
-        deleteAll(VoiceExample.self, context: context)
-        deleteAll(VoiceProfile.self, context: context)
-        deleteAll(CreativeBrief.self, context: context)
-        deleteAll(PendingBriefProposal.self, context: context)
-        deleteAll(PendingVoiceProfileProposal.self, context: context)
-        deleteAll(PlatformOutput.self, context: context)
-        deleteAll(CreatorSocialAccount.self, context: context)
-        deleteAll(CreatorTask.self, context: context)
-        deleteAll(Pillar.self, context: context)
-        deleteAll(PublishingFormat.self, context: context)
-        deleteAll(PublishingDestination.self, context: context)
-        deleteAll(DailyFocusTemplateEntry.self, context: context)
-        deleteAll(DailyFocusOverride.self, context: context)
-        deleteAll(DailyFocusDayDetail.self, context: context)
-        deleteAll(PendingWeekProposal.self, context: context)
-        deleteAll(CreatorAttachment.self, context: context)
-        deleteAll(RhythmTemplate.self, context: context)
-        deleteAll(WeekPlan.self, context: context)
-        deleteAll(ConversationThread.self, context: context)
-        deleteAll(ConversationMessage.self, context: context)
-        deleteAll(ReminderSettings.self, context: context)
-        deleteAll(SubscriptionState.self, context: context)
-        var localDeletionNotice: AppNotice?
-        do {
-            try context.save()
-        } catch {
-            localDeletionNotice = .error("The local store could not confirm every deletion: \(error.localizedDescription)")
-        }
+    }
+
+    private func clearErasedLocalState() {
         exportURL = nil
         briefProposals.removeAll()
         revisionProposals.removeAll()
         voiceProfileChangeProposal = nil
-        hasInstallationCredential = false
-        isInstallationCredentialStatusResolved = true
-        notice = localDeletionNotice ?? credentialNotice ?? completionNotice
+    }
+
+    private func privacyEraseCompletionMessage(_ reason: PrivacyEraseCompletionReason) -> String {
+        switch reason {
+        case .live:
+            "Your local and server-linked data were erased. Only non-content anti-abuse and entitlement records remain on the server."
+        case .resumed:
+            "The interrupted erase finished successfully."
+        case .localOnlyMissingService:
+            "Local data was erased. This Debug or fixture run did not have a live privacy service configured."
+        case .localOnlyServerUnavailable:
+            "Local data was erased. This Debug or fixture run could not reach the privacy service."
+        case .localOnlyMissingCredential:
+            "Local data was erased. No live installation credential was present in this Debug or fixture run."
+        }
+    }
+
+    private func privacyErasePauseMessage(_ reason: PrivacyErasePauseReason) -> String {
+        switch reason {
+        case .unreadableCredential(let message):
+            "Erase paused because the installation credential could not be read: \(message) Local data and the credential were left intact so you can retry."
+        case .missingPrivacyService:
+            "Erase paused because the privacy service is unavailable. Local data and the credential were left intact so you can retry."
+        case .serverDeletionFailed(let message):
+            "Erase paused because server metadata could not be deleted: \(message) Your local data and device credential were left intact so you can retry."
+        case .missingCredential:
+            "Erase paused because no installation credential was available. Local data was left intact so you can retry after restoring access."
+        case .localDeletionFailed(let message):
+            "Erase paused because the local store could not confirm every deletion: \(message) Your device credential was kept so the erase can resume safely."
+        case .cleanupFailed(let message):
+            "Creator data was erased, but cleanup is not finished: \(message) The app will retry before removing this device credential."
+        case .credentialDeletionFailed(let message):
+            "Creator data was erased, but the device credential could not be removed: \(message) The app will resume that final step safely."
+        }
     }
 
     func subscriptionState(_ context: ModelContext) -> SubscriptionState? {
@@ -2444,20 +2412,6 @@ final class AppModel {
         return VoiceExampleEvidenceLimits.issue(in: context.voiceExamples)
     }
 
-    private func removeExportArchives() {
-        let fileManager = FileManager.default
-        if let exportURL { try? fileManager.removeItem(at: exportURL) }
-        let temporaryDirectory = fileManager.temporaryDirectory
-        let candidates = (try? fileManager.contentsOfDirectory(
-            at: temporaryDirectory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        for candidate in candidates where candidate.lastPathComponent.hasPrefix("agentcy-export-") && candidate.pathExtension == "zip" {
-            try? fileManager.removeItem(at: candidate)
-        }
-    }
-
     private func can(_ action: AccessAction, context: ModelContext) -> Bool {
         guard let state = subscriptionState(context) else {
             notice = .error("Access state is unavailable. New creation is paused so the free journey cannot be reset accidentally.")
@@ -2622,8 +2576,4 @@ final class AppModel {
         return accounts.first(where: \.isPrimary)?.id ?? accounts.first?.id
     }
 
-    private func deleteAll<T: PersistentModel>(_ type: T.Type, context: ModelContext) {
-        let values = (try? context.fetch(FetchDescriptor<T>())) ?? []
-        values.forEach(context.delete)
-    }
 }

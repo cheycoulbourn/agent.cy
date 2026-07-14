@@ -97,4 +97,47 @@ final class CalendarSyncTests: XCTestCase {
         XCTAssertFalse(CalendarIntegrationPreferences.isEnabled(defaults: defaults))
         XCTAssertNil(defaults.object(forKey: CalendarIntegrationPreferences.eventLinksKey))
     }
+
+    func testDisconnectWithRevokedAccessKeepsEventLinksForLaterCleanup() throws {
+        let suite = "CalendarSyncTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let links = ["post:1": "event-1", "task:2": "event-2"]
+        defaults.set("calendar-id", forKey: CalendarIntegrationPreferences.selectedCalendarIdentifierKey)
+        defaults.set(true, forKey: CalendarIntegrationPreferences.syncScheduledPostsKey)
+        defaults.set(links, forKey: CalendarIntegrationPreferences.eventLinksKey)
+
+        CalendarIntegrationPreferences.disable(preservingEventLinks: true, defaults: defaults)
+
+        XCTAssertFalse(CalendarIntegrationPreferences.isEnabled(defaults: defaults))
+        XCTAssertEqual(
+            defaults.dictionary(forKey: CalendarIntegrationPreferences.eventLinksKey) as? [String: String],
+            links
+        )
+    }
+
+    func testCalendarCleanupRetainsFailedAndUnattemptedLinksThenRetries() throws {
+        var links = [
+            "post:1": "event-1",
+            "post:2": "event-2",
+            "task:1": "event-3",
+        ]
+        var firstAttempt: [String] = []
+
+        XCTAssertThrowsError(try CalendarEventLinkCleanup.removeAll(links: &links) { identifier in
+            firstAttempt.append(identifier)
+            if identifier == "event-2" { throw CalendarCleanupTestError.failed }
+        })
+        XCTAssertEqual(firstAttempt, ["event-1", "event-2"])
+        XCTAssertEqual(links, ["post:2": "event-2", "task:1": "event-3"])
+
+        var retry: [String] = []
+        try CalendarEventLinkCleanup.removeAll(links: &links) { retry.append($0) }
+        XCTAssertEqual(retry, ["event-2", "event-3"])
+        XCTAssertTrue(links.isEmpty)
+    }
+}
+
+private enum CalendarCleanupTestError: Error {
+    case failed
 }

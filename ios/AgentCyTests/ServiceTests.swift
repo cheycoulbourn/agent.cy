@@ -26,18 +26,6 @@ final class ServiceTests: XCTestCase {
         XCTAssertNotNil(object["constraints"])
     }
 
-#if DEBUG
-    func testLiveDebugBuildGrantsPromotionalTestingAccess() async {
-        let state = SubscriptionState(access: .expired)
-        let service = LocalDevelopmentSubscriptionService()
-
-        await service.refresh(state: state)
-
-        XCTAssertEqual(state.access, .comped)
-        XCTAssertGreaterThan(state.trialEnd ?? .distantPast, Date())
-    }
-#endif
-
     func testPreviewCreativeServiceProducesExactlyThreeDirections() async throws {
         let service = PreviewCreativeService()
         let ideas = try await service.findIdeas(context: creatorContext(), mode: .collaborate)
@@ -118,7 +106,7 @@ final class ServiceTests: XCTestCase {
         XCTAssertNil(appModel.notice)
     }
 
-    func testProviderCreditLimitReturnsUpgradeUpsellInsteadOfRetry() async throws {
+    func testProviderCreditFailureDoesNotOfferAnUpgradeThatCannotFixIt() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         context.insert(SubscriptionState(access: .comped))
@@ -135,9 +123,9 @@ final class ServiceTests: XCTestCase {
         let outcome = await appModel.findIdeaSuggestions(context: context)
 
         guard case .unavailable(_, let requiresUpgrade) = outcome else {
-            return XCTFail("Expected an upgrade result")
+            return XCTFail("Expected an inline unavailable result")
         }
-        XCTAssertTrue(requiresUpgrade)
+        XCTAssertFalse(requiresUpgrade)
         XCTAssertNil(appModel.notice)
     }
 
@@ -247,6 +235,34 @@ final class ServiceTests: XCTestCase {
         XCTAssertNotNil(data.range(of: Data("Pending proposal title".utf8)))
         XCTAssertNotNil(data.range(of: Data("@ari.creates".utf8)))
         XCTAssertNotNil(data.range(of: Data("https://instagram.com/ari.creates".utf8)))
+    }
+
+    func testExportSanitizesAttachmentArchivePaths() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let brief = CreativeBrief(title: "Attachment", premise: "Keep the export safe")
+        context.insert(brief)
+        let attachmentID = UUID()
+        context.insert(CreatorAttachment(
+            id: attachmentID,
+            ownerKind: .referenceFile,
+            briefID: brief.id,
+            fileName: "../../private\nname.txt",
+            kind: .document,
+            uniformTypeIdentifier: "public.plain-text",
+            byteCount: 4,
+            localRelativePath: "",
+            cloudData: Data("safe".utf8),
+            syncState: .synced
+        ))
+
+        let url = try LocalExportService().makeArchive(context: context)
+        let data = try Data(contentsOf: url)
+        let safePath = "attachments/\(attachmentID.uuidString)-private_name.txt"
+        let unsafePath = "attachments/\(attachmentID.uuidString)-../../"
+
+        XCTAssertNotNil(data.range(of: Data(safePath.utf8)))
+        XCTAssertNil(data.range(of: Data(unsafePath.utf8)))
     }
 
     func testCanonicalComposeResultDecodesAndMapsToNonpersistentProposal() throws {
@@ -399,6 +415,7 @@ private struct NoCreditsIdeasCreativeService: CreativeServicing {
             message: "Cy does not have generation credits available.",
             retryable: false,
             retryAfterSeconds: nil,
+            quotaScope: .providerCredits,
             fieldIssues: nil
         ))
     }

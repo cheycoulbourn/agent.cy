@@ -41,6 +41,20 @@ enum ModelContainerFactory {
         cloudKitEnabled && !forceLocalOnly
     }
 
+    /// Creates a file-backed local store at a caller-controlled URL. This is
+    /// used by migration characterization tests so reopening exercises SQLite
+    /// persistence rather than the in-memory test path.
+    static func makeLocal(at url: URL) throws -> ModelContainer {
+        let schema = AgentCySchema.schema
+        let configuration = ModelConfiguration(
+            "AgentCyMigrationTest",
+            schema: schema,
+            url: url,
+            cloudKitDatabase: .none
+        )
+        return try ModelContainer(for: schema, configurations: [configuration])
+    }
+
     private static var cloudKitEnabled: Bool {
         let value = Bundle.main.object(forInfoDictionaryKey: "AGENTCY_CLOUDKIT_ENABLED") as? String
         return (value as NSString?)?.boolValue ?? false

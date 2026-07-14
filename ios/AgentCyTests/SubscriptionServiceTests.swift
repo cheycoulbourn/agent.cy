@@ -1,3 +1,4 @@
+import SwiftData
 import XCTest
 @testable import AgentCy
 
@@ -11,7 +12,7 @@ final class SubscriptionServiceTests: XCTestCase {
         XCTAssertEqual(state.access, .freeJourney)
     }
 
-    func testUnavailableLiveServicePreservesOnlyUnexpiredPromotionalAccess() async {
+    func testUnavailableLiveServicePreservesActiveAndLegacyUndatedPromotionalAccess() async {
         let service = UnavailableLiveSubscriptionService()
         let active = SubscriptionState(access: .comped, trialEnd: Date().addingTimeInterval(3_600))
         let expired = SubscriptionState(access: .comped, trialEnd: Date().addingTimeInterval(-3_600))
@@ -23,7 +24,7 @@ final class SubscriptionServiceTests: XCTestCase {
 
         XCTAssertEqual(active.access, .comped)
         XCTAssertEqual(expired.access, .expired)
-        XCTAssertEqual(undated.access, .expired)
+        XCTAssertEqual(undated.access, .comped)
     }
 
     func testUnavailableLiveServiceRejectsUnverifiedTrialAndPaidAccess() async {
@@ -60,14 +61,77 @@ final class SubscriptionServiceTests: XCTestCase {
     }
 
 #if DEBUG
-    func testRuntimeFactoryUsesPromotionalAccessWithoutSwitchingOffLiveAI() {
+    func testRuntimeFactoryFailsClosedForLiveDebugBuilds() {
         let service = SubscriptionServiceFactory.runtime(useLiveAI: true)
-        XCTAssertTrue(service is LocalDevelopmentSubscriptionService)
-        XCTAssertFalse(service is PreviewSubscriptionService)
+        XCTAssertTrue(service is UnavailableLiveSubscriptionService)
     }
 
     func testRuntimeFactoryUsesPreviewOnlyForDebugNonLiveRuns() {
         XCTAssertTrue(SubscriptionServiceFactory.runtime(useLiveAI: false) is PreviewSubscriptionService)
+    }
+
+    func testLiveDebugCredentialRefreshDoesNotExtendExpiredPromotionalAccess() async throws {
+        let oldValue = ProcessInfo.processInfo.environment["AGENTCY_USE_LIVE_AI"]
+        setenv("AGENTCY_USE_LIVE_AI", "1", 1)
+        defer {
+            if let oldValue {
+                setenv("AGENTCY_USE_LIVE_AI", oldValue, 1)
+            } else {
+                unsetenv("AGENTCY_USE_LIVE_AI")
+            }
+        }
+
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let originalEnd = Date().addingTimeInterval(-3_600)
+        let state = SubscriptionState(access: .comped, trialEnd: originalEnd)
+        context.insert(state)
+        try context.save()
+
+        let identity = InstallationIdentity(
+            installationID: UUID(),
+            credential: String(repeating: "c", count: 48),
+            access: .comped,
+            credentialExpiresAt: nil,
+            promotionalEntitlementEndsAt: originalEnd
+        )
+        let model = AppModel(
+            credentialStore: PreviewCredentialStore(identity: identity),
+            requiresInstallationInvite: true
+        )
+
+        await model.refreshInstallationCredentialStatus(context: context)
+
+        XCTAssertEqual(state.access, .expired)
+        XCTAssertEqual(state.trialEnd, originalEnd)
+    }
+
+    func testCredentialRefreshClearsStalePromotionalEndAfterPaidTransition() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let state = SubscriptionState(
+            access: .comped,
+            trialEnd: Date().addingTimeInterval(86_400)
+        )
+        context.insert(state)
+        try context.save()
+
+        let identity = InstallationIdentity(
+            installationID: UUID(),
+            credential: String(repeating: "p", count: 48),
+            access: .paid,
+            credentialExpiresAt: nil,
+            promotionalEntitlementEndsAt: nil
+        )
+        let model = AppModel(
+            credentialStore: PreviewCredentialStore(identity: identity),
+            requiresInstallationInvite: true
+        )
+
+        await model.refreshInstallationCredentialStatus(context: context)
+
+        XCTAssertEqual(state.access, .paid)
+        XCTAssertNil(state.trialEnd)
     }
 #else
     func testRuntimeFactoryFailsClosedWhenLivePurchaseVerificationIsUnavailable() {

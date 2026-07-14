@@ -466,6 +466,10 @@ final class CreatorTask {
     var recordingMilestoneEmitted: Bool = false
     var isRecordingMilestoneDesignated: Bool = false
     var createdAt: Date = Date()
+    /// Zero identifies a record created before task-lane backfilling became one-shot.
+    /// New records start at the current version so launch preparation never rewrites
+    /// a creator's explicit lane choice.
+    var bootstrapVersion: Int = 0
 
     init(id: UUID = UUID(), briefID: UUID? = nil, pillarID: UUID? = nil, platformOutputID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, lane: TaskLane = .production, priority: TaskPriority = .none, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, dailyFocusDate: Date? = nil, dailyFocusTitle: String? = nil, dailyFocusTemplateEntryID: UUID? = nil, recurrence: TaskRecurrenceFrequency = .none, recurrenceRootTaskID: UUID? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
         self.id = id
@@ -488,6 +492,7 @@ final class CreatorTask {
         self.sortOrder = sortOrder
         self.isRecordingMilestoneDesignated = isRecordingMilestoneDesignated
         self.createdAt = createdAt
+        self.bootstrapVersion = 1
     }
 
     var kind: CreatorTaskKind {
@@ -522,6 +527,8 @@ final class Pillar {
     var assignedWeekdaysRaw: String = ""
     var isArchived: Bool = false
     var createdAt: Date = Date()
+    /// Zero identifies a record created before pillar-role backfilling became one-shot.
+    var bootstrapVersion: Int = 0
 
     init(id: UUID = UUID(), parentPillarID: UUID? = nil, role: PillarRole = .supporting, name: String = "", detail: String = "", colorHex: String = "55705B", assignedWeekdays: Set<PillarWeekday> = [], createdAt: Date = Date()) {
         self.id = id
@@ -532,6 +539,7 @@ final class Pillar {
         self.colorHex = colorHex
         self.assignedWeekdaysRaw = assignedWeekdays.map(\.rawValue).sorted().map(String.init).joined(separator: ",")
         self.createdAt = createdAt
+        self.bootstrapVersion = 1
     }
 
     var assignedWeekdays: Set<PillarWeekday> {

@@ -101,14 +101,19 @@ enum AccessAction: Sendable {
 }
 
 enum AccessPolicy {
-    static func allows(_ action: AccessAction, state: SubscriptionState?) -> Bool {
+    static func allows(
+        _ action: AccessAction,
+        state: SubscriptionState?,
+        at now: Date = Date()
+    ) -> Bool {
         guard let state else { return false }
-        if state.access == .expired {
+        let access = effectiveAccess(for: state, at: now)
+        if access == .expired {
             switch action {
             case .editExisting, .updatePosting, .export, .erase: return true
             default: return false
             }
-        } else if state.access == .freeJourney, state.freeBriefConsumed {
+        } else if access == .freeJourney, state.freeBriefConsumed {
             switch action {
             case .extractVoiceProfile: return true
             case .revise: return state.revisionRequestsUsed < 3
@@ -116,7 +121,7 @@ enum AccessPolicy {
             case .editExisting, .updatePosting, .export, .erase: return true
             default: return false
             }
-        } else if state.access == .freeJourney {
+        } else if access == .freeJourney {
             switch action {
             case .ideate: return state.ideationRequestsUsed < 3
             case .sparkDialogue: return true
@@ -128,6 +133,22 @@ enum AccessPolicy {
             }
         } else {
             return true
+        }
+    }
+
+    static func effectiveAccess(
+        for state: SubscriptionState,
+        at now: Date = Date()
+    ) -> SubscriptionAccess {
+        switch state.access {
+        case .comped:
+            guard let end = state.trialEnd else { return .comped }
+            return end > now ? .comped : .expired
+        case .trial:
+            guard let end = state.trialEnd else { return .expired }
+            return end > now ? .trial : .expired
+        default:
+            return state.access
         }
     }
 }

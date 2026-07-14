@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct PrivacyDeleteRequest: Codable, Equatable, Sendable {
     let requestId: UUID
@@ -44,6 +45,123 @@ struct PrivacyDeleteResult: Codable, Equatable, Sendable {
 
 protocol PrivacyDeletionServicing: Sendable {
     func deleteServerMetadata(for identity: InstallationIdentity) async throws -> PrivacyDeleteResult
+}
+
+enum PrivacyErasePhase: String, Codable, Sendable {
+    case serverDeleted
+    case localDataDeleted
+}
+
+struct PrivacyEraseCheckpoint: Codable, Equatable, Sendable {
+    let installationID: UUID
+    let phase: PrivacyErasePhase
+}
+
+@MainActor
+protocol PrivacyEraseProgressStoring: AnyObject {
+    var checkpoint: PrivacyEraseCheckpoint? { get }
+    func markServerDeleted(installationID: UUID)
+    func markLocalDataDeleted(installationID: UUID)
+    func clear()
+}
+
+@MainActor
+final class UserDefaultsPrivacyEraseProgressStore: PrivacyEraseProgressStoring {
+    private let defaults: UserDefaults
+    private let legacyInstallationIDKey: String
+    private let legacyPhaseKey: String
+    private let checkpointKey: String
+
+    init(
+        defaults: UserDefaults = .standard,
+        key: String = "agentcy.privacyErase.serverDeletedInstallationID",
+        phaseKey: String = "agentcy.privacyErase.phase",
+        checkpointKey: String = "agentcy.privacyErase.checkpoint.v2"
+    ) {
+        self.defaults = defaults
+        self.legacyInstallationIDKey = key
+        self.legacyPhaseKey = phaseKey
+        self.checkpointKey = checkpointKey
+    }
+
+    var checkpoint: PrivacyEraseCheckpoint? {
+        if let data = defaults.data(forKey: checkpointKey),
+           let checkpoint = try? JSONDecoder().decode(PrivacyEraseCheckpoint.self, from: data) {
+            return checkpoint
+        }
+        guard let installationID = defaults.string(forKey: legacyInstallationIDKey).flatMap(UUID.init(uuidString:)) else {
+            return nil
+        }
+        let phase = defaults.string(forKey: legacyPhaseKey)
+            .flatMap(PrivacyErasePhase.init(rawValue:)) ?? .serverDeleted
+        let checkpoint = PrivacyEraseCheckpoint(installationID: installationID, phase: phase)
+        persist(checkpoint)
+        return checkpoint
+    }
+
+    func markServerDeleted(installationID: UUID) {
+        mark(installationID: installationID, phase: .serverDeleted)
+    }
+
+    func markLocalDataDeleted(installationID: UUID) {
+        mark(installationID: installationID, phase: .localDataDeleted)
+    }
+
+    func clear() {
+        defaults.removeObject(forKey: checkpointKey)
+        defaults.removeObject(forKey: legacyInstallationIDKey)
+        defaults.removeObject(forKey: legacyPhaseKey)
+    }
+
+    private func mark(installationID: UUID, phase: PrivacyErasePhase) {
+        persist(PrivacyEraseCheckpoint(installationID: installationID, phase: phase))
+    }
+
+    private func persist(_ checkpoint: PrivacyEraseCheckpoint) {
+        guard let data = try? JSONEncoder().encode(checkpoint) else { return }
+        defaults.set(data, forKey: checkpointKey)
+        defaults.removeObject(forKey: legacyInstallationIDKey)
+        defaults.removeObject(forKey: legacyPhaseKey)
+    }
+}
+
+@MainActor
+protocol LocalCreatorDataErasing {
+    func eraseAll(context: ModelContext) async throws
+}
+
+@MainActor
+struct SwiftDataLocalCreatorDataEraser: LocalCreatorDataErasing {
+    func eraseAll(context: ModelContext) async throws {
+        try deleteAll(CreatorProfile.self, context: context)
+        try deleteAll(VoiceExample.self, context: context)
+        try deleteAll(VoiceProfile.self, context: context)
+        try deleteAll(CreativeBrief.self, context: context)
+        try deleteAll(PendingBriefProposal.self, context: context)
+        try deleteAll(PendingVoiceProfileProposal.self, context: context)
+        try deleteAll(PlatformOutput.self, context: context)
+        try deleteAll(CreatorSocialAccount.self, context: context)
+        try deleteAll(CreatorTask.self, context: context)
+        try deleteAll(Pillar.self, context: context)
+        try deleteAll(PublishingFormat.self, context: context)
+        try deleteAll(PublishingDestination.self, context: context)
+        try deleteAll(DailyFocusTemplateEntry.self, context: context)
+        try deleteAll(DailyFocusOverride.self, context: context)
+        try deleteAll(DailyFocusDayDetail.self, context: context)
+        try deleteAll(PendingWeekProposal.self, context: context)
+        try deleteAll(CreatorAttachment.self, context: context)
+        try deleteAll(RhythmTemplate.self, context: context)
+        try deleteAll(WeekPlan.self, context: context)
+        try deleteAll(ConversationThread.self, context: context)
+        try deleteAll(ConversationMessage.self, context: context)
+        try deleteAll(ReminderSettings.self, context: context)
+        try deleteAll(SubscriptionState.self, context: context)
+        try context.save()
+    }
+
+    private func deleteAll<T: PersistentModel>(_ type: T.Type, context: ModelContext) throws {
+        try context.fetch(FetchDescriptor<T>()).forEach(context.delete)
+    }
 }
 
 enum PrivacyDeletionError: LocalizedError {

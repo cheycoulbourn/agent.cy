@@ -3,6 +3,19 @@ import XCTest
 @testable import AgentCy
 
 final class APIClientTests: XCTestCase {
+    func testAPIBaseURLRequiresHTTPSExceptForExplicitLocalDevelopment() {
+        XCTAssertEqual(
+            APIConfiguration.validatedBaseURL("https://api.agent.cy", allowInsecureLocalhost: false),
+            URL(string: "https://api.agent.cy")
+        )
+        XCTAssertNil(APIConfiguration.validatedBaseURL("http://api.agent.cy", allowInsecureLocalhost: true))
+        XCTAssertNil(APIConfiguration.validatedBaseURL("http://127.0.0.1:3000", allowInsecureLocalhost: false))
+        XCTAssertEqual(
+            APIConfiguration.validatedBaseURL("http://127.0.0.1:3000", allowInsecureLocalhost: true),
+            URL(string: "http://127.0.0.1:3000")
+        )
+    }
+
     func testSSELineDecoderHandlesEventBlocks() throws {
         var decoder = SSELineDecoder()
         XCTAssertNil(decoder.consume("event: phase"))
@@ -56,13 +69,27 @@ final class APIClientTests: XCTestCase {
         let blocks = [
             block("meta", ["operationId": id.uuidString, "requestId": UUID().uuidString, "operation": "ideas", "schemaVersion": "ideas.result.v1", "model": "claude-sonnet-5", "startedAt": "2026-07-11T12:00:00Z"]),
             block("phase", ["operationId": id.uuidString, "phase": "accepted"]),
-            block("error", ["operationId": id.uuidString, "error": ["code": "quota_exceeded", "message": "Try later.", "retryable": true, "retryAfterSeconds": 60]]),
+            block("error", ["operationId": id.uuidString, "error": ["code": "quota_exceeded", "message": "Try later.", "retryable": true, "retryAfterSeconds": 60, "quotaScope": "installationDaily"]]),
             block("done", ["operationId": id.uuidString, "status": "failed", "completedAt": "2026-07-11T12:00:01Z"])
         ]
         XCTAssertThrowsError(try SSESequenceDecoder.decode(ResultValue.self, blocks: blocks, expectedOperation: .ideas, expectedOperationID: id)) { error in
             guard case AgentCyAPIError.server(let wire) = error else { return XCTFail("Expected server error") }
             XCTAssertEqual(wire.code, .quotaExceeded)
+            XCTAssertEqual(wire.quotaScope, .installationDaily)
+            XCTAssertFalse(wire.requiresSubscriptionUpgrade)
         }
+    }
+
+    func testOnlyEntitlementAndFreeAllowanceErrorsRequireSubscriptionUpgrade() throws {
+        let entitlement = try decodeWireError(code: "entitlement_required")
+        let freeAllowance = try decodeWireError(code: "quota_exceeded", quotaScope: "freeAllowance")
+        let daily = try decodeWireError(code: "quota_exceeded", quotaScope: "installationDaily")
+        let providerCredits = try decodeWireError(code: "upstream_unavailable", quotaScope: "providerCredits")
+
+        XCTAssertTrue(entitlement.requiresSubscriptionUpgrade)
+        XCTAssertTrue(freeAllowance.requiresSubscriptionUpgrade)
+        XCTAssertFalse(daily.requiresSubscriptionUpgrade)
+        XCTAssertFalse(providerCredits.requiresSubscriptionUpgrade)
     }
 
     func testSSESequenceRejectsPhaseAfterTerminalEvent() {
@@ -90,5 +117,16 @@ final class APIClientTests: XCTestCase {
 
     private func block(_ event: String, _ object: [String: Any]) -> SSEBlock {
         SSEBlock(event: event, data: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
+    }
+
+    private func decodeWireError(code: String, quotaScope: String? = nil) throws -> AIWireError {
+        var object: [String: Any] = [
+            "code": code,
+            "message": "Test error",
+            "retryable": false
+        ]
+        if let quotaScope { object["quotaScope"] = quotaScope }
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(AIWireError.self, from: data)
     }
 }

@@ -10,15 +10,15 @@ struct AgentCyApp: App {
     init() {
         #if DEBUG
         let usesPreviewData = ProcessInfo.processInfo.arguments.contains("-agentCyPreviewData")
-        #else
-        let usesPreviewData = false
-        #endif
         container = usesPreviewData
             ? ModelContainerFactory.make(isStoredInMemoryOnly: true)
             : ModelContainerFactory.shared
         if usesPreviewData {
             PreviewData.seed(container.mainContext)
         }
+        #else
+        container = ModelContainerFactory.shared
+        #endif
         do {
             try StoreBootstrapService.run(context: container.mainContext)
         } catch {
@@ -26,6 +26,11 @@ struct AgentCyApp: App {
         }
         let credentialStore = DeviceOnlyKeychainCredentialStore.shared
         let liveAI = APIConfiguration.useLiveAI
+        #if DEBUG
+        let requiresInstallationInvite = !usesPreviewData && liveAI
+        #else
+        let requiresInstallationInvite = liveAI
+        #endif
         let creativeService: any CreativeServicing
         let subscriptionService = SubscriptionServiceFactory.runtime(useLiveAI: liveAI)
         if liveAI {
@@ -41,7 +46,7 @@ struct AgentCyApp: App {
             credentialStore: credentialStore,
             installationRedemptionClient: InstallationRedemptionClient(baseURL: APIConfiguration.baseURL, store: credentialStore),
             privacyDeletionService: PrivacyDeletionClient(baseURL: APIConfiguration.baseURL),
-            requiresInstallationInvite: usesPreviewData ? false : liveAI,
+            requiresInstallationInvite: requiresInstallationInvite,
             allowsOfflinePrivacyErase: !liveAI
         )
         if let profile = try? container.mainContext.fetch(FetchDescriptor<CreatorProfile>()).first {

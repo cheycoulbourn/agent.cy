@@ -38,11 +38,19 @@ enum CalendarIntegrationPreferences {
     }
 
     static func clear(defaults: UserDefaults = .standard) {
+        disable(preservingEventLinks: false, defaults: defaults)
+    }
+
+    /// Disconnects the visible integration while retaining any event identifiers
+    /// that still need deletion after calendar permission is restored.
+    static func disable(preservingEventLinks: Bool, defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: selectedCalendarIdentifierKey)
         defaults.removeObject(forKey: selectedCalendarTitleKey)
         defaults.removeObject(forKey: syncScheduledPostsKey)
         defaults.removeObject(forKey: syncTasksKey)
-        defaults.removeObject(forKey: eventLinksKey)
+        if !preservingEventLinks {
+            defaults.removeObject(forKey: eventLinksKey)
+        }
     }
 }
 
@@ -98,6 +106,21 @@ enum CalendarSyncPolicy {
     ) -> (start: Date, end: Date) {
         let minutes = max(estimatedMinutes ?? 30, 15)
         return (targetDate, calendar.date(byAdding: .minute, value: minutes, to: targetDate) ?? targetDate)
+    }
+}
+
+enum CalendarEventLinkCleanup {
+    /// Removes links only after their corresponding event deletion succeeds.
+    /// A caller can persist the remaining dictionary and safely retry later.
+    static func removeAll(
+        links: inout [String: String],
+        removeEvent: (String) throws -> Void
+    ) throws {
+        for key in links.keys.sorted() {
+            guard let identifier = links[key] else { continue }
+            try removeEvent(identifier)
+            links.removeValue(forKey: key)
+        }
     }
 }
 
@@ -262,19 +285,44 @@ final class EventKitCalendarSyncService: CalendarSyncServicing {
 
     private func removeAllLinkedEvents(clearPreferences: Bool) throws {
         var links = eventLinks()
-        if authorization == .fullAccess {
-            for key in Array(links.keys) {
-                try removeLinkedEvent(for: key, links: &links)
+        guard authorization == .fullAccess else {
+            saveEventLinks(links)
+            if clearPreferences {
+                CalendarIntegrationPreferences.disable(
+                    preservingEventLinks: !links.isEmpty,
+                    defaults: defaults
+                )
             }
+            return
+        }
+
+        do {
+            try CalendarEventLinkCleanup.removeAll(links: &links) { identifier in
+                guard let event = eventStore.event(withIdentifier: identifier) else { return }
+                try eventStore.remove(event, span: .thisEvent, commit: true)
+            }
+        } catch {
+            saveEventLinks(links)
+            if clearPreferences {
+                CalendarIntegrationPreferences.disable(
+                    preservingEventLinks: !links.isEmpty,
+                    defaults: defaults
+                )
+            }
+            throw error
         }
         saveEventLinks(links)
-        if clearPreferences { CalendarIntegrationPreferences.clear(defaults: defaults) }
+        if clearPreferences {
+            CalendarIntegrationPreferences.disable(preservingEventLinks: false, defaults: defaults)
+        }
     }
 
     private func removeLinkedEvent(for key: String, links: inout [String: String]) throws {
-        guard let identifier = links.removeValue(forKey: key) else { return }
-        guard let event = eventStore.event(withIdentifier: identifier) else { return }
-        try eventStore.remove(event, span: .thisEvent, commit: true)
+        guard let identifier = links[key] else { return }
+        if let event = eventStore.event(withIdentifier: identifier) {
+            try eventStore.remove(event, span: .thisEvent, commit: true)
+        }
+        links.removeValue(forKey: key)
     }
 
     private func eventLinks() -> [String: String] {

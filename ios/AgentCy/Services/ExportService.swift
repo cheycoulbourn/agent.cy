@@ -203,7 +203,8 @@ struct LocalExportService: ExportServicing {
         ]
         for attachment in attachments {
             if let data = attachment.cloudData {
-                entries.append(.init(path: "attachments/\(attachment.id.uuidString)-\(attachment.fileName)", data: data))
+                let fileName = archiveSafeFileName(attachment.fileName)
+                entries.append(.init(path: "attachments/\(attachment.id.uuidString)-\(fileName)", data: data))
             }
         }
         let archive = StoredZIP.make(entries: entries)
@@ -212,6 +213,16 @@ struct LocalExportService: ExportServicing {
             .appendingPathExtension("zip")
         try archive.write(to: destination, options: .atomic)
         return destination
+    }
+
+    private func archiveSafeFileName(_ rawName: String) -> String {
+        let normalized = rawName.replacingOccurrences(of: "\\", with: "/")
+        let leaf = normalized.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? ""
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._- "))
+        let sanitized = String(leaf.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" })
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let limited = String(sanitized.prefix(120))
+        return limited.isEmpty || limited == "." || limited == ".." ? "attachment" : limited
     }
 
     private func makeMarkdown(briefs: [CreativeBrief], outputs: [PlatformOutput], tasks: [CreatorTask]) -> String {

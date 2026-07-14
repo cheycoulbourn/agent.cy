@@ -109,7 +109,7 @@ struct OnboardingView: View {
             CyCallout(heading: .keepsItPrivate) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                     MetaLabel("Your privacy")
-                    Text("Your work stays on your devices and private iCloud. Cy receives only the text needed for a request. Audio and screenshots are never uploaded.")
+                    Text("Your work stays on your devices and private iCloud. Cy receives only the text needed for a request. Creator-added files and screenshots are never sent to Cy.")
                         .font(.agentBody)
                 }
             }

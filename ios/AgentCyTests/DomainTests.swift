@@ -198,8 +198,11 @@ final class DomainTests: XCTestCase {
         let output = PlatformOutput(briefID: brief.id, platform: .youtubeVideo)
         output.durationSeconds = 0
         let task = CreatorTask(title: "Plan the pillar", kind: .planning, priority: .medium)
+        task.bootstrapVersion = 0
         let first = Pillar(name: "First", colorHex: "55705B")
         let second = Pillar(name: "Second", colorHex: "416B85")
+        first.bootstrapVersion = 0
+        second.bootstrapVersion = 0
         context.insert(profile)
         context.insert(brief)
         context.insert(output)
@@ -211,6 +214,8 @@ final class DomainTests: XCTestCase {
         try StoreBootstrapService.run(context: context)
         let firstDestinationCount = try context.fetch(FetchDescriptor<PublishingDestination>()).count
         let firstFormatCount = try context.fetch(FetchDescriptor<PublishingFormat>()).count
+        XCTAssertEqual(task.lane, .pillar)
+        task.lane = .production
         try StoreBootstrapService.run(context: context)
 
         XCTAssertEqual(firstDestinationCount, 3)
@@ -221,10 +226,197 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(output.formatID, PublishingCatalog.youtubeVideoID)
         XCTAssertEqual(output.durationSeconds, brief.durationSeconds)
         XCTAssertEqual(task.priority, .none)
-        XCTAssertEqual(task.lane, .pillar)
+        XCTAssertEqual(task.lane, .production)
         XCTAssertEqual(profile.selectedDestinationIDs.count, 2)
         XCTAssertEqual([first, second].filter { $0.role == .anchor }.count, 1)
     }
+
+    func testStoreBootstrapPreservesCreatorEditedTaskLanesAndPillarHierarchy() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let selectedAnchor = Pillar(role: .anchor, name: "Education")
+        let selectedBranch = Pillar(parentPillarID: selectedAnchor.id, role: .supporting, name: "Tutorials")
+        let legacyBranch = Pillar(name: "Legacy")
+        legacyBranch.bootstrapVersion = 0
+        let creatorEditedTask = CreatorTask(
+            pillarID: selectedBranch.id,
+            title: "A deliberately production-scoped task",
+            kind: .planning,
+            lane: .production
+        )
+        context.insert(selectedAnchor)
+        context.insert(selectedBranch)
+        context.insert(legacyBranch)
+        context.insert(creatorEditedTask)
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+        try StoreBootstrapService.run(context: context)
+
+        XCTAssertEqual(creatorEditedTask.lane, .production)
+        XCTAssertEqual(selectedAnchor.role, .anchor)
+        XCTAssertNil(selectedAnchor.parentPillarID)
+        XCTAssertEqual(selectedBranch.role, .supporting)
+        XCTAssertEqual(selectedBranch.parentPillarID, selectedAnchor.id)
+        XCTAssertEqual(legacyBranch.role, .supporting)
+        XCTAssertEqual(legacyBranch.parentPillarID, selectedAnchor.id)
+        XCTAssertEqual(legacyBranch.bootstrapVersion, 1)
+    }
+
+    func testStoreBootstrapDeterministicallyMergesCloudKitSingletonDuplicates() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let old = Date(timeIntervalSince1970: 100)
+        let recent = Date(timeIntervalSince1970: 200)
+
+        let incompleteProfile = CreatorProfile(name: "", goal: "Recovered goal", createdAt: recent)
+        incompleteProfile.telemetryConsent = true
+        let completeProfile = CreatorProfile(
+            name: "Chey",
+            goal: "Create clearly",
+            selectedPlatforms: [.instagramReels, .youtubeVideo],
+            adultConfirmed: true,
+            onboardingCompleted: true,
+            createdAt: old
+        )
+        let example = VoiceExample(profileID: incompleteProfile.id, text: "A synced example")
+        let pending = PendingVoiceProfileProposal(profileID: incompleteProfile.id, sourceVersion: 1, payloadJSON: "{}")
+        let account = CreatorSocialAccount(
+            profileID: incompleteProfile.id,
+            destinationID: PublishingCatalog.instagramID,
+            label: "@chey",
+            profileURLString: "https://instagram.com/chey"
+        )
+        context.insert(incompleteProfile)
+        context.insert(completeProfile)
+        context.insert(example)
+        context.insert(pending)
+        context.insert(account)
+
+        let oldSubscription = SubscriptionState(access: .paid, updatedAt: old)
+        oldSubscription.freeBriefConsumed = true
+        oldSubscription.ideationRequestsUsed = 3
+        let currentSubscription = SubscriptionState(access: .expired, updatedAt: recent)
+        currentSubscription.ideationRequestsUsed = 1
+        context.insert(oldSubscription)
+        context.insert(currentSubscription)
+
+        context.insert(ReminderSettings(dailyEnabled: true, updatedAt: old))
+        context.insert(ReminderSettings(weeklyEnabled: true, updatedAt: recent))
+        context.insert(RhythmTemplate(name: "Active", entriesText: "Monday: plan", isActive: true, updatedAt: old))
+        context.insert(RhythmTemplate(name: "Inactive", entriesText: "", isActive: false, updatedAt: recent))
+
+        let calendar = Calendar.current
+        let weekStart = try XCTUnwrap(calendar.dateInterval(of: .weekOfYear, for: recent)?.start)
+        context.insert(WeekPlan(weekStart: weekStart, rhythmEntriesText: "Monday: plan", createdAt: old))
+        context.insert(WeekPlan(weekStart: weekStart.addingTimeInterval(2 * 86_400), notes: "Keep it light", createdAt: recent))
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+        try StoreBootstrapService.run(context: context)
+
+        let profiles = try context.fetch(FetchDescriptor<CreatorProfile>())
+        let profile = try XCTUnwrap(profiles.first)
+        XCTAssertEqual(profiles.count, 1)
+        XCTAssertEqual(profile.id, completeProfile.id)
+        XCTAssertFalse(profile.telemetryConsent)
+        XCTAssertEqual(example.profileID, profile.id)
+        XCTAssertEqual(pending.profileID, profile.id)
+        XCTAssertEqual(account.profileID, profile.id)
+
+        let subscriptions = try context.fetch(FetchDescriptor<SubscriptionState>())
+        let subscription = try XCTUnwrap(subscriptions.first)
+        XCTAssertEqual(subscriptions.count, 1)
+        XCTAssertEqual(subscription.access, .expired)
+        XCTAssertTrue(subscription.freeBriefConsumed)
+        XCTAssertEqual(subscription.ideationRequestsUsed, 3)
+
+        let reminders = try context.fetch(FetchDescriptor<ReminderSettings>())
+        XCTAssertEqual(reminders.count, 1)
+        XCTAssertTrue(try XCTUnwrap(reminders.first).weeklyEnabled)
+        XCTAssertFalse(try XCTUnwrap(reminders.first).dailyEnabled)
+
+        let templates = try context.fetch(FetchDescriptor<RhythmTemplate>())
+        XCTAssertEqual(templates.count, 1)
+        XCTAssertEqual(templates.first?.name, "Active")
+
+        let plans = try context.fetch(FetchDescriptor<WeekPlan>())
+        let plan = try XCTUnwrap(plans.first)
+        XCTAssertEqual(plans.count, 1)
+        XCTAssertEqual(plan.rhythmEntriesText, "Monday: plan")
+        XCTAssertEqual(plan.notes, "Keep it light")
+        XCTAssertEqual(plan.weekStart, weekStart)
+    }
+
+    func testStoreBootstrapPreservesDisjointPlatformSelectionsWhenMergingProfiles() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let keeper = CreatorProfile(
+            name: "Chey",
+            goal: "Create clearly",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        keeper.selectedDestinationIDs = [PublishingCatalog.instagramID]
+        let syncedDuplicate = CreatorProfile(
+            selectedPlatforms: [.youtubeVideo, .tiktok],
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        syncedDuplicate.selectedDestinationIDs = [PublishingCatalog.youtubeID, PublishingCatalog.tiktokID]
+        context.insert(keeper)
+        context.insert(syncedDuplicate)
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+
+        let profiles = try context.fetch(FetchDescriptor<CreatorProfile>())
+        let merged = try XCTUnwrap(profiles.first)
+        XCTAssertEqual(profiles.count, 1)
+        XCTAssertEqual(merged.id, keeper.id)
+        XCTAssertEqual(
+            merged.selectedDestinationIDs,
+            [PublishingCatalog.instagramID, PublishingCatalog.youtubeID, PublishingCatalog.tiktokID]
+        )
+        XCTAssertEqual(merged.selectedPlatforms, [.instagramReels, .youtubeVideo, .tiktok])
+    }
+
+    func testPopulatedFileBackedStoreReopensWithoutRewritingCreatorChoices() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentCyMigrationTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appendingPathComponent("AgentCy.store")
+        let taskID = UUID()
+        let anchorID = UUID()
+
+        do {
+            let container = try ModelContainerFactory.makeLocal(at: storeURL)
+            let context = container.mainContext
+            let anchor = Pillar(id: anchorID, role: .anchor, name: "Anchor")
+            let task = CreatorTask(id: taskID, pillarID: anchor.id, title: "Creator choice", lane: .production)
+            context.insert(CreatorProfile(name: "Chey", goal: "Create", adultConfirmed: true, onboardingCompleted: true))
+            context.insert(SubscriptionState(access: .comped))
+            context.insert(anchor)
+            context.insert(task)
+            try context.save()
+        }
+
+        do {
+            let reopened = try ModelContainerFactory.makeLocal(at: storeURL)
+            let context = reopened.mainContext
+            try StoreBootstrapService.run(context: context)
+            let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            let pillars = try context.fetch(FetchDescriptor<Pillar>())
+            let task = try XCTUnwrap(tasks.first(where: { $0.id == taskID }))
+            let anchor = try XCTUnwrap(pillars.first(where: { $0.id == anchorID }))
+            XCTAssertEqual(task.lane, .production)
+            XCTAssertEqual(anchor.role, .anchor)
+            XCTAssertNil(anchor.parentPillarID)
+        }
+    }
+
     func testStoreUsesCloudKitOnlyWhenTheBuildExplicitlyEnablesIt() {
         XCTAssertTrue(ModelContainerFactory.shouldUseCloudKit(
             cloudKitEnabled: true,
@@ -291,6 +483,19 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(AccessPolicy.allows(.updatePosting, state: state))
         XCTAssertTrue(AccessPolicy.allows(.export, state: state))
         XCTAssertTrue(AccessPolicy.allows(.erase, state: state))
+    }
+
+    func testDatedPromotionalAccessExpiresWithoutRelaunchingTheApp() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let state = SubscriptionState(
+            access: .comped,
+            trialEnd: now.addingTimeInterval(-1)
+        )
+
+        XCTAssertFalse(AccessPolicy.allows(.createSpark, state: state, at: now))
+        XCTAssertFalse(AccessPolicy.allows(.schedule, state: state, at: now))
+        XCTAssertTrue(AccessPolicy.allows(.editExisting, state: state, at: now))
+        XCTAssertTrue(AccessPolicy.allows(.export, state: state, at: now))
     }
 
     func testConsumedFreeJourneyFailsClosedForNewWork() {

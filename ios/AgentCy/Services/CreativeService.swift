@@ -354,26 +354,32 @@ struct PreviewCreativeService: CreativeServicing {
 @MainActor
 struct RemoteCreativeService: CreativeServicing {
     private let client: AgentCyAPIClient
+    private let operationIDs: AIOperationIDRegistry
+    private static let fingerprintOperationID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
-    init(client: AgentCyAPIClient = AgentCyAPIClient()) {
+    init(
+        client: AgentCyAPIClient = AgentCyAPIClient(),
+        operationIDs: AIOperationIDRegistry = .shared
+    ) {
         self.client = client
+        self.operationIDs = operationIDs
     }
 
     func extractVoiceProfile(context: CreatorContextWire, mode: AssistanceMode) async throws -> VoiceProfileExtraction {
         try validateContext(context)
         guard (3...5).contains(context.voiceExamples.filter(\.creatorConfirmed).count) else { throw CreativeServiceError.missingInput }
-        let operationID = UUID()
-        let request = VoiceProfileRequestWire(
-            schemaVersion: AIContractVersion.schema,
-            promptVersion: AIContractVersion.voiceProfilePrompt,
-            operationId: operationID,
-            appBuild: APIConfiguration.appBuild,
-            assistanceMode: mode,
-            creatorContext: context,
-            intent: .onboarding,
-            teachingInstruction: nil
-        )
-        let result = try await client.perform(operation: .voiceProfile, request: request, result: VoiceProfileResultWire.self)
+        let result = try await perform(operation: .voiceProfile, result: VoiceProfileResultWire.self) { operationID in
+            VoiceProfileRequestWire(
+                schemaVersion: AIContractVersion.schema,
+                promptVersion: AIContractVersion.voiceProfilePrompt,
+                operationId: operationID,
+                appBuild: APIConfiguration.appBuild,
+                assistanceMode: mode,
+                creatorContext: context,
+                intent: .onboarding,
+                teachingInstruction: nil
+            )
+        }
         let profile = result.profile
         guard !profile.summary.isEmpty,
               !profile.tone.isEmpty,
@@ -388,19 +394,19 @@ struct RemoteCreativeService: CreativeServicing {
 
     func findIdeas(context: CreatorContextWire, mode: AssistanceMode) async throws -> [IdeaDirection] {
         try validateContext(context)
-        let operationID = UUID()
-        let request = IdeasRequestWire(
-            schemaVersion: AIContractVersion.schema,
-            promptVersion: AIContractVersion.ideasPrompt,
-            operationId: operationID,
-            appBuild: APIConfiguration.appBuild,
-            assistanceMode: mode,
-            creatorContext: context,
-            count: 3,
-            startingPoint: nil,
-            constraints: []
-        )
-        let result = try await client.perform(operation: .ideas, request: request, result: IdeasResultWire.self)
+        let result = try await perform(operation: .ideas, result: IdeasResultWire.self) { operationID in
+            IdeasRequestWire(
+                schemaVersion: AIContractVersion.schema,
+                promptVersion: AIContractVersion.ideasPrompt,
+                operationId: operationID,
+                appBuild: APIConfiguration.appBuild,
+                assistanceMode: mode,
+                creatorContext: context,
+                count: 3,
+                startingPoint: nil,
+                constraints: []
+            )
+        }
         guard result.ideas.count == 3,
               Set(result.ideas.map(\.directionId)).count == 3,
               Set(result.ideas.map(\.title)).count == 3 else {
@@ -422,20 +428,21 @@ struct RemoteCreativeService: CreativeServicing {
         guard turn < 8 else { throw CreativeServiceError.dialogueLimit }
         guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CreativeServiceError.missingInput }
         try validateContext(context)
-        let request = SparkTurnRequestWire(
-            schemaVersion: AIContractVersion.schema,
-            promptVersion: AIContractVersion.sparkTurnPrompt,
-            operationId: UUID(),
-            appBuild: APIConfiguration.appBuild,
-            assistanceMode: mode,
-            creatorContext: context,
-            spark: spark(from: brief, postContext: postContext),
-            turnNumber: turn + 1,
-            composeNow: false,
-            conversation: Array(conversation.suffix(16)),
-            workingState: developmentState(from: brief)
-        )
-        let result = try await client.perform(operation: .sparkTurn, request: request, result: SparkTurnResultWire.self)
+        let result = try await perform(operation: .sparkTurn, result: SparkTurnResultWire.self) { operationID in
+            SparkTurnRequestWire(
+                schemaVersion: AIContractVersion.schema,
+                promptVersion: AIContractVersion.sparkTurnPrompt,
+                operationId: operationID,
+                appBuild: APIConfiguration.appBuild,
+                assistanceMode: mode,
+                creatorContext: context,
+                spark: spark(from: brief, postContext: postContext),
+                turnNumber: turn + 1,
+                composeNow: false,
+                conversation: Array(conversation.suffix(16)),
+                workingState: developmentState(from: brief)
+            )
+        }
         guard !result.assistantMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CreativeServiceError.invalidLiveResponse("dialogue response was empty")
         }
@@ -447,22 +454,23 @@ struct RemoteCreativeService: CreativeServicing {
         guard (ContentFormat.shortForm.durationOptions + ContentFormat.longForm.durationOptions).contains(brief.durationSeconds) else {
             throw CreativeServiceError.invalidLiveResponse("the selected duration is unsupported")
         }
-        let request = ComposeBriefRequestWire(
-            schemaVersion: AIContractVersion.schema,
-            promptVersion: AIContractVersion.composeBriefPrompt,
-            operationId: UUID(),
-            appBuild: APIConfiguration.appBuild,
-            assistanceMode: mode,
-            creatorContext: context,
-            briefId: brief.id,
-            spark: spark(from: brief, postContext: nil),
-            conversation: Array(conversation.suffix(16)),
-            workingState: developmentState(from: brief),
-            durationSeconds: brief.durationSeconds,
-            selectedPlatforms: context.selectedPlatforms,
-            additionalDirection: nil
-        )
-        let result = try await client.perform(operation: .composeBrief, request: request, result: ComposeBriefResultWire.self)
+        let result = try await perform(operation: .composeBrief, result: ComposeBriefResultWire.self) { operationID in
+            ComposeBriefRequestWire(
+                schemaVersion: AIContractVersion.schema,
+                promptVersion: AIContractVersion.composeBriefPrompt,
+                operationId: operationID,
+                appBuild: APIConfiguration.appBuild,
+                assistanceMode: mode,
+                creatorContext: context,
+                briefId: brief.id,
+                spark: spark(from: brief, postContext: nil),
+                conversation: Array(conversation.suffix(16)),
+                workingState: developmentState(from: brief),
+                durationSeconds: brief.durationSeconds,
+                selectedPlatforms: context.selectedPlatforms,
+                additionalDirection: nil
+            )
+        }
         let readyBrief = result.brief
         guard readyBrief.briefId == brief.id else {
             throw CreativeServiceError.invalidLiveResponse("brief ID changed")
@@ -496,19 +504,20 @@ struct RemoteCreativeService: CreativeServicing {
         try validateContext(context)
         let cleaned = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { throw CreativeServiceError.missingInput }
-        let request = ReviseBriefRequestWire(
-            schemaVersion: AIContractVersion.schema,
-            promptVersion: AIContractVersion.reviseBriefPrompt,
-            operationId: UUID(),
-            appBuild: APIConfiguration.appBuild,
-            assistanceMode: mode,
-            creatorContext: context,
-            brief: brief,
-            revisionNumber: revisionNumber,
-            scope: scope,
-            instruction: cleaned
-        )
-        let result = try await client.perform(operation: .reviseBrief, request: request, result: ReviseBriefResultWire.self)
+        let result = try await perform(operation: .reviseBrief, result: ReviseBriefResultWire.self) { operationID in
+            ReviseBriefRequestWire(
+                schemaVersion: AIContractVersion.schema,
+                promptVersion: AIContractVersion.reviseBriefPrompt,
+                operationId: operationID,
+                appBuild: APIConfiguration.appBuild,
+                assistanceMode: mode,
+                creatorContext: context,
+                brief: brief,
+                revisionNumber: revisionNumber,
+                scope: scope,
+                instruction: cleaned
+            )
+        }
         guard result.brief.briefId == brief.briefId, result.brief.briefId == localBriefID else {
             throw CreativeServiceError.invalidLiveResponse("brief ID changed")
         }
@@ -554,17 +563,18 @@ struct RemoteCreativeService: CreativeServicing {
         try validateContext(context)
         let cleaned = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { throw CreativeServiceError.missingInput }
-        let request = VoiceProfileRequestWire(
-            schemaVersion: AIContractVersion.schema,
-            promptVersion: AIContractVersion.voiceProfilePrompt,
-            operationId: UUID(),
-            appBuild: APIConfiguration.appBuild,
-            assistanceMode: mode,
-            creatorContext: context,
-            intent: .teachCy,
-            teachingInstruction: cleaned
-        )
-        let result = try await client.perform(operation: .voiceProfile, request: request, result: VoiceProfileResultWire.self)
+        let result = try await perform(operation: .voiceProfile, result: VoiceProfileResultWire.self) { operationID in
+            VoiceProfileRequestWire(
+                schemaVersion: AIContractVersion.schema,
+                promptVersion: AIContractVersion.voiceProfilePrompt,
+                operationId: operationID,
+                appBuild: APIConfiguration.appBuild,
+                assistanceMode: mode,
+                creatorContext: context,
+                intent: .teachCy,
+                teachingInstruction: cleaned
+            )
+        }
         let edited = VoiceProfileDraft(result.profile)
         guard edited != current else {
             throw CreativeServiceError.invalidLiveResponse("Teach Cy returned the current profile without a change")
@@ -593,17 +603,18 @@ struct RemoteCreativeService: CreativeServicing {
         try validateContext(context)
         let boundedConversation = Array(conversation.suffix(24))
         guard !boundedConversation.isEmpty else { throw CreativeServiceError.missingInput }
-        let request = ChatTurnRequestWire(
-            schemaVersion: AIContractVersion.schema,
-            promptVersion: AIContractVersion.chatTurnPrompt,
-            operationId: UUID(),
-            appBuild: APIConfiguration.appBuild,
-            assistanceMode: mode,
-            creatorContext: context,
-            conversation: boundedConversation,
-            relevantBriefIds: Array(relevantBriefIDs.prefix(5))
-        )
-        let result = try await client.perform(operation: .chatTurn, request: request, result: ChatTurnResultWire.self)
+        let result = try await perform(operation: .chatTurn, result: ChatTurnResultWire.self) { operationID in
+            ChatTurnRequestWire(
+                schemaVersion: AIContractVersion.schema,
+                promptVersion: AIContractVersion.chatTurnPrompt,
+                operationId: operationID,
+                appBuild: APIConfiguration.appBuild,
+                assistanceMode: mode,
+                creatorContext: context,
+                conversation: boundedConversation,
+                relevantBriefIds: Array(relevantBriefIDs.prefix(5))
+            )
+        }
         guard !result.assistantMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CreativeServiceError.invalidLiveResponse("chat response was empty")
         }
@@ -623,6 +634,46 @@ struct RemoteCreativeService: CreativeServicing {
               context.pillars.count <= 10,
               context.librarySummaries.count <= 20 else {
             throw CreativeServiceError.invalidCreatorContext("Cy could not use this creator context safely. Review your profile and try again.")
+        }
+    }
+
+    private func perform<Request: AIRequestIdentifying, Result: Decodable & Sendable>(
+        operation: AIOperation,
+        result: Result.Type,
+        makeRequest: (UUID) -> Request
+    ) async throws -> Result {
+        let fingerprintRequest = makeRequest(Self.fingerprintOperationID)
+        let reservation = try await operationIDs.reserve(
+            operation: operation,
+            fingerprintRequest: fingerprintRequest
+        )
+        do {
+            let value = try await client.perform(
+                operation: operation,
+                request: makeRequest(reservation.operationID),
+                result: result
+            )
+            await operationIDs.complete(reservation)
+            return value
+        } catch {
+            if shouldDiscardOperationID(after: error) {
+                await operationIDs.complete(reservation)
+            }
+            throw error
+        }
+    }
+
+    private func shouldDiscardOperationID(after error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError { return urlError.code == .cancelled }
+        guard let apiError = error as? AgentCyAPIError else { return true }
+        switch apiError {
+        case .invalidRequest, .missingCredential, .payloadTooLarge:
+            return true
+        case .server(let error):
+            return !(error.code == .conflict && error.retryable)
+        case .http, .invalidStream:
+            return false
         }
     }
 

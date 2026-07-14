@@ -1249,13 +1249,14 @@ struct EraseDataSettingsView: View {
         .confirmationDialog("Erase all agent.cy data?", isPresented: $confirmErase, titleVisibility: .visible) {
             Button("Erase everything", role: .destructive) {
                 Task {
-                    await appModel.eraseAll(context: context)
-                    onErased()
+                    if await appModel.eraseAll(context: context) {
+                        onErased()
+                    }
                 }
             }
             Button("Keep my data", role: .cancel) {}
         } message: {
-            Text("This permanently removes your content, private iCloud records, temporary audio, reminders, and locally cached access state.")
+            Text("This permanently removes your content, private iCloud records, reminders, and locally cached access state.")
         }
     }
 }
