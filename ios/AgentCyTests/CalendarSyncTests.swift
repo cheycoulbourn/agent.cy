@@ -116,6 +116,25 @@ final class CalendarSyncTests: XCTestCase {
         )
     }
 
+    func testPendingCalendarCleanupRequiresFullAccess() {
+        XCTAssertThrowsError(try CalendarEventLinkCleanup.requireFullAccess(
+            authorization: .denied,
+            hasPendingLinks: true
+        )) { error in
+            guard case CalendarSyncError.cleanupRequiresAccess = error else {
+                return XCTFail("Expected pending-cleanup access error")
+            }
+        }
+        XCTAssertNoThrow(try CalendarEventLinkCleanup.requireFullAccess(
+            authorization: .denied,
+            hasPendingLinks: false
+        ))
+        XCTAssertNoThrow(try CalendarEventLinkCleanup.requireFullAccess(
+            authorization: .fullAccess,
+            hasPendingLinks: true
+        ))
+    }
+
     func testCalendarCleanupRetainsFailedAndUnattemptedLinksThenRetries() throws {
         var links = [
             "post:1": "event-1",

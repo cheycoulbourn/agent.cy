@@ -57,6 +57,7 @@ enum CalendarIntegrationPreferences {
 enum CalendarSyncError: LocalizedError {
     case accessDenied
     case calendarUnavailable
+    case cleanupRequiresAccess
 
     var errorDescription: String? {
         switch self {
@@ -64,6 +65,8 @@ enum CalendarSyncError: LocalizedError {
             "Calendar access is off. Allow access in Settings to keep your agenda connected."
         case .calendarUnavailable:
             "That calendar is no longer available on this iPhone. Choose another calendar in Settings."
+        case .cleanupRequiresAccess:
+            "Calendar access must be restored before agent.cy can delete its linked calendar events."
         }
     }
 }
@@ -110,6 +113,14 @@ enum CalendarSyncPolicy {
 }
 
 enum CalendarEventLinkCleanup {
+    static func requireFullAccess(
+        authorization: AgentCalendarAuthorization,
+        hasPendingLinks: Bool
+    ) throws {
+        guard hasPendingLinks, authorization != .fullAccess else { return }
+        throw CalendarSyncError.cleanupRequiresAccess
+    }
+
     /// Removes links only after their corresponding event deletion succeeds.
     /// A caller can persist the remaining dictionary and safely retry later.
     static func removeAll(
@@ -293,6 +304,10 @@ final class EventKitCalendarSyncService: CalendarSyncServicing {
                     defaults: defaults
                 )
             }
+            try CalendarEventLinkCleanup.requireFullAccess(
+                authorization: authorization,
+                hasPendingLinks: !links.isEmpty
+            )
             return
         }
 

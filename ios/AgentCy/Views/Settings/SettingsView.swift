@@ -209,7 +209,7 @@ struct SettingsView: View {
 
     private var accessSummary: String {
         guard let subscription = subscriptions.first else { return "Free" }
-        return switch subscription.access {
+        return switch AccessPolicy.effectiveAccess(for: subscription) {
         case .freeJourney: "Free"
         case .trial: "Trial"
         case .paid: "Paid"

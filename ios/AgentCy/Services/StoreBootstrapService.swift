@@ -81,13 +81,21 @@ enum StoreBootstrapService {
     private static func deduplicateCatalog(destinations: [PublishingDestination], formats: [PublishingFormat], context: ModelContext) throws {
         let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
         let socialAccounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>())
+        let profiles = try context.fetch(FetchDescriptor<CreatorProfile>())
         for kind in BuiltInDestinationKind.allCases {
             let matches = destinations.filter { $0.builtInKind == kind }.sorted { $0.createdAt < $1.createdAt }
-            guard let keeper = matches.first else { continue }
-            for duplicate in matches.dropFirst() {
+            let canonicalID = PublishingCatalog.destinationSeeds.first(where: { $0.2 == kind })?.0
+            guard let keeper = matches.first(where: { $0.id == canonicalID }) ?? matches.first else { continue }
+            for duplicate in matches where duplicate.id != keeper.id {
                 for format in formats where format.destinationID == duplicate.id { format.destinationID = keeper.id }
                 for output in outputs where output.destinationID == duplicate.id { output.destinationID = keeper.id }
                 for account in socialAccounts where account.destinationID == duplicate.id { account.destinationID = keeper.id }
+                for profile in profiles where profile.selectedDestinationIDs.contains(duplicate.id) {
+                    profile.selectedDestinationIDs = stableUnion(
+                        [],
+                        profile.selectedDestinationIDs.map { $0 == duplicate.id ? keeper.id : $0 }
+                    )
+                }
                 context.delete(duplicate)
             }
         }
@@ -251,12 +259,36 @@ enum StoreBootstrapService {
             return $0.id.uuidString < $1.id.uuidString
         }
         guard let keeper = sorted.first else { return }
+        let accessSource: SubscriptionState
+        if keeper.access == .freeJourney,
+           let activeEntitlement = sorted.first(where: hasPotentiallyActiveEntitlement) {
+            accessSource = activeEntitlement
+        } else {
+            accessSource = keeper
+        }
+        keeper.access = accessSource.access
+        keeper.trialEnd = [.trial, .comped].contains(accessSource.access)
+            ? accessSource.trialEnd
+            : nil
         for duplicate in sorted.dropFirst() {
             keeper.freeBriefConsumed = keeper.freeBriefConsumed || duplicate.freeBriefConsumed
             keeper.ideationRequestsUsed = max(keeper.ideationRequestsUsed, duplicate.ideationRequestsUsed)
             keeper.revisionRequestsUsed = max(keeper.revisionRequestsUsed, duplicate.revisionRequestsUsed)
             keeper.teachCyUpdatesUsed = max(keeper.teachCyUpdatesUsed, duplicate.teachCyUpdatesUsed)
             context.delete(duplicate)
+        }
+    }
+
+    private static func hasPotentiallyActiveEntitlement(_ state: SubscriptionState) -> Bool {
+        switch state.access {
+        case .paid:
+            return true
+        case .comped:
+            return state.trialEnd.map { $0 > Date() } ?? true
+        case .trial:
+            return state.trialEnd.map { $0 > Date() } ?? false
+        case .freeJourney, .expired:
+            return false
         }
     }
 

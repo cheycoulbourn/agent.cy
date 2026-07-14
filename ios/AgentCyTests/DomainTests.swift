@@ -382,6 +382,57 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(merged.selectedPlatforms, [.instagramReels, .youtubeVideo, .tiktok])
     }
 
+    func testStoreBootstrapKeepsCanonicalDestinationAndRewritesProfileSelection() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let duplicateID = UUID()
+        let duplicate = PublishingDestination(
+            id: duplicateID,
+            name: "Instagram duplicate",
+            builtInKind: .instagram,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let profile = CreatorProfile(name: "Chey", goal: "Create")
+        profile.selectedDestinationIDs = [duplicateID]
+        context.insert(duplicate)
+        context.insert(profile)
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+        try StoreBootstrapService.run(context: context)
+
+        let instagram = try context.fetch(FetchDescriptor<PublishingDestination>())
+            .filter { $0.builtInKind == .instagram }
+        XCTAssertEqual(instagram.map(\.id), [PublishingCatalog.instagramID])
+        XCTAssertEqual(profile.selectedDestinationIDs, [PublishingCatalog.instagramID])
+    }
+
+    func testStoreBootstrapDoesNotLetNewerFreeDuplicateErasePaidAccess() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let paid = SubscriptionState(
+            access: .paid,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let newerFree = SubscriptionState(
+            access: .freeJourney,
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        newerFree.ideationRequestsUsed = 2
+        context.insert(paid)
+        context.insert(newerFree)
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+
+        let subscriptions = try context.fetch(FetchDescriptor<SubscriptionState>())
+        let merged = try XCTUnwrap(subscriptions.first)
+        XCTAssertEqual(subscriptions.count, 1)
+        XCTAssertEqual(merged.access, .paid)
+        XCTAssertNil(merged.trialEnd)
+        XCTAssertEqual(merged.ideationRequestsUsed, 2)
+    }
+
     func testPopulatedFileBackedStoreReopensWithoutRewritingCreatorChoices() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentCyMigrationTests-\(UUID().uuidString)", isDirectory: true)

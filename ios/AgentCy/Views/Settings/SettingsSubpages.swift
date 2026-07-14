@@ -1107,17 +1107,18 @@ struct AccessSettingsView: View {
             subtitle: "See what is available and manage your App Store access."
         ) {
             if let subscription = subscriptions.first {
+                let effectiveAccess = AccessPolicy.effectiveAccess(for: subscription)
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     MetaLabel("Current access")
                     HStack(alignment: .firstTextBaseline) {
-                        Text(accessTitle(subscription.access))
+                        Text(accessTitle(effectiveAccess))
                             .font(.agentTitle)
                             .foregroundStyle(Color.agentText)
                         Spacer()
-                        MetaLabel(subscription.access.canCreate ? "Active" : "Expired")
-                            .foregroundStyle(subscription.access.canCreate ? Color.agentSuccess : Color.agentDestructive)
+                        MetaLabel(effectiveAccess.canCreate ? "Active" : "Expired")
+                            .foregroundStyle(effectiveAccess.canCreate ? Color.agentSuccess : Color.agentDestructive)
                     }
-                    Text(accessDetail(subscription))
+                    Text(accessDetail(effectiveAccess))
                         .font(.agentBody)
                         .foregroundStyle(Color.agentSecondary)
                 }
@@ -1128,7 +1129,7 @@ struct AccessSettingsView: View {
                 }
                 SettingsValueRow(title: "Billing", value: "Monthly", isLast: true)
 
-                if subscription.access == .freeJourney || subscription.access == .expired {
+                if effectiveAccess == .freeJourney || effectiveAccess == .expired {
                     Button("Start 14-day trial") {
                         Task { await appModel.startTrial(context: context) }
                     }
@@ -1157,8 +1158,8 @@ struct AccessSettingsView: View {
         }
     }
 
-    private func accessDetail(_ subscription: SubscriptionState) -> String {
-        switch subscription.access {
+    private func accessDetail(_ access: SubscriptionAccess) -> String {
+        switch access {
         case .freeJourney: "Your first complete brief is included."
         case .trial: "Then $8.99 a month. Cancel anytime in App Store settings."
         case .paid: "$8.99 a month through the App Store."
