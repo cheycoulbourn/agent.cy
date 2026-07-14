@@ -7301,6 +7301,17 @@
           "exclusiveMinimum": 0,
           "maximum": 86400
         },
+        "quotaScope": {
+          "type": "string",
+          "enum": [
+            "freeAllowance",
+            "installationShortWindow",
+            "installationDaily",
+            "globalDailySpend",
+            "providerRateLimit",
+            "providerCredits"
+          ]
+        },
         "fieldIssues": {
           "maxItems": 20,
           "type": "array",
@@ -8909,6 +8920,17 @@
                       "type": "integer",
                       "exclusiveMinimum": 0,
                       "maximum": 86400
+                    },
+                    "quotaScope": {
+                      "type": "string",
+                      "enum": [
+                        "freeAllowance",
+                        "installationShortWindow",
+                        "installationDaily",
+                        "globalDailySpend",
+                        "providerRateLimit",
+                        "providerCredits"
+                      ]
                     },
                     "fieldIssues": {
                       "maxItems": 20,
@@ -10575,6 +10597,17 @@
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 86400
+                },
+                "quotaScope": {
+                  "type": "string",
+                  "enum": [
+                    "freeAllowance",
+                    "installationShortWindow",
+                    "installationDaily",
+                    "globalDailySpend",
+                    "providerRateLimit",
+                    "providerCredits"
+                  ]
                 },
                 "fieldIssues": {
                   "maxItems": 20,

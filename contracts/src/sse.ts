@@ -44,12 +44,22 @@ export const AiErrorCodeSchema = z.enum([
   "conflict",
 ]);
 
+export const AiQuotaScopeSchema = z.enum([
+  "freeAllowance",
+  "installationShortWindow",
+  "installationDaily",
+  "globalDailySpend",
+  "providerRateLimit",
+  "providerCredits",
+]);
+
 export const AiErrorSchema = z
   .object({
     code: AiErrorCodeSchema,
     message: z.string().trim().min(1).max(500),
     retryable: z.boolean(),
     retryAfterSeconds: z.number().int().positive().max(86_400).optional(),
+    quotaScope: AiQuotaScopeSchema.optional(),
     fieldIssues: z
       .array(
         z
@@ -272,6 +282,7 @@ export const AiSseSequenceSchema = z
 
 export type AiOperation = z.infer<typeof AiOperationSchema>;
 export type AiErrorCode = z.infer<typeof AiErrorCodeSchema>;
+export type AiQuotaScope = z.infer<typeof AiQuotaScopeSchema>;
 export type AiError = z.infer<typeof AiErrorSchema>;
 export type SseMetaEvent = z.infer<typeof SseMetaEventSchema>;
 export type SsePhaseEvent = z.infer<typeof SsePhaseEventSchema>;

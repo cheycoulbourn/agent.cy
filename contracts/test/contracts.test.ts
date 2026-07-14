@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AiSseSequenceSchema,
+  AiErrorSchema,
   AssistanceModeSchema,
   ChatTurnResultSchema,
   ComposeBriefResultSchema,
@@ -298,6 +299,21 @@ describe("AI contracts", () => {
 });
 
 describe("SSE contract", () => {
+  it("accepts optional machine-readable quota scopes without requiring them", () => {
+    const base = {
+      code: "quota_exceeded",
+      message: "The allowance has been reached.",
+      retryable: false,
+    };
+    expect(AiErrorSchema.safeParse(base).success).toBe(true);
+    expect(
+      AiErrorSchema.safeParse({ ...base, quotaScope: "freeAllowance" }).success,
+    ).toBe(true);
+    expect(
+      AiErrorSchema.safeParse({ ...base, quotaScope: "unknownScope" }).success,
+    ).toBe(false);
+  });
+
   it("accepts meta, phase, validated result, done", () => {
     const events = [
       {

@@ -76,6 +76,7 @@ describe("Anthropic provider failure diagnostics", () => {
       code: "rate_limited",
       retryable: true,
       retryAfterSeconds: 12,
+      quotaScope: "providerRateLimit",
     });
     expect(diagnostic).toHaveBeenCalledWith({
       event: "anthropic_request_failed",
@@ -84,6 +85,20 @@ describe("Anthropic provider failure diagnostics", () => {
       errorType: "rate_limit_error",
       requestId: "req_rate_limit",
       retryable: true,
+    });
+  });
+
+  it("marks provider billing failures as a provider credit issue", () => {
+    const error = classifyAnthropicFailure("ideas", {
+      status: 400,
+      type: "billing_error",
+      requestID: "req_billing",
+    });
+
+    expect(error).toMatchObject({
+      code: "upstream_unavailable",
+      retryable: false,
+      quotaScope: "providerCredits",
     });
   });
 

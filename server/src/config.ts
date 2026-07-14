@@ -14,6 +14,7 @@ export interface ServerConfig {
   readonly installationHashSecrets: readonly [string, ...string[]];
   readonly inviteCodes: readonly string[];
   readonly pilotCompedAccess: boolean;
+  readonly pilotCompedDurationDays: number;
   readonly revenueCatWebhookSecret: string | undefined;
   readonly revenueCatEntitlementId: string;
   readonly requestTimeoutMs: number;
@@ -127,6 +128,27 @@ export function loadConfig(
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+  if (new Set(inviteCodes).size !== inviteCodes.length) {
+    throw new Error("INVITE_CODES must not contain duplicates");
+  }
+  if (production) {
+    if (inviteCodes.length === 0) {
+      throw new Error("INVITE_CODES must contain at least one production invitation");
+    }
+    for (const inviteCode of inviteCodes) {
+      const characterClasses = [
+        /[a-z]/.test(inviteCode),
+        /[A-Z]/.test(inviteCode),
+        /[0-9]/.test(inviteCode),
+        /[^a-zA-Z0-9]/.test(inviteCode),
+      ].filter(Boolean).length;
+      if (inviteCode.length < 20 || characterClasses < 3) {
+        throw new Error(
+          "Each production INVITE_CODES value must contain at least 20 characters across at least three character classes",
+        );
+      }
+    }
+  }
   const revenueCatEntitlementId =
     environment.REVENUECAT_ENTITLEMENT_ID ??
     (production ? undefined : "creator_access");
@@ -140,6 +162,14 @@ export function loadConfig(
   );
   if (telemetryRetentionDays > 30) {
     throw new Error("TELEMETRY_RETENTION_DAYS cannot exceed 30");
+  }
+  const pilotCompedDurationDays = integer(
+    environment.PILOT_COMPED_DURATION_DAYS,
+    28,
+    "PILOT_COMPED_DURATION_DAYS",
+  );
+  if (pilotCompedDurationDays > 365) {
+    throw new Error("PILOT_COMPED_DURATION_DAYS cannot exceed 365");
   }
 
   return {
@@ -159,6 +189,7 @@ export function loadConfig(
       production,
       "PILOT_COMPED_ACCESS",
     ),
+    pilotCompedDurationDays,
     revenueCatWebhookSecret: environment.REVENUECAT_WEBHOOK_SECRET,
     revenueCatEntitlementId,
     requestTimeoutMs: integer(

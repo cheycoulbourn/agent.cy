@@ -32,6 +32,7 @@ const config: ServerConfig = {
   installationHashSecrets: ["test-install-secret-long-enough-for-hmac"],
   inviteCodes: ["FOUNDER-ONE"],
   pilotCompedAccess: false,
+  pilotCompedDurationDays: 28,
   revenueCatWebhookSecret: "revenuecat-test-secret",
   revenueCatEntitlementId: "creator_access",
   requestTimeoutMs: 5_000,
@@ -46,12 +47,16 @@ afterEach(async () => {
   await Promise.all(openApps.splice(0).map((app) => app.close()));
 });
 
-async function harness(provider?: AiProvider) {
+async function harness(
+  provider?: AiProvider,
+  configOverrides: Partial<ServerConfig> = {},
+) {
+  const selectedConfig = { ...config, ...configOverrides };
   const repository = new StateRepository(new MemoryStateBackend());
   const selectedProvider =
-    provider ?? new FixtureAiProvider(config.model, developmentFixtures);
+    provider ?? new FixtureAiProvider(selectedConfig.model, developmentFixtures);
   const app = await buildApp({
-    config,
+    config: selectedConfig,
     repository,
     provider: selectedProvider,
     clock: () => fixedNow,
@@ -71,6 +76,7 @@ async function harness(provider?: AiProvider) {
     installationId: string;
     credential: string;
     access: string;
+    promotionalEntitlementEndsAt?: string;
   }>();
   return { app, repository, provider: selectedProvider, identity };
 }
@@ -157,6 +163,78 @@ function fixtureResult(operation: keyof typeof developmentFixtures, payload: unk
 }
 
 describe("agent.cy server", () => {
+  it("rate-limits invitation redemption attempts by source address", async () => {
+    const { app } = await harness(undefined, { shortWindowLimit: 2 });
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/v1/installations/redeem",
+      payload: {
+        inviteCode: "ANOTHER-INVITE",
+        appBuild: "1.0 (1)",
+        platform: "ios",
+      },
+    });
+    expect(invalid.statusCode).toBe(401);
+
+    const limited = await app.inject({
+      method: "POST",
+      url: "/v1/installations/redeem",
+      payload: {
+        inviteCode: "ONE-MORE-INVITE",
+        appBuild: "1.0 (1)",
+        platform: "ios",
+      },
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBe("600");
+    expect(limited.json()).toMatchObject({
+      error: { code: "rate_limited", retryable: true },
+    });
+  });
+
+  it("returns the configured promotional entitlement end for a comped pilot", async () => {
+    const { identity, repository } = await harness(undefined, {
+      pilotCompedAccess: true,
+      pilotCompedDurationDays: 28,
+    });
+    expect(identity).toMatchObject({
+      access: "comped",
+      promotionalEntitlementEndsAt: "2026-08-08T16:00:00.000Z",
+    });
+    expect(
+      (await repository.snapshotForTests()).installations[
+        identity.installationId
+      ]?.promotionalEntitlementEndsAt,
+    ).toBe("2026-08-08T16:00:00.000Z");
+  });
+
+  it("gives startup-promoted free journeys the configured promotional end", async () => {
+    const repository = new StateRepository(new MemoryStateBackend());
+    await repository.seedInviteHashes(["existing-free-invite"]);
+    const installation = await repository.redeemInvite(
+      "existing-free-invite",
+      "existing-free-token",
+      fixedNow,
+    );
+    const app = await buildApp({
+      config: {
+        ...config,
+        pilotCompedAccess: true,
+        pilotCompedDurationDays: 28,
+      },
+      repository,
+      provider: new FixtureAiProvider(config.model, developmentFixtures),
+      clock: () => fixedNow,
+    });
+    openApps.push(app);
+
+    expect(
+      (await repository.snapshotForTests()).installations[installation.id],
+    ).toMatchObject({
+      access: "comped",
+      promotionalEntitlementEndsAt: "2026-08-08T16:00:00.000Z",
+    });
+  });
   it("reports health without exposing configuration", async () => {
     const { app } = await harness();
     const response = await app.inject({ method: "GET", url: "/healthz" });
@@ -553,7 +631,7 @@ describe("agent.cy server", () => {
       payload: voiceRequest(),
     });
     expect(parseSseForTests(exceeded.body).find((event) => event.event === "error")?.data).toMatchObject({
-      error: { code: "quota_exceeded" },
+      error: { code: "quota_exceeded", quotaScope: "freeAllowance" },
     });
   });
 
@@ -664,7 +742,12 @@ describe("agent.cy server", () => {
 
   it("applies RevenueCat entitlements once and blocks expired AI access", async () => {
     const { app, identity, repository } = await harness();
-    const webhook = (id: string, type: string, periodType?: string) => ({
+    const webhook = (
+      id: string,
+      type: string,
+      periodType?: string,
+      expirationAtMs?: number,
+    ) => ({
       api_version: "1.0",
       event: {
         id,
@@ -673,6 +756,7 @@ describe("agent.cy server", () => {
         app_user_id: identity.installationId,
         entitlement_ids: [config.revenueCatEntitlementId],
         ...(periodType ? { period_type: periodType } : {}),
+        ...(expirationAtMs ? { expiration_at_ms: expirationAtMs } : {}),
       },
     });
     const purchase = await app.inject({
@@ -704,6 +788,7 @@ describe("agent.cy server", () => {
     });
     expect(unrelatedEntitlement.json()).toMatchObject({ processed: false });
 
+    const promotionalEnd = fixedNow.getTime() + 7 * 24 * 60 * 60 * 1_000;
     const promotional = await app.inject({
       method: "POST",
       url: "/v1/webhooks/revenuecat",
@@ -712,6 +797,7 @@ describe("agent.cy server", () => {
         "rc-promotional",
         "NON_RENEWING_PURCHASE",
         "PROMOTIONAL",
+        promotionalEnd,
       ),
     });
     expect(promotional.json()).toMatchObject({ processed: true });
@@ -719,6 +805,10 @@ describe("agent.cy server", () => {
     expect(promotionalState.installations[identity.installationId]?.access).toBe(
       "comped",
     );
+    expect(
+      promotionalState.installations[identity.installationId]
+        ?.promotionalEntitlementEndsAt,
+    ).toBe(new Date(promotionalEnd).toISOString());
 
     await app.inject({
       method: "POST",
@@ -734,6 +824,61 @@ describe("agent.cy server", () => {
     });
     expect(parseSseForTests(response.body).find((event) => event.event === "error")?.data).toMatchObject({
       error: { code: "entitlement_required" },
+    });
+  });
+
+  it("acknowledges RevenueCat events for unknown and erased installations", async () => {
+    const { app, identity } = await harness();
+    const webhook = (id: string, installationId: string) => ({
+      api_version: "1.0",
+      event: {
+        id,
+        type: "INITIAL_PURCHASE",
+        event_timestamp_ms: fixedNow.getTime(),
+        app_user_id: installationId,
+        entitlement_ids: [config.revenueCatEntitlementId],
+        period_type: "NORMAL",
+      },
+    });
+
+    const unknown = await app.inject({
+      method: "POST",
+      url: "/v1/webhooks/revenuecat",
+      headers: auth(config.revenueCatWebhookSecret ?? ""),
+      payload: webhook("rc-unknown", randomUUID()),
+    });
+    expect(unknown.statusCode).toBe(200);
+    expect(unknown.json()).toMatchObject({
+      received: true,
+      eventId: "rc-unknown",
+      processed: false,
+    });
+
+    const deletion = await app.inject({
+      method: "POST",
+      url: "/v1/privacy/delete",
+      headers: auth(identity.credential),
+      payload: {
+        requestId: randomUUID(),
+        installationId: identity.installationId,
+        appBuild: "1.0 (1)",
+        scope: "serverMetadata",
+        confirmation: "ERASE",
+      },
+    });
+    expect(deletion.statusCode).toBe(200);
+
+    const erased = await app.inject({
+      method: "POST",
+      url: "/v1/webhooks/revenuecat",
+      headers: auth(config.revenueCatWebhookSecret ?? ""),
+      payload: webhook("rc-erased", identity.installationId),
+    });
+    expect(erased.statusCode).toBe(200);
+    expect(erased.json()).toMatchObject({
+      received: true,
+      eventId: "rc-erased",
+      processed: false,
     });
   });
 

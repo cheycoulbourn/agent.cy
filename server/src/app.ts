@@ -66,6 +66,9 @@ interface CachedResult {
   readonly result: unknown;
 }
 
+const INVITE_RATE_WINDOW_MS = 10 * 60 * 1_000;
+const MAX_INVITE_RATE_LIMIT_KEYS = 10_000;
+
 export interface BuildAppOptions {
   readonly config: ServerConfig;
   readonly repository?: StateRepository;
@@ -86,12 +89,19 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const provider = options.provider ?? createProvider(config);
   const activeInstallations = new Set<string>();
   const idempotencyCache = new Map<string, CachedResult>();
+  const inviteRedemptionAttempts = new Map<string, number[]>();
 
   await repository.seedInviteHashes(
     config.inviteCodes.map((inviteCode) => inviteIdentity.hash(inviteCode)),
   );
   if (config.pilotCompedAccess) {
-    await repository.promoteActiveFreeJourneysToComped();
+    const promotionStartedAt = clock();
+    await repository.promoteActiveFreeJourneysToComped(
+      new Date(
+        promotionStartedAt.getTime() +
+          config.pilotCompedDurationDays * 86_400_000,
+      ),
+    );
   }
   await repository.purgeTelemetryBefore(
     new Date(clock().getTime() - config.telemetryRetentionDays * 86_400_000),
@@ -137,6 +147,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }
 
   app.post("/v1/installations/redeem", async (request, reply) => {
+    try {
+      enforceInviteRedemptionRateLimit(
+        inviteRedemptionAttempts,
+        request.ip,
+        clock(),
+        config.shortWindowLimit,
+      );
+    } catch (error) {
+      return sendHttpError(reply, asAppError(error));
+    }
     const parsed = InstallationRedeemRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return sendHttpError(
@@ -145,17 +165,31 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       );
     }
     const rawCredential = installationIdentity.createInstallationToken();
+    const redeemedAt = clock();
+    const promotionalEntitlementEndsAt = config.pilotCompedAccess
+      ? new Date(
+          redeemedAt.getTime() +
+            config.pilotCompedDurationDays * 86_400_000,
+        )
+      : null;
     try {
       const installation = await repository.redeemInvite(
         inviteIdentity.hash(parsed.data.inviteCode),
         installationIdentity.hash(rawCredential),
-        clock(),
+        redeemedAt,
         config.pilotCompedAccess ? "comped" : "freeJourney",
+        promotionalEntitlementEndsAt,
       );
       const result = InstallationRedeemResultSchema.parse({
         installationId: installation.id,
         credential: rawCredential,
         access: installation.access,
+        ...(config.pilotCompedAccess
+          ? {
+              promotionalEntitlementEndsAt:
+                promotionalEntitlementEndsAt?.toISOString(),
+            }
+          : {}),
       });
       return reply.code(201).send(result);
     } catch (error) {
@@ -169,6 +203,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         request,
         repository,
         installationIdentity,
+        clock(),
       );
       const parsed = TelemetryEventsRequestSchema.safeParse(request.body);
       if (!parsed.success || !sameUuid(parsed.data.installationId, installation.id)) {
@@ -198,6 +233,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         request,
         repository,
         installationIdentity,
+        clock(),
       );
       const parsed = PrivacyDeleteRequestSchema.safeParse(request.body);
       if (!parsed.success || !sameUuid(parsed.data.installationId, installation.id)) {
@@ -255,11 +291,34 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         parsed.data.event.entitlement_ids?.includes(
           config.revenueCatEntitlementId,
         ) === true;
+      let promotionalEntitlementEndsAt: Date | null = null;
+      if (
+        access === "comped" &&
+        parsed.data.event.app_user_id &&
+        entitlementMatches
+      ) {
+        const expirationAtMs = parsed.data.event.expiration_at_ms;
+        if (expirationAtMs === null || expirationAtMs === undefined) {
+          throw new AppError(
+            "invalid_input",
+            "Promotional entitlement expiration is required.",
+          );
+        }
+        promotionalEntitlementEndsAt = new Date(expirationAtMs);
+        if (Number.isNaN(promotionalEntitlementEndsAt.getTime())) {
+          throw new AppError(
+            "invalid_input",
+            "Promotional entitlement expiration is invalid.",
+          );
+        }
+      }
       const processed = parsed.data.event.app_user_id && entitlementMatches
         ? await repository.applyRevenueCatEntitlement(
             parsed.data.event.id,
             parsed.data.event.app_user_id,
             access,
+            clock(),
+            promotionalEntitlementEndsAt,
           )
         : false;
       const result = RevenueCatWebhookResultSchema.parse({
@@ -370,7 +429,7 @@ async function handleAiRequest(context: AiHandlerContext): Promise<void> {
   let timedOut = false;
   let providerResult: ProviderResult | null = null;
   try {
-    installation = await authenticate(request, repository, identity);
+    installation = await authenticate(request, repository, identity, clock());
     const parsed = definition.requestSchema.safeParse(request.body);
     if (!parsed.success) {
       throw new AppError(
@@ -566,6 +625,7 @@ async function authenticate(
   request: FastifyRequest,
   repository: StateRepository,
   identity: RotatingInstallationIdentityService,
+  now: Date,
 ): Promise<InstallationRecord> {
   const token = readBearerToken(request.headers.authorization);
   if (!token) {
@@ -577,6 +637,7 @@ async function authenticate(
   const tokenHashes = identity.hashCandidates(token);
   const installation = await repository.findActiveInstallationByTokenHashes(
     tokenHashes,
+    now,
   );
   if (!installation) {
     throw new AppError(
@@ -642,6 +703,7 @@ function sendAiError(
       ...(error.retryAfterSeconds === null
         ? {}
         : { retryAfterSeconds: error.retryAfterSeconds }),
+      ...(error.quotaScope === null ? {} : { quotaScope: error.quotaScope }),
     },
   });
   writer.send("done", {
@@ -842,6 +904,7 @@ function sendHttpError(reply: FastifyReply, error: AppError): FastifyReply {
       ...(error.retryAfterSeconds === null
         ? {}
         : { retryAfterSeconds: error.retryAfterSeconds }),
+      ...(error.quotaScope === null ? {} : { quotaScope: error.quotaScope }),
     },
   });
 }
@@ -850,6 +913,50 @@ function pruneIdempotencyCache(cache: Map<string, CachedResult>, nowMs: number):
   for (const [key, value] of cache.entries()) {
     if (value.expiresAt <= nowMs) cache.delete(key);
   }
+}
+
+function enforceInviteRedemptionRateLimit(
+  attemptsByAddress: Map<string, number[]>,
+  address: string,
+  now: Date,
+  limit: number,
+): void {
+  const nowMs = now.getTime();
+  for (const [key, attempts] of attemptsByAddress.entries()) {
+    const recent = attempts.filter(
+      (attemptedAt) => attemptedAt > nowMs - INVITE_RATE_WINDOW_MS,
+    );
+    if (recent.length === 0) attemptsByAddress.delete(key);
+    else if (recent.length !== attempts.length) attemptsByAddress.set(key, recent);
+  }
+
+  const attempts = attemptsByAddress.get(address) ?? [];
+  if (attempts.length >= limit) {
+    const firstAttemptAt = Math.min(...attempts);
+    throw new AppError(
+      "rate_limited",
+      "Too many invitation attempts. Please wait before trying again.",
+      {
+        retryable: true,
+        retryAfterSeconds: Math.max(
+          1,
+          Math.ceil(
+            (firstAttemptAt + INVITE_RATE_WINDOW_MS - nowMs) / 1_000,
+          ),
+        ),
+      },
+    );
+  }
+
+  if (
+    !attemptsByAddress.has(address) &&
+    attemptsByAddress.size >= MAX_INVITE_RATE_LIMIT_KEYS
+  ) {
+    const oldestAddress = attemptsByAddress.keys().next().value;
+    if (oldestAddress !== undefined) attemptsByAddress.delete(oldestAddress);
+  }
+  attempts.push(nowMs);
+  attemptsByAddress.set(address, attempts);
 }
 
 function telemetryCutoff(now: Date, retentionDays: number): Date {

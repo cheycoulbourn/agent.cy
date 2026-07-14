@@ -5,6 +5,8 @@ import {
   RotatingInstallationIdentityService,
 } from "../src/identity.js";
 
+const strongProductionInvite = "pilot-7F2K-9M4Q-X8R6";
+
 describe("server secret configuration", () => {
   it("uses separate safe defaults for local invitation and installation hashing", () => {
     const config = loadConfig({ NODE_ENV: "development" });
@@ -18,6 +20,7 @@ describe("server secret configuration", () => {
       NODE_ENV: "production",
       AI_PROVIDER: "anthropic",
       ANTHROPIC_API_KEY: "test-key",
+      INVITE_CODES: strongProductionInvite,
     };
     expect(() => loadConfig(production)).toThrow("INVITE_HASH_SECRET");
     expect(() =>
@@ -35,6 +38,30 @@ describe("server secret configuration", () => {
         PREVIOUS_INSTALLATION_HASH_SECRETS: "short",
       }),
     ).toThrow("PREVIOUS_INSTALLATION_HASH_SECRETS[0]");
+  });
+
+  it("requires strong, unique invitation codes in production", () => {
+    const production = {
+      NODE_ENV: "production",
+      AI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "test-key",
+      INVITE_HASH_SECRET: "a".repeat(32),
+      INSTALLATION_HASH_SECRET: "b".repeat(32),
+      REVENUECAT_ENTITLEMENT_ID: "creator_access",
+    };
+    expect(() => loadConfig(production)).toThrow("INVITE_CODES");
+    expect(() =>
+      loadConfig({ ...production, INVITE_CODES: "FOUNDER-ONE" }),
+    ).toThrow("at least 20 characters");
+    expect(() =>
+      loadConfig({
+        ...production,
+        INVITE_CODES: `${strongProductionInvite},${strongProductionInvite}`,
+      }),
+    ).toThrow("must not contain duplicates");
+    expect(() =>
+      loadConfig({ ...production, INVITE_CODES: strongProductionInvite }),
+    ).not.toThrow();
   });
 
   it("loads prior installation secrets for credential rotation", () => {
@@ -78,9 +105,11 @@ describe("server secret configuration", () => {
       ANTHROPIC_API_KEY: "test-key",
       INVITE_HASH_SECRET: "a".repeat(32),
       INSTALLATION_HASH_SECRET: "b".repeat(32),
+      INVITE_CODES: strongProductionInvite,
       REVENUECAT_ENTITLEMENT_ID: "creator_access",
     });
     expect(config.pilotCompedAccess).toBe(true);
+    expect(config.pilotCompedDurationDays).toBe(28);
     expect(loadConfig({ NODE_ENV: "development" }).pilotCompedAccess).toBe(false);
     expect(
       loadConfig({ NODE_ENV: "development", PILOT_COMPED_ACCESS: "true" })

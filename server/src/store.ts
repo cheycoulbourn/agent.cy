@@ -32,6 +32,7 @@ export interface InstallationRecord {
   readonly id: string;
   tokenHash: string | null;
   access: SubscriptionAccess;
+  promotionalEntitlementEndsAt: string | null;
   readonly createdAt: string;
   deletedAt: string | null;
   allowanceCounts: Partial<Record<AllowanceKey, number>>;
@@ -112,6 +113,7 @@ interface PersistedState {
   operations: Record<string, AiOperationRecord>;
   telemetry: OperationalTelemetry[];
   processedRevenueCatEvents: string[];
+  processedRevenueCatEventTimes: Record<string, string>;
 }
 
 function emptyState(): PersistedState {
@@ -125,6 +127,7 @@ function emptyState(): PersistedState {
     operations: {},
     telemetry: [],
     processedRevenueCatEvents: [],
+    processedRevenueCatEventTimes: {},
   };
 }
 
@@ -205,20 +208,26 @@ export interface SettleOperationInput {
 const TEN_MINUTES_MS = 10 * 60 * 1_000;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const STALE_RESERVATION_MS = 30 * 60 * 1_000;
+const OPERATION_RETENTION_MS = DAY_MS;
+const MAX_OPERATION_RECORDS = 10_000;
+const REVENUECAT_EVENT_RETENTION_MS = 90 * DAY_MS;
+const MAX_REVENUECAT_EVENT_RECORDS = 10_000;
 
 export class StateRepository {
-  private readonly statePromise: Promise<PersistedState>;
+  private statePromise: Promise<PersistedState>;
   private transactionTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly backend: StateBackend) {
-    this.statePromise = backend.load();
+    this.statePromise = backend.load().then(normalizeState);
   }
 
   private transact<T>(mutate: (state: PersistedState) => T | Promise<T>): Promise<T> {
     const pending = this.transactionTail.then(async () => {
-      const state = await this.statePromise;
-      const result = await mutate(state);
-      await this.backend.save(state);
+      const committedState = await this.statePromise;
+      const nextState = structuredClone(committedState);
+      const result = await mutate(nextState);
+      await this.backend.save(nextState);
+      this.statePromise = Promise.resolve(nextState);
       return result;
     });
     this.transactionTail = pending.then(
@@ -245,6 +254,7 @@ export class StateRepository {
     tokenHash: string,
     now: Date,
     access: SubscriptionAccess = "freeJourney",
+    promotionalEntitlementEndsAt: Date | null = null,
   ): Promise<InstallationRecord> {
     return this.transact((state) => {
       const invite = state.invites[codeHash];
@@ -259,6 +269,10 @@ export class StateRepository {
         id: randomUUID(),
         tokenHash,
         access,
+        promotionalEntitlementEndsAt:
+          access === "comped"
+            ? promotionalEntitlementEndsAt?.toISOString() ?? null
+            : null,
         createdAt: now.toISOString(),
         deletedAt: null,
         allowanceCounts: {},
@@ -270,11 +284,15 @@ export class StateRepository {
     });
   }
 
-  async promoteActiveFreeJourneysToComped(): Promise<void> {
+  async promoteActiveFreeJourneysToComped(
+    promotionalEntitlementEndsAt: Date,
+  ): Promise<void> {
     await this.transact((state) => {
       for (const installation of Object.values(state.installations)) {
         if (installation.deletedAt === null && installation.access === "freeJourney") {
           installation.access = "comped";
+          installation.promotionalEntitlementEndsAt =
+            promotionalEntitlementEndsAt.toISOString();
         }
       }
     });
@@ -282,12 +300,14 @@ export class StateRepository {
 
   async findActiveInstallationByTokenHash(
     tokenHash: string,
+    at?: Date,
   ): Promise<InstallationRecord | null> {
-    return this.findActiveInstallationByTokenHashes([tokenHash]);
+    return this.findActiveInstallationByTokenHashes([tokenHash], at);
   }
 
   async findActiveInstallationByTokenHashes(
     tokenHashes: readonly string[],
+    at?: Date,
   ): Promise<InstallationRecord | null> {
     const candidateHashes = new Set(tokenHashes);
     return this.transact((state) => {
@@ -297,7 +317,12 @@ export class StateRepository {
           candidateHashes.has(candidate.tokenHash) &&
           candidate.deletedAt === null,
       );
-      return installation ? structuredClone(installation) : null;
+      if (!installation) return null;
+      const result = structuredClone(installation);
+      if (at && isCompedAccessExpired(result, at.getTime())) {
+        result.access = "expired";
+      }
+      return result;
     });
   }
 
@@ -326,6 +351,7 @@ export class StateRepository {
     return this.transact((state) => {
       const nowMs = input.now.getTime();
       expireStaleReservations(state, nowMs);
+      pruneOperationRecords(state, nowMs);
       const installation = state.installations[input.installationId];
       if (!installation || installation.deletedAt !== null) {
         throw new AppError("installation_invalid", "This installation is not active.");
@@ -348,7 +374,10 @@ export class StateRepository {
           "This Cy request already finished, but its earlier result is no longer available. Start a new request if you want Cy to try again.",
         );
       }
-      if (installation.access === "expired") {
+      if (
+        installation.access === "expired" ||
+        isCompedAccessExpired(installation, nowMs)
+      ) {
         throw new AppError(
           "entitlement_required",
           "A trial or membership is needed to ask Cy for new work.",
@@ -380,6 +409,7 @@ export class StateRepository {
           "Cy needs a short pause before another request.",
           {
             retryable: true,
+            quotaScope: "installationShortWindow",
             retryAfterSeconds: Math.max(
               1,
               Math.ceil((firstAt + TEN_MINUTES_MS - nowMs) / 1_000),
@@ -396,6 +426,7 @@ export class StateRepository {
           "Today’s Cy allowance has been reached.",
           {
             retryable: true,
+            quotaScope: "installationDaily",
             retryAfterSeconds: Math.max(
               1,
               Math.ceil((firstAt + DAY_MS - nowMs) / 1_000),
@@ -419,6 +450,7 @@ export class StateRepository {
           throw new AppError(
             "quota_exceeded",
             "That part of the free first brief has already been used.",
+            { quotaScope: "freeAllowance" },
           );
         }
       }
@@ -438,7 +470,7 @@ export class StateRepository {
         throw new AppError(
           "quota_exceeded",
           "Cy has reached today’s shared generation limit. Please try tomorrow.",
-          { retryable: true },
+          { retryable: true, quotaScope: "globalDailySpend" },
         );
       }
 
@@ -464,6 +496,14 @@ export class StateRepository {
         createdAt: input.now.toISOString(),
         settledAt: null,
       };
+      pruneOperationRecords(state, nowMs);
+      if (Object.keys(state.operations).length > MAX_OPERATION_RECORDS) {
+        throw new AppError(
+          "usage_limit",
+          "Cy is finishing too many requests right now. Please try again shortly.",
+          { retryable: true },
+        );
+      }
       return reservationId;
     });
   }
@@ -554,18 +594,25 @@ export class StateRepository {
     eventId: string,
     installationId: string,
     access: SubscriptionAccess | null,
+    processedAt: Date,
+    promotionalEntitlementEndsAt: Date | null = null,
   ): Promise<boolean> {
     return this.transact((state) => {
       if (state.processedRevenueCatEvents.includes(eventId)) return false;
+      pruneRevenueCatEventRecords(state, processedAt.getTime());
       const installation = state.installations[installationId];
       if (!installation || installation.deletedAt !== null) {
-        throw new AppError(
-          "installation_invalid",
-          "The RevenueCat customer is not an active installation.",
-        );
+        rememberRevenueCatEvent(state, eventId, processedAt);
+        return false;
       }
-      if (access !== null) installation.access = access;
-      state.processedRevenueCatEvents.push(eventId);
+      if (access !== null) {
+        installation.access = access;
+        installation.promotionalEntitlementEndsAt =
+          access === "comped"
+            ? promotionalEntitlementEndsAt?.toISOString() ?? null
+            : null;
+      }
+      rememberRevenueCatEvent(state, eventId, processedAt);
       return true;
     });
   }
@@ -578,16 +625,124 @@ export class StateRepository {
 function normalizeState(state: PersistedState): PersistedState {
   const legacyState = state as PersistedState & {
     operations?: Record<string, AiOperationRecord>;
+    processedRevenueCatEventTimes?: Record<string, string>;
     reservations: Record<
       string,
       ReservationRecord & { operationKey?: string | null }
     >;
   };
   legacyState.operations ??= {};
+  legacyState.processedRevenueCatEventTimes ??= {};
+  for (const installation of Object.values(legacyState.installations) as Array<
+    InstallationRecord & { promotionalEntitlementEndsAt?: string | null }
+  >) {
+    installation.promotionalEntitlementEndsAt ??= null;
+  }
   for (const reservation of Object.values(legacyState.reservations)) {
     reservation.operationKey ??= null;
   }
   return legacyState;
+}
+
+function isCompedAccessExpired(
+  installation: InstallationRecord,
+  nowMs: number,
+): boolean {
+  if (
+    installation.access !== "comped" ||
+    installation.promotionalEntitlementEndsAt === null
+  ) {
+    return false;
+  }
+  const endsAtMs = Date.parse(installation.promotionalEntitlementEndsAt);
+  return !Number.isFinite(endsAtMs) || endsAtMs <= nowMs;
+}
+
+function pruneOperationRecords(state: PersistedState, nowMs: number): void {
+  const activeOperationKeys = new Set(
+    Object.values(state.reservations)
+      .map((reservation) => reservation.operationKey)
+      .filter((operationKey): operationKey is string => operationKey !== null),
+  );
+  for (const [key, operation] of Object.entries(state.operations)) {
+    if (operation.outcome === "inProgress") {
+      const createdAt = Date.parse(operation.createdAt);
+      if (
+        activeOperationKeys.has(key) ||
+        (Number.isFinite(createdAt) && createdAt > nowMs - STALE_RESERVATION_MS)
+      ) {
+        continue;
+      }
+      operation.outcome = "failed";
+      operation.settledAt = new Date(nowMs).toISOString();
+    }
+    const settledAt = operation.settledAt
+      ? Date.parse(operation.settledAt)
+      : Date.parse(operation.createdAt);
+    if (!Number.isFinite(settledAt) || settledAt <= nowMs - OPERATION_RETENTION_MS) {
+      delete state.operations[key];
+    }
+  }
+
+  const excess = Object.keys(state.operations).length - MAX_OPERATION_RECORDS;
+  if (excess <= 0) return;
+  const oldestSettled = Object.values(state.operations)
+    .filter((operation) => operation.outcome !== "inProgress")
+    .sort(
+      (left, right) =>
+        Date.parse(left.settledAt ?? left.createdAt) -
+        Date.parse(right.settledAt ?? right.createdAt),
+    );
+  for (const operation of oldestSettled.slice(0, excess)) {
+    delete state.operations[operation.operationKey];
+  }
+}
+
+function pruneRevenueCatEventRecords(
+  state: PersistedState,
+  nowMs: number,
+): void {
+  const retained = state.processedRevenueCatEvents.filter((eventId) => {
+    const processedAt = state.processedRevenueCatEventTimes[eventId];
+    if (!processedAt) return true;
+    const processedAtMs = Date.parse(processedAt);
+    if (
+      Number.isFinite(processedAtMs) &&
+      processedAtMs > nowMs - REVENUECAT_EVENT_RETENTION_MS
+    ) {
+      return true;
+    }
+    delete state.processedRevenueCatEventTimes[eventId];
+    return false;
+  });
+  state.processedRevenueCatEvents = retained.slice(
+    -MAX_REVENUECAT_EVENT_RECORDS,
+  );
+  const retainedIds = new Set(state.processedRevenueCatEvents);
+  for (const eventId of Object.keys(state.processedRevenueCatEventTimes)) {
+    if (!retainedIds.has(eventId)) {
+      delete state.processedRevenueCatEventTimes[eventId];
+    }
+  }
+}
+
+function rememberRevenueCatEvent(
+  state: PersistedState,
+  eventId: string,
+  processedAt: Date,
+): void {
+  state.processedRevenueCatEvents.push(eventId);
+  state.processedRevenueCatEventTimes[eventId] = processedAt.toISOString();
+  if (state.processedRevenueCatEvents.length <= MAX_REVENUECAT_EVENT_RECORDS) {
+    return;
+  }
+  const removed = state.processedRevenueCatEvents.splice(
+    0,
+    state.processedRevenueCatEvents.length - MAX_REVENUECAT_EVENT_RECORDS,
+  );
+  for (const removedId of removed) {
+    delete state.processedRevenueCatEventTimes[removedId];
+  }
 }
 
 function operationLedgerKey(installationId: string, operationId: string): string {

@@ -195,6 +195,18 @@ export function classifyAnthropicFailure(
       {
         retryable: true,
         retryAfterSeconds,
+        quotaScope: "providerRateLimit",
+        cause: error,
+      },
+    );
+  }
+
+  if (errorType === "billing_error") {
+    return new AppError(
+      "upstream_unavailable",
+      "Cy’s API billing is unavailable. Check the funded Anthropic workspace used by the app.",
+      {
+        quotaScope: "providerCredits",
         cause: error,
       },
     );
@@ -214,9 +226,6 @@ function providerFailureMessage(
 ): string {
   if (status === 401 || errorType === "authentication_error") {
     return "Cy’s server credential needs attention. Your work is safe.";
-  }
-  if (errorType === "billing_error") {
-    return "Cy’s API billing is unavailable. Check the funded Anthropic workspace used by the app.";
   }
   if (status === 403 || errorType === "permission_error") {
     return "Cy’s Anthropic workspace does not currently allow this request.";

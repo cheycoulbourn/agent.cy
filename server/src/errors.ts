@@ -1,3 +1,5 @@
+import type { AiQuotaScope } from "@agent-cy/contracts";
+
 export type AppErrorCode =
   | "invalid_input"
   | "payload_too_large"
@@ -18,6 +20,7 @@ export class AppError extends Error {
   readonly code: AppErrorCode;
   readonly retryable: boolean;
   readonly retryAfterSeconds: number | null;
+  readonly quotaScope: AiQuotaScope | null;
 
   constructor(
     code: AppErrorCode,
@@ -25,6 +28,7 @@ export class AppError extends Error {
     options: {
       retryable?: boolean;
       retryAfterSeconds?: number | null;
+      quotaScope?: AiQuotaScope | null;
       cause?: unknown;
     } = {},
   ) {
@@ -33,6 +37,7 @@ export class AppError extends Error {
     this.code = code;
     this.retryable = options.retryable ?? false;
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+    this.quotaScope = options.quotaScope ?? null;
   }
 }
 
