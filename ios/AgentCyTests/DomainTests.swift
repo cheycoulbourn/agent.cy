@@ -51,7 +51,18 @@ final class DomainTests: XCTestCase {
         )))
         let end = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 27)))
         let brief = CreativeBrief(title: "Weekly series", premise: "One useful post each Monday")
+        brief.spokenHook = "Start with this."
+        brief.isBrandCollaboration = true
+        brief.brandName = "Example Brand"
+        brief.compensationType = .paid
+        brief.compensationAmount = 1_250
+        brief.compensationCurrencyCode = "USD"
+        brief.brandHasNetTerms = true
+        brief.brandNetTermsDays = 30
+        brief.moodBoardEnabled = true
+        brief.moodBoardURLString = "https://pinterest.com/example/board"
         let output = PlatformOutput(briefID: brief.id, platform: .instagramReels)
+        output.caption = "One useful caption."
         output.recurrence = .weekly
         output.recurrenceWeekdays = [.monday]
         output.recurrenceEndDate = end
@@ -81,6 +92,70 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(outputs.allSatisfy { $0.status == .scheduled })
         XCTAssertTrue(outputs.allSatisfy { $0.targetDate.map { calendar.component(.hour, from: $0) == 12 } ?? false })
         XCTAssertEqual(outputs.filter { $0.seriesRootOutputID == output.id }.count, 3)
+        XCTAssertTrue(briefs.allSatisfy { $0.spokenHook == "Start with this." })
+        XCTAssertTrue(briefs.allSatisfy { $0.brandName == "Example Brand" })
+        XCTAssertTrue(briefs.allSatisfy { $0.compensationAmount == 1_250 })
+        XCTAssertTrue(briefs.allSatisfy { $0.brandHasNetTerms && $0.brandNetTermsDays == 30 })
+        XCTAssertTrue(briefs.allSatisfy { $0.moodBoardURLString == "https://pinterest.com/example/board" })
+        XCTAssertTrue(outputs.allSatisfy { $0.caption == "One useful caption." })
+    }
+
+    func testDeletingRecurringPostAndFuturePreservesPastAndRemovesLinkedTasks() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let calendar = Calendar.current
+        let dates = [1, 8, 15, 22].map { day in
+            calendar.date(from: DateComponents(year: 2026, month: 7, day: day, hour: 12))!
+        }
+
+        let pastBrief = CreativeBrief(title: "Past", status: .posted)
+        let selectedBrief = CreativeBrief(title: "Selected", status: .scheduled)
+        let futureBrief = CreativeBrief(title: "Future", status: .scheduled)
+        let alreadyPostedBrief = CreativeBrief(title: "Posted early", status: .posted)
+        let briefs = [pastBrief, selectedBrief, futureBrief, alreadyPostedBrief]
+        briefs.forEach(context.insert)
+
+        let root = PlatformOutput(briefID: pastBrief.id, status: .posted)
+        root.targetDate = dates[0]
+        root.recurrence = .weekly
+        root.seriesRootOutputID = root.id
+        let selected = PlatformOutput(briefID: selectedBrief.id, status: .scheduled)
+        selected.targetDate = dates[1]
+        selected.seriesRootOutputID = root.id
+        let future = PlatformOutput(briefID: futureBrief.id, status: .scheduled)
+        future.targetDate = dates[2]
+        future.seriesRootOutputID = root.id
+        let alreadyPosted = PlatformOutput(briefID: alreadyPostedBrief.id, status: .posted)
+        alreadyPosted.targetDate = dates[3]
+        alreadyPosted.seriesRootOutputID = root.id
+        let outputs = [root, selected, future, alreadyPosted]
+        outputs.forEach(context.insert)
+
+        for (brief, output) in zip(briefs, outputs) {
+            context.insert(CreatorTask(
+                briefID: brief.id,
+                platformOutputID: output.id,
+                title: "Task for \(brief.title)",
+                targetDate: output.targetDate
+            ))
+        }
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        XCTAssertTrue(model.deletePost(
+            brief: selectedBrief,
+            output: selected,
+            scope: .thisAndFuture,
+            context: context
+        ))
+
+        let remainingBriefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+        let remainingOutputs = try context.fetch(FetchDescriptor<PlatformOutput>())
+        let remainingTasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        XCTAssertEqual(Set(remainingBriefs.map(\.title)), ["Past", "Posted early"])
+        XCTAssertEqual(Set(remainingOutputs.map(\.id)), [root.id, alreadyPosted.id])
+        XCTAssertEqual(Set(remainingTasks.map(\.briefID).compactMap { $0 }), [pastBrief.id, alreadyPostedBrief.id])
     }
 
     func testTodayKeepsDraftWorkOutOfGoingLive() {
@@ -654,6 +729,7 @@ final class DomainTests: XCTestCase {
         let output = try XCTUnwrap(model.outputs(for: brief, context: context).first)
         XCTAssertEqual(output.status, .draft)
         XCTAssertEqual(output.targetDate, postDate)
+        XCTAssertFalse(output.includesTargetTime)
         XCTAssertEqual(brief.agendaDate, postDate)
         XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
 
@@ -688,6 +764,7 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(draft.brief.status, .spark)
         XCTAssertEqual(draft.brief.agendaDate, postDate)
         XCTAssertEqual(draft.output.status, .draft)
+        XCTAssertFalse(draft.output.includesTargetTime)
         XCTAssertEqual(draft.output.targetDate, postDate)
         XCTAssertEqual(draft.output.destinationID, PublishingCatalog.instagramID)
         XCTAssertEqual(draft.output.formatID, PublishingCatalog.instagramReelID)
@@ -708,7 +785,19 @@ final class DomainTests: XCTestCase {
         ))
         original.brief.title = "A clear creative habit"
         original.brief.notes = "Show the habit in three simple beats."
+        original.brief.spokenHook = "Try this opening."
+        original.brief.isBrandCollaboration = true
+        original.brief.brandName = "Sample Partner"
+        original.brief.compensationType = .both
+        original.brief.compensationAmount = 950
+        original.brief.compensationCurrencyCode = "USD"
+        original.brief.brandHasNetTerms = true
+        original.brief.brandNetTermsDays = 45
+        original.brief.giftedProductDescription = "A camera bag"
+        original.brief.moodBoardEnabled = true
+        original.brief.moodBoardURLString = "https://cosmos.so/example"
         original.output.caption = "Save this for your next filming day."
+        original.output.publishedURLString = "https://instagram.com/p/original"
         let task = CreatorTask(
             briefID: original.brief.id,
             platformOutputID: original.output.id,
@@ -742,8 +831,16 @@ final class DomainTests: XCTestCase {
         XCTAssertNotEqual(duplicated.output.id, original.output.id)
         XCTAssertEqual(duplicated.brief.title, "A clear creative habit copy")
         XCTAssertEqual(duplicated.brief.notes, original.brief.notes)
+        XCTAssertEqual(duplicated.brief.spokenHook, original.brief.spokenHook)
+        XCTAssertEqual(duplicated.brief.brandName, "Sample Partner")
+        XCTAssertEqual(duplicated.brief.compensationType, .both)
+        XCTAssertEqual(duplicated.brief.compensationAmount, 950)
+        XCTAssertEqual(duplicated.brief.brandNetTermsDays, 45)
+        XCTAssertEqual(duplicated.brief.giftedProductDescription, "A camera bag")
+        XCTAssertEqual(duplicated.brief.moodBoardURLString, "https://cosmos.so/example")
         XCTAssertEqual(duplicated.brief.status, .spark)
         XCTAssertEqual(duplicated.output.caption, original.output.caption)
+        XCTAssertTrue(duplicated.output.publishedURLString.isEmpty)
         XCTAssertEqual(duplicated.output.status, .draft)
         XCTAssertEqual(duplicated.output.targetDate, postDate)
 
@@ -783,6 +880,15 @@ final class DomainTests: XCTestCase {
         ))
 
         brief.notes = ""
+        brief.moodBoardEnabled = true
+        XCTAssertFalse(EmptyPostDraftDeletionPolicy.shouldOfferDirectDelete(
+            brief: brief,
+            output: output,
+            taskCount: 0,
+            attachmentCount: 0
+        ))
+
+        brief.moodBoardEnabled = false
         XCTAssertFalse(EmptyPostDraftDeletionPolicy.shouldOfferDirectDelete(
             brief: brief,
             output: output,
@@ -1045,6 +1151,43 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(branch.resolvedAnchor(in: [branch]).id, branch.id)
     }
 
+    func testRemovingAnchorArchivesItsBranchesAndKeepsTheirWorkUnfiled() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let anchor = Pillar(role: .anchor, name: "Lifestyle")
+        let branch = Pillar(parentPillarID: anchor.id, name: "Beauty")
+        let unrelated = Pillar(role: .anchor, name: "Business")
+        let anchorBrief = CreativeBrief(title: "Morning routine")
+        anchorBrief.pillarID = anchor.id
+        let branchBrief = CreativeBrief(title: "Everyday makeup")
+        branchBrief.pillarID = branch.id
+        let unrelatedBrief = CreativeBrief(title: "Launch notes")
+        unrelatedBrief.pillarID = unrelated.id
+        let task = CreatorTask(pillarID: branch.id, title: "Film the routine", lane: .pillar)
+
+        [anchor, branch, unrelated].forEach(context.insert)
+        [anchorBrief, branchBrief, unrelatedBrief].forEach(context.insert)
+        context.insert(task)
+        try context.save()
+
+        try PillarRemovalService.remove(
+            anchor,
+            pillars: [anchor, branch, unrelated],
+            briefs: [anchorBrief, branchBrief, unrelatedBrief],
+            tasks: [task],
+            context: context
+        )
+
+        XCTAssertTrue(anchor.isArchived)
+        XCTAssertTrue(branch.isArchived)
+        XCTAssertFalse(unrelated.isArchived)
+        XCTAssertNil(anchorBrief.pillarID)
+        XCTAssertNil(branchBrief.pillarID)
+        XCTAssertNil(task.pillarID)
+        XCTAssertEqual(unrelatedBrief.pillarID, unrelated.id)
+        XCTAssertEqual(PillarRemovalService.IDsRemoved(with: branch, pillars: [anchor, branch]), [branch.id])
+    }
+
     func testSubtasksCompleteIndependentlyAndDeleteWithParent() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -1063,6 +1206,7 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(first.parentTaskID, parent.id)
         XCTAssertEqual(second.parentTaskID, parent.id)
         XCTAssertEqual(parent.priority, .high)
+        XCTAssertFalse(parent.includesTargetTime)
         XCTAssertEqual(first.priority, .high)
         XCTAssertEqual(second.priority, .high)
         XCTAssertEqual(model.subtasks(for: parent, context: context).map(\.title), ["Choose the clips", "Add captions"])
@@ -1074,6 +1218,241 @@ final class DomainTests: XCTestCase {
 
         model.deleteTask(parent, context: context)
         XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
+    }
+
+    func testTaskCollectionsUsePostAssociationRatherThanLegacyLane() {
+        XCTAssertEqual(
+            TaskCollectionPolicy.collection(briefID: UUID(), platformOutputID: nil),
+            .postTasks
+        )
+        XCTAssertEqual(
+            TaskCollectionPolicy.collection(briefID: nil, platformOutputID: UUID()),
+            .postTasks
+        )
+        XCTAssertEqual(
+            TaskCollectionPolicy.collection(briefID: nil, platformOutputID: nil),
+            .myTasks
+        )
+    }
+
+    func testTasksPageLimitsPostTasksToCurrentMondayThroughSunday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 15,
+            hour: 12
+        )))
+        let monday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 13)))
+        let sunday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 19, hour: 23)))
+        let previousSunday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 12, hour: 23)))
+        let nextMonday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 20)))
+
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
+            collection: .postTasks,
+            focusTaskTemplateID: nil,
+            recurrence: .none,
+            recurrenceRootTaskID: nil,
+            targetDate: monday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
+            collection: .postTasks,
+            focusTaskTemplateID: nil,
+            recurrence: .none,
+            recurrenceRootTaskID: nil,
+            targetDate: sunday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(TaskListVisibilityPolicy.includes(
+            collection: .postTasks,
+            focusTaskTemplateID: nil,
+            recurrence: .none,
+            recurrenceRootTaskID: nil,
+            targetDate: previousSunday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(TaskListVisibilityPolicy.includes(
+            collection: .postTasks,
+            focusTaskTemplateID: nil,
+            recurrence: .none,
+            recurrenceRootTaskID: nil,
+            targetDate: nextMonday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
+            collection: .postTasks,
+            focusTaskTemplateID: nil,
+            recurrence: .none,
+            recurrenceRootTaskID: nil,
+            targetDate: nil,
+            now: now,
+            calendar: calendar
+        ))
+
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
+            collection: .myTasks,
+            focusTaskTemplateID: UUID(),
+            recurrence: .none,
+            recurrenceRootTaskID: nil,
+            targetDate: sunday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(TaskListVisibilityPolicy.includes(
+            collection: .myTasks,
+            focusTaskTemplateID: UUID(),
+            recurrence: .none,
+            recurrenceRootTaskID: nil,
+            targetDate: nextMonday,
+            now: now,
+            calendar: calendar
+        ))
+
+        let sevenDaysOut = try XCTUnwrap(calendar.date(byAdding: .day, value: 7, to: now))
+        let eightDaysOut = try XCTUnwrap(calendar.date(byAdding: .day, value: 8, to: now))
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
+            collection: .myTasks,
+            focusTaskTemplateID: nil,
+            recurrence: .none,
+            recurrenceRootTaskID: UUID(),
+            targetDate: sevenDaysOut,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(TaskListVisibilityPolicy.includes(
+            collection: .myTasks,
+            focusTaskTemplateID: nil,
+            recurrence: .none,
+            recurrenceRootTaskID: UUID(),
+            targetDate: eightDaysOut,
+            now: now,
+            calendar: calendar
+        ))
+    }
+
+    func testReschedulingPostAlignsItsOpenLinkedTasksToPostDay() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let postDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 15, hour: 14
+        )))
+        let newPostDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 3, to: postDate))
+        let taskDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 14, hour: 10
+        )))
+
+        let brief = CreativeBrief(title: "Post", premise: "Test", status: .ready)
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
+        output.targetDate = postDate
+        let outputTask = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Edit post",
+            targetDate: taskDate,
+            includesTargetTime: true
+        )
+        let briefTask = CreatorTask(
+            briefID: brief.id,
+            title: "Write caption",
+            targetDate: taskDate
+        )
+        let undatedTask = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Publish post"
+        )
+        let completedTask = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Film",
+            targetDate: taskDate
+        )
+        completedTask.isCompleted = true
+        let unrelatedTask = CreatorTask(title: "Personal task", targetDate: taskDate)
+        context.insert(brief)
+        context.insert(output)
+        [outputTask, briefTask, undatedTask, completedTask, unrelatedTask].forEach(context.insert)
+
+        AppModel(reminderService: PreviewReminderService()).schedule(
+            output: output,
+            date: newPostDate,
+            context: context
+        )
+
+        let expectedTimedTaskDate = PostTaskReschedulePolicy.alignedDate(
+            taskDate,
+            to: newPostDate,
+            includesTime: true
+        )
+        let expectedDateOnlyTaskDate = Calendar.current.startOfDay(for: newPostDate)
+        XCTAssertEqual(outputTask.targetDate, expectedTimedTaskDate)
+        XCTAssertEqual(briefTask.targetDate, expectedDateOnlyTaskDate)
+        XCTAssertEqual(undatedTask.targetDate, expectedDateOnlyTaskDate)
+        XCTAssertEqual(completedTask.targetDate, taskDate)
+        XCTAssertEqual(unrelatedTask.targetDate, taskDate)
+    }
+
+    func testPostTaskScheduleRepairRunsOnceForExplicitOpenOutputTasks() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let suiteName = "PostTaskScheduleRepairTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let postDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 16, hour: 14
+        )))
+        let staleTaskDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 15, hour: 9
+        )))
+
+        let brief = CreativeBrief(title: "Post", premise: "Test", status: .scheduled)
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
+        output.targetDate = postDate
+        let linkedTask = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Film",
+            targetDate: staleTaskDate,
+            includesTargetTime: true
+        )
+        let unrelatedTask = CreatorTask(
+            briefID: brief.id,
+            title: "General post task",
+            targetDate: staleTaskDate
+        )
+        context.insert(brief)
+        context.insert(output)
+        context.insert(linkedTask)
+        context.insert(unrelatedTask)
+
+        XCTAssertEqual(try PostTaskScheduleRepairService.reconcileOnce(
+            context: context,
+            defaults: defaults,
+            calendar: calendar
+        ), 1)
+        XCTAssertTrue(calendar.isDate(try XCTUnwrap(linkedTask.targetDate), inSameDayAs: postDate))
+        XCTAssertEqual(unrelatedTask.targetDate, staleTaskDate)
+
+        linkedTask.targetDate = staleTaskDate
+        XCTAssertEqual(try PostTaskScheduleRepairService.reconcileOnce(
+            context: context,
+            defaults: defaults,
+            calendar: calendar
+        ), 0)
+        XCTAssertEqual(linkedTask.targetDate, staleTaskDate)
     }
 
     func testLegacySimplifyPrefixIsRemovedFromSavedTasks() {
@@ -1262,7 +1641,7 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(lead[0].contains("Assumption"))
     }
 
-    func testDeniedNotificationPermissionTurnsReminderSettingsBackOff() async throws {
+    func testDeniedNotificationPermissionPreservesReminderChoices() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         let settings = ReminderSettings(dailyEnabled: true, weeklyEnabled: true)
@@ -1271,9 +1650,9 @@ final class DomainTests: XCTestCase {
 
         await model.applyReminderSettings(settings, context: context)
 
-        XCTAssertFalse(settings.dailyEnabled)
-        XCTAssertFalse(settings.weeklyEnabled)
-        XCTAssertEqual(model.notice?.message, "Notifications stayed off because permission was not available.")
+        XCTAssertTrue(settings.dailyEnabled)
+        XCTAssertTrue(settings.weeklyEnabled)
+        XCTAssertEqual(model.notice?.message, "Notifications are turned off for agent.cy in iPhone Settings.")
     }
 
     func testSocialProfileLinksAreGeneratedFromHandles() {

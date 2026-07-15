@@ -31,6 +31,10 @@ struct TodayView: View {
             .filter {
                 !$0.isCompleted &&
                     $0.parentTaskID == nil &&
+                    TaskCollectionPolicy.collection(
+                        briefID: $0.briefID,
+                        platformOutputID: $0.platformOutputID
+                    ) == .myTasks &&
                     ($0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } ?? false)
             }
             .sorted(by: taskSort)
@@ -288,7 +292,15 @@ struct TodayView: View {
     private func addTaskForToday() {
         appModel.quickCaptureTargetDate = day
         appModel.quickCapturePillarID = nil
-        appModel.quickCaptureTaskFocus = nil
+        appModel.quickCaptureTaskLane = .production
+        appModel.quickCaptureTaskFocus = resolvedFocus.map {
+            DailyFocusTaskAssignment(
+                date: day,
+                title: $0.title,
+                taskKind: $0.kinds.first?.taskKind ?? .planning,
+                templateEntryID: $0.templateEntryID
+            )
+        }
         appModel.quickCaptureStartsWithTask = true
         appModel.quickCaptureStartsWithPost = false
         appModel.quickCaptureStartsWithIdeas = false

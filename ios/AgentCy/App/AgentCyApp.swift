@@ -3,6 +3,7 @@ import SwiftData
 
 @main
 struct AgentCyApp: App {
+    @UIApplicationDelegateAdaptor(AgentCyApplicationDelegate.self) private var applicationDelegate
     @Environment(\.scenePhase) private var scenePhase
     private let container: ModelContainer
     @State private var appModel: AppModel
@@ -77,8 +78,11 @@ struct AgentCyApp: App {
                 .modelContainer(container)
                 .tint(.actionAccent)
                 .onChange(of: scenePhase) { _, phase in
-                    guard phase != .inactive else { return }
+                    guard phase == .active else { return }
+                    try? FocusTaskRecurrenceService.reconcile(context: container.mainContext)
+                    appModel.applyPendingWidgetTaskCompletions(context: container.mainContext)
                     WidgetSnapshotService.refresh(context: container.mainContext)
+                    Task { await appModel.refreshReminderSchedule(context: container.mainContext) }
                 }
         }
     }

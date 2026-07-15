@@ -178,41 +178,82 @@ final class VoiceExampleTests: XCTestCase {
         )
     }
 
-    func testOnboardingCanonicalVoicePayloadReflectsCreatorEdits() async throws {
+    func testOnboardingPersistsPaperSetupWithoutGeneratingVoiceProfile() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
-        let baseline = VoiceProfileWire(
-            summary: "Original summary",
-            tone: ["direct", "grounded"],
-            sentenceStyle: "Short practical sentences.",
-            signatureQualities: ["specific", "practical"],
-            phrasesToUse: ["try this"],
-            phrasesToAvoid: ["game changer"],
-            guidance: ["Use a real example."],
-            confidence: 0.82
-        )
+        let anchorID = UUID()
+        let branchID = UUID()
         var draft = OnboardingDraft()
         draft.adultConfirmed = true
         draft.name = "Ari"
-        draft.goal = "Teach"
-        draft.voiceExamples = (0..<3).map { VoiceExampleDraft(text: "Example \($0) with a useful point.") }
-        draft.voiceSummary = "Edited summary"
-        draft.voiceTraits = "warm, precise\nplainspoken"
-        draft.voiceAvoid = "hype, forced urgency"
-        draft.voiceProfilePayloadJSON = String(decoding: try JSONEncoder().encode(baseline), as: UTF8.self)
+        draft.goal = "Teach practical design"
+        draft.platforms = [.instagramReels, .youtubeShorts]
+        draft.pillars = [
+            OnboardingPillarDraft(id: anchorID, name: "Design", colorHex: "55705B", assignedWeekdays: [.monday]),
+            OnboardingPillarDraft(id: branchID, name: "Tools", colorHex: "416B85", assignedWeekdays: [.thursday]),
+        ]
+        draft.voiceExamples = [VoiceExampleDraft(text: "A real caption in my voice.")]
+        draft.accountHandles[.instagram] = "@ari.designs"
         let model = AppModel(reminderService: PreviewReminderService())
 
         let completed = await model.completeOnboarding(draft, context: context)
         XCTAssertTrue(completed)
 
-        let stored = try XCTUnwrap(context.fetch(FetchDescriptor<VoiceProfile>()).first)
-        let canonical = try JSONDecoder().decode(VoiceProfileWire.self, from: Data(stored.canonicalPayloadJSON.utf8))
-        XCTAssertEqual(canonical.summary, "Edited summary")
-        XCTAssertEqual(canonical.signatureQualities, ["warm", "precise", "plainspoken"])
-        XCTAssertEqual(canonical.phrasesToAvoid, ["hype", "forced urgency"])
-        XCTAssertEqual(canonical.tone, baseline.tone)
-        XCTAssertEqual(canonical.guidance, baseline.guidance)
-        XCTAssertEqual(stored.summary, canonical.summary)
+        let profile = try XCTUnwrap(context.fetch(FetchDescriptor<CreatorProfile>()).first)
+        XCTAssertTrue(profile.onboardingCompleted)
+        XCTAssertEqual(profile.assistanceMode, .collaborate)
+        XCTAssertEqual(Set(profile.selectedPlatforms), [.instagramReels, .youtubeShorts])
+
+        let pillars = try context.fetch(FetchDescriptor<Pillar>())
+        let anchor = try XCTUnwrap(pillars.first(where: { $0.id == anchorID }))
+        let branch = try XCTUnwrap(pillars.first(where: { $0.id == branchID }))
+        XCTAssertEqual(anchor.role, .anchor)
+        XCTAssertNil(anchor.parentPillarID)
+        XCTAssertEqual(branch.role, .supporting)
+        XCTAssertEqual(branch.parentPillarID, anchorID)
+        XCTAssertEqual(branch.colorHex, "416B85")
+
+        let account = try XCTUnwrap(context.fetch(FetchDescriptor<CreatorSocialAccount>()).first)
+        XCTAssertEqual(account.label, "@ari.designs")
+        XCTAssertEqual(account.profileURLString, "https://www.instagram.com/ari.designs/")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<VoiceExample>()).count, 1)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<VoiceProfile>()).isEmpty)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ReminderSettings>()).count, 1)
+    }
+
+    func testOnboardingCompletionIsIdempotent() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        var draft = OnboardingDraft()
+        draft.adultConfirmed = true
+        draft.name = "Ari"
+        draft.goal = "Create consistently"
+        draft.pillars = [OnboardingPillarDraft(name: "Lifestyle")]
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let firstCompletion = await model.completeOnboarding(draft, context: context)
+        let secondCompletion = await model.completeOnboarding(draft, context: context)
+        XCTAssertTrue(firstCompletion)
+        XCTAssertTrue(secondCompletion)
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorProfile>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Pillar>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ReminderSettings>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<SubscriptionState>()).count, 1)
+    }
+
+    func testOnboardingRejectsMissingGoalWithoutPartialData() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        var draft = OnboardingDraft()
+        draft.adultConfirmed = true
+        draft.name = "Ari"
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let completed = await model.completeOnboarding(draft, context: context)
+        XCTAssertFalse(completed)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorProfile>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<Pillar>()).isEmpty)
     }
 
     func testScreenshotTextJoiningDropsBlankLines() {

@@ -484,20 +484,28 @@ struct ProductionQueueWidgetView: View {
                         }
                     } else {
                         ForEach(tasks.prefix(2)) { task in
-                            Link(destination: AgentCyDeepLink.tasks.url) {
-                                HStack(spacing: 12) {
+                            HStack(spacing: 12) {
+                                Button(intent: SetWidgetTaskCompletionIntent(
+                                    taskID: task.id,
+                                    isCompleted: !task.isCompleted
+                                )) {
                                     taskCheckbox(task)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(task.isCompleted ? "Mark \(task.title) open" : "Complete \(task.title)")
+
+                                Link(destination: AgentCyDeepLink.tasks.url) {
                                     Text(task.title)
                                         .font(.widgetInter(size: 14, weight: task.isCompleted ? .regular : .medium))
                                         .foregroundStyle(task.isCompleted ? WidgetPalette.secondary : WidgetPalette.ink)
                                         .strikethrough(task.isCompleted, color: WidgetPalette.secondary)
                                         .lineLimit(1)
-                                    Spacer()
                                 }
-                                .frame(height: 45)
-                                .overlay(alignment: .bottom) {
-                                    Rectangle().fill(WidgetPalette.hairline).frame(height: 1)
-                                }
+                                Spacer()
+                            }
+                            .frame(height: 45)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(WidgetPalette.hairline).frame(height: 1)
                             }
                         }
                     }
@@ -532,7 +540,7 @@ struct ProductionQueueWidgetView: View {
            focus.taskCount > 0 {
             return "\(focus.completedTaskCount) OF \(focus.taskCount)"
         }
-        return "\(tasks.filter(\.isCompleted).count) OF \(tasks.count)"
+        return "\(laneTasks.filter(\.isCompleted).count) OF \(laneTasks.count)"
     }
 
     private var openTaskCount: Int {
@@ -587,6 +595,10 @@ struct ProductionQueueWidgetView: View {
     }
 
     private var tasks: [WidgetTaskSnapshot] {
+        entry.snapshot.openProductionTasks(in: entry.taskLane)
+    }
+
+    private var laneTasks: [WidgetTaskSnapshot] {
         entry.snapshot.productionTasks.filter { ($0.lane ?? .production) == entry.taskLane }
     }
 }

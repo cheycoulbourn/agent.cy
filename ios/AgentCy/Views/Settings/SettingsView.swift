@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [CreatorProfile]
     @Query private var voiceExamples: [VoiceExample]
@@ -13,8 +14,10 @@ struct SettingsView: View {
     @AppStorage(CalendarIntegrationPreferences.syncScheduledPostsKey) private var syncCalendarPosts = false
     @AppStorage(CalendarIntegrationPreferences.syncTasksKey) private var syncCalendarTasks = false
     @State private var showAddAccount = false
+    @State private var showOnboardingPreview = false
 
     var body: some View {
+        @Bindable var model = appModel
         NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
@@ -105,6 +108,12 @@ struct SettingsView: View {
                         }
 
                         SettingsIndexSection(title: "Cy & your data") {
+                            Button {
+                                showOnboardingPreview = true
+                            } label: {
+                                SettingsIndexRow(title: "Preview onboarding", value: "Review")
+                            }
+                            .buttonStyle(.plain)
                             NavigationLink {
                                 VoiceExamplesView(embeddedInNavigation: true)
                             } label: {
@@ -168,10 +177,24 @@ struct SettingsView: View {
                 }
             }
         }
+        .navigationDestination(item: $model.requestedSettingsPage) { page in
+            switch page {
+            case .notifications: NotificationSettingsView()
+            case .access: AccessSettingsView()
+            }
+        }
         .agentKeyboardDismissal()
         .sheet(isPresented: $showAddAccount) {
             if let profile = profiles.first {
                 SocialAccountEditorView(profile: profile)
+            }
+        }
+        .fullScreenCover(isPresented: $showOnboardingPreview) {
+            if let profile = profiles.first {
+                OnboardingView(
+                    previewOnly: true,
+                    initialDraft: OnboardingDraft(name: profile.name, goal: profile.goal)
+                )
             }
         }
     }
@@ -189,9 +212,17 @@ struct SettingsView: View {
 
     private var reminderSummary: String {
         guard let reminder = reminders.first else { return "Off" }
-        if reminder.dailyEnabled && reminder.weeklyEnabled { return "2 on" }
-        if reminder.dailyEnabled || reminder.weeklyEnabled { return "1 on" }
-        return "Off"
+        guard reminder.masterEnabled else { return "Off" }
+        let count = [
+            reminder.dailyEnabled,
+            reminder.weeklyEnabled,
+            reminder.postRemindersEnabled,
+            reminder.missedPostRemindersEnabled,
+            reminder.taskRemindersEnabled,
+            reminder.draftPrepRemindersEnabled,
+            reminder.accessRemindersEnabled,
+        ].filter { $0 }.count
+        return count == 0 ? "Off" : "\(count) on"
     }
 
     private var calendarSummary: String {

@@ -1,5 +1,70 @@
 import Foundation
 
+struct DailyFocusTaskTemplateDefinition: Codable, Hashable, Identifiable, Sendable {
+    var id: UUID
+    var focusKind: DailyFocusKind
+    var title: String
+    var priority: TaskPriority
+    var sortOrder: Int
+
+    init(
+        id: UUID = UUID(),
+        focusKind: DailyFocusKind,
+        title: String,
+        priority: TaskPriority = .none,
+        sortOrder: Int = 0
+    ) {
+        self.id = id
+        self.focusKind = focusKind
+        self.title = title
+        self.priority = priority.normalized
+        self.sortOrder = sortOrder
+    }
+}
+
+enum DailyFocusTaskDefaults {
+    static func definitions(for kinds: [DailyFocusKind]) -> [DailyFocusTaskTemplateDefinition] {
+        kinds.flatMap { kind in
+            titles(for: kind).enumerated().map { index, title in
+                DailyFocusTaskTemplateDefinition(
+                    focusKind: kind,
+                    title: title,
+                    sortOrder: index
+                )
+            }
+        }
+    }
+
+    static func addingDefaults(
+        for kind: DailyFocusKind,
+        to definitions: [DailyFocusTaskTemplateDefinition]
+    ) -> [DailyFocusTaskTemplateDefinition] {
+        guard !definitions.contains(where: { $0.focusKind == kind }) else { return definitions }
+        return definitions + self.definitions(for: [kind])
+    }
+
+    private static func titles(for kind: DailyFocusKind) -> [String] {
+        switch kind {
+        case .planning:
+            ["Review your idea bank", "Choose what to make next"]
+        case .scripting:
+            ["Draft hooks and outlines", "Finish the next script"]
+        case .filming:
+            ["Prep your filming setup", "Record planned content"]
+        case .editing:
+            ["Edit the next post", "Add captions and finishing touches"]
+        case .publishing, .posting:
+            ["Finalize the caption and cover", "Schedule or publish the post"]
+        case .community:
+            ["Reply to comments and messages", "Engage with your community"]
+        case .businessAdmin, .admin:
+            ["Review creator admin", "Handle the next business task"]
+        case .custom:
+            []
+        }
+    }
+}
+
 struct ResolvedDailyFocus {
     let kinds: [DailyFocusKind]
     let title: String

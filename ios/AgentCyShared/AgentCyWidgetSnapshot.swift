@@ -79,6 +79,37 @@ struct AgentCyWidgetSnapshot: Codable, Equatable, Sendable {
             ]
         )
     }()
+
+    @discardableResult
+    mutating func setTaskCompletion(taskID: UUID, isCompleted: Bool) -> Bool {
+        let previousState = productionTasks.first(where: { $0.id == taskID })?.isCompleted
+            ?? todayTasks.first(where: { $0.id == taskID })?.isCompleted
+        guard let previousState else { return false }
+
+        for index in productionTasks.indices where productionTasks[index].id == taskID {
+            productionTasks[index].isCompleted = isCompleted
+        }
+        for index in todayTasks.indices where todayTasks[index].id == taskID {
+            todayTasks[index].isCompleted = isCompleted
+        }
+
+        if previousState != isCompleted, var focus {
+            let delta = isCompleted ? 1 : -1
+            focus.completedTaskCount = min(
+                focus.taskCount,
+                max(0, focus.completedTaskCount + delta)
+            )
+            self.focus = focus
+        }
+        generatedAt = Date()
+        return true
+    }
+
+    func openProductionTasks(in lane: WidgetTaskLane) -> [WidgetTaskSnapshot] {
+        productionTasks.filter { task in
+            (task.lane ?? .production) == lane && !task.isCompleted
+        }
+    }
 }
 
 struct WidgetFocusSnapshot: Codable, Equatable, Sendable {

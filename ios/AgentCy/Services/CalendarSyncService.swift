@@ -105,10 +105,19 @@ enum CalendarSyncPolicy {
     static func taskTiming(
         targetDate: Date,
         estimatedMinutes: Int?,
+        includesTime: Bool,
         calendar: Calendar = .current
-    ) -> (start: Date, end: Date) {
+    ) -> (start: Date, end: Date, isAllDay: Bool) {
+        guard includesTime else {
+            let start = calendar.startOfDay(for: targetDate)
+            return (start, calendar.date(byAdding: .day, value: 1, to: start) ?? start, true)
+        }
         let minutes = max(estimatedMinutes ?? 30, 15)
-        return (targetDate, calendar.date(byAdding: .minute, value: minutes, to: targetDate) ?? targetDate)
+        return (
+            targetDate,
+            calendar.date(byAdding: .minute, value: minutes, to: targetDate) ?? targetDate,
+            false
+        )
     }
 }
 
@@ -266,13 +275,14 @@ final class EventKitCalendarSyncService: CalendarSyncServicing {
             let event = links[key].flatMap(eventStore.event(withIdentifier:)) ?? EKEvent(eventStore: eventStore)
             let timing = CalendarSyncPolicy.taskTiming(
                 targetDate: targetDate,
-                estimatedMinutes: task.estimatedMinutes
+                estimatedMinutes: task.estimatedMinutes,
+                includesTime: task.includesTargetTime
             )
             event.calendar = destinationCalendar
             event.title = task.isCompleted ? "Completed: \(task.title)" : "Task: \(task.title)"
             event.startDate = timing.start
             event.endDate = timing.end
-            event.isAllDay = false
+            event.isAllDay = timing.isAllDay
             event.notes = taskNotes(task)
             if let briefID = task.briefID {
                 event.url = AgentCyDeepLink.brief(briefID).url

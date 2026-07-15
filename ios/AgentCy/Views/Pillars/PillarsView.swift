@@ -306,13 +306,21 @@ struct PillarDetailView: View {
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var outputs: [PlatformOutput]
+    @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
     @State private var selectedTab: ContentTab
     @State private var headerHeight: CGFloat = 0
-    @State private var showEditor = false
+    @State private var isEditing = false
+    @State private var draftName: String
+    @State private var draftDetail: String
+    @State private var draftColorHex: String
+    @State private var confirmDelete = false
 
     init(pillar: Pillar, initialTab: ContentTab = .ideas) {
         self.pillar = pillar
         _selectedTab = State(initialValue: initialTab)
+        _draftName = State(initialValue: pillar.name)
+        _draftDetail = State(initialValue: pillar.detail)
+        _draftColorHex = State(initialValue: pillar.colorHex)
     }
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
@@ -351,6 +359,8 @@ struct PillarDetailView: View {
                         gap: 28
                     ) {
                         VStack(alignment: .leading, spacing: 28) {
+                            descriptionSection
+                            if isEditing { colorSection }
                             daysPicker
                             PillarStatsRow(
                                 values: [ideas.count, scheduled.count, posted.count],
@@ -358,6 +368,7 @@ struct PillarDetailView: View {
                             )
                             contentTabs
                             contentList
+                            if isEditing { deleteButton }
                         }
                     }
                     .padding(.horizontal, AgentLayout.dashboardGutter)
@@ -367,8 +378,14 @@ struct PillarDetailView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
-        .sheet(isPresented: $showEditor) { PillarEditorView(pillar: pillar) }
+        .confirmationDialog(deleteConfirmationTitle, isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button(deleteConfirmationAction, role: .destructive) { deletePillar() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Posts, ideas, and tasks will remain, but they will no longer be assigned to this pillar.")
+        }
         .agentDashboardScreen()
+        .agentKeyboardDismissal()
     }
 
     private var detailHeader: some View {
@@ -384,28 +401,91 @@ struct PillarDetailView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                Button { showEditor = true } label: {
-                    Text("Edit")
-                        .font(.paperInter(size: 15, weight: .semibold, relativeTo: .body))
-                        .frame(minWidth: 44, minHeight: 44)
+                if isEditing {
+                    Button("Cancel") { cancelEditing() }
+                        .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                        .frame(minHeight: 44)
+                        .buttonStyle(.plain)
+
+                    Button(action: saveEdits) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.agentText)
+                            .frame(width: 44, height: 44)
+                            .background(Color.agentSurface, in: .circle)
+                            .overlay { Circle().stroke(Color.agentBorder, lineWidth: 1) }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSaveEdits)
+                    .opacity(canSaveEdits ? 1 : 0.4)
+                    .accessibilityLabel("Save pillar")
+                } else {
+                    Button { beginEditing() } label: {
+                        Text("Edit")
+                            .font(.paperInter(size: 15, weight: .semibold, relativeTo: .body))
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit \(pillar.name)")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Edit \(pillar.name)")
             }
 
             PaperPillarMeta(isAnchor ? "Anchor" : "Branch")
 
             HStack(spacing: 14) {
-                Circle().fill(Color(agentHex: pillar.colorHex)).frame(width: 16, height: 16)
-                Text(pillar.name)
-                    .font(.paperInter(size: 32, weight: .medium, relativeTo: .title))
-                    .tracking(-0.96)
+                Circle().fill(Color(agentHex: displayedColorHex)).frame(width: 16, height: 16)
+                if isEditing {
+                    TextField("", text: $draftName)
+                        .font(.paperInter(size: 32, weight: .medium, relativeTo: .title))
+                        .tracking(-0.96)
+                        .textFieldStyle(.plain)
+                        .agentSingleLineSubmit()
+                        .overlay(alignment: .bottom) { PaperHairline() }
+                } else {
+                    Text(pillar.name)
+                        .font(.paperInter(size: 32, weight: .medium, relativeTo: .title))
+                        .tracking(-0.96)
+                }
             }
         }
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x4)
         .padding(.bottom, 58)
+    }
+
+    @ViewBuilder
+    private var descriptionSection: some View {
+        if isEditing || !pillar.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                PaperPillarMeta("Description", weight: .semibold, tracking: 1.6)
+                if isEditing {
+                    TextEditor(text: $draftDetail)
+                        .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 112)
+                        .padding(14)
+                        .background(Color.agentCanvas, in: .rect(cornerRadius: 14))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                } else {
+                    Text(pillar.detail)
+                        .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private var colorSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            PaperPillarMeta("Color", weight: .semibold, tracking: 1.6)
+            PillarColorChooser(selectedHex: $draftColorHex)
+        }
     }
 
     private var daysPicker: some View {
@@ -427,7 +507,7 @@ struct PillarDetailView: View {
     private func detailDayButton(_ day: PillarWeekday) -> some View {
         let selected = pillar.assignedWeekdays.contains(day)
         let otherPillar = activePillars.first { $0.id != pillar.id && $0.assignedWeekdays.contains(day) }
-        let selectedHex = pillar.colorHex
+        let selectedHex = displayedColorHex
         let selectedForegroundHex = AgentChipContrast.foregroundHex(on: selectedHex)
         let otherPillarHex = otherPillar.map(\.colorHex)
         return Button {
@@ -548,6 +628,72 @@ struct PillarDetailView: View {
         case .ideas: "Ideas captured for this pillar will appear here."
         case .scheduled: "Nothing is scheduled yet."
         case .posted: "Posted work will appear here."
+        }
+    }
+
+    private var deleteButton: some View {
+        Button("Delete pillar", role: .destructive) { confirmDelete = true }
+            .font(.paperInter(size: 15, weight: .semibold, relativeTo: .body))
+            .foregroundStyle(Color.agentDestructive)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .overlay {
+                Capsule().stroke(Color.agentDestructive.opacity(0.5), lineWidth: 1)
+            }
+            .buttonStyle(.plain)
+    }
+
+    private var displayedColorHex: String { isEditing ? draftColorHex : pillar.colorHex }
+    private var canSaveEdits: Bool {
+        !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private var deleteConfirmationTitle: String {
+        isAnchor && !branches.isEmpty
+            ? "Delete \(pillar.name) and its branches?"
+            : "Delete \(pillar.name)?"
+    }
+    private var deleteConfirmationAction: String {
+        isAnchor && !branches.isEmpty ? "Delete pillar and branches" : "Delete pillar"
+    }
+
+    private func beginEditing() {
+        draftName = pillar.name
+        draftDetail = pillar.detail
+        draftColorHex = pillar.colorHex
+        withAnimation(.snappy(duration: 0.2)) { isEditing = true }
+    }
+
+    private func cancelEditing() {
+        draftName = pillar.name
+        draftDetail = pillar.detail
+        draftColorHex = pillar.colorHex
+        withAnimation(.snappy(duration: 0.2)) { isEditing = false }
+    }
+
+    private func saveEdits() {
+        guard canSaveEdits else { return }
+        pillar.name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        pillar.detail = draftDetail.trimmingCharacters(in: .whitespacesAndNewlines)
+        pillar.colorHex = draftColorHex
+        do {
+            try context.save()
+            withAnimation(.snappy(duration: 0.2)) { isEditing = false }
+        } catch {
+            appModel.notice = .error("This pillar could not be saved.")
+        }
+    }
+
+    private func deletePillar() {
+        do {
+            try PillarRemovalService.remove(
+                pillar,
+                pillars: pillars,
+                briefs: briefs,
+                tasks: tasks,
+                context: context
+            )
+            dismiss()
+        } catch {
+            appModel.notice = .error("This pillar could not be deleted.")
         }
     }
 }
@@ -672,43 +818,6 @@ struct NewPillarView: View {
         context.insert(pillar)
         try? context.save()
         onSave(pillar)
-        dismiss()
-    }
-}
-
-private struct PillarEditorView: View {
-    @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
-    let pillar: Pillar
-    @State private var name: String
-    @State private var colorHex: String
-
-    init(pillar: Pillar) {
-        self.pillar = pillar
-        _name = State(initialValue: pillar.name)
-        _colorHex = State(initialValue: pillar.colorHex)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Pillar") { TextField("Name", text: $name).agentSingleLineSubmit() }
-                Section("Color") { PillarColorChooser(selectedHex: $colorHex) }
-            }
-            .navigationTitle("Edit pillar")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
-            }
-        }
-        .agentKeyboardDismissal()
-    }
-
-    private func save() {
-        pillar.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        pillar.colorHex = colorHex
-        try? context.save()
         dismiss()
     }
 }

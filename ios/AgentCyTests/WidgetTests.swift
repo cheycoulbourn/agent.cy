@@ -16,6 +16,58 @@ final class WidgetTests: XCTestCase {
         XCTAssertEqual(try canonicalData(actual), try canonicalData(expected))
     }
 
+    func testWidgetTaskCompletionUpdatesSnapshotAndFocusProgress() throws {
+        var snapshot = AgentCyWidgetSnapshot.preview
+        let task = try XCTUnwrap(snapshot.productionTasks.first(where: { !$0.isCompleted }))
+        let previousProgress = try XCTUnwrap(snapshot.focus?.completedTaskCount)
+
+        XCTAssertTrue(snapshot.setTaskCompletion(taskID: task.id, isCompleted: true))
+        XCTAssertTrue(try XCTUnwrap(snapshot.productionTasks.first { $0.id == task.id }).isCompleted)
+        XCTAssertEqual(snapshot.focus?.completedTaskCount, previousProgress + 1)
+        XCTAssertFalse(snapshot.openProductionTasks(in: task.lane ?? .production).contains { $0.id == task.id })
+    }
+
+    func testWidgetTaskCompletionActionStoreKeepsLatestActionPerTask() throws {
+        let suite = "AgentCyWidgetActionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let taskID = UUID()
+        let first = WidgetTaskCompletionAction(taskID: taskID, isCompleted: true)
+        let latest = WidgetTaskCompletionAction(taskID: taskID, isCompleted: false)
+
+        try WidgetTaskCompletionActionStore.enqueue(first, defaults: defaults)
+        try WidgetTaskCompletionActionStore.enqueue(latest, defaults: defaults)
+
+        XCTAssertEqual(try WidgetTaskCompletionActionStore.pending(defaults: defaults), [latest])
+        try WidgetTaskCompletionActionStore.remove([latest], defaults: defaults)
+        XCTAssertTrue(try WidgetTaskCompletionActionStore.pending(defaults: defaults).isEmpty)
+    }
+
+    func testPendingWidgetTaskCompletionReconcilesIntoSwiftData() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let task = CreatorTask(title: "Finish the edit", targetDate: Date())
+        context.insert(task)
+        try context.save()
+
+        let suite = "AgentCyWidgetReconcileTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let action = WidgetTaskCompletionAction(taskID: task.id, isCompleted: true)
+        try WidgetTaskCompletionActionStore.enqueue(action, defaults: defaults)
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        model.applyPendingWidgetTaskCompletions(
+            context: context,
+            defaults: defaults,
+            refreshWidgets: false
+        )
+
+        XCTAssertTrue(task.isCompleted)
+        XCTAssertNotNil(task.completedAt)
+        XCTAssertTrue(try WidgetTaskCompletionActionStore.pending(defaults: defaults).isEmpty)
+    }
+
     func testWidgetDeepLinksRoundTrip() throws {
         let day = Calendar.current.startOfDay(for: Date())
         let briefID = UUID()

@@ -100,13 +100,6 @@ struct IdeaBankView: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .glassEffect(.clear, in: .circle)
-        .overlay {
-            Circle()
-                .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
-                .allowsHitTesting(false)
-        }
-        .shadow(color: Color.black.opacity(0.08), radius: 12, y: 4)
         .popover(
             isPresented: $isFilterPresented,
             attachmentAnchor: .rect(.bounds),

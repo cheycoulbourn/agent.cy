@@ -2,12 +2,19 @@ import SwiftData
 import SwiftUI
 
 struct WeeklyFocusSetupView: View {
+    private struct DraftSnapshot: Equatable {
+        let assignments: [[DailyFocusKind]]
+        let taskTemplates: [[DailyFocusTaskTemplateDefinition]]
+    }
+
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var templates: [DailyFocusTemplateEntry]
     @State private var assignments: [PillarWeekday: [DailyFocusKind]] = [:]
+    @State private var taskTemplates: [PillarWeekday: [DailyFocusTaskTemplateDefinition]] = [:]
     @State private var didLoad = false
+    @State private var savedSnapshot: DraftSnapshot?
 
     var body: some View {
         NavigationStack {
@@ -32,7 +39,8 @@ struct WeeklyFocusSetupView: View {
                                 NavigationLink {
                                     WeeklyFocusDaySelectionView(
                                         day: day,
-                                        selection: assignmentBinding(for: day)
+                                        selection: assignmentBinding(for: day),
+                                        taskTemplates: taskTemplateBinding(for: day)
                                     )
                                 } label: {
                                     HStack(spacing: AgentSpacing.x4) {
@@ -67,12 +75,6 @@ struct WeeklyFocusSetupView: View {
                         }
                     }
 
-                    Button("Save weekly focus", systemImage: "checkmark") {
-                        if appModel.saveWeeklyFocus(assignments, context: context) {
-                            dismiss()
-                        }
-                    }
-                    .buttonStyle(AgentPrimaryButtonStyle())
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.top, AgentSpacing.x6)
@@ -86,6 +88,22 @@ struct WeeklyFocusSetupView: View {
                     Button("Close", systemImage: "xmark") { dismiss() }
                         .labelStyle(.iconOnly)
                 }
+                if hasChanges {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: saveAndDismiss) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Color.black)
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.circle)
+                        .controlSize(.large)
+                        .tint(Color.white)
+                        .accessibilityLabel("Save weekly focus")
+                        .accessibilityHint("Saves your weekly focuses and recurring tasks")
+                    }
+                }
             }
             .onAppear(perform: load)
             .agentScreen()
@@ -97,6 +115,15 @@ struct WeeklyFocusSetupView: View {
         Binding(
             get: { assignments[day] ?? [] },
             set: { assignments[day] = Array($0.prefix(2)) }
+        )
+    }
+
+    private func taskTemplateBinding(
+        for day: PillarWeekday
+    ) -> Binding<[DailyFocusTaskTemplateDefinition]> {
+        Binding(
+            get: { taskTemplates[day] ?? [] },
+            set: { taskTemplates[day] = $0 }
         )
     }
 
@@ -113,6 +140,32 @@ struct WeeklyFocusSetupView: View {
                 secondary: template.secondaryKind,
                 storedTitle: template.title
             )
+            taskTemplates[day] = template.hasConfiguredFocusTasks
+                ? template.focusTaskTemplates
+                : DailyFocusTaskDefaults.definitions(for: assignments[day] ?? [])
+        }
+        savedSnapshot = currentSnapshot
+    }
+
+    private var currentSnapshot: DraftSnapshot {
+        DraftSnapshot(
+            assignments: PillarWeekday.mondayFirst.map { Array((assignments[$0] ?? []).prefix(2)) },
+            taskTemplates: PillarWeekday.mondayFirst.map { taskTemplates[$0] ?? [] }
+        )
+    }
+
+    private var hasChanges: Bool {
+        guard didLoad, let savedSnapshot else { return false }
+        return currentSnapshot != savedSnapshot
+    }
+
+    private func saveAndDismiss() {
+        if appModel.saveWeeklyFocus(
+            assignments,
+            taskTemplates: taskTemplates,
+            context: context
+        ) {
+            dismiss()
         }
     }
 }
@@ -120,6 +173,7 @@ struct WeeklyFocusSetupView: View {
 private struct WeeklyFocusDaySelectionView: View {
     let day: PillarWeekday
     @Binding var selection: [DailyFocusKind]
+    @Binding var taskTemplates: [DailyFocusTaskTemplateDefinition]
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -139,6 +193,7 @@ private struct WeeklyFocusDaySelectionView: View {
                         showsDivider: false
                     ) {
                         selection = []
+                        taskTemplates = []
                     }
 
                     ForEach(DailyFocusKind.selectableCases) { kind in
@@ -162,8 +217,23 @@ private struct WeeklyFocusDaySelectionView: View {
                         .foregroundStyle(Color.agentSecondary)
                 }
 
-                    Button("Use for \(day.title)") { dismiss() }
+                    if selection.isEmpty {
+                        Button("Use Rest for \(day.title)") { dismiss() }
+                            .buttonStyle(AgentPrimaryButtonStyle())
+                    } else {
+                        NavigationLink {
+                            WeeklyFocusTaskTemplateEditor(
+                                day: day,
+                                focusKinds: selection,
+                                taskTemplates: $taskTemplates,
+                                finishDay: { dismiss() }
+                            )
+                        } label: {
+                            Label("Next: weekly tasks", systemImage: "arrow.right")
+                                .frame(maxWidth: .infinity)
+                        }
                         .buttonStyle(AgentPrimaryButtonStyle())
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, AgentLayout.pageMargin)
@@ -216,8 +286,143 @@ private struct WeeklyFocusDaySelectionView: View {
     private func toggle(_ kind: DailyFocusKind) {
         if let index = selection.firstIndex(of: kind) {
             selection.remove(at: index)
+            taskTemplates.removeAll { $0.focusKind == kind }
         } else if selection.count < 2 {
             selection.append(kind)
+            taskTemplates = DailyFocusTaskDefaults.addingDefaults(for: kind, to: taskTemplates)
+        }
+    }
+}
+
+private struct WeeklyFocusTaskTemplateEditor: View {
+    let day: PillarWeekday
+    let focusKinds: [DailyFocusKind]
+    @Binding var taskTemplates: [DailyFocusTaskTemplateDefinition]
+    let finishDay: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                EditorialHeader(
+                    kicker: "Repeats every \(day.title)",
+                    title: "Set the next steps.",
+                    subtitle: "These tasks return each week. Edit, remove, or add anything you need."
+                )
+
+                ForEach(focusKinds) { kind in
+                    AgentInsetSurface {
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack(alignment: .firstTextBaseline) {
+                                MetaLabel(kind.title)
+                                Spacer()
+                                MetaLabel("\(definitions(for: kind).count) tasks")
+                            }
+                            .padding(.bottom, AgentSpacing.x3)
+
+                            ForEach(definitions(for: kind)) { definition in
+                                if let binding = binding(for: definition.id) {
+                                    focusTaskRow(binding)
+                                }
+                            }
+
+                            AgentAddActionRow(title: "Add task") {
+                                addTask(for: kind)
+                            }
+                            .padding(.top, AgentSpacing.x2)
+                        }
+                    }
+                }
+
+                Button("Save \(day.title)") {
+                    taskTemplates.removeAll {
+                        $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                    dismiss()
+                    Task { @MainActor in
+                        await Task.yield()
+                        finishDay()
+                    }
+                }
+                .buttonStyle(AgentPrimaryButtonStyle())
+            }
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.top, AgentSpacing.x6)
+            .padding(.bottom, AgentSpacing.x12)
+        }
+        .navigationTitle("Weekly tasks")
+        .navigationBarTitleDisplayMode(.inline)
+        .agentScreen()
+        .agentKeyboardDismissal()
+    }
+
+    private func definitions(for kind: DailyFocusKind) -> [DailyFocusTaskTemplateDefinition] {
+        taskTemplates
+            .filter { $0.focusKind == kind }
+            .sorted {
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+    }
+
+    private func binding(
+        for id: UUID
+    ) -> Binding<DailyFocusTaskTemplateDefinition>? {
+        guard let index = taskTemplates.firstIndex(where: { $0.id == id }) else { return nil }
+        return $taskTemplates[index]
+    }
+
+    private func focusTaskRow(
+        _ definition: Binding<DailyFocusTaskTemplateDefinition>
+    ) -> some View {
+        HStack(spacing: AgentSpacing.x3) {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(priorityColor(definition.wrappedValue.priority), lineWidth: 1.25)
+                .frame(width: 19, height: 19)
+
+            TextField("", text: definition.title, axis: .vertical)
+                .font(.agentBody)
+                .lineLimit(1...2)
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+
+            Menu {
+                ForEach(TaskPriority.selectableCases) { priority in
+                    Button(priority.title) {
+                        definition.wrappedValue.priority = priority
+                    }
+                }
+                Divider()
+                Button("Remove task", role: .destructive) {
+                    taskTemplates.removeAll { $0.id == definition.wrappedValue.id }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.agentText)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Task options")
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
+    }
+
+    private func addTask(for kind: DailyFocusKind) {
+        let nextOrder = (definitions(for: kind).map(\.sortOrder).max() ?? -1) + 1
+        taskTemplates.append(DailyFocusTaskTemplateDefinition(
+            focusKind: kind,
+            title: "",
+            sortOrder: nextOrder
+        ))
+    }
+
+    private func priorityColor(_ priority: TaskPriority) -> Color {
+        switch priority.normalized {
+        case .urgent: Color.agentDestructive
+        case .high: Color.orange
+        default: Color.agentBorder
         }
     }
 }
@@ -230,6 +435,8 @@ struct DailyFocusDetailView: View {
     @Query private var templates: [DailyFocusTemplateEntry]
     @Query private var overrides: [DailyFocusOverride]
     @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
     @Query private var savedDetails: [DailyFocusDayDetail]
     @State private var detailRecord: DailyFocusDayDetail?
     @State private var note = ""
@@ -247,20 +454,41 @@ struct DailyFocusDetailView: View {
             ? (focus?.note ?? "")
             : DailyFocusKind.combinedDirective(focus?.kinds ?? [])
     }
-    private var focusTasks: [CreatorTask] {
+    private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
+    private var activeBriefIDs: Set<UUID> { Set(activeBriefs.map(\.id)) }
+    private var dayOutputs: [PlatformOutput] {
+        outputs.filter {
+            activeBriefIDs.contains($0.briefID) &&
+                $0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: date) } == true
+        }
+    }
+    private var dayTasks: [CreatorTask] {
         tasks
             .filter {
                 $0.parentTaskID == nil &&
-                    $0.lane == .production &&
-                    (
-                        $0.dailyFocusDate.map { Calendar.current.isDate($0, inSameDayAs: date) } == true ||
-                        ($0.dailyFocusDate == nil && $0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: date) } == true)
-                    )
+                    AgendaContentVisibility.includesTask(
+                        briefID: $0.briefID,
+                        activeBriefIDs: activeBriefIDs
+                    ) &&
+                    taskBelongsToDay($0)
             }
-            .sorted { lhs, rhs in
-                if lhs.isCompleted != rhs.isCompleted { return !lhs.isCompleted }
-                return (lhs.targetDate ?? .distantFuture) < (rhs.targetDate ?? .distantFuture)
-            }
+            .sorted(by: sortTasks)
+    }
+    private var postTasks: [CreatorTask] {
+        dayTasks.filter {
+            TaskCollectionPolicy.collection(
+                briefID: $0.briefID,
+                platformOutputID: $0.platformOutputID
+            ) == .postTasks
+        }
+    }
+    private var myTasks: [CreatorTask] {
+        dayTasks.filter {
+            TaskCollectionPolicy.collection(
+                briefID: $0.briefID,
+                platformOutputID: $0.platformOutputID
+            ) == .myTasks
+        }
     }
     private var reminderIsAvailable: Bool {
         Calendar.current.startOfDay(for: date) >= Calendar.current.startOfDay(for: Date())
@@ -326,73 +554,20 @@ struct DailyFocusDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
 
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .firstTextBaseline) {
-                        MetaLabel("Focus tasks")
-                        Spacer()
-                        MetaLabel("\(focusTasks.filter(\.isCompleted).count) of \(focusTasks.count)")
-                    }
-                    .padding(.bottom, AgentSpacing.x3)
+                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                    focusTaskCollection(
+                        title: TaskCollection.postTasks.title,
+                        tasks: postTasks,
+                        emptyMessage: "No post tasks for this day."
+                    )
 
-                    if focusTasks.isEmpty {
-                        Text("No focus tasks planned for this day.")
-                            .font(.agentSubtext)
-                            .foregroundStyle(Color.agentSecondary)
-                            .padding(.vertical, AgentSpacing.x3)
-                    } else {
-                        ForEach(focusTasks) { task in
-                            HStack(spacing: AgentSpacing.x2) {
-                                Button {
-                                    appModel.toggleTask(task, context: context)
-                                } label: {
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(Color.agentBorder, lineWidth: 1.25)
-                                        .background(
-                                            task.isCompleted ? Color.agentText : Color.clear,
-                                            in: .rect(cornerRadius: 4)
-                                        )
-                                        .overlay {
-                                            if task.isCompleted {
-                                                Image(systemName: "checkmark")
-                                                    .font(.caption.bold())
-                                                    .foregroundStyle(Color.agentCanvas)
-                                            }
-                                        }
-                                        .frame(width: 19, height: 19)
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(task.isCompleted ? "Mark focus task open" : "Complete focus task")
-
-                                NavigationLink {
-                                    TaskDetailView(task: task)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                        Text(task.title)
-                                            .font(.agentSubtext.weight(.semibold))
-                                            .foregroundStyle(task.isCompleted ? Color.agentSecondary : Color.agentText)
-                                            .strikethrough(task.isCompleted)
-                                            .lineLimit(2)
-                                        HStack(spacing: AgentSpacing.x2) {
-                                            MetaLabel(task.kind.title)
-                                            if let targetDate = task.targetDate {
-                                                MetaLabel(targetDate.formatted(date: .omitted, time: .shortened))
-                                            }
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-                                }
-                                .buttonStyle(.plain)
-                            }
-
-                            if task.id != focusTasks.last?.id {
-                                Rectangle().fill(Color.agentHairline).frame(height: 1)
-                            }
-                        }
-                    }
+                    focusTaskCollection(
+                        title: TaskCollection.myTasks.title,
+                        tasks: myTasks,
+                        emptyMessage: "No personal or focus tasks for this day."
+                    )
 
                     AgentAddActionRow(title: "Add task", action: addFocusTask)
-                        .padding(.top, AgentSpacing.x3)
                 }
                 .padding(AgentSpacing.x6)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -456,6 +631,116 @@ struct DailyFocusDetailView: View {
                 .font(.agentSubtext.weight(.semibold))
                 .foregroundStyle(Color.agentText)
         }
+    }
+
+    @ViewBuilder
+    private func focusTaskCollection(
+        title: String,
+        tasks collectionTasks: [CreatorTask],
+        emptyMessage: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                MetaLabel(title)
+                Spacer()
+                MetaLabel("\(collectionTasks.filter(\.isCompleted).count) of \(collectionTasks.count)")
+            }
+            .padding(.bottom, AgentSpacing.x3)
+
+            if collectionTasks.isEmpty {
+                Text(emptyMessage)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .padding(.vertical, AgentSpacing.x3)
+            } else {
+                let groups = dueDateGroups(for: collectionTasks)
+                if groups.count > 1 {
+                    ForEach(groups) { group in
+                        taskGroupHeader(group)
+                        taskRows(group.tasks)
+                    }
+                } else {
+                    taskRows(collectionTasks)
+                }
+            }
+        }
+    }
+
+    private func taskRows(_ collectionTasks: [CreatorTask]) -> some View {
+        ForEach(collectionTasks) { task in
+            TaskRow(
+                task: task,
+                allTasks: tasks,
+                linkedPostTitle: linkedPostTitle(for: task)
+            )
+            .overlay(alignment: .bottom) {
+                if task.id != collectionTasks.last?.id {
+                    Rectangle().fill(Color.agentHairline).frame(height: 1)
+                }
+            }
+        }
+    }
+
+    private func taskGroupHeader(_ group: TaskDueDateGroup) -> some View {
+        HStack {
+            MetaLabel(group.title)
+            Spacer()
+            MetaLabel("\(group.tasks.count)")
+        }
+        .padding(.top, AgentSpacing.x4)
+        .padding(.bottom, AgentSpacing.x2)
+    }
+
+    private func dueDateGroups(for collectionTasks: [CreatorTask]) -> [TaskDueDateGroup] {
+        Dictionary(grouping: collectionTasks) { task in
+            task.targetDate.map(Calendar.current.startOfDay(for:))
+        }
+        .map { TaskDueDateGroup(day: $0.key, tasks: $0.value.sorted(by: sortTasks)) }
+        .sorted { lhs, rhs in
+            switch (lhs.day, rhs.day) {
+            case let (left?, right?): left < right
+            case (nil, _?): false
+            case (_?, nil): true
+            case (nil, nil): false
+            }
+        }
+    }
+
+    private func sortTasks(_ lhs: CreatorTask, _ rhs: CreatorTask) -> Bool {
+        if lhs.isCompleted != rhs.isCompleted { return !lhs.isCompleted }
+        let rank: (CreatorTask) -> Int = { task in
+            task.priority.normalized == .urgent ? 0 : (task.priority.normalized == .high ? 1 : 2)
+        }
+        if rank(lhs) != rank(rhs) { return rank(lhs) < rank(rhs) }
+        if (lhs.targetDate ?? .distantFuture) != (rhs.targetDate ?? .distantFuture) {
+            return (lhs.targetDate ?? .distantFuture) < (rhs.targetDate ?? .distantFuture)
+        }
+        return lhs.createdAt < rhs.createdAt
+    }
+
+    private func taskBelongsToDay(_ task: CreatorTask) -> Bool {
+        if task.dailyFocusDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) == true ||
+            task.targetDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) == true {
+            return true
+        }
+        if let outputID = task.platformOutputID,
+           dayOutputs.contains(where: { $0.id == outputID }) {
+            return true
+        }
+        return task.briefID.map { briefID in
+            dayOutputs.contains(where: { $0.briefID == briefID })
+        } == true
+    }
+
+    private func linkedPostTitle(for task: CreatorTask) -> String? {
+        let output = task.platformOutputID.flatMap { outputID in
+            outputs.first { $0.id == outputID }
+        }
+        let briefID = task.briefID ?? output?.briefID
+        guard let briefID,
+              let brief = activeBriefs.first(where: { $0.id == briefID }) else { return nil }
+        let override = output?.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return override.isEmpty ? brief.title : override
     }
 
     private func loadDetails() {

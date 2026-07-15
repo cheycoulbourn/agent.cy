@@ -86,6 +86,43 @@ enum RecurringPostSchedule {
     }
 }
 
+enum PostDeletionScope: Equatable, Sendable {
+    case thisPost
+    case thisAndFuture
+}
+
+enum PostSeriesDeletionPolicy {
+    static func seriesRootID(for output: PlatformOutput) -> UUID? {
+        if let rootID = output.seriesRootOutputID { return rootID }
+        return output.recurrence == .none ? nil : output.id
+    }
+
+    static func isPartOfSeries(_ output: PlatformOutput) -> Bool {
+        seriesRootID(for: output) != nil
+    }
+
+    static func outputsToDelete(
+        selected: PlatformOutput,
+        from outputs: [PlatformOutput],
+        scope: PostDeletionScope
+    ) -> [PlatformOutput] {
+        guard scope == .thisAndFuture,
+              let rootID = seriesRootID(for: selected)
+        else { return [selected] }
+
+        return outputs.filter { candidate in
+            if candidate.id == selected.id { return true }
+            guard candidate.status != .posted,
+                  seriesRootID(for: candidate) == rootID
+            else { return false }
+
+            guard let selectedDate = selected.targetDate else { return true }
+            guard let candidateDate = candidate.targetDate else { return false }
+            return candidateDate >= selectedDate
+        }
+    }
+}
+
 enum RecurringTaskSchedule {
     static func nextDate(
         after date: Date,
@@ -139,6 +176,7 @@ enum RecurringTaskMaterializer {
             notes: task.notes,
             estimatedMinutes: task.estimatedMinutes,
             targetDate: nextDate,
+            includesTargetTime: task.includesTargetTime,
             dailyFocusDate: task.dailyFocusDate.map {
                 calendar.date(byAdding: .day, value: calendar.dateComponents(
                     [.day],
@@ -170,6 +208,7 @@ enum RecurringTaskMaterializer {
                 priority: subtask.priority,
                 notes: subtask.notes,
                 estimatedMinutes: subtask.estimatedMinutes,
+                includesTargetTime: subtask.includesTargetTime,
                 dailyFocusDate: next.dailyFocusDate,
                 dailyFocusTitle: next.dailyFocusTitle,
                 dailyFocusTemplateEntryID: next.dailyFocusTemplateEntryID,
@@ -283,10 +322,14 @@ enum RecurringPostMaterializer {
         clone.compensationType = source.compensationType
         clone.compensationAmount = source.compensationAmount
         clone.compensationCurrencyCode = source.compensationCurrencyCode
+        clone.brandHasNetTerms = source.brandHasNetTerms
+        clone.brandNetTermsDays = source.brandNetTermsDays
         clone.giftedProductDescription = source.giftedProductDescription
         clone.giftedEstimatedValue = source.giftedEstimatedValue
         clone.promoCode = source.promoCode
         clone.promoLinkString = source.promoLinkString
+        clone.moodBoardEnabled = source.moodBoardEnabled
+        clone.moodBoardURLString = source.moodBoardURLString
         clone.agendaDate = occurrenceDate
         return clone
     }
@@ -317,6 +360,7 @@ enum RecurringPostMaterializer {
         clone.recurrenceEndDate = nil
         clone.includesTargetTime = source.includesTargetTime
         clone.seriesRootOutputID = rootOutputID
+        clone.publishedURLString = ""
         return clone
     }
 
@@ -352,6 +396,7 @@ enum RecurringPostMaterializer {
                 notes: source.notes,
                 estimatedMinutes: source.estimatedMinutes,
                 targetDate: source.targetDate.flatMap { calendar.date(byAdding: .day, value: dayOffset, to: $0) },
+                includesTargetTime: source.includesTargetTime,
                 dailyFocusDate: source.dailyFocusDate.flatMap { calendar.date(byAdding: .day, value: dayOffset, to: $0) },
                 dailyFocusTitle: source.dailyFocusTitle,
                 dailyFocusTemplateEntryID: source.dailyFocusTemplateEntryID,

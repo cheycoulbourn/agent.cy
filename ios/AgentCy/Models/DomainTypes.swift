@@ -168,13 +168,19 @@ enum PublishingFormatKind: String, CaseIterable, Codable, Identifiable, Sendable
     }
 }
 
-enum BuiltInDestinationKind: String, CaseIterable, Codable, Identifiable, Sendable {
+enum BuiltInDestinationKind: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case instagram
     case tiktok
     case youtube
 
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .instagram: "Instagram"
+        case .tiktok: "TikTok"
+        case .youtube: "YouTube"
+        }
+    }
 }
 
 enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -333,6 +339,58 @@ enum TaskLane: String, CaseIterable, Codable, Identifiable, Sendable {
     var shortTitle: String { self == .pillar ? "Pillar" : "Focus" }
 }
 
+enum TaskCollection: String, CaseIterable, Identifiable, Sendable {
+    case postTasks
+    case myTasks
+
+    var id: String { rawValue }
+    var title: String { self == .postTasks ? "Post Tasks" : "My Tasks" }
+}
+
+enum TaskCollectionPolicy {
+    static func collection(briefID: UUID?, platformOutputID: UUID?) -> TaskCollection {
+        briefID != nil || platformOutputID != nil ? .postTasks : .myTasks
+    }
+}
+
+enum TaskListVisibilityPolicy {
+    /// Post Tasks are scoped to the calendar week shown by the Tasks page.
+    /// Recurring My Tasks keep the existing short rolling horizon so their
+    /// materialized future occurrences do not flood the list.
+    static func includes(
+        collection: TaskCollection,
+        focusTaskTemplateID: UUID?,
+        recurrence: TaskRecurrenceFrequency,
+        recurrenceRootTaskID: UUID?,
+        targetDate: Date?,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        if collection == .postTasks || focusTaskTemplateID != nil {
+            guard let targetDate else { return true }
+            let targetDay = calendar.startOfDay(for: targetDate)
+            let today = calendar.startOfDay(for: now)
+            let weekday = calendar.component(.weekday, from: today)
+            let daysSinceMonday = (weekday + 5) % 7
+            guard let monday = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today),
+                  let nextMonday = calendar.date(byAdding: .day, value: 7, to: monday)
+            else { return true }
+            return targetDay >= monday && targetDay < nextMonday
+        }
+
+        let isRecurring = focusTaskTemplateID != nil ||
+            recurrence != .none ||
+            recurrenceRootTaskID != nil
+        guard isRecurring, let targetDate else { return true }
+
+        let today = calendar.startOfDay(for: now)
+        guard let horizon = calendar.date(byAdding: .day, value: 7, to: today) else {
+            return true
+        }
+        return calendar.startOfDay(for: targetDate) <= horizon
+    }
+}
+
 enum TaskPriority: String, CaseIterable, Codable, Identifiable, Sendable {
     case none
     case high
@@ -468,6 +526,8 @@ enum CompensationType: String, CaseIterable, Codable, Identifiable, Sendable {
 enum AttachmentOwnerKind: String, Codable, Sendable {
     case referenceFile
     case postMedia
+    case collaborationFile
+    case moodBoardMedia
 }
 
 enum AttachmentKind: String, Codable, Sendable {
@@ -860,21 +920,34 @@ struct AssistancePolicy: Sendable {
     }
 }
 
+struct OnboardingPillarDraft: Identifiable, Equatable, Sendable {
+    var id = UUID()
+    var name = ""
+    var colorHex = "55705B"
+    var assignedWeekdays: Set<PillarWeekday> = []
+}
+
 struct OnboardingDraft: Equatable, Sendable {
     var adultConfirmed = false
     var telemetryConsent = false
     var name = ""
     var goal = ""
-    var platforms: Set<CreatorPlatform> = [.instagramReels]
+    var platforms: Set<CreatorPlatform> = []
+    // Retained while the Paper-led onboarding flow is migrated so existing
+    // onboarding services and saved drafts continue to compile and decode.
     var assistanceMode: AssistanceMode = .collaborate
-    var voiceExamples = [VoiceExampleDraft(), VoiceExampleDraft(), VoiceExampleDraft()]
+    var pillars: [OnboardingPillarDraft] = []
+    var voiceExamples: [VoiceExampleDraft] = []
     var voiceSummary = ""
     var voiceTraits = ""
     var voiceAvoid = ""
     var voiceProfilePayloadJSON = ""
-    var dailyReminderEnabled = false
+    var accountHandles: [BuiltInDestinationKind: String] = [:]
+    var dailyReminderEnabled = true
     var dailyReminderHour = 9
-    var weeklyReminderEnabled = false
+    var dailyReminderMinute = 0
+    var weeklyReminderEnabled = true
     var weeklyReminderWeekday = 2
     var weeklyReminderHour = 9
+    var weeklyReminderMinute = 0
 }

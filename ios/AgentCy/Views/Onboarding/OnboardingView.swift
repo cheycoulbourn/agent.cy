@@ -3,432 +3,1226 @@ import SwiftUI
 
 @MainActor
 struct OnboardingView: View {
-    private enum Step: Int, CaseIterable {
+    private enum Step: Int, CaseIterable, Identifiable {
         case welcome
-        case profile
-        case mode
-        case invite
-        case examples
+        case name
+        case pillars
         case voice
-        case reminders
-        case firstSpark
+        case platforms
+        case notifications
+        case ready
 
-        var kicker: String {
+        var id: Int { rawValue }
+
+        var label: String {
             switch self {
             case .welcome: "Welcome"
-            case .profile: "About you"
-            case .mode: "Cy’s role"
-            case .invite: "Pilot access"
-            case .examples: "Your voice"
-            case .voice: "Voice profile"
-            case .reminders: "Reminders"
-            case .firstSpark: "First idea"
+            case .name: "About you"
+            case .pillars: "Your content"
+            case .voice: "Your voice"
+            case .platforms: "Where you post"
+            case .notifications: "Notifications"
+            case .ready: "Ready"
             }
         }
     }
 
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let previewOnly: Bool
     @State private var step: Step = .welcome
-    @State private var draft = OnboardingDraft()
-    @State private var inviteCode = ""
-    @State private var didDeferVoiceExamples = false
+    @State private var draft: OnboardingDraft
+    @State private var transitionEdge: Edge = .trailing
+    @State private var pillarEditorDraft: OnboardingPillarDraft?
+    @State private var showsVoiceEditor = false
 
-    private var steps: [Step] {
-        Step.allCases.filter {
-            (appModel.requiresInstallationInvite || $0 != .invite) &&
-                (!didDeferVoiceExamples || $0 != .voice)
-        }
-    }
-
-    private var stepIndex: Int {
-        steps.firstIndex(of: step) ?? 0
+    init(previewOnly: Bool = false, initialDraft: OnboardingDraft = OnboardingDraft()) {
+        self.previewOnly = previewOnly
+        _draft = State(initialValue: initialDraft)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                MetaLabel("Step \(stepIndex + 1) / \(steps.count)")
-                Spacer()
-                ProgressView(value: Double(stepIndex + 1), total: Double(steps.count))
-                    .frame(width: 96)
-                    .tint(.actionAccent)
-                    .accessibilityLabel("Onboarding progress")
-            }
-            .padding(.horizontal, AgentLayout.pageMargin)
-            .padding(.top, AgentSpacing.x4)
+            progressHeader
 
             ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-                    stepContent
-                }
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.top, AgentSpacing.x8)
-                .padding(.bottom, AgentSpacing.x16)
+                stepContent
+                    .id(step)
+                    .transition(stepTransition)
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(.top, step == .welcome ? AgentSpacing.x8 : AgentSpacing.x12)
+                    .padding(.bottom, AgentSpacing.x12)
             }
             .scrollDismissesKeyboard(.interactively)
         }
-        .safeAreaInset(edge: .bottom) {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             navigationControls
                 .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.vertical, AgentSpacing.x3)
+                .padding(.top, AgentSpacing.x2)
+                .padding(.bottom, AgentSpacing.x4)
                 .background(Color.agentCanvas)
-                .overlay(alignment: .top) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
+        }
+        .sheet(item: $pillarEditorDraft) { editingDraft in
+            OnboardingPillarEditor(
+                pillar: editingDraft,
+                role: pillarRole(for: editingDraft.id),
+                canDelete: draft.pillars.contains(where: { $0.id == editingDraft.id }),
+                onSave: savePillar,
+                onDelete: { deletePillar(id: editingDraft.id) }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showsVoiceEditor) {
+            OnboardingVoiceEditor(
+                examples: $draft.voiceExamples,
+                onNotice: { appModel.notice = .info($0) }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .agentScreen()
         .agentKeyboardDismissal()
-        .task { await appModel.refreshInstallationCredentialStatus(context: context) }
+        .task { await appModel.refreshReminderSchedule(context: context) }
+    }
+
+    private var progressHeader: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            HStack(spacing: 6) {
+                ForEach(Step.allCases) { item in
+                    Capsule()
+                        .fill(item.rawValue <= step.rawValue ? Color.agentText : Color.agentHairline)
+                        .frame(maxWidth: .infinity, minHeight: 2, maxHeight: 2)
+                }
+            }
+            HStack(alignment: .center) {
+                Text(step.label.uppercased())
+                    .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                    .tracking(1.1)
+                Spacer()
+                Text("\(step.rawValue + 1) / \(Step.allCases.count)")
+                    .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.agentSecondary)
+                if previewOnly {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 32, height: 32)
+                            .background(Color.agentSurface, in: .circle)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close onboarding preview")
+                }
+            }
+        }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x4)
     }
 
     @ViewBuilder
     private var stepContent: some View {
         switch step {
         case .welcome:
-            EditorialHeader(
-                kicker: step.kicker,
-                title: "Make your next video.",
-                subtitle: "Turn an idea into a clear script and plan."
-            )
-            VStack(spacing: AgentSpacing.x4) {
-                Toggle(isOn: $draft.adultConfirmed) {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                        Text("I’m 18 or older").font(.agentHeadline)
-                        Text("This app is for adult creators.").font(.agentBody).foregroundStyle(Color.agentSecondary)
-                    }
-                }
-                .tint(.actionAccent)
-                Toggle(isOn: $draft.telemetryConsent) {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                        Text("Share content-free diagnostics").font(.agentHeadline)
-                        Text("Optional. Never includes your content.").font(.agentBody).foregroundStyle(Color.agentSecondary)
-                    }
-                }
-                .tint(.actionAccent)
-            }
-            CyCallout(heading: .keepsItPrivate) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    MetaLabel("Your privacy")
-                    Text("Your work stays on your devices and private iCloud. Cy receives only the text needed for a request. Creator-added files and screenshots are never sent to Cy.")
-                        .font(.agentBody)
-                }
-            }
-
-        case .profile:
-            EditorialHeader(kicker: step.kicker, title: "Tell us about your content.", subtitle: "This helps Cy make relevant suggestions.")
-            VStack(spacing: AgentSpacing.x4) {
-                AgentLabeledField(label: "Name", placeholder: "What should Cy call you?", text: $draft.name)
-                AgentLabeledField(label: "Goal", placeholder: "e.g. Teach practical design skills", text: $draft.goal, axis: .vertical)
-            }
-            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                SectionRuleHeader(title: "Platforms")
-                ForEach(CreatorPlatform.allCases) { platform in
-                    Button {
-                        if draft.platforms.contains(platform), draft.platforms.count > 1 {
-                            draft.platforms.remove(platform)
-                        } else {
-                            draft.platforms.insert(platform)
-                        }
-                    } label: {
-                        EditorialRow {
-                            HStack {
-                                Image(systemName: platform.symbol).frame(width: 32)
-                                Text(platform.title).font(.agentBody)
-                                Spacer()
-                                Image(systemName: draft.platforms.contains(platform) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(draft.platforms.contains(platform) ? Color.actionAccent : Color.agentSecondary)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityValue(draft.platforms.contains(platform) ? "Selected" : "Not selected")
-                }
-            }
-
-        case .mode:
-            EditorialHeader(kicker: step.kicker, title: "How should Cy help?", subtitle: "Change this anytime. You approve every change.")
-            VStack(spacing: AgentSpacing.x3) {
-                ForEach(AssistanceMode.allCases) { mode in
-                    Button {
-                        draft.assistanceMode = mode
-                    } label: {
-                        HStack(alignment: .top, spacing: AgentSpacing.x4) {
-                            Image(systemName: draft.assistanceMode == mode ? "record.circle.fill" : "circle")
-                                .foregroundStyle(draft.assistanceMode == mode ? Color.cyAccent : Color.agentSecondary)
-                                .frame(width: 32)
-                            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                Text(mode.title).font(.agentHeadline)
-                                Text(mode.detail).font(.agentBody).foregroundStyle(Color.agentSecondary)
-                            }
-                            Spacer()
-                        }
-                        .padding(AgentSpacing.x4)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.agentSurface)
-                        .clipShape(.rect(cornerRadius: AgentRadius.control))
-                        .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(draft.assistanceMode == mode ? Color.cyAccent : Color.agentBorder, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-        case .invite:
-            EditorialHeader(
-                kicker: step.kicker,
-                title: "Enter your invite.",
-                subtitle: "Your one-use code unlocks Cy on this iPhone."
-            )
-            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                AgentLabeledField(label: "Invitation code", placeholder: "Enter your pilot code", text: $inviteCode)
-                    .textInputAutocapitalization(.characters)
-                    .autocorrectionDisabled()
-                Button {
-                    Task { await appModel.redeemInstallationInvite(inviteCode, context: context) }
-                } label: {
-                    Label(
-                        appModel.hasInstallationCredential ? "Connected" : "Use invite",
-                        systemImage: appModel.hasInstallationCredential ? "checkmark.circle.fill" : "key"
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(AgentPrimaryButtonStyle())
-                .disabled(appModel.isRedeemingInvite || appModel.hasInstallationCredential || inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).count < 6)
-                if appModel.isRedeemingInvite {
-                    ProgressView("Connecting…")
-                        .font(.agentBody)
-                }
-            }
-            CyCallout(heading: .keepsItPrivate) {
-                Text("Your invite is checked before any content is sent.")
-                    .font(.agentBody)
-            }
-
-        case .examples:
-            EditorialHeader(
-                kicker: step.kicker,
-                title: "Show Cy your voice.",
-                subtitle: "Add three real examples, or do this later."
-            )
-            CyCallout(heading: .noticed) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    MetaLabel("\(usableExampleCount) of 3 ready")
-                    Text("Paste text, link an Instagram post, or use a screenshot.")
-                        .font(.agentBody)
-                }
-            }
-            VStack(spacing: AgentSpacing.x6) {
-                ForEach(Array(draft.voiceExamples.enumerated()), id: \.element.id) { index, example in
-                        VoiceExampleInputCard(
-                            example: exampleBinding(for: example.id),
-                            number: index + 1,
-                            onRemove: draft.voiceExamples.count > 3 ? { removeExample(id: example.id) } : nil,
-                        onNotice: { appModel.notice = .info($0) }
-                    )
-                    .disabled(appModel.isWorking)
-                }
-                if draft.voiceExamples.count < 5 {
-                    Button("Add example", systemImage: "plus") {
-                        draft.voiceExamples.append(VoiceExampleDraft())
-                    }
-                    .frame(minHeight: 44)
-                    .disabled(appModel.isWorking)
-                }
-            }
-
+            welcomeStep
+        case .name:
+            nameStep
+        case .pillars:
+            pillarsStep
         case .voice:
-            EditorialHeader(kicker: step.kicker, title: "Does this sound like you?", subtitle: "Edit anything before you approve it.")
-            AgentLabeledField(label: "Voice summary", placeholder: "How your voice feels", text: $draft.voiceSummary, axis: .vertical)
-            AgentLabeledField(label: "Recurring traits", placeholder: "What Cy should preserve", text: $draft.voiceTraits, axis: .vertical)
-            AgentLabeledField(label: "Avoid", placeholder: "What Cy should not imitate", text: $draft.voiceAvoid, axis: .vertical)
+            voiceStep
+        case .platforms:
+            platformsStep
+        case .notifications:
+            notificationsStep
+        case .ready:
+            readyStep
+        }
+    }
 
-        case .reminders:
-            EditorialHeader(kicker: step.kicker, title: "Want reminders?", subtitle: "They are optional and easy to change later.")
+    private var welcomeStep: some View {
+        VStack(spacing: 0) {
             VStack(spacing: AgentSpacing.x6) {
-                Toggle("Daily focus", isOn: $draft.dailyReminderEnabled).font(.agentHeadline).tint(.actionAccent)
-                if draft.dailyReminderEnabled {
-                    Picker("Daily time", selection: $draft.dailyReminderHour) {
-                        ForEach(6..<22, id: \.self) { hour in Text(hourLabel(hour)).tag(hour) }
-                    }
-                }
-                Toggle("New week", isOn: $draft.weeklyReminderEnabled).font(.agentHeadline).tint(.actionAccent)
-                if draft.weeklyReminderEnabled {
-                    Picker("Time", selection: $draft.weeklyReminderHour) {
-                        ForEach(6..<22, id: \.self) { hour in Text(hourLabel(hour)).tag(hour) }
-                    }
+                CyAsterisk(size: 56, strokeWidth: 4)
+                VStack(spacing: AgentSpacing.x3) {
+                    Text("From idea to ready.")
+                        .font(.paperInter(size: 36, weight: .bold, relativeTo: .largeTitle))
+                        .tracking(-0.8)
+                        .multilineTextAlignment(.center)
+                    Text("A clear place to shape your ideas, plan your week, and make the work.")
+                        .font(.paperInter(size: 18, weight: .regular, relativeTo: .body))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(maxWidth: 310)
                 }
             }
+            .frame(maxWidth: .infinity)
 
-        case .firstSpark:
-            EditorialHeader(
-                kicker: step.kicker,
-                title: "Start with an idea.",
-                subtitle: usableExampleCount >= 3
-                    ? "Add your own or ask Cy for three options."
-                    : "Add your own or ask Cy for three options. You can teach Cy your voice later."
-            )
-            VStack(spacing: AgentSpacing.x4) {
-                Button {
-                    finish(startWithIdeas: false)
-                } label: {
-                    Label("Add my idea", systemImage: "plus").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(AgentPrimaryButtonStyle())
-                Button {
-                    finish(startWithIdeas: true)
-                } label: {
-                    Label("Give me ideas", systemImage: "sparkles").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(AgentSecondaryButtonStyle())
+            VStack(spacing: 0) {
+                PaperOnboardingFeature(title: "Capture the idea", detail: "Save it before it disappears.")
+                PaperOnboardingFeature(title: "Shape the post", detail: "Turn a rough thought into something usable.")
+                PaperOnboardingFeature(title: "Plan the work", detail: "Keep posts and production tasks in one rhythm.")
             }
-            CyCallout(heading: .says) {
-                Text("Either choice creates the same simple brief.")
-                    .font(.agentBody)
+            .padding(.top, AgentSpacing.x12)
+
+            VStack(spacing: 0) {
+                PaperConsentRow(
+                    title: "I am 18 or older",
+                    detail: "agent.cy is made for adult creators.",
+                    isOn: $draft.adultConfirmed
+                )
+                PaperConsentRow(
+                    title: "Share content-free diagnostics",
+                    detail: "Optional. Your ideas and writing are never included.",
+                    isOn: $draft.telemetryConsent
+                )
+            }
+            .padding(.top, AgentSpacing.x8)
+        }
+    }
+
+    private var nameStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x12) {
+            PaperOnboardingPrompt(
+                title: "What should Cy call you?",
+                subtitle: "This is the name you will see throughout the app."
+            )
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                PaperFieldLabel("Your name")
+                TextField("Name", text: $draft.name)
+                    .font(.paperInter(size: 22, weight: .regular, relativeTo: .title3))
+                    .textContentType(.name)
+                    .agentSingleLineSubmit()
+                    .padding(.horizontal, AgentSpacing.x6)
+                    .frame(minHeight: 64)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
+                    }
             }
         }
     }
 
-    @ViewBuilder
-    private var navigationControls: some View {
-        if step != .firstSpark {
-            VStack(spacing: AgentSpacing.x2) {
-                HStack(spacing: AgentSpacing.x3) {
-                    if stepIndex > 0 {
-                        Button("Back") { moveBack() }
-                            .frame(minWidth: 72, minHeight: 52)
-                            .font(.agentHeadline)
+    private var pillarsStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            PaperOnboardingPrompt(
+                title: "What do you create about?",
+                subtitle: "Start with one central pillar. Add branches now or whenever you are ready."
+            )
+
+            VStack(spacing: AgentSpacing.x3) {
+                ForEach(Array(draft.pillars.enumerated()), id: \.element.id) { index, pillar in
+                    Button {
+                        pillarEditorDraft = pillar
+                    } label: {
+                        HStack(spacing: AgentSpacing.x4) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color(agentHex: pillar.colorHex))
+                                .frame(width: 7, height: 38)
+                            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                Text(pillar.name)
+                                    .font(.paperInter(size: 18, weight: .semibold, relativeTo: .headline))
+                                Text(index == 0 ? "Anchor pillar" : weekdaySummary(pillar.assignedWeekdays))
+                                    .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                                    .tracking(0.8)
+                                    .textCase(.uppercase)
+                                    .foregroundStyle(Color.agentSecondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+                        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
+                        }
                     }
-                    Button(step == .examples ? "Build my voice profile" : "Continue") { moveForward() }
-                        .buttonStyle(AgentPrimaryButtonStyle())
-                        .disabled(!isStepValid || appModel.isWorking)
-                        .overlay { if appModel.isWorking { ProgressView().tint(.onAccent) } }
+                    .buttonStyle(.plain)
                 }
-                if step == .examples {
-                    Button("Add these later") { deferVoiceExamples() }
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .font(.agentHeadline)
-                        .disabled(appModel.isWorking)
+
+                if draft.pillars.count < 4 {
+                    Button {
+                        pillarEditorDraft = OnboardingPillarDraft()
+                    } label: {
+                        HStack(spacing: AgentSpacing.x3) {
+                            Image(systemName: "plus")
+                            Text(draft.pillars.isEmpty ? "Add your anchor pillar" : "Add a branch")
+                            Spacer()
+                        }
+                        .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(maxWidth: .infinity, minHeight: 68)
+                        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Color.agentText.opacity(0.24), style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            HStack {
+                Text("\(draft.pillars.count) of 4")
+                Spacer()
+                Text(draft.pillars.isEmpty ? "Optional" : "You can edit these later")
+            }
+            .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+            .tracking(0.7)
+            .textCase(.uppercase)
+            .foregroundStyle(Color.agentSecondary)
+        }
+    }
+
+    private var voiceStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            PaperOnboardingPrompt(
+                title: "Want Cy to learn your voice?",
+                subtitle: "Add real examples now, or teach Cy later from Settings."
+            )
+
+            VStack(spacing: AgentSpacing.x3) {
+                Button { showsVoiceEditor = true } label: {
+                    PaperOnboardingActionRow(
+                        symbol: "text.alignleft",
+                        title: "Add writing samples",
+                        detail: draft.voiceExamples.isEmpty
+                            ? "Paste captions, scripts, or posts."
+                            : "\(usableExampleCount) example\(usableExampleCount == 1 ? "" : "s") added"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button { showsVoiceEditor = true } label: {
+                    PaperOnboardingActionRow(
+                        symbol: "photo.on.rectangle",
+                        title: "Use a link or screenshot",
+                        detail: "Instagram links stay local. Screenshots are read on-device."
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                CyAsterisk(size: 15, strokeWidth: 1.6)
+                Text("Cy will not build a voice profile until you ask. Setup never spends an AI request.")
+                    .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                    .foregroundStyle(Color.agentSecondary)
+            }
+        }
+    }
+
+    private var platformsStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            PaperOnboardingPrompt(
+                title: "Where do you create?",
+                subtitle: "Choose the formats you use. Add a handle only if you want the account saved as a reference."
+            )
+
+            VStack(spacing: AgentSpacing.x3) {
+                PaperPlatformCard(
+                    title: "Instagram",
+                    detail: "Reels",
+                    symbol: "camera.aperture",
+                    selected: draft.platforms.contains(.instagramReels),
+                    handle: handleBinding(for: .instagram),
+                    onToggle: { toggle(.instagramReels) }
+                )
+                PaperPlatformCard(
+                    title: "TikTok",
+                    detail: "Short-form video",
+                    symbol: "music.note",
+                    selected: draft.platforms.contains(.tiktok),
+                    handle: handleBinding(for: .tiktok),
+                    onToggle: { toggle(.tiktok) }
+                )
+                PaperYouTubeCard(
+                    selectedFormats: $draft.platforms,
+                    handle: handleBinding(for: .youtube)
+                )
+            }
+
+            Text("Nothing is connected, fetched, or posted automatically.")
+                .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                .tracking(0.6)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.agentSecondary)
+        }
+    }
+
+    private var notificationsStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            PaperOnboardingPrompt(
+                title: "Want a calm heads-up?",
+                subtitle: "Start with a daily overview and one Monday planning note. Rest days stay quiet."
+            )
+
+            VStack(spacing: 0) {
+                onboardingReminderRow(
+                    title: "Daily overview",
+                    detail: "Your focus and next commitment on active days.",
+                    isOn: $draft.dailyReminderEnabled,
+                    time: onboardingTimeBinding(hour: \.dailyReminderHour, minute: \.dailyReminderMinute)
+                )
+                Rectangle().fill(Color.agentHairline).frame(height: 1)
+                onboardingReminderRow(
+                    title: "Monday planning",
+                    detail: "Your week, saved ideas, and what is already planned.",
+                    isOn: $draft.weeklyReminderEnabled,
+                    time: onboardingTimeBinding(hour: \.weeklyReminderHour, minute: \.weeklyReminderMinute)
+                )
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                PaperFieldLabel("Preview")
+                Text("A new week is here")
+                    .font(.paperInter(size: 18, weight: .semibold, relativeTo: .headline))
+                Text("Start with Planning. You have four saved ideas.")
+                    .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
+            }
+
+            Text("Your content stays on this iPhone. You can change every notification category later in Settings.")
+                .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
+                .foregroundStyle(Color.agentSecondary)
+        }
+    }
+
+    private func onboardingReminderRow(
+        title: String,
+        detail: String,
+        isOn: Binding<Bool>,
+        time: Binding<Date>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            Toggle(isOn: isOn) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(title)
+                        .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                    Text(detail)
+                        .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                        .foregroundStyle(Color.agentSecondary)
+                }
+            }
+            .tint(.actionAccent)
+
+            if isOn.wrappedValue {
+                HStack {
+                    PaperFieldLabel("Time")
+                    Spacer()
+                    DatePicker(title, selection: time, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
                 }
             }
         }
+        .padding(.vertical, AgentSpacing.x4)
+    }
+
+    private func onboardingTimeBinding(
+        hour: WritableKeyPath<OnboardingDraft, Int>,
+        minute: WritableKeyPath<OnboardingDraft, Int>
+    ) -> Binding<Date> {
+        Binding(
+            get: {
+                Calendar.current.date(
+                    bySettingHour: draft[keyPath: hour],
+                    minute: draft[keyPath: minute],
+                    second: 0,
+                    of: Date()
+                ) ?? Date()
+            },
+            set: { value in
+                draft[keyPath: hour] = Calendar.current.component(.hour, from: value)
+                draft[keyPath: minute] = Calendar.current.component(.minute, from: value)
+            }
+        )
+    }
+
+    private var readyStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x12) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                CyAsterisk(size: 64, strokeWidth: 4.5)
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    Text("You’re ready, \(displayName).")
+                        .font(.paperInter(size: 36, weight: .bold, relativeTo: .largeTitle))
+                        .tracking(-0.8)
+                    Text("Your creative workspace is set up. Everything here can change as your work does.")
+                        .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
+                        .foregroundStyle(Color.agentSecondary)
+                }
+            }
+
+            VStack(spacing: 0) {
+                PaperReadyRow(label: "Pillars", value: pillarReadySummary)
+                PaperReadyRow(label: "Voice", value: usableExampleCount == 0 ? "Add later" : "\(usableExampleCount) saved")
+                PaperReadyRow(label: "Platforms", value: platformReadySummary)
+                PaperReadyRow(label: "Notifications", value: notificationReadySummary)
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                PaperFieldLabel("What are you working toward?")
+                TextField("", text: $draft.goal, axis: .vertical)
+                    .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
+                    .lineLimit(2...4)
+                    .padding(AgentSpacing.x4)
+                    .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
+                    }
+                Text("Cy uses this goal to keep suggestions relevant.")
+                    .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
+                    .foregroundStyle(Color.agentSecondary)
+            }
+        }
+    }
+
+    private var navigationControls: some View {
+        VStack(spacing: AgentSpacing.x2) {
+            HStack(spacing: AgentSpacing.x3) {
+                if step != .welcome {
+                    Button {
+                        moveBack()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 56, height: 56)
+                    }
+                    .buttonStyle(PaperOnboardingSecondaryButtonStyle())
+                    .accessibilityLabel("Back")
+                }
+
+                Button {
+                    performPrimaryAction()
+                } label: {
+                    HStack(spacing: AgentSpacing.x2) {
+                        if appModel.isWorking && step == .ready {
+                            ProgressView().tint(Color.onAccent)
+                        }
+                        Text(primaryButtonTitle)
+                        if step == .ready {
+                            CyAsterisk(color: .onAccent, size: 17, strokeWidth: 1.8)
+                        }
+                    }
+                }
+                .buttonStyle(PaperOnboardingPrimaryButtonStyle())
+                .disabled(!isStepValid || appModel.isWorking)
+            }
+
+            if skipIsAvailable {
+                Button("Skip for now") {
+                    if step == .notifications {
+                        draft.dailyReminderEnabled = false
+                        draft.weeklyReminderEnabled = false
+                    }
+                    moveForward()
+                }
+                    .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(minHeight: 32)
+            }
+        }
+    }
+
+    private var stepTransition: AnyTransition {
+        let insertion = AnyTransition.move(edge: transitionEdge).combined(with: .opacity)
+        let removal = AnyTransition.move(edge: transitionEdge == .trailing ? .leading : .trailing).combined(with: .opacity)
+        return .asymmetric(insertion: insertion, removal: removal)
+    }
+
+    private var primaryButtonTitle: String {
+        switch step {
+        case .welcome: "Get started"
+        case .notifications: appModel.notificationAuthorization.canSchedule ? "Continue" : "Turn on notifications"
+        case .ready: previewOnly ? "Close preview" : "Start with Cy"
+        default: "Continue"
+        }
+    }
+
+    private var skipIsAvailable: Bool {
+        (step == .pillars && draft.pillars.isEmpty) ||
+            (step == .voice && usableExampleCount == 0) ||
+            (step == .platforms && draft.platforms.isEmpty) ||
+            step == .notifications
     }
 
     private var isStepValid: Bool {
         switch step {
-        case .welcome: draft.adultConfirmed
-        case .profile: !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !draft.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !draft.platforms.isEmpty
-        case .mode: true
-        case .invite: appModel.hasInstallationCredential
-        case .examples: usableExampleCount >= 3
-        case .voice: !draft.voiceSummary.isEmpty && !draft.voiceTraits.isEmpty
-        case .reminders, .firstSpark: true
+        case .welcome:
+            draft.adultConfirmed
+        case .name:
+            !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .ready:
+            previewOnly || !draft.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .pillars, .voice, .platforms, .notifications:
+            true
         }
     }
 
-    private func moveForward() {
-        if step == .examples {
-            Task {
-                if let result = await appModel.prepareVoiceProfile(from: draft) {
-                    didDeferVoiceExamples = false
-                    draft.voiceSummary = result.summary
-                    draft.voiceTraits = result.canonical.signatureQualities.joined(separator: ", ")
-                    draft.voiceAvoid = result.avoid
-                    draft.voiceProfilePayloadJSON = (try? Self.encodeVoiceProfile(result.canonical)) ?? ""
-                    setStep(.voice)
-                }
-            }
-        } else if stepIndex + 1 < steps.count {
-            setStep(steps[stepIndex + 1])
-        }
-    }
-
-    private static func encodeVoiceProfile(_ profile: VoiceProfileWire) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return String(decoding: try encoder.encode(profile), as: UTF8.self)
-    }
-
-    private func moveBack() {
-        guard stepIndex > 0 else { return }
-        setStep(steps[stepIndex - 1])
-    }
-
-    private func setStep(_ newStep: Step) {
-        if reduceMotion { step = newStep } else { withAnimation(.easeInOut(duration: 0.22)) { step = newStep } }
-    }
-
-    private func finish(startWithIdeas: Bool) {
-        Task {
-            appModel.quickCaptureStartsWithIdeas = startWithIdeas
-            appModel.quickCaptureStartsWithTask = false
-            appModel.quickCaptureStartsWithPost = false
-            if await appModel.completeOnboarding(draft, context: context) {
-                appModel.presentedSheet = .quickCapture
-            }
-        }
-    }
-
-    private func hourLabel(_ hour: Int) -> String {
-        DateComponents(calendar: .current, hour: hour).date?.formatted(date: .omitted, time: .shortened) ?? "\(hour):00"
+    private var displayName: String {
+        let trimmed = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "creator" : trimmed
     }
 
     private var usableExampleCount: Int {
         draft.voiceExamples.filter(\.isUsableEvidence).count
     }
 
-    private func exampleBinding(for id: UUID) -> Binding<VoiceExampleDraft> {
-        Binding(
-            get: { draft.voiceExamples.first(where: { $0.id == id }) ?? VoiceExampleDraft(id: id) },
-            set: { updated in
-                guard let index = draft.voiceExamples.firstIndex(where: { $0.id == id }) else { return }
-                draft.voiceExamples[index] = updated
-            }
-        )
+    private var pillarReadySummary: String {
+        guard !draft.pillars.isEmpty else { return "Add later" }
+        return draft.pillars.count == 1 ? "1 anchor" : "1 anchor + \(draft.pillars.count - 1)"
     }
 
-    private func deferVoiceExamples() {
-        didDeferVoiceExamples = true
-        draft.voiceSummary = ""
-        draft.voiceTraits = ""
-        draft.voiceAvoid = ""
-        draft.voiceProfilePayloadJSON = ""
-        setStep(.reminders)
+    private var platformReadySummary: String {
+        let destinations = selectedDestinationKinds
+        guard !destinations.isEmpty else { return "Add later" }
+        return destinations.count == 1 ? destinations[0].title : "\(destinations.count) selected"
     }
 
-    private func removeExample(id: UUID) {
-        guard let index = draft.voiceExamples.firstIndex(where: { $0.id == id }), draft.voiceExamples.count > 3 else { return }
-        draft.voiceExamples.remove(at: index)
+    private var notificationReadySummary: String {
+        let count = [draft.dailyReminderEnabled, draft.weeklyReminderEnabled].filter { $0 }.count
+        return count == 0 ? "Off" : "\(count) selected"
     }
-}
 
-private struct AgentLabeledField: View {
-    let label: String
-    let placeholder: String
-    @Binding var text: String
-    var axis: Axis = .horizontal
-    @FocusState private var isFocused: Bool
+    private func performPrimaryAction() {
+        if step == .ready {
+            finish()
+            return
+        }
+        guard step == .notifications, !previewOnly, !appModel.notificationAuthorization.canSchedule else {
+            moveForward()
+            return
+        }
+        Task {
+            _ = await appModel.requestNotificationPermission(context: context)
+            moveForward()
+        }
+    }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            if axis == .vertical {
-                AgentInputHeader(title: label, isEditing: isFocused) { isFocused = false }
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .font(.agentBody)
-                    .lineLimit(2...6)
-                    .focused($isFocused)
-                    .padding(AgentSpacing.x4)
-                    .background(Color.agentSurface)
-                    .clipShape(.rect(cornerRadius: AgentRadius.control))
-                    .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
-            } else {
-                MetaLabel(label)
-                TextField(placeholder, text: $text)
-                    .font(.agentBody)
-                    .agentSingleLineSubmit()
-                    .padding(AgentSpacing.x4)
-                    .background(Color.agentSurface)
-                    .clipShape(.rect(cornerRadius: AgentRadius.control))
-                    .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
+    private var selectedDestinationKinds: [BuiltInDestinationKind] {
+        BuiltInDestinationKind.allCases.filter { kind in
+            switch kind {
+            case .instagram: draft.platforms.contains(.instagramReels)
+            case .tiktok: draft.platforms.contains(.tiktok)
+            case .youtube: draft.platforms.contains(.youtubeShorts) || draft.platforms.contains(.youtubeVideo)
             }
         }
     }
+
+    private func moveForward() {
+        guard let next = Step(rawValue: step.rawValue + 1) else { return }
+        transitionEdge = .trailing
+        setStep(next)
+    }
+
+    private func moveBack() {
+        guard let previous = Step(rawValue: step.rawValue - 1) else { return }
+        transitionEdge = .leading
+        setStep(previous)
+    }
+
+    private func setStep(_ value: Step) {
+        if reduceMotion {
+            step = value
+        } else {
+            withAnimation(.easeInOut(duration: 0.24)) { step = value }
+        }
+    }
+
+    private func finish() {
+        if previewOnly {
+            dismiss()
+            return
+        }
+        Task {
+            _ = await appModel.completeOnboarding(draft, context: context)
+        }
+    }
+
+    private func savePillar(_ pillar: OnboardingPillarDraft) {
+        if let index = draft.pillars.firstIndex(where: { $0.id == pillar.id }) {
+            draft.pillars[index] = pillar
+        } else if draft.pillars.count < 4 {
+            draft.pillars.append(pillar)
+        }
+        pillarEditorDraft = nil
+    }
+
+    private func deletePillar(id: UUID) {
+        draft.pillars.removeAll { $0.id == id }
+        pillarEditorDraft = nil
+    }
+
+    private func pillarRole(for id: UUID) -> PillarRole {
+        guard let index = draft.pillars.firstIndex(where: { $0.id == id }) else {
+            return draft.pillars.isEmpty ? .anchor : .supporting
+        }
+        return index == 0 ? .anchor : .supporting
+    }
+
+    private func toggle(_ platform: CreatorPlatform) {
+        if draft.platforms.contains(platform) {
+            draft.platforms.remove(platform)
+        } else {
+            draft.platforms.insert(platform)
+        }
+    }
+
+    private func handleBinding(for destination: BuiltInDestinationKind) -> Binding<String> {
+        Binding(
+            get: { draft.accountHandles[destination, default: ""] },
+            set: { draft.accountHandles[destination] = $0 }
+        )
+    }
+}
+
+private struct PaperOnboardingPrompt: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            Text(title)
+                .font(.paperInter(size: 32, weight: .bold, relativeTo: .largeTitle))
+                .tracking(-0.7)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(subtitle)
+                .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct PaperFieldLabel: View {
+    let title: String
+
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.paperMono(size: 10, weight: .medium, relativeTo: .caption))
+            .tracking(1.1)
+    }
+}
+
+private struct PaperOnboardingFeature: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: AgentSpacing.x4) {
+            CyAsterisk(size: 15, strokeWidth: 1.6)
+                .padding(.top, 3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
+                Text(detail)
+                    .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, AgentSpacing.x3)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentText.opacity(0.1)).frame(height: 1)
+        }
+    }
+}
+
+private struct PaperConsentRow: View {
+    let title: String
+    let detail: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                Image(systemName: isOn ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(isOn ? Color.agentText : Color.agentSecondary)
+                    .frame(width: 28, height: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+                    Text(detail)
+                        .font(.paperInter(size: 12, weight: .regular, relativeTo: .caption))
+                        .foregroundStyle(Color.agentSecondary)
+                }
+                Spacer()
+            }
+            .padding(.vertical, AgentSpacing.x3)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isOn ? "Selected" : "Not selected")
+    }
+}
+
+private struct PaperOnboardingActionRow: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: AgentSpacing.x4) {
+            Image(systemName: symbol)
+                .font(.system(size: 19, weight: .regular))
+                .frame(width: 32)
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                Text(title)
+                    .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                Text(detail)
+                    .font(.paperInter(size: 13, weight: .regular, relativeTo: .subheadline))
+                    .foregroundStyle(Color.agentSecondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .medium))
+        }
+        .padding(.horizontal, AgentSpacing.x4)
+        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
+        }
+    }
+}
+
+private struct PaperPlatformCard: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let selected: Bool
+    @Binding var handle: String
+    let onToggle: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: onToggle) {
+                HStack(spacing: AgentSpacing.x4) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 18, weight: .regular))
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                        Text(detail)
+                            .font(.paperInter(size: 12, weight: .regular, relativeTo: .caption))
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 20, weight: .regular))
+                }
+                .contentShape(.rect)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(minHeight: 68)
+            }
+            .buttonStyle(.plain)
+
+            if selected {
+                Rectangle().fill(Color.agentText.opacity(0.1)).frame(height: 1)
+                    .padding(.horizontal, AgentSpacing.x4)
+                TextField("@handle · optional", text: $handle)
+                    .font(.paperInter(size: 14, weight: .regular, relativeTo: .body))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .agentSingleLineSubmit()
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .frame(minHeight: 52)
+            }
+        }
+        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(selected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: 1)
+        }
+    }
+}
+
+private struct PaperYouTubeCard: View {
+    @Binding var selectedFormats: Set<CreatorPlatform>
+    @Binding var handle: String
+
+    private var selected: Bool {
+        selectedFormats.contains(.youtubeShorts) || selectedFormats.contains(.youtubeVideo)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                if selected {
+                    selectedFormats.remove(.youtubeShorts)
+                    selectedFormats.remove(.youtubeVideo)
+                } else {
+                    selectedFormats.insert(.youtubeShorts)
+                }
+            } label: {
+                HStack(spacing: AgentSpacing.x4) {
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 18, weight: .regular))
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("YouTube")
+                            .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                        Text("Shorts and long-form video")
+                            .font(.paperInter(size: 12, weight: .regular, relativeTo: .caption))
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 20, weight: .regular))
+                }
+                .contentShape(.rect)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(minHeight: 68)
+            }
+            .buttonStyle(.plain)
+
+            if selected {
+                Rectangle().fill(Color.agentText.opacity(0.1)).frame(height: 1)
+                    .padding(.horizontal, AgentSpacing.x4)
+                HStack(spacing: AgentSpacing.x2) {
+                    formatButton("Shorts", platform: .youtubeShorts)
+                    formatButton("Long-form", platform: .youtubeVideo)
+                }
+                .padding(.horizontal, AgentSpacing.x4)
+                .padding(.vertical, AgentSpacing.x3)
+                TextField("@handle · optional", text: $handle)
+                    .font(.paperInter(size: 14, weight: .regular, relativeTo: .body))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .agentSingleLineSubmit()
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .frame(minHeight: 48)
+            }
+        }
+        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(selected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private func formatButton(_ title: String, platform: CreatorPlatform) -> some View {
+        let isSelected = selectedFormats.contains(platform)
+        return Button {
+            if isSelected {
+                selectedFormats.remove(platform)
+            } else {
+                selectedFormats.insert(platform)
+            }
+        } label: {
+            Text(title)
+                .font(.paperInter(size: 13, weight: .semibold, relativeTo: .subheadline))
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .foregroundStyle(isSelected ? Color.onAccent : Color.agentText)
+                .background(isSelected ? Color.actionAccent : Color.agentCanvas, in: .capsule)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct PaperReadyRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.paperMono(size: 10, weight: .medium, relativeTo: .caption))
+                .tracking(0.9)
+                .textCase(.uppercase)
+            Spacer()
+            Text(value)
+                .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+        }
+        .frame(minHeight: 52)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentText.opacity(label == "Platforms" ? 0 : 0.1)).frame(height: 1)
+        }
+    }
+}
+
+private struct OnboardingPillarEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: OnboardingPillarDraft
+    let role: PillarRole
+    let canDelete: Bool
+    let onSave: (OnboardingPillarDraft) -> Void
+    let onDelete: () -> Void
+
+    init(
+        pillar: OnboardingPillarDraft,
+        role: PillarRole,
+        canDelete: Bool,
+        onSave: @escaping (OnboardingPillarDraft) -> Void,
+        onDelete: @escaping () -> Void
+    ) {
+        _draft = State(initialValue: pillar)
+        self.role = role
+        self.canDelete = canDelete
+        self.onSave = onSave
+        self.onDelete = onDelete
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        PaperFieldLabel(role == .anchor ? "Anchor pillar" : "Branch")
+                        TextField("Pillar name", text: $draft.name)
+                            .font(.paperInter(size: 22, weight: .regular, relativeTo: .title3))
+                            .agentSingleLineSubmit()
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 64)
+                            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+                    }
+
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        PaperFieldLabel("Color")
+                        OnboardingColorChooser(selectedHex: $draft.colorHex)
+                    }
+
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        HStack {
+                            PaperFieldLabel("Preferred days")
+                            Spacer()
+                            Text("\(draft.assignedWeekdays.count) of 7")
+                                .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        OnboardingWeekdayChooser(
+                            selection: $draft.assignedWeekdays,
+                            accentHex: draft.colorHex
+                        )
+                    }
+
+                    if canDelete {
+                        Button("Delete pillar", role: .destructive) {
+                            onDelete()
+                            dismiss()
+                        }
+                        .font(.paperInter(size: 15, weight: .semibold, relativeTo: .body))
+                        .foregroundStyle(Color.agentDestructive)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                    }
+                }
+                .padding(AgentLayout.pageMargin)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle(role == .anchor ? "Anchor pillar" : "Branch")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", systemImage: "checkmark") {
+                        onSave(draft)
+                        dismiss()
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .agentScreen()
+            .agentKeyboardDismissal()
+        }
+    }
+}
+
+private struct OnboardingColorChooser: View {
+    private let colors = ["9B3A2E", "B47724", "55705B", "416B85", "76506F"]
+    @Binding var selectedHex: String
+
+    var body: some View {
+        HStack(spacing: AgentSpacing.x2) {
+            ForEach(colors, id: \.self) { hex in
+                Button { selectedHex = hex } label: {
+                    Circle()
+                        .fill(Color(agentHex: hex))
+                        .frame(width: 32, height: 32)
+                        .padding(AgentSpacing.x1)
+                        .overlay {
+                            Circle().stroke(selectedHex.caseInsensitiveCompare(hex) == .orderedSame ? Color.agentText : Color.clear, lineWidth: 2)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Pillar color")
+                .accessibilityValue(selectedHex.caseInsensitiveCompare(hex) == .orderedSame ? "Selected" : "Not selected")
+            }
+            ColorPicker("Custom color", selection: customColor, supportsOpacity: false)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+    }
+
+    private var customColor: Binding<Color> {
+        Binding(
+            get: { Color(agentHex: selectedHex) },
+            set: { selectedHex = $0.onboardingHexString }
+        )
+    }
+}
+
+private struct OnboardingWeekdayChooser: View {
+    @Binding var selection: Set<PillarWeekday>
+    let accentHex: String
+
+    var body: some View {
+        let foregroundHex = AgentChipContrast.foregroundHex(on: accentHex)
+        HStack(spacing: AgentSpacing.x2) {
+            ForEach(PillarWeekday.mondayFirst) { day in
+                Button {
+                    if selection.contains(day) {
+                        selection.remove(day)
+                    } else {
+                        selection.insert(day)
+                    }
+                } label: {
+                    Text(day.letter)
+                        .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                        .foregroundStyle(selection.contains(day) ? Color(agentHex: foregroundHex) : Color.agentText)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(selection.contains(day) ? Color(agentHex: accentHex) : Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle().stroke(selection.contains(day) ? Color.clear : Color.agentBorder, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(day.title)
+                .accessibilityValue(selection.contains(day) ? "Selected" : "Not selected")
+            }
+        }
+    }
+}
+
+private struct OnboardingVoiceEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var examples: [VoiceExampleDraft]
+    let onNotice: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    Text("Add up to five examples that sound like you. A link is only a local reference, so include the words or a screenshot too.")
+                        .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                        .foregroundStyle(Color.agentSecondary)
+
+                    ForEach(Array(examples.enumerated()), id: \.element.id) { index, example in
+                        VoiceExampleInputCard(
+                            example: binding(for: example.id),
+                            number: index + 1,
+                            onRemove: examples.count > 1 ? { examples.removeAll { $0.id == example.id } } : nil,
+                            onNotice: onNotice
+                        )
+                    }
+
+                    if examples.count < 5 {
+                        Button("Add another example", systemImage: "plus") {
+                            examples.append(VoiceExampleDraft())
+                        }
+                        .buttonStyle(AgentSecondaryButtonStyle())
+                    }
+                }
+                .padding(AgentLayout.pageMargin)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Teach Cy")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", systemImage: "checkmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                }
+            }
+            .onAppear {
+                if examples.isEmpty { examples.append(VoiceExampleDraft()) }
+            }
+            .agentScreen()
+            .agentKeyboardDismissal()
+        }
+    }
+
+    private func binding(for id: UUID) -> Binding<VoiceExampleDraft> {
+        Binding(
+            get: { examples.first(where: { $0.id == id }) ?? VoiceExampleDraft(id: id) },
+            set: { updated in
+                guard let index = examples.firstIndex(where: { $0.id == id }) else { return }
+                examples[index] = updated
+            }
+        )
+    }
+}
+
+private struct PaperOnboardingPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .foregroundStyle(Color.onAccent)
+            .background(Color.actionAccent, in: .capsule)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.36)
+    }
+}
+
+private struct PaperOnboardingSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Color.agentText)
+            .background(Color.agentSurface, in: .circle)
+            .overlay { Circle().stroke(Color.agentBorder, lineWidth: 1) }
+            .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+private extension Color {
+    var onboardingHexString: String {
+        let resolved = UIColor(self).resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return "55705B" }
+        return String(
+            format: "%02X%02X%02X",
+            Int(round(red * 255)),
+            Int(round(green * 255)),
+            Int(round(blue * 255))
+        )
+    }
+}
+
+private func weekdaySummary(_ days: Set<PillarWeekday>) -> String {
+    let values = PillarWeekday.mondayFirst.filter(days.contains).map(\.shortTitle)
+    return values.isEmpty ? "No preferred days" : values.joined(separator: " · ")
 }

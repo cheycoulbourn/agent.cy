@@ -35,7 +35,7 @@ struct LocalExportService: ExportServicing {
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 10,
+            "schemaVersion": 11,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -78,6 +78,16 @@ struct LocalExportService: ExportServicing {
                     "voiceConfidence": brief.voiceConfidence,
                     "source": brief.source.rawValue,
                     "status": brief.status.rawValue,
+                    "brandCollaboration": brief.isBrandCollaboration,
+                    "brandName": brief.brandName,
+                    "compensationType": brief.compensationType.rawValue,
+                    "compensationAmount": brief.compensationAmount ?? NSNull(),
+                    "compensationCurrencyCode": brief.compensationCurrencyCode,
+                    "hasNetTerms": brief.brandHasNetTerms,
+                    "netTermsDays": brief.brandNetTermsDays,
+                    "giftedProduct": brief.giftedProductDescription,
+                    "moodBoardEnabled": brief.moodBoardEnabled,
+                    "moodBoardURL": brief.moodBoardURLString,
                     "agendaDate": brief.agendaDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "lifecycleHistory": brief.lifecycleHistory.map {
                         [
@@ -135,7 +145,8 @@ struct LocalExportService: ExportServicing {
                     "includesTargetTime": output.includesTargetTime,
                     "seriesRootOutputID": output.seriesRootOutputID?.uuidString ?? NSNull(),
                     "targetDate": output.targetDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
-                    "postedAt": output.postedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+                    "postedAt": output.postedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "publishedURL": output.publishedURLString
                 ] as [String: Any]
             },
             "tasks": tasks.map { task in
@@ -150,9 +161,12 @@ struct LocalExportService: ExportServicing {
                     "estimatedMinutes": task.estimatedMinutes ?? NSNull(),
                     "isCompleted": task.isCompleted,
                     "targetDate": task.targetDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "includesTargetTime": task.includesTargetTime,
                     "dailyFocusDate": task.dailyFocusDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "dailyFocusTitle": task.dailyFocusTitle ?? NSNull(),
                     "dailyFocusTemplateEntryID": task.dailyFocusTemplateEntryID?.uuidString ?? NSNull(),
+                    "focusTaskTemplateID": task.focusTaskTemplateID?.uuidString ?? NSNull(),
+                    "isFocusTemplateCustomized": task.isFocusTemplateCustomized,
                     "recurrence": task.recurrence.rawValue,
                     "recurrenceRootTaskID": task.recurrenceRootTaskID?.uuidString ?? NSNull(),
                     "completedAt": task.completedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
@@ -175,12 +189,39 @@ struct LocalExportService: ExportServicing {
             "weekPlans": weekPlans.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "rhythmEntries": $0.rhythmEntriesText, "notes": $0.notes] },
             "conversationThreads": threads.map { ["id": $0.id.uuidString, "briefID": $0.briefID?.uuidString ?? NSNull(), "title": $0.title, "turnCount": $0.turnCount] as [String: Any] },
             "conversationMessages": messages.map { ["id": $0.id.uuidString, "threadID": $0.threadID.uuidString, "role": $0.role.rawValue, "text": $0.text, "createdAt": ISO8601DateFormatter().string(from: $0.createdAt)] },
-            "reminderSettings": reminders.map { ["id": $0.id.uuidString, "dailyEnabled": $0.dailyEnabled, "dailyHour": $0.dailyHour, "weeklyEnabled": $0.weeklyEnabled, "weeklyWeekday": $0.weeklyWeekday, "weeklyHour": $0.weeklyHour] as [String: Any] },
+            "reminderSettings": reminders.map {
+                [
+                    "id": $0.id.uuidString,
+                    "masterEnabled": $0.masterEnabled,
+                    "dailyEnabled": $0.dailyEnabled,
+                    "dailyHour": $0.dailyHour,
+                    "dailyMinute": $0.dailyMinute,
+                    "weeklyEnabled": $0.weeklyEnabled,
+                    "weeklyWeekday": $0.weeklyWeekday,
+                    "weeklyHour": $0.weeklyHour,
+                    "weeklyMinute": $0.weeklyMinute,
+                    "postRemindersEnabled": $0.postRemindersEnabled,
+                    "missedPostRemindersEnabled": $0.missedPostRemindersEnabled,
+                    "taskRemindersEnabled": $0.taskRemindersEnabled,
+                    "draftPrepRemindersEnabled": $0.draftPrepRemindersEnabled,
+                    "accessRemindersEnabled": $0.accessRemindersEnabled,
+                    "draftPrepHour": $0.draftPrepHour,
+                    "draftPrepMinute": $0.draftPrepMinute,
+                    "dateOnlyDeadlineHour": $0.dateOnlyDeadlineHour,
+                    "dateOnlyDeadlineMinute": $0.dateOnlyDeadlineMinute,
+                    "quietHoursEnabled": $0.quietHoursEnabled,
+                    "quietHoursStartHour": $0.quietHoursStartHour,
+                    "quietHoursStartMinute": $0.quietHoursStartMinute,
+                    "quietHoursEndHour": $0.quietHoursEndHour,
+                    "quietHoursEndMinute": $0.quietHoursEndMinute,
+                    "showNotificationTitles": $0.showNotificationTitles,
+                ] as [String: Any]
+            },
             "subscriptionStates": subscriptions.map { ["id": $0.id.uuidString, "access": $0.access.rawValue, "trialEnd": $0.trialEnd.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(), "freeBriefConsumed": $0.freeBriefConsumed, "ideationRequestsUsed": $0.ideationRequestsUsed, "revisionRequestsUsed": $0.revisionRequestsUsed, "teachCyUpdatesUsed": $0.teachCyUpdatesUsed] as [String: Any] }
             ,"publishingDestinations": destinations.map { ["id": $0.id.uuidString, "name": $0.name, "builtInKind": $0.builtInKindRaw, "isArchived": $0.isArchived] as [String: Any] }
             ,"publishingFormats": formats.map { ["id": $0.id.uuidString, "destinationID": $0.destinationID.uuidString, "name": $0.name, "kind": $0.kind.rawValue, "isArchived": $0.isArchived] as [String: Any] }
             ,"socialAccounts": socialAccounts.map { ["id": $0.id.uuidString, "profileID": $0.profileID.uuidString, "destinationID": $0.destinationID.uuidString, "label": $0.label, "profileURL": $0.profileURLString, "isPrimary": $0.isPrimary, "isArchived": $0.isArchived] as [String: Any] }
-            ,"dailyFocusTemplates": focusTemplates.map { ["id": $0.id.uuidString, "weekday": $0.weekday.rawValue, "kind": $0.kind.rawValue, "title": $0.title, "note": $0.note] as [String: Any] }
+            ,"dailyFocusTemplates": focusTemplates.map { ["id": $0.id.uuidString, "weekday": $0.weekday.rawValue, "kind": $0.kind.rawValue, "title": $0.title, "note": $0.note, "focusTasks": $0.focusTaskTemplates.map { ["id": $0.id.uuidString, "focusKind": $0.focusKind.rawValue, "title": $0.title, "priority": $0.priority.rawValue, "sortOrder": $0.sortOrder] }] as [String: Any] }
             ,"dailyFocusOverrides": focusOverrides.map { ["id": $0.id.uuidString, "date": ISO8601DateFormatter().string(from: $0.date), "isCleared": $0.isCleared, "title": $0.title] as [String: Any] }
             ,"dailyFocusDayDetails": focusDayDetails.map {
                 [
@@ -192,7 +233,7 @@ struct LocalExportService: ExportServicing {
                 ] as [String: Any]
             }
             ,"pendingWeekProposals": weekProposals.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "status": $0.statusRaw, "payloadJSON": $0.payloadJSON] as [String: Any] }
-            ,"attachments": attachments.map { ["id": $0.id.uuidString, "briefID": $0.briefID.uuidString, "fileName": $0.fileName, "kind": $0.kind.rawValue, "contentType": $0.uniformTypeIdentifier, "byteCount": $0.byteCount] as [String: Any] }
+            ,"attachments": attachments.map { ["id": $0.id.uuidString, "briefID": $0.briefID.uuidString, "platformOutputID": $0.platformOutputID?.uuidString ?? NSNull(), "ownerKind": $0.ownerKind.rawValue, "fileName": $0.fileName, "kind": $0.kind.rawValue, "contentType": $0.uniformTypeIdentifier, "byteCount": $0.byteCount] as [String: Any] }
         ]
 
         let json = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])

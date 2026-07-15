@@ -85,6 +85,10 @@ struct AppShellView: View {
         .task {
             await appModel.refreshAccess(context: modelContext)
             await appModel.refreshReminderSchedule(context: modelContext)
+            openRequestedTaskIfNeeded()
+        }
+        .onChange(of: appModel.requestedTaskID) { _, _ in
+            openRequestedTaskIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
@@ -108,6 +112,14 @@ struct AppShellView: View {
             cyPlanningWeekOpened = WeeklyPlanningCue.weekKey(for: Date())
         }
         appModel.selectedTab = tab
+    }
+
+    private func openRequestedTaskIfNeeded() {
+        guard let taskID = appModel.requestedTaskID else { return }
+        appModel.selectedTab = .tasks
+        tasksPath = NavigationPath()
+        tasksPath.append(TaskNavigationRoute(taskID: taskID))
+        appModel.requestedTaskID = nil
     }
 
 }

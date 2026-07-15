@@ -27,7 +27,10 @@ struct ResumablePostEditorView: View {
     @State private var showTaskComposer = false
     @State private var showPostCopy = false
     @State private var selectedMedia: [PhotosPickerItem] = []
+    @State private var selectedMoodBoardMedia: [PhotosPickerItem] = []
     @State private var isImportingMedia = false
+    @State private var isImportingMoodBoardMedia = false
+    @State private var showCollaborationFileImporter = false
     @State private var confirmDeleteDraft = false
     @State private var isDeletingDraft = false
     @FocusState private var notesAreFocused: Bool
@@ -111,6 +114,14 @@ struct ResumablePostEditorView: View {
                 }
 
                 Menu {
+                    ForEach(activeDestinations) { destination in
+                        Button(destination.name) { select(destination) }
+                    }
+                } label: {
+                    PostDraftSetupRow(label: "Platform", value: selectedDestination?.name ?? output.platform.title)
+                }
+
+                Menu {
                     ForEach(activeFormats) { format in
                         Button(format.name) {
                             output.formatID = format.id
@@ -120,14 +131,6 @@ struct ResumablePostEditorView: View {
                     }
                 } label: {
                     PostDraftSetupRow(label: "Format", value: selectedFormat?.name ?? "Pick a format")
-                }
-
-                Menu {
-                    ForEach(activeDestinations) { destination in
-                        Button(destination.name) { select(destination) }
-                    }
-                } label: {
-                    PostDraftSetupRow(label: "Post to", value: selectedDestination?.name ?? output.platform.title)
                 }
 
                 Button { editDueDate() } label: {
@@ -144,7 +147,13 @@ struct ResumablePostEditorView: View {
                 AgentDurationPicker(seconds: $output.durationSeconds, format: contentFormat)
             }
 
+            postCopySection
+
             recurrenceSection
+
+            collaborationSection
+
+            moodBoardSection
 
             VStack(alignment: .leading, spacing: 10) {
                 AgentInputHeader(title: "Notes", isEditing: notesAreFocused) {
@@ -168,7 +177,6 @@ struct ResumablePostEditorView: View {
             if showPostCopy || Self.hasPostCopy(output) {
                 DisclosureGroup(isExpanded: $showPostCopy) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                        BriefField(label: "Caption", text: $output.caption)
                         BriefField(label: "Opening", text: $output.openingAdjustment)
                         if selectedDestination?.builtInKind == .youtube {
                             BriefField(label: "Platform title", text: $output.titleOverride)
@@ -178,8 +186,18 @@ struct ResumablePostEditorView: View {
                     }
                     .padding(.top, AgentSpacing.x4)
                 } label: {
-                    BriefDisclosureLabel(title: "Post copy", detail: "Caption, opening, CTA")
+                    BriefDisclosureLabel(title: "More post details", detail: "Opening, CTA, edit notes")
                 }
+            }
+
+            if output.status == .posted {
+                PostEditorTextField(
+                    label: "Post link",
+                    text: $output.publishedURLString,
+                    axis: .horizontal,
+                    keyboardType: .URL,
+                    textContentType: .URL
+                )
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x4) {
@@ -193,16 +211,10 @@ struct ResumablePostEditorView: View {
                 AgentAddActionRow(title: "Add task") { showTaskComposer = true }
             }
 
-            VStack(spacing: AgentSpacing.x3) {
-                if isEditingFinalizedPost {
-                    Button("Save changes", action: saveDraft)
-                        .buttonStyle(AgentPrimaryButtonStyle())
-                        .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                } else {
-                    Button("Schedule post", action: requestSchedule)
-                        .buttonStyle(AgentPrimaryButtonStyle())
-                        .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+            if !isEditingFinalizedPost {
+                Button("Schedule post", action: requestSchedule)
+                    .buttonStyle(AgentPrimaryButtonStyle())
+                    .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .sheet(isPresented: $showDatePicker, onDismiss: finishDateSelection) {
@@ -222,7 +234,23 @@ struct ResumablePostEditorView: View {
                 .presentationDetents([.medium])
         }
         .toolbar {
-            if canDeleteDraft {
+            if isEditingFinalizedPost {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: saveDraft) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.black)
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .tint(Color.white)
+                    .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
+                    .accessibilityLabel("Save changes")
+                }
+            } else if canDeleteDraft {
                 ToolbarItem(placement: .topBarTrailing) {
                     if canDeleteAsEmptyDraft {
                         Button(role: .destructive) {
@@ -266,6 +294,16 @@ struct ResumablePostEditorView: View {
             guard !items.isEmpty else { return }
             Task { await importMedia(items) }
         }
+        .onChange(of: selectedMoodBoardMedia) { _, items in
+            guard !items.isEmpty else { return }
+            Task { await importMoodBoardMedia(items) }
+        }
+        .fileImporter(
+            isPresented: $showCollaborationFileImporter,
+            allowedContentTypes: [.pdf, .image, .plainText, .rtf, .data],
+            allowsMultipleSelection: true,
+            onCompletion: importCollaborationFiles
+        )
     }
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
@@ -305,6 +343,166 @@ struct ResumablePostEditorView: View {
 
     private var postMedia: [CreatorAttachment] {
         attachments.filter { $0.ownerKind == .postMedia && $0.platformOutputID == output.id }
+    }
+
+    private var collaborationFiles: [CreatorAttachment] {
+        attachments.filter { $0.ownerKind == .collaborationFile && $0.platformOutputID == output.id }
+    }
+
+    private var moodBoardMedia: [CreatorAttachment] {
+        attachments.filter { $0.ownerKind == .moodBoardMedia && $0.platformOutputID == output.id }
+    }
+
+    private var postCopySection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            SectionRuleHeader(title: "Post")
+            PostEditorTextField(label: "Hook", text: $brief.spokenHook)
+            PostEditorTextField(label: "Caption", text: $output.caption, minimumHeight: 112)
+        }
+    }
+
+    private var collaborationSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            SectionRuleHeader(title: "Brand collaboration")
+
+            Toggle("Brand collaboration", isOn: $brief.isBrandCollaboration)
+                .font(.agentBody.weight(.semibold))
+                .tint(Color.actionAccent)
+                .frame(minHeight: 44)
+
+            if brief.isBrandCollaboration {
+                PostEditorTextField(label: "Brand or partner", text: $brief.brandName, axis: .horizontal)
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    MetaLabel("Compensation")
+                    Picker("Compensation", selection: $brief.compensationTypeRaw) {
+                        ForEach(CompensationType.allCases) { type in
+                            Text(type.title).tag(type.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                if brief.compensationType == .paid || brief.compensationType == .both {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                        MetaLabel("Paid amount")
+                        HStack(spacing: AgentSpacing.x3) {
+                            Text("$")
+                                .font(.agentBody.weight(.medium))
+                            TextField("", value: $brief.compensationAmount, format: .number.precision(.fractionLength(0...2)))
+                                .font(.agentBody)
+                                .keyboardType(.decimalPad)
+                            Text("USD")
+                                .font(.agentMono)
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+                        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AgentRadius.control)
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                    }
+
+                    VStack(spacing: 0) {
+                        Toggle("Net terms", isOn: $brief.brandHasNetTerms)
+                            .font(.agentBody)
+                            .tint(Color.actionAccent)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                        if brief.brandHasNetTerms {
+                            Divider().overlay(Color.agentHairline)
+                            HStack {
+                                Text("Payment due")
+                                    .font(.agentBody)
+                                Spacer()
+                                Picker("Payment due", selection: $brief.brandNetTermsDays) {
+                                    ForEach([15, 30, 45, 60, 90], id: \.self) { days in
+                                        Text("Net \(days)").tag(days)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                            }
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                        }
+                    }
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.control)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                }
+
+                if brief.compensationType == .gifted || brief.compensationType == .both {
+                    PostEditorTextField(label: "Gifted product", text: $brief.giftedProductDescription)
+                }
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    SectionRuleHeader(title: "Contract or brief", trailing: "\(collaborationFiles.count)")
+                    ForEach(collaborationFiles) { attachment in
+                        PostAttachmentRow(attachment: attachment) {
+                            deleteAttachment(attachment)
+                        }
+                    }
+                    AgentAddActionRow(title: "Add contract or brief") {
+                        showCollaborationFileImporter = true
+                    }
+                }
+            }
+        }
+    }
+
+    private var moodBoardSection: some View {
+        let importingMoodBoardMedia = isImportingMoodBoardMedia
+        return VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            SectionRuleHeader(title: "Mood board")
+
+            Toggle("Add a mood board", isOn: $brief.moodBoardEnabled)
+                .font(.agentBody.weight(.semibold))
+                .tint(Color.actionAccent)
+                .frame(minHeight: 44)
+
+            if brief.moodBoardEnabled {
+                if !moodBoardMedia.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: AgentSpacing.x3) {
+                            ForEach(moodBoardMedia) { attachment in
+                                PostMediaThumbnail(attachment: attachment) {
+                                    deleteAttachment(attachment)
+                                }
+                            }
+                        }
+                    }
+                    .scrollIndicators(.hidden)
+                }
+
+                PhotosPicker(
+                    selection: $selectedMoodBoardMedia,
+                    maxSelectionCount: 10,
+                    matching: .images
+                ) {
+                    HStack(spacing: AgentSpacing.x3) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                        Text(importingMoodBoardMedia ? "Adding images" : "Add mood board images")
+                        Spacer()
+                        if importingMoodBoardMedia { ProgressView().controlSize(.small) }
+                    }
+                    .font(.agentBody.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.control)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                }
+                .disabled(importingMoodBoardMedia)
+            }
+        }
     }
 
     private var recurrenceSection: some View {
@@ -513,6 +711,79 @@ struct ResumablePostEditorView: View {
         try? context.save()
     }
 
+    @MainActor
+    private func importMoodBoardMedia(_ items: [PhotosPickerItem]) async {
+        isImportingMoodBoardMedia = true
+        defer {
+            isImportingMoodBoardMedia = false
+            selectedMoodBoardMedia = []
+        }
+
+        for item in items {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else { continue }
+                guard data.count <= 25 * 1_024 * 1_024 else {
+                    appModelNotice("Choose mood board images smaller than 25 MB each.")
+                    continue
+                }
+                let type = item.supportedContentTypes.first ?? .image
+                let ext = type.preferredFilenameExtension ?? "jpg"
+                context.insert(CreatorAttachment(
+                    ownerKind: .moodBoardMedia,
+                    briefID: brief.id,
+                    platformOutputID: output.id,
+                    fileName: "mood-board-\(UUID().uuidString.prefix(8)).\(ext)",
+                    kind: .photo,
+                    uniformTypeIdentifier: type.identifier,
+                    byteCount: Int64(data.count),
+                    localRelativePath: "",
+                    cloudData: data,
+                    syncState: .synced
+                ))
+            } catch {
+                appModelNotice("One mood board image could not be added.")
+            }
+        }
+        try? context.save()
+    }
+
+    private func importCollaborationFiles(_ result: Result<[URL], Error>) {
+        do {
+            let urls = try result.get()
+            for url in urls {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                let data = try Data(contentsOf: url)
+                guard data.count <= 25 * 1_024 * 1_024 else {
+                    appModelNotice("Choose contract or brief files smaller than 25 MB each.")
+                    continue
+                }
+                let type = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType) ?? .data
+                let kind: AttachmentKind = type.conforms(to: .image) ? .photo : .document
+                context.insert(CreatorAttachment(
+                    ownerKind: .collaborationFile,
+                    briefID: brief.id,
+                    platformOutputID: output.id,
+                    fileName: url.lastPathComponent,
+                    kind: kind,
+                    uniformTypeIdentifier: type.identifier,
+                    byteCount: Int64(data.count),
+                    localRelativePath: "",
+                    cloudData: data,
+                    syncState: .synced
+                ))
+            }
+            try context.save()
+        } catch {
+            appModelNotice("That contract or brief could not be added.")
+        }
+    }
+
+    private func deleteAttachment(_ attachment: CreatorAttachment) {
+        context.delete(attachment)
+        try? context.save()
+    }
+
     private func appModelNotice(_ message: String) {
         appModel.notice = .info(message)
     }
@@ -553,8 +824,7 @@ struct ResumablePostEditorView: View {
         hasTargetDate = true
         shouldPersistTargetDate = true
         didChooseDate = true
-        output.targetDate = targetDate
-        brief.agendaDate = targetDate
+        appModel.schedule(output: output, date: targetDate, context: context)
         persistChanges()
     }
 
@@ -635,6 +905,11 @@ struct ResumablePostEditorView: View {
     private func persistChanges(commitSuggestedTargetDate: Bool = false) {
         let cleanNotes = brief.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !cleanNotes.isEmpty { brief.premise = cleanNotes }
+        if brief.isBrandCollaboration,
+           (brief.compensationType == .paid || brief.compensationType == .both),
+           brief.compensationCurrencyCode.isEmpty {
+            brief.compensationCurrencyCode = "USD"
+        }
         output.status = PostDraftResumePolicy.outputStatus(briefStatus: brief.status, current: output.status)
         if hasTargetDate {
             targetDate = RecurringPostSchedule.normalizedTargetDate(
@@ -648,6 +923,12 @@ struct ResumablePostEditorView: View {
         )
         if writesTargetDate {
             shouldPersistTargetDate = true
+            appModel.rescheduleLinkedTasks(
+                for: output,
+                from: output.targetDate,
+                to: hasTargetDate ? targetDate : nil,
+                context: context
+            )
             output.targetDate = hasTargetDate ? targetDate : nil
             brief.agendaDate = hasTargetDate ? targetDate : nil
         }
@@ -740,7 +1021,8 @@ enum EmptyPostDraftDeletionPolicy {
         guard output.recurrence == .none else { return false }
         guard !brief.isBrandCollaboration,
               brief.compensationAmount == nil,
-              brief.giftedEstimatedValue == nil else { return false }
+              brief.giftedEstimatedValue == nil,
+              !brief.moodBoardEnabled else { return false }
 
         let textValues = [
             brief.title,
@@ -767,11 +1049,74 @@ enum EmptyPostDraftDeletionPolicy {
             output.titleOverride,
             output.cta,
             output.editChanges,
+            output.publishedURLString,
             output.seriesName
         ]
 
         return textValues.allSatisfy {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+}
+
+private struct PostEditorTextField: View {
+    let label: String
+    @Binding var text: String
+    var axis: Axis = .vertical
+    var minimumHeight: CGFloat = 72
+    var keyboardType: UIKeyboardType = .default
+    var textContentType: UITextContentType?
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            AgentInputHeader(title: label, isEditing: isFocused) {
+                isFocused = false
+            }
+            TextField("", text: $text, axis: axis)
+                .font(.agentBody)
+                .lineLimit(axis == .vertical ? 2...8 : 1...1)
+                .keyboardType(keyboardType)
+                .textContentType(textContentType)
+                .textInputAutocapitalization(keyboardType == .URL ? .never : .sentences)
+                .autocorrectionDisabled(keyboardType == .URL)
+                .padding(AgentSpacing.x4)
+                .frame(minHeight: axis == .vertical ? minimumHeight : 52, alignment: .topLeading)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.control)
+                        .stroke(Color.agentBorder, lineWidth: 1)
+                }
+                .focused($isFocused)
+        }
+    }
+}
+
+private struct PostAttachmentRow: View {
+    let attachment: CreatorAttachment
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                Text(attachment.fileName)
+                    .font(.agentBody)
+                    .lineLimit(1)
+                Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
+                    .font(.agentMono)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            Spacer()
+            Button(role: .destructive, action: onDelete) {
+                Image(systemName: "trash")
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete \(attachment.fileName)")
+        }
+        .frame(minHeight: 56)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
         }
     }
 }
@@ -923,16 +1268,17 @@ private struct PostDraftDatePicker: View {
     }
 }
 
-private struct PostDraftTaskComposer: View {
+struct PostDraftTaskComposer: View {
+    @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     let brief: CreativeBrief
     let output: PlatformOutput
     let defaultDate: Date
     @State private var title = ""
-    @State private var kind: CreatorTaskKind = .planning
     @State private var priority: TaskPriority = .none
     @State private var includeDate = true
+    @State private var includesTime = false
     @State private var date: Date
 
     init(brief: CreativeBrief, output: PlatformOutput, defaultDate: Date) {
@@ -947,9 +1293,6 @@ private struct PostDraftTaskComposer: View {
             Form {
                 TextField("What's the task?", text: $title)
                     .agentSingleLineSubmit()
-                Picker("Focus", selection: $kind) {
-                    ForEach(CreatorTaskKind.allCases) { kind in Text(kind.title).tag(kind) }
-                }
                 Picker("Priority", selection: $priority) {
                     ForEach(TaskPriority.selectableCases) { priority in
                         Text(priority.title).tag(priority)
@@ -957,7 +1300,11 @@ private struct PostDraftTaskComposer: View {
                 }
                 Toggle("Set a due date", isOn: $includeDate)
                 if includeDate {
-                    DatePicker("Date and time", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                    DatePicker("Date", selection: $date, displayedComponents: .date)
+                    Toggle("Include a time", isOn: $includesTime)
+                    if includesTime {
+                        DatePicker("Time", selection: $date, displayedComponents: .hourAndMinute)
+                    }
                 }
             }
             .navigationTitle("Add task")
@@ -990,13 +1337,17 @@ private struct PostDraftTaskComposer: View {
             pillarID: brief.pillarID,
             platformOutputID: output.id,
             title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            kind: kind,
+            kind: .planning,
             lane: .production,
             priority: priority,
-            targetDate: includeDate ? date : nil
+            targetDate: includeDate
+                ? (includesTime ? date : Calendar.current.startOfDay(for: date))
+                : nil,
+            includesTargetTime: includeDate && includesTime
         )
         context.insert(task)
         try? context.save()
+        appModel.queueCalendarSync(context: context)
         dismiss()
     }
 }

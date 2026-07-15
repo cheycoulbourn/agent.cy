@@ -1019,12 +1019,24 @@ private struct PlatformOutputEditor: View {
                     if output.targetDate == nil {
                         Button("Set a due date", systemImage: "calendar.badge.plus") {
                             targetDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
-                            appModel.schedule(output: output, date: targetDate, context: context)
+                            output.includesTargetTime = false
+                            appModel.schedule(
+                                output: output,
+                                date: Calendar.current.startOfDay(for: targetDate),
+                                context: context
+                            )
                         }
                         .buttonStyle(AgentCompactSecondaryButtonStyle())
                     } else {
-                        DatePicker("Date and time", selection: $targetDate, displayedComponents: [.date, .hourAndMinute])
-                            .onChange(of: targetDate) { _, date in appModel.schedule(output: output, date: date, context: context) }
+                        DatePicker("Date", selection: $targetDate, displayedComponents: .date)
+                            .onChange(of: targetDate) { _, date in saveTargetDate(date) }
+                        Toggle("Include a time", isOn: $output.includesTargetTime)
+                            .tint(Color.actionAccent)
+                            .onChange(of: output.includesTargetTime) { _, _ in saveTargetDate(targetDate) }
+                        if output.includesTargetTime {
+                            DatePicker("Time", selection: $targetDate, displayedComponents: .hourAndMinute)
+                                .onChange(of: targetDate) { _, date in saveTargetDate(date) }
+                        }
                         Button("Remove target") { appModel.schedule(output: output, date: nil, context: context) }
                     }
                     Button(output.status == .posted ? "Mark not posted" : "Mark posted", systemImage: output.status == .posted ? "arrow.uturn.backward" : "paperplane") {
@@ -1072,6 +1084,14 @@ private struct PlatformOutputEditor: View {
     }
 
     private var selectedDestination: PublishingDestination? { destinations.first { $0.id == output.destinationID } }
+
+    private func saveTargetDate(_ date: Date) {
+        appModel.schedule(
+            output: output,
+            date: output.includesTargetTime ? date : Calendar.current.startOfDay(for: date),
+            context: context
+        )
+    }
     private var selectedFormat: PublishingFormat? { formats.first { $0.id == output.formatID } }
     private var availableSocialAccounts: [CreatorSocialAccount] {
         guard let destinationID = output.destinationID else { return [] }

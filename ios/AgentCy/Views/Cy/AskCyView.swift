@@ -80,7 +80,18 @@ struct AskCyView: View {
         .toolbar(.hidden, for: .navigationBar)
         .task {
             loadThread()
+            if let pending = appModel.pendingCyPrompt {
+                prompt = pending
+                appModel.pendingCyPrompt = nil
+                composerIsFocused = true
+            }
             await appModel.refreshAccess(context: context)
+        }
+        .onChange(of: appModel.pendingCyPrompt) { _, pending in
+            guard let pending else { return }
+            prompt = pending
+            appModel.pendingCyPrompt = nil
+            composerIsFocused = true
         }
         .agentScreen()
         .agentKeyboardDismissal()

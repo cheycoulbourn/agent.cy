@@ -170,10 +170,14 @@ final class CreativeBrief {
     var compensationTypeRaw: String = CompensationType.paid.rawValue
     var compensationAmount: Double?
     var compensationCurrencyCode: String = ""
+    var brandHasNetTerms: Bool = false
+    var brandNetTermsDays: Int = 30
     var giftedProductDescription: String = ""
     var giftedEstimatedValue: Double?
     var promoCode: String = ""
     var promoLinkString: String = ""
+    var moodBoardEnabled: Bool = false
+    var moodBoardURLString: String = ""
     var agendaDate: Date?
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
@@ -324,6 +328,7 @@ final class PlatformOutput {
     var recurrenceEndDate: Date?
     var includesTargetTime: Bool = true
     var seriesRootOutputID: UUID?
+    var publishedURLString: String = ""
     var createdAt: Date = Date()
 
     init(id: UUID = UUID(), briefID: UUID = UUID(), platform: CreatorPlatform = .instagramReels, destinationID: UUID? = nil, formatID: UUID? = nil, socialAccountID: UUID? = nil, durationSeconds: Int = 45, status: PlatformOutputStatus = .draft, createdAt: Date = Date()) {
@@ -456,9 +461,16 @@ final class CreatorTask {
     var priorityRaw: String = TaskPriority.medium.rawValue
     var isCompleted: Bool = false
     var targetDate: Date?
+    /// Existing records default to timed so an additive migration preserves their meaning.
+    /// New tasks default to date-only through the initializer below.
+    var includesTargetTime: Bool = true
     var dailyFocusDate: Date?
     var dailyFocusTitle: String?
     var dailyFocusTemplateEntryID: UUID?
+    /// Links a materialized weekly focus task back to its editable template.
+    var focusTaskTemplateID: UUID?
+    /// Once a creator edits one occurrence, recurring template reconciliation leaves it alone.
+    var isFocusTemplateCustomized: Bool = false
     var recurrenceRaw: String = TaskRecurrenceFrequency.none.rawValue
     var recurrenceRootTaskID: UUID?
     var sortOrder: Int = 0
@@ -471,7 +483,7 @@ final class CreatorTask {
     /// a creator's explicit lane choice.
     var bootstrapVersion: Int = 0
 
-    init(id: UUID = UUID(), briefID: UUID? = nil, pillarID: UUID? = nil, platformOutputID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, lane: TaskLane = .production, priority: TaskPriority = .none, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, dailyFocusDate: Date? = nil, dailyFocusTitle: String? = nil, dailyFocusTemplateEntryID: UUID? = nil, recurrence: TaskRecurrenceFrequency = .none, recurrenceRootTaskID: UUID? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), briefID: UUID? = nil, pillarID: UUID? = nil, platformOutputID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, lane: TaskLane = .production, priority: TaskPriority = .none, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, includesTargetTime: Bool = false, dailyFocusDate: Date? = nil, dailyFocusTitle: String? = nil, dailyFocusTemplateEntryID: UUID? = nil, focusTaskTemplateID: UUID? = nil, isFocusTemplateCustomized: Bool = false, recurrence: TaskRecurrenceFrequency = .none, recurrenceRootTaskID: UUID? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
         self.id = id
         self.briefID = briefID
         self.pillarID = pillarID
@@ -484,9 +496,12 @@ final class CreatorTask {
         self.laneRaw = lane.rawValue
         self.priorityRaw = priority.rawValue
         self.targetDate = targetDate
+        self.includesTargetTime = includesTargetTime
         self.dailyFocusDate = dailyFocusDate.map { Calendar.current.startOfDay(for: $0) }
         self.dailyFocusTitle = dailyFocusTitle
         self.dailyFocusTemplateEntryID = dailyFocusTemplateEntryID
+        self.focusTaskTemplateID = focusTaskTemplateID
+        self.isFocusTemplateCustomized = isFocusTemplateCustomized
         self.recurrenceRaw = recurrence.rawValue
         self.recurrenceRootTaskID = recurrenceRootTaskID
         self.sortOrder = sortOrder
@@ -635,6 +650,9 @@ final class DailyFocusTemplateEntry {
     var note: String = ""
     var durationMinutes: Int?
     var startMinutesFromMidnight: Int?
+    /// JSON keeps the editable per-day task template additive and CloudKit-safe.
+    /// An empty string means the creator has not configured tasks for this day yet.
+    var focusTaskTemplatesJSON: String = ""
     var isActive: Bool = true
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
@@ -663,6 +681,25 @@ final class DailyFocusTemplateEntry {
     var secondaryKind: DailyFocusKind? {
         get { secondaryKindRaw.flatMap(DailyFocusKind.init(rawValue:)) }
         set { secondaryKindRaw = newValue?.rawValue }
+    }
+
+    var hasConfiguredFocusTasks: Bool {
+        !focusTaskTemplatesJSON.isEmpty
+    }
+
+    var focusTaskTemplates: [DailyFocusTaskTemplateDefinition] {
+        get {
+            guard let data = focusTaskTemplatesJSON.data(using: .utf8),
+                  let value = try? JSONDecoder().decode([DailyFocusTaskTemplateDefinition].self, from: data)
+            else { return [] }
+            return value
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let value = String(data: data, encoding: .utf8)
+            else { return }
+            focusTaskTemplatesJSON = value
+        }
     }
 }
 
@@ -888,20 +925,53 @@ final class ConversationMessage {
 @Model
 final class ReminderSettings {
     var id: UUID = UUID()
+    /// The master switch is additive and defaults on so existing Daily and Weekly choices remain effective.
+    var masterEnabled: Bool = true
     var dailyEnabled: Bool = false
     var dailyHour: Int = 9
+    var dailyMinute: Int = 0
     var weeklyEnabled: Bool = false
     var weeklyWeekday: Int = 2
     var weeklyHour: Int = 9
+    var weeklyMinute: Int = 0
+    var postRemindersEnabled: Bool = true
+    var missedPostRemindersEnabled: Bool = true
+    var taskRemindersEnabled: Bool = true
+    var draftPrepRemindersEnabled: Bool = true
+    var accessRemindersEnabled: Bool = true
+    var draftPrepHour: Int = 18
+    var draftPrepMinute: Int = 0
+    var dateOnlyDeadlineHour: Int = 18
+    var dateOnlyDeadlineMinute: Int = 0
+    var quietHoursEnabled: Bool = true
+    var quietHoursStartHour: Int = 20
+    var quietHoursStartMinute: Int = 0
+    var quietHoursEndHour: Int = 8
+    var quietHoursEndMinute: Int = 0
+    var showNotificationTitles: Bool = true
     var updatedAt: Date = Date()
 
-    init(id: UUID = UUID(), dailyEnabled: Bool = false, dailyHour: Int = 9, weeklyEnabled: Bool = false, weeklyWeekday: Int = 2, weeklyHour: Int = 9, updatedAt: Date = Date()) {
+    init(
+        id: UUID = UUID(),
+        masterEnabled: Bool = true,
+        dailyEnabled: Bool = false,
+        dailyHour: Int = 9,
+        dailyMinute: Int = 0,
+        weeklyEnabled: Bool = false,
+        weeklyWeekday: Int = 2,
+        weeklyHour: Int = 9,
+        weeklyMinute: Int = 0,
+        updatedAt: Date = Date()
+    ) {
         self.id = id
+        self.masterEnabled = masterEnabled
         self.dailyEnabled = dailyEnabled
         self.dailyHour = dailyHour
+        self.dailyMinute = dailyMinute
         self.weeklyEnabled = weeklyEnabled
         self.weeklyWeekday = weeklyWeekday
         self.weeklyHour = weeklyHour
+        self.weeklyMinute = weeklyMinute
         self.updatedAt = updatedAt
     }
 }

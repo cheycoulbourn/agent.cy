@@ -81,6 +81,42 @@ final class CalendarSyncTests: XCTestCase {
         XCTAssertEqual(timing.end.timeIntervalSince(timing.start), 15 * 60)
     }
 
+    func testTasksWithoutTimesBecomeOneDayEvents() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let target = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 14,
+            hour: 15,
+            minute: 30
+        )))
+
+        let timing = CalendarSyncPolicy.taskTiming(
+            targetDate: target,
+            estimatedMinutes: 45,
+            includesTime: false,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(timing.isAllDay)
+        XCTAssertEqual(calendar.component(.hour, from: timing.start), 0)
+        XCTAssertEqual(calendar.dateComponents([.day], from: timing.start, to: timing.end).day, 1)
+    }
+
+    func testTimedTasksUseTheirEstimate() {
+        let target = Date(timeIntervalSince1970: 1_784_041_200)
+        let timing = CalendarSyncPolicy.taskTiming(
+            targetDate: target,
+            estimatedMinutes: 45,
+            includesTime: true
+        )
+
+        XCTAssertFalse(timing.isAllDay)
+        XCTAssertEqual(timing.start, target)
+        XCTAssertEqual(timing.end.timeIntervalSince(timing.start), 45 * 60)
+    }
+
     func testCalendarPreferencesAreDeviceLocalAndClearCompletely() throws {
         let suite = "CalendarSyncTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

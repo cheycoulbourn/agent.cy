@@ -53,11 +53,28 @@ struct RootView: View {
         }
         .task {
             appModel.removeLegacySimplifyPrefixes(context: context)
+            try? FocusTaskRecurrenceService.reconcile(context: context)
+            let repairedPostTasks = (try? PostTaskScheduleRepairService.reconcileOnce(context: context)) ?? 0
             await appModel.refreshInstallationCredentialStatus(context: context)
+            appModel.applyPendingWidgetTaskCompletions(context: context)
             WidgetSnapshotService.refresh(context: context)
             appModel.refreshCalendarSync(context: context)
+            if repairedPostTasks > 0 {
+                await appModel.refreshReminderSchedule(context: context)
+            }
+            handlePendingNotificationRoute()
         }
         .onOpenURL(perform: openWidgetDestination)
+        .onReceive(NotificationCenter.default.publisher(for: .agentCyNotificationRouteReady)) { _ in
+            handlePendingNotificationRoute()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .agentCyNotificationContentChanged)) { _ in
+            WidgetSnapshotService.refresh(context: context)
+            Task { await appModel.refreshReminderSchedule(context: context) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in
+            Task { await appModel.refreshReminderSchedule(context: context) }
+        }
         .agentScreen()
     }
 
@@ -93,6 +110,7 @@ struct RootView: View {
         appModel.presentedSheet = nil
         appModel.widgetAgendaDay = nil
         appModel.widgetBriefID = nil
+        appModel.widgetBriefOpensEditor = false
 
         switch destination {
         case .today:
@@ -107,18 +125,45 @@ struct RootView: View {
             appModel.selectedTab = .ideaBank
         case .brief(let id):
             appModel.selectedTab = .today
-            if isPlannedForToday(briefID: id) {
-                appModel.requestedPlanMode = .day
-                appModel.widgetBriefID = id
-            } else {
-                appModel.requestedPlanMode = .day
-            }
+            appModel.requestedPlanMode = .week
+            appModel.widgetBriefID = id
+            appModel.widgetBriefOpensEditor = false
         case .quickIdea:
             prepareQuickCapture(idea: true, post: false, task: false)
         case .quickPost:
             prepareQuickCapture(idea: false, post: true, task: false)
         case .quickTask:
             prepareQuickCapture(idea: false, post: false, task: true)
+        }
+    }
+
+    private func handlePendingNotificationRoute() {
+        guard let route = AgentNotificationRouteStore.take() else { return }
+        appModel.presentedSheet = nil
+        switch route.kind {
+        case .day:
+            appModel.selectedTab = .today
+            appModel.widgetAgendaDay = route.date
+            appModel.requestedPlanMode = .day
+        case .week:
+            appModel.selectedTab = .today
+            appModel.widgetAgendaDay = route.date
+            appModel.requestedPlanMode = .week
+        case .cyWeek:
+            appModel.pendingCyPrompt = "Help me plan this week around my saved ideas, scheduled posts, tasks, and daily focuses."
+            appModel.selectedTab = .cy
+        case .brief, .draft:
+            guard let id = route.objectID else { return }
+            appModel.selectedTab = .today
+            appModel.requestedPlanMode = .week
+            appModel.widgetBriefOpensEditor = route.kind == .draft
+            appModel.widgetBriefID = id
+        case .task:
+            appModel.selectedTab = .tasks
+            appModel.requestedTaskID = route.objectID
+        case .access:
+            appModel.requestedSettingsPage = .access
+            appModel.presentedSheet = .settings
         }
     }
 

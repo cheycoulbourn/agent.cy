@@ -25,6 +25,7 @@ struct AgendaView: View {
     @State private var focusedDay: AgendaDaySelection?
     @State private var showWeeklyFocusSetup = false
     @State private var deepLinkedBrief: CreativeBrief?
+    @State private var deepLinkedBriefOpensEditor = false
 
     private var weekStart: Date {
         let calendar = Calendar.current
@@ -93,7 +94,19 @@ struct AgendaView: View {
             AgendaPostIdeaPickerView(day: selection.day)
         }
         .navigationDestination(item: $deepLinkedBrief) { brief in
-            if let output = outputs.first(where: {
+            if deepLinkedBriefOpensEditor,
+               let output = outputs.first(where: { $0.briefID == brief.id && $0.status != .posted }) {
+                ScrollView {
+                    ResumablePostEditorView(brief: brief, output: output, onSpark: {})
+                        .padding(.horizontal, AgentLayout.pageMargin)
+                        .padding(.top, AgentSpacing.x4)
+                        .padding(.bottom, 120)
+                }
+                .navigationTitle("Edit post")
+                .navigationBarTitleDisplayMode(.inline)
+                .agentScreen()
+                .agentKeyboardDismissal()
+            } else if let output = outputs.first(where: {
                 $0.briefID == brief.id && PostOutputDetailPolicy.usesFinalizedView(
                     outputStatus: $0.status,
                     targetDate: $0.targetDate
@@ -113,7 +126,9 @@ struct AgendaView: View {
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
         .onChange(of: appModel.widgetBriefID, initial: true) { _, id in
             guard let id, let brief = activeBriefs.first(where: { $0.id == id }) else { return }
+            deepLinkedBriefOpensEditor = appModel.widgetBriefOpensEditor
             deepLinkedBrief = brief
+            appModel.widgetBriefOpensEditor = false
             appModel.widgetBriefID = nil
         }
         .agentDashboardScreen()
@@ -372,8 +387,7 @@ struct AgendaView: View {
             }
             .foregroundStyle(Color.agentText)
             .frame(maxWidth: .infinity, minHeight: 39)
-            .padding(.top, AgentSpacing.x1)
-            .padding(.bottom, AgentSpacing.x4)
+            .padding(.vertical, AgentSpacing.x3)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -542,7 +556,8 @@ struct AgendaView: View {
         let linkedTasks = dayTasks.filter {
             $0.platformOutputID == output.id || $0.briefID == output.briefID
         }
-        let candidates = linkedTasks.isEmpty ? dayTasks.map(\.targetDate) : linkedTasks.map(\.targetDate)
+        let sourceTasks = linkedTasks.isEmpty ? dayTasks : linkedTasks
+        let candidates = sourceTasks.map { $0.includesTargetTime ? $0.targetDate : nil }
         return AgendaDayPresentation.firstTaskDate(in: candidates)
     }
 
@@ -581,7 +596,14 @@ struct AgendaView: View {
             }
     }
     private func tasks(on day: Date) -> [CreatorTask] {
-        tasks.filter { $0.parentTaskID == nil && $0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } == true }
+        tasks.filter {
+            $0.parentTaskID == nil &&
+                TaskCollectionPolicy.collection(
+                    briefID: $0.briefID,
+                    platformOutputID: $0.platformOutputID
+                ) == .myTasks &&
+                $0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } == true
+        }
             .sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
     }
     private func focus(on day: Date) -> ResolvedDailyFocus? { DailyFocusResolver.resolve(date: day, templates: focusTemplates, overrides: focusOverrides) }
@@ -814,9 +836,25 @@ struct DayAgendaView: View {
         tasks.filter {
             $0.parentTaskID == nil &&
                 AgendaContentVisibility.includesTask(briefID: $0.briefID, activeBriefIDs: activeBriefIDs) &&
-                $0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } == true
+                taskBelongsToDay($0)
         }
-        .sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
+        .sorted(by: sortTasks)
+    }
+    private var postTasks: [CreatorTask] {
+        dayTasks.filter {
+            TaskCollectionPolicy.collection(
+                briefID: $0.briefID,
+                platformOutputID: $0.platformOutputID
+            ) == .postTasks
+        }
+    }
+    private var myTasks: [CreatorTask] {
+        dayTasks.filter {
+            TaskCollectionPolicy.collection(
+                briefID: $0.briefID,
+                platformOutputID: $0.platformOutputID
+            ) == .myTasks
+        }
     }
     private var dayFocus: ResolvedDailyFocus? { DailyFocusResolver.resolve(date: day, templates: focusTemplates, overrides: focusOverrides) }
 
@@ -1105,33 +1143,127 @@ struct DayAgendaView: View {
     }
 
     private var tasksSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            dayTaskCollection(
+                title: TaskCollection.postTasks.title,
+                tasks: postTasks,
+                emptyMessage: "No post tasks for this day."
+            )
+
+            dayTaskCollection(
+                title: TaskCollection.myTasks.title,
+                tasks: myTasks,
+                emptyMessage: "No personal or focus tasks for this day."
+            )
+
+            AgentAddActionRow(title: "Add task") { planner = .task }
+        }
+    }
+
+    @ViewBuilder
+    private func dayTaskCollection(
+        title: String,
+        tasks collectionTasks: [CreatorTask],
+        emptyMessage: String
+    ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionRuleHeader(title: "Tasks", trailing: "\(dayTasks.count)")
-            if dayTasks.isEmpty {
-                Text("No focus tasks scheduled.").font(.agentSubtext).foregroundStyle(Color.agentSecondary).padding(.vertical, AgentSpacing.x4)
+            SectionRuleHeader(title: title, trailing: "\(collectionTasks.count)")
+
+            if collectionTasks.isEmpty {
+                Text(emptyMessage)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .padding(.vertical, AgentSpacing.x4)
             } else {
-                ForEach(dayTasks) { task in
-                    HStack(spacing: AgentSpacing.x3) {
-                        Button { appModel.toggleTask(task, context: context) } label: {
-                            Image(systemName: task.isCompleted ? "checkmark.square.fill" : "square").frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        NavigationLink { TaskDetailView(task: task) } label: {
-                            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                Text(task.title).font(.agentBody.weight(.medium))
-                                MetaLabel(task.lane.shortTitle)
-                            }
-                            .foregroundStyle(Color.agentText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
+                let groups = dueDateGroups(for: collectionTasks)
+                if groups.count > 1 {
+                    ForEach(groups) { group in
+                        taskGroupHeader(group)
+                        taskRows(group.tasks)
                     }
-                    .overlay(alignment: .bottom) { Rectangle().fill(Color.agentHairline).frame(height: 1) }
+                } else {
+                    taskRows(collectionTasks)
                 }
             }
-            AgentAddActionRow(title: "Add task") { planner = .task }
-                .padding(.top, AgentSpacing.x3)
         }
+    }
+
+    private func taskRows(_ collectionTasks: [CreatorTask]) -> some View {
+        ForEach(collectionTasks) { task in
+            TaskRow(
+                task: task,
+                allTasks: tasks,
+                linkedPostTitle: linkedPostTitle(for: task)
+            )
+            .overlay(alignment: .bottom) {
+                if task.id != collectionTasks.last?.id {
+                    Rectangle().fill(Color.agentHairline).frame(height: 1)
+                }
+            }
+        }
+    }
+
+    private func taskGroupHeader(_ group: TaskDueDateGroup) -> some View {
+        HStack {
+            MetaLabel(group.title)
+            Spacer()
+            MetaLabel("\(group.tasks.count)")
+        }
+        .padding(.top, AgentSpacing.x4)
+        .padding(.bottom, AgentSpacing.x2)
+    }
+
+    private func dueDateGroups(for collectionTasks: [CreatorTask]) -> [TaskDueDateGroup] {
+        Dictionary(grouping: collectionTasks) { task in
+            task.targetDate.map(Calendar.current.startOfDay(for:))
+        }
+        .map { TaskDueDateGroup(day: $0.key, tasks: $0.value.sorted(by: sortTasks)) }
+        .sorted { lhs, rhs in
+            switch (lhs.day, rhs.day) {
+            case let (left?, right?): left < right
+            case (nil, _?): false
+            case (_?, nil): true
+            case (nil, nil): false
+            }
+        }
+    }
+
+    private func sortTasks(_ lhs: CreatorTask, _ rhs: CreatorTask) -> Bool {
+        let rank: (CreatorTask) -> Int = { task in
+            task.priority.normalized == .urgent ? 0 : (task.priority.normalized == .high ? 1 : 2)
+        }
+        if rank(lhs) != rank(rhs) { return rank(lhs) < rank(rhs) }
+        if (lhs.targetDate ?? .distantFuture) != (rhs.targetDate ?? .distantFuture) {
+            return (lhs.targetDate ?? .distantFuture) < (rhs.targetDate ?? .distantFuture)
+        }
+        return lhs.createdAt < rhs.createdAt
+    }
+
+    private func taskBelongsToDay(_ task: CreatorTask) -> Bool {
+        if task.dailyFocusDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true ||
+            task.targetDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true {
+            return true
+        }
+
+        if let outputID = task.platformOutputID,
+           dayOutputs.contains(where: { $0.id == outputID }) {
+            return true
+        }
+
+        return task.briefID.map { briefID in
+            dayOutputs.contains(where: { $0.briefID == briefID })
+        } == true
+    }
+
+    private func linkedPostTitle(for task: CreatorTask) -> String? {
+        let output = task.platformOutputID.flatMap { outputID in
+            outputs.first { $0.id == outputID }
+        }
+        let briefID = task.briefID ?? output?.briefID
+        guard let briefID,
+              let brief = activeBriefs.first(where: { $0.id == briefID }) else { return nil }
+        let override = output?.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return override.isEmpty ? brief.title : override
     }
 
     private func color(for brief: CreativeBrief) -> Color {
@@ -1172,12 +1304,14 @@ private struct PostRescheduleSheet: View {
     @Environment(\.dismiss) private var dismiss
     private let minimumDate: Date
     @State private var targetDate: Date
+    @State private var includesTime: Bool
 
     init(output: PlatformOutput) {
         let now = Date()
         self.output = output
         minimumDate = now
         _targetDate = State(initialValue: max(output.targetDate ?? now, now))
+        _includesTime = State(initialValue: output.includesTargetTime)
     }
 
     var body: some View {
@@ -1186,26 +1320,38 @@ private struct PostRescheduleSheet: View {
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                     EditorialHeader(
                         kicker: "Due date",
-                        title: "Choose a new time.",
+                        title: "Choose a new date.",
                         subtitle: "Move this post without changing the rest of your week."
                     )
 
                     VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                        MetaLabel("New date and time")
+                        MetaLabel("New date")
                         DatePicker(
-                            "Date and time",
+                            "Date",
                             selection: $targetDate,
                             in: minimumDate...,
-                            displayedComponents: [.date, .hourAndMinute]
+                            displayedComponents: .date
                         )
                         .datePickerStyle(.graphical)
                         .tint(Color.cyAccent)
+
+                        Toggle("Include a time", isOn: $includesTime)
+                            .font(.agentBody.weight(.semibold))
+                            .tint(Color.actionAccent)
+
+                        if includesTime {
+                            DatePicker("Time", selection: $targetDate, displayedComponents: .hourAndMinute)
+                        }
                     }
                     .padding(AgentSpacing.x4)
                     .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
 
                     Button("Save new date") {
-                        appModel.schedule(output: output, date: targetDate, context: context)
+                        output.includesTargetTime = includesTime
+                        let resolvedDate = includesTime
+                            ? targetDate
+                            : Calendar.current.startOfDay(for: targetDate)
+                        appModel.schedule(output: output, date: resolvedDate, context: context)
                         dismiss()
                     }
                     .buttonStyle(AgentPrimaryButtonStyle())
@@ -1238,6 +1384,8 @@ private struct DayPlannerSheet: View {
     @Query private var destinations: [PublishingDestination]
     @Query private var formats: [PublishingFormat]
     @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
+    @Query private var focusTemplates: [DailyFocusTemplateEntry]
+    @Query private var focusOverrides: [DailyFocusOverride]
 
     var body: some View {
         NavigationStack {
@@ -1266,6 +1414,11 @@ private struct DayPlannerSheet: View {
                         ForEach(availableTasks) { task in
                             Button {
                                 task.targetDate = plannedDate
+                                task.includesTargetTime = false
+                                task.lane = .production
+                                task.dailyFocusDate = day
+                                task.dailyFocusTitle = resolvedFocus?.title
+                                task.dailyFocusTemplateEntryID = resolvedFocus?.templateEntryID
                                 try? context.save()
                                 appModel.queueCalendarSync(context: context)
                                 dismiss()
@@ -1290,14 +1443,37 @@ private struct DayPlannerSheet: View {
             output.targetDate == nil && briefs.contains(where: { $0.id == output.briefID && $0.status != .archived })
         }
     }
-    private var availableTasks: [CreatorTask] { tasks.filter { $0.parentTaskID == nil && $0.targetDate == nil } }
+    private var availableTasks: [CreatorTask] {
+        tasks.filter {
+            $0.parentTaskID == nil &&
+                $0.targetDate == nil &&
+                TaskCollectionPolicy.collection(
+                    briefID: $0.briefID,
+                    platformOutputID: $0.platformOutputID
+                ) == .myTasks
+        }
+    }
     private var plannedDate: Date { Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day }
+    private var resolvedFocus: ResolvedDailyFocus? {
+        DailyFocusResolver.resolve(date: day, templates: focusTemplates, overrides: focusOverrides)
+    }
 
     private func createNew() {
         dismiss()
         appModel.quickCaptureTargetDate = plannedDate
         appModel.quickCaptureStartsWithPost = kind == .post
         appModel.quickCaptureStartsWithTask = kind == .task
+        if kind == .task {
+            appModel.quickCaptureTaskLane = .production
+            appModel.quickCaptureTaskFocus = resolvedFocus.map {
+                DailyFocusTaskAssignment(
+                    date: day,
+                    title: $0.title,
+                    taskKind: $0.kinds.first?.taskKind ?? .planning,
+                    templateEntryID: $0.templateEntryID
+                )
+            }
+        }
         Task { @MainActor in await Task.yield(); appModel.presentedSheet = .quickCapture }
     }
     private func outputLabel(_ output: PlatformOutput) -> String {

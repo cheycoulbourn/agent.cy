@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import QuickLook
 
 struct PostOutputDetailView: View {
     let brief: CreativeBrief
@@ -55,6 +56,34 @@ enum PostOutputDetailPolicy {
     }
 }
 
+enum TaskLinkedPostPolicy {
+    static func output(for task: CreatorTask, in outputs: [PlatformOutput]) -> PlatformOutput? {
+        if let outputID = task.platformOutputID,
+           let exactOutput = outputs.first(where: { $0.id == outputID }) {
+            return exactOutput
+        }
+        guard let briefID = task.briefID else { return nil }
+        return outputs
+            .filter { $0.briefID == briefID }
+            .sorted { lhs, rhs in
+                let lhsRank = destinationRank(for: lhs)
+                let rhsRank = destinationRank(for: rhs)
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                return lhs.createdAt < rhs.createdAt
+            }
+            .first
+    }
+
+    private static func destinationRank(for output: PlatformOutput) -> Int {
+        if PostOutputDetailPolicy.usesFinalizedView(
+            outputStatus: output.status,
+            targetDate: output.targetDate
+        ) { return 0 }
+        if output.status == .draft { return 1 }
+        return 2
+    }
+}
+
 struct ScheduledPostDetailView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
@@ -65,8 +94,13 @@ struct ScheduledPostDetailView: View {
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
     @Query private var tasks: [CreatorTask]
+    @Query private var attachments: [CreatorAttachment]
     @State private var showEditor = false
+    @State private var showTaskComposer = false
     @State private var confirmArchive = false
+    @State private var confirmDelete = false
+    @State private var selectedMoodBoardPreview: MoodBoardImagePreview?
+    @State private var attachmentPreviewURL: URL?
 
     private struct DisplayField: Identifiable {
         let label: String
@@ -82,6 +116,10 @@ struct ScheduledPostDetailView: View {
             filter: #Predicate<CreatorTask> { $0.briefID == briefID },
             sort: \CreatorTask.sortOrder
         )
+        _attachments = Query(
+            filter: #Predicate<CreatorAttachment> { $0.briefID == briefID },
+            sort: \CreatorAttachment.createdAt
+        )
     }
 
     var body: some View {
@@ -90,6 +128,9 @@ struct ScheduledPostDetailView: View {
                 postHeader
                 scheduleSurface
                 postContent
+                collaborationDetails
+                moodBoardDetails
+                publishedLink
                 taskSection
                 postingAction
             }
@@ -115,6 +156,9 @@ struct ScheduledPostDetailView: View {
                     Divider()
                     Button("Archive", systemImage: "archivebox", role: .destructive) {
                         confirmArchive = true
+                    }
+                    Button("Delete post", systemImage: "trash", role: .destructive) {
+                        confirmDelete = true
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -143,6 +187,22 @@ struct ScheduledPostDetailView: View {
                 .agentKeyboardDismissal()
             }
         }
+        .sheet(isPresented: $showTaskComposer) {
+            PostDraftTaskComposer(
+                brief: brief,
+                output: output,
+                defaultDate: output.targetDate ?? Date()
+            )
+            .presentationDetents([.medium])
+        }
+        .fullScreenCover(item: $selectedMoodBoardPreview) { preview in
+            MoodBoardImageViewer(preview: preview)
+        }
+        .quickLookPreview($attachmentPreviewURL)
+        .onChange(of: attachmentPreviewURL) { oldValue, newValue in
+            guard newValue == nil, let oldValue else { return }
+            try? FileManager.default.removeItem(at: oldValue)
+        }
         .confirmationDialog("Archive this post?", isPresented: $confirmArchive, titleVisibility: .visible) {
             Button("Archive", role: .destructive) {
                 appModel.archive(brief, context: context)
@@ -151,6 +211,28 @@ struct ScheduledPostDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("You can still find it in Your work.")
+        }
+        .confirmationDialog("Delete this post?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            if PostSeriesDeletionPolicy.isPartOfSeries(output) {
+                Button("Delete this post", role: .destructive) {
+                    deletePost(scope: .thisPost)
+                }
+                Button("Delete this and future posts", role: .destructive) {
+                    deletePost(scope: .thisAndFuture)
+                }
+            } else {
+                Button("Delete post", role: .destructive) {
+                    deletePost(scope: .thisPost)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(PostSeriesDeletionPolicy.isPartOfSeries(output)
+                ? "Past posts stay in place. Linked tasks for every deleted post are also removed."
+                : "This also removes the post's linked tasks.")
+        }
+        .onDisappear {
+            if output.status == .posted { savePublishedLink() }
         }
         .agentScreen()
     }
@@ -202,6 +284,10 @@ struct ScheduledPostDetailView: View {
         .padding(.horizontal, AgentSpacing.x4)
         .padding(.vertical, AgentSpacing.x4)
         .background(pillarColor.opacity(0.10), in: .rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(pillarColor, lineWidth: 1)
+        }
     }
 
     @ViewBuilder
@@ -231,21 +317,128 @@ struct ScheduledPostDetailView: View {
     }
 
     @ViewBuilder
-    private var taskSection: some View {
-        if !topLevelTasks.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                SectionRuleHeader(
-                    title: "Tasks",
-                    trailing: "\(completedTaskCount) of \(topLevelTasks.count) complete"
-                )
-                ForEach(topLevelTasks) { task in
-                    TaskRow(task: task, allTasks: tasks)
-                        .padding(.vertical, AgentSpacing.x2)
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(Color.agentHairline).frame(height: 1)
+    private var collaborationDetails: some View {
+        if brief.isBrandCollaboration {
+            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                SectionRuleHeader(title: "Brand collaboration")
+                detailRow(label: "Partner", value: brief.brandName.isEmpty ? "Not set" : brief.brandName)
+                detailRow(label: "Type", value: compensationSummary)
+                if brief.brandHasNetTerms {
+                    detailRow(label: "Terms", value: "Net \(brief.brandNetTermsDays)")
+                }
+                if !brief.giftedProductDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    detailRow(label: "Gifted", value: brief.giftedProductDescription)
+                }
+                ForEach(collaborationFiles) { attachment in
+                    Button {
+                        openAttachment(attachment)
+                    } label: {
+                        HStack(spacing: AgentSpacing.x3) {
+                            Text(attachment.fileName)
+                                .font(.agentBody)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
+                                .font(.agentMono)
+                                .foregroundStyle(Color.agentSecondary)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.agentSecondary)
                         }
+                        .frame(minHeight: 44)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open \(attachment.fileName)")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var moodBoardDetails: some View {
+        if brief.moodBoardEnabled {
+            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                SectionRuleHeader(title: "Mood board", trailing: moodBoardMedia.isEmpty ? nil : "\(moodBoardMedia.count) images")
+                if !moodBoardMedia.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: AgentSpacing.x3) {
+                            ForEach(moodBoardMedia) { attachment in
+                                if let data = attachment.cloudData, let image = UIImage(data: data) {
+                                    Button {
+                                        selectedMoodBoardPreview = MoodBoardImagePreview(
+                                            id: attachment.id,
+                                            data: data,
+                                            title: attachment.fileName
+                                        )
+                                    } label: {
+                                        Image(uiImage: image)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 104, height: 118)
+                                            .clipShape(.rect(cornerRadius: 14))
+                                            .overlay {
+                                                RoundedRectangle(cornerRadius: 14)
+                                                    .stroke(Color.agentBorder, lineWidth: 1)
+                                            }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Open mood board image")
+                                }
+                            }
+                        }
+                    }
+                    .scrollIndicators(.hidden)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var publishedLink: some View {
+        if output.status == .posted {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                SectionRuleHeader(title: "Published link")
+                TextField("", text: $output.publishedURLString)
+                    .font(.agentBody)
+                    .keyboardType(.URL)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .frame(minHeight: 52)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.control)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                    .onSubmit { savePublishedLink() }
+                if let publishedURL {
+                    Link("Open published post", destination: publishedURL)
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+                }
+            }
+        }
+    }
+
+    private var taskSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionRuleHeader(
+                title: "Tasks",
+                trailing: "\(completedTaskCount) of \(topLevelTasks.count) complete"
+            )
+            ForEach(topLevelTasks) { task in
+                TaskRow(task: task, allTasks: tasks)
+                    .padding(.vertical, AgentSpacing.x2)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Color.agentHairline).frame(height: 1)
+                    }
+            }
+            AgentAddActionRow(title: "Add task") {
+                showTaskComposer = true
+            }
+            .padding(.top, topLevelTasks.isEmpty ? AgentSpacing.x2 : AgentSpacing.x3)
         }
     }
 
@@ -283,6 +476,12 @@ struct ScheduledPostDetailView: View {
     private var selectedDestination: PublishingDestination? { destinations.first { $0.id == output.destinationID } }
     private var selectedFormat: PublishingFormat? { formats.first { $0.id == output.formatID } }
     private var topLevelTasks: [CreatorTask] { tasks.filter { $0.parentTaskID == nil } }
+    private var collaborationFiles: [CreatorAttachment] {
+        attachments.filter { $0.ownerKind == .collaborationFile && $0.platformOutputID == output.id }
+    }
+    private var moodBoardMedia: [CreatorAttachment] {
+        attachments.filter { $0.ownerKind == .moodBoardMedia && $0.platformOutputID == output.id }
+    }
     private var completedTaskCount: Int { topLevelTasks.filter(\.isCompleted).count }
     private var displayTitle: String {
         let override = output.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -311,6 +510,55 @@ struct ScheduledPostDetailView: View {
         let duration = output.durationSeconds
         return duration < 120 ? "\(duration) seconds" : "\(duration / 60) minutes"
     }
+    private var compensationSummary: String {
+        switch brief.compensationType {
+        case .paid:
+            return paidAmountSummary
+        case .gifted:
+            return "Gifted"
+        case .both:
+            return "\(paidAmountSummary) + gifted"
+        }
+    }
+    private var paidAmountSummary: String {
+        guard let amount = brief.compensationAmount else { return "Paid" }
+        return amount.formatted(.currency(code: brief.compensationCurrencyCode.isEmpty ? "USD" : brief.compensationCurrencyCode))
+    }
+    private var publishedURL: URL? { safeWebURL(from: output.publishedURLString) }
+    private func safeWebURL(from rawValue: String) -> URL? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased()) else { return nil }
+        return url
+    }
+    private func savePublishedLink() {
+        brief.updatedAt = Date()
+        try? context.save()
+        appModel.queueCalendarSync(context: context)
+    }
+    private func openAttachment(_ attachment: CreatorAttachment) {
+        guard let data = attachment.cloudData else {
+            appModel.notice = .error("That attachment is not available on this device yet.")
+            return
+        }
+
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("agent-cy-attachment-previews", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileName = URL(fileURLWithPath: attachment.fileName).lastPathComponent
+            let safeName = fileName.isEmpty ? "attachment" : fileName
+            let url = directory.appendingPathComponent("\(attachment.id.uuidString)-\(safeName)")
+            try data.write(to: url, options: .atomic)
+            attachmentPreviewURL = url
+        } catch {
+            appModel.notice = .error("That attachment could not be opened.")
+        }
+    }
+    private func deletePost(scope: PostDeletionScope) {
+        if appModel.deletePost(brief: brief, output: output, scope: scope, context: context) {
+            dismiss()
+        }
+    }
     private var contentFields: [DisplayField] {
         [
             ("Hook", brief.spokenHook),
@@ -323,5 +571,45 @@ struct ScheduledPostDetailView: View {
             let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
             return value.isEmpty ? nil : DisplayField(label: label, value: value)
         }
+    }
+}
+
+private struct MoodBoardImagePreview: Identifiable {
+    let id: UUID
+    let data: Data
+    let title: String
+}
+
+private struct MoodBoardImageViewer: View {
+    @Environment(\.dismiss) private var dismiss
+    let preview: MoodBoardImagePreview
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+
+            if let image = UIImage(data: preview.data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityLabel(preview.title)
+            }
+
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial, in: .circle)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, AgentSpacing.x4)
+            .padding(.trailing, AgentSpacing.x4)
+            .accessibilityLabel("Close image")
+        }
+        .statusBarHidden()
     }
 }

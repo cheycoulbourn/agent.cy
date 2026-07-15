@@ -1023,76 +1023,209 @@ private struct NotificationSettingsContent: View {
         SettingsPageShell(
             kicker: "Publishing",
             title: "Notifications",
-            subtitle: "Choose when agent.cy should get your attention."
+            subtitle: "Keep useful commitments close without adding pressure."
         ) {
-            MetaLabel("Reminders")
-            reminderBlock(
-                title: "Daily focus",
-                detail: "A gentle prompt to choose today’s next move.",
-                isOn: $settings.dailyEnabled
-            ) {
-                DatePicker("Time", selection: hourBinding(\.dailyHour), displayedComponents: .hourAndMinute)
-                    .font(.agentBody)
-                    .frame(minHeight: 52)
-            }
+            authorizationSection
 
-            reminderBlock(
-                title: "New week",
-                detail: "Cy checks in every Monday to help you plan the week.",
-                isOn: $settings.weeklyEnabled
-            ) {
-                DatePicker("Time", selection: hourBinding(\.weeklyHour), displayedComponents: .hourAndMinute)
-                    .font(.agentBody)
-                    .frame(minHeight: 52)
-            }
-
-            Text("agent.cy asks for notification permission only after you turn on a reminder.")
-                .font(.agentSubtext)
-                .foregroundStyle(Color.agentSecondary)
-        }
-        .onChange(of: settings.dailyEnabled) { _, _ in apply() }
-        .onChange(of: settings.dailyHour) { _, _ in apply() }
-        .onChange(of: settings.weeklyEnabled) { _, _ in apply() }
-        .onChange(of: settings.weeklyHour) { _, _ in apply() }
-    }
-
-    private func reminderBlock<Content: View>(
-        title: String,
-        detail: String,
-        isOn: Binding<Bool>,
-        @ViewBuilder controls: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            Toggle(isOn: isOn) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                    Text(title).font(.agentHeadline).foregroundStyle(Color.agentText)
-                    Text(detail).font(.agentBody).foregroundStyle(Color.agentSecondary)
+            notificationGroup("Planning") {
+                reminderRow(
+                    title: "Daily overview",
+                    detail: "Only on active focus days. Mondays use the weekly plan instead.",
+                    isOn: $settings.dailyEnabled
+                )
+                if settings.dailyEnabled {
+                    timeRow("Morning time", selection: timeBinding(hour: \.dailyHour, minute: \.dailyMinute))
+                }
+                reminderRow(
+                    title: "Monday planning",
+                    detail: "Your weekly focus, saved ideas, and what is already planned.",
+                    isOn: $settings.weeklyEnabled
+                )
+                if settings.weeklyEnabled {
+                    timeRow("Monday time", selection: timeBinding(hour: \.weeklyHour, minute: \.weeklyMinute))
                 }
             }
-            .tint(.actionAccent)
-            controls()
-                .padding(.horizontal, AgentSpacing.x1)
-                .overlay(alignment: .top) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
-                .overlay(alignment: .bottom) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
-                .disabled(!isOn.wrappedValue)
-                .opacity(isOn.wrappedValue ? 1 : 0.5)
+
+            notificationGroup("Commitments") {
+                reminderRow(title: "Scheduled posts", detail: "30 minutes before a timed post.", isOn: $settings.postRemindersEnabled)
+                reminderRow(title: "Timed tasks", detail: "15 minutes before tasks with a saved time.", isOn: $settings.taskRemindersEnabled)
+                reminderRow(title: "Draft preparation", detail: "The evening before a planned post is still a draft.", isOn: $settings.draftPrepRemindersEnabled)
+                if settings.draftPrepRemindersEnabled {
+                    timeRow("Draft check", selection: timeBinding(hour: \.draftPrepHour, minute: \.draftPrepMinute))
+                }
+                reminderRow(title: "Missed posts", detail: "One calm check-in if a scheduled post is still open.", isOn: $settings.missedPostRemindersEnabled)
+                if settings.missedPostRemindersEnabled {
+                    timeRow("Date-only deadline", selection: timeBinding(hour: \.dateOnlyDeadlineHour, minute: \.dateOnlyDeadlineMinute))
+                }
+                reminderRow(title: "Trial or access", detail: "One reminder 24 hours before access changes.", isOn: $settings.accessRemindersEnabled)
+            }
+
+            notificationGroup("Quiet hours") {
+                reminderRow(title: "Use quiet hours", detail: "Flexible nudges wait. Exact post, task, and focus reminders still fire.", isOn: $settings.quietHoursEnabled)
+                if settings.quietHoursEnabled {
+                    timeRow("Start", selection: timeBinding(hour: \.quietHoursStartHour, minute: \.quietHoursStartMinute))
+                    timeRow("End", selection: timeBinding(hour: \.quietHoursEndHour, minute: \.quietHoursEndMinute))
+                }
+            }
+
+            notificationGroup("Privacy") {
+                reminderRow(
+                    title: "Show titles",
+                    detail: "Include post, task, and idea titles in notification previews.",
+                    isOn: $settings.showNotificationTitles
+                )
+            }
+        }
+        .task { await appModel.refreshReminderSchedule(context: context) }
+        .onChange(of: settingsFingerprint) { _, _ in apply() }
+    }
+
+    private var authorizationSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            SectionRuleHeader(title: "Status")
+            HStack(alignment: .center, spacing: AgentSpacing.x4) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(authorizationTitle)
+                        .font(.agentBody.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+                    Text(authorizationDetail)
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if appModel.notificationAuthorization.canSchedule {
+                    Toggle("Notifications", isOn: $settings.masterEnabled)
+                        .labelsHidden()
+                        .tint(.actionAccent)
+                        .fixedSize()
+                }
+            }
+
+            if appModel.notificationAuthorization == .notDetermined {
+                Button("Turn on notifications") {
+                    settings.masterEnabled = true
+                    settings.dailyEnabled = true
+                    settings.weeklyEnabled = true
+                    Task { await appModel.applyReminderSettings(settings, context: context, requestPermission: true) }
+                }
+                .buttonStyle(AgentPrimaryButtonStyle())
+            } else if appModel.notificationAuthorization == .denied {
+                Button("Open iPhone Settings") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(url)
+                }
+                .buttonStyle(AgentSecondaryButtonStyle())
+            }
         }
     }
 
-    private func hourBinding(_ keyPath: ReferenceWritableKeyPath<ReminderSettings, Int>) -> Binding<Date> {
+    private func notificationGroup<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            SectionRuleHeader(title: title)
+            content()
+        }
+        .disabled(!settings.masterEnabled)
+        .opacity(settings.masterEnabled ? 1 : 0.5)
+    }
+
+    private func reminderRow(
+        title: String,
+        detail: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .center, spacing: AgentSpacing.x4) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                Text(title)
+                    .font(.agentBody.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                Text(detail)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: AgentSpacing.x3)
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .tint(.actionAccent)
+                .fixedSize()
+        }
+        .padding(.vertical, AgentSpacing.x1)
+        .contentShape(.rect)
+    }
+
+    private func timeRow(_ title: String, selection: Binding<Date>) -> some View {
+        HStack(spacing: AgentSpacing.x4) {
+            Text(title)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+            Spacer(minLength: AgentSpacing.x3)
+            DatePicker(title, selection: selection, displayedComponents: .hourAndMinute)
+                .labelsHidden()
+                .fixedSize()
+        }
+        .frame(minHeight: 40)
+    }
+
+    private func timeBinding(
+        hour: ReferenceWritableKeyPath<ReminderSettings, Int>,
+        minute: ReferenceWritableKeyPath<ReminderSettings, Int>
+    ) -> Binding<Date> {
         Binding(
             get: {
-                Calendar.current.date(bySettingHour: settings[keyPath: keyPath], minute: 0, second: 0, of: Date()) ?? Date()
+                Calendar.current.date(
+                    bySettingHour: settings[keyPath: hour],
+                    minute: settings[keyPath: minute],
+                    second: 0,
+                    of: Date()
+                ) ?? Date()
             },
             set: { date in
-                settings[keyPath: keyPath] = Calendar.current.component(.hour, from: date)
+                settings[keyPath: hour] = Calendar.current.component(.hour, from: date)
+                settings[keyPath: minute] = Calendar.current.component(.minute, from: date)
             }
         )
+    }
+
+    private var authorizationTitle: String {
+        switch appModel.notificationAuthorization {
+        case .authorized, .provisional, .ephemeral: settings.masterEnabled ? "Notifications are on" : "Notifications are paused"
+        case .denied: "Notifications are blocked"
+        case .notDetermined: "Notifications are off"
+        }
+    }
+
+    private var authorizationDetail: String {
+        switch appModel.notificationAuthorization {
+        case .authorized, .provisional, .ephemeral: "agent.cy will schedule only the categories you choose."
+        case .denied: "Allow notifications in iPhone Settings to use reminders."
+        case .notDetermined: "Daily and Monday planning are ready when you are."
+        }
+    }
+
+    private var settingsFingerprint: String {
+        [
+            settings.masterEnabled ? 1 : 0,
+            settings.dailyEnabled ? 1 : 0, settings.dailyHour, settings.dailyMinute,
+            settings.weeklyEnabled ? 1 : 0, settings.weeklyHour, settings.weeklyMinute,
+            settings.postRemindersEnabled ? 1 : 0,
+            settings.taskRemindersEnabled ? 1 : 0,
+            settings.draftPrepRemindersEnabled ? 1 : 0, settings.draftPrepHour, settings.draftPrepMinute,
+            settings.missedPostRemindersEnabled ? 1 : 0, settings.dateOnlyDeadlineHour, settings.dateOnlyDeadlineMinute,
+            settings.accessRemindersEnabled ? 1 : 0,
+            settings.quietHoursEnabled ? 1 : 0, settings.quietHoursStartHour, settings.quietHoursStartMinute,
+            settings.quietHoursEndHour, settings.quietHoursEndMinute,
+            settings.showNotificationTitles ? 1 : 0,
+        ].map(String.init).joined(separator: "|")
     }
 
     private func apply() {
         Task { await appModel.applyReminderSettings(settings, context: context) }
     }
+
 }
 
 struct AccessSettingsView: View {

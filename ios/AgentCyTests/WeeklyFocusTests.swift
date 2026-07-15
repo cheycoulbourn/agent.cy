@@ -135,6 +135,86 @@ final class WeeklyFocusTests: XCTestCase {
         )
     }
 
+    func testFocusTaskDefaultsProvideEditableNextStepsForEachSelectedFocus() {
+        let definitions = DailyFocusTaskDefaults.definitions(for: [.planning, .filming])
+
+        XCTAssertEqual(definitions.filter { $0.focusKind == .planning }.count, 2)
+        XCTAssertEqual(definitions.filter { $0.focusKind == .filming }.count, 2)
+        XCTAssertTrue(definitions.allSatisfy { !$0.title.isEmpty })
+    }
+
+    func testFocusTaskTemplatesRoundTripThroughCloudKitSafeJSON() {
+        let template = DailyFocusTemplateEntry(
+            weekday: .monday,
+            kind: .planning,
+            title: "Planning"
+        )
+        let definitions = [
+            DailyFocusTaskTemplateDefinition(
+                focusKind: .planning,
+                title: "Review the idea bank",
+                priority: .high
+            )
+        ]
+
+        XCTAssertFalse(template.hasConfiguredFocusTasks)
+        template.focusTaskTemplates = definitions
+
+        XCTAssertTrue(template.hasConfiguredFocusTasks)
+        XCTAssertEqual(template.focusTaskTemplates, definitions)
+    }
+
+    func testFocusTaskMaterializerCreatesWeeklyMyTasksWithoutDuplicates() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let monday = try XCTUnwrap(testCalendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 13
+        )))
+        let definition = DailyFocusTaskTemplateDefinition(
+            focusKind: .planning,
+            title: "Choose this week's posts",
+            priority: .high
+        )
+        let template = DailyFocusTemplateEntry(
+            weekday: .monday,
+            kind: .planning,
+            title: "Planning"
+        )
+        template.focusTaskTemplates = [definition]
+        context.insert(template)
+        try context.save()
+
+        try FocusTaskRecurrenceService.reconcile(
+            context: context,
+            from: monday,
+            weekCount: 2,
+            calendar: testCalendar
+        )
+        try FocusTaskRecurrenceService.reconcile(
+            context: context,
+            from: monday,
+            weekCount: 2,
+            calendar: testCalendar
+        )
+
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        XCTAssertEqual(tasks.count, 2)
+        XCTAssertTrue(tasks.allSatisfy { $0.focusTaskTemplateID == definition.id })
+        XCTAssertTrue(tasks.allSatisfy { $0.priority == .high })
+        XCTAssertTrue(tasks.allSatisfy {
+            TaskCollectionPolicy.collection(
+                briefID: $0.briefID,
+                platformOutputID: $0.platformOutputID
+            ) == .myTasks
+        })
+        XCTAssertEqual(
+            Set(tasks.compactMap(\.dailyFocusDate).map(testCalendar.startOfDay(for:))).count,
+            2
+        )
+    }
+
     private var testCalendar: Calendar {
         Calendar.current
     }

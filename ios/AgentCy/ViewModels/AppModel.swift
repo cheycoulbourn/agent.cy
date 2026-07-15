@@ -22,6 +22,13 @@ enum AppNotice: Equatable {
     }
 }
 
+enum RequestedSettingsPage: String, Identifiable {
+    case notifications
+    case access
+
+    var id: String { rawValue }
+}
+
 enum IdeaSuggestionOutcome {
     case success([IdeaDirection])
     case unavailable(message: String, requiresUpgrade: Bool)
@@ -47,7 +54,13 @@ final class AppModel {
     var quickCaptureTaskFocus: DailyFocusTaskAssignment?
     var widgetAgendaDay: Date?
     var widgetBriefID: UUID?
+    var widgetBriefOpensEditor = false
+    var requestedTaskID: UUID?
     var requestedPlanMode: PlanMode?
+    var requestedSettingsPage: RequestedSettingsPage?
+    var pendingCyPrompt: String?
+    var notificationAuthorization: AgentNotificationAuthorization = .notDetermined
+    var nextNotificationPreviews: [AgentNotificationPreview] = []
     var briefProposals: [UUID: BriefProposal] = [:]
     var revisionProposals: [UUID: BriefRevisionProposal] = [:]
     var voiceProfileChangeProposal: VoiceProfileChangeProposal?
@@ -172,22 +185,6 @@ final class AppModel {
             : nil
         state.updatedAt = Date()
         try? context.save()
-    }
-
-    func prepareVoiceProfile(from draft: OnboardingDraft) async -> VoiceProfileExtraction? {
-        let creatorContext = onboardingCreatorContext(from: draft)
-        if let issue = voiceEvidenceIssue(in: creatorContext) {
-            notice = .info(issue)
-            return nil
-        }
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            return try await creativeService.extractVoiceProfile(context: creatorContext, mode: draft.assistanceMode)
-        } catch {
-            notice = .error(error.localizedDescription)
-            return nil
-        }
     }
 
     func voiceExampleDrafts(context: ModelContext) -> [VoiceExampleDraft] {
@@ -378,21 +375,64 @@ final class AppModel {
 
     @discardableResult
     func completeOnboarding(_ draft: OnboardingDraft, context: ModelContext) async -> Bool {
+        if fetchOne(CreatorProfile.self, context: context) != nil { return true }
+        guard !isWorking else { return false }
+
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let goal = draft.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard draft.adultConfirmed, !name.isEmpty, !goal.isEmpty else {
+            notice = .info("Add your name, goal, and age confirmation before finishing setup.")
+            return false
+        }
+
         let retainedExamples = Array(draft.voiceExamples.filter { $0.isUsableEvidence || $0.hasLocalReference }.prefix(5))
         if let issue = VoiceExampleEvidenceLimits.issue(in: retainedExamples) {
             notice = .info(issue)
             return false
         }
+
+        let selectedPlatforms = draft.platforms.sorted { $0.rawValue < $1.rawValue }
+        let selectedDestinations = Set(selectedPlatforms.map { PublishingCatalog.identifiers(for: $0).destination })
+        let accountInputs: [(kind: BuiltInDestinationKind, destinationID: UUID, rawHandle: String)] = [
+            (.instagram, PublishingCatalog.instagramID, draft.accountHandles[.instagram, default: ""]),
+            (.tiktok, PublishingCatalog.tiktokID, draft.accountHandles[.tiktok, default: ""]),
+            (.youtube, PublishingCatalog.youtubeID, draft.accountHandles[.youtube, default: ""]),
+        ].filter { selectedDestinations.contains($0.destinationID) && !$0.rawHandle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        for input in accountInputs where CreatorSocialAccount.profileURLString(forHandle: input.rawHandle, destination: input.kind) == nil {
+            notice = .info("Check the \(input.kind.title) handle. Use only the account name, with or without @.")
+            return false
+        }
+
+        isWorking = true
+        defer { isWorking = false }
+        let installationIdentity = try? await credentialStore.load()
         let profile = CreatorProfile(
-            name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
-            goal: draft.goal.trimmingCharacters(in: .whitespacesAndNewlines),
-            selectedPlatforms: draft.platforms.sorted { $0.rawValue < $1.rawValue },
-            assistanceMode: draft.assistanceMode,
+            name: name,
+            goal: goal,
+            selectedPlatforms: selectedPlatforms,
+            assistanceMode: .collaborate,
             adultConfirmed: draft.adultConfirmed,
             telemetryConsent: draft.telemetryConsent,
-            onboardingCompleted: false
+            onboardingCompleted: true
         )
+        profile.selectedDestinationIDs = selectedDestinations.sorted { $0.uuidString < $1.uuidString }
         context.insert(profile)
+
+        let retainedPillars = Array(draft.pillars.prefix(4))
+        let anchorID = retainedPillars.first?.id
+        for (index, pillar) in retainedPillars.enumerated() {
+            context.insert(Pillar(
+                id: pillar.id,
+                parentPillarID: index == 0 ? nil : anchorID,
+                role: index == 0 ? .anchor : .supporting,
+                name: pillar.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                detail: "",
+                colorHex: pillar.colorHex,
+                assignedWeekdays: pillar.assignedWeekdays
+            ))
+        }
+
         for (index, example) in retainedExamples.enumerated() {
             context.insert(VoiceExample(
                 id: example.id,
@@ -404,53 +444,91 @@ final class AppModel {
                 creatorConfirmed: true
             ))
         }
-        if let approvedVoiceProfile = onboardingVoiceProfile(from: draft) {
-            context.insert(VoiceProfile(
+
+        for (index, input) in accountInputs.enumerated() {
+            guard let profileURL = CreatorSocialAccount.profileURLString(forHandle: input.rawHandle, destination: input.kind) else { continue }
+            var handle = input.rawHandle.trimmingCharacters(in: .whitespacesAndNewlines)
+            while handle.hasPrefix("@") { handle.removeFirst() }
+            context.insert(CreatorSocialAccount(
                 profileID: profile.id,
-                summary: approvedVoiceProfile.summary,
-                traitsText: (approvedVoiceProfile.tone + approvedVoiceProfile.signatureQualities).joined(separator: ", "),
-                avoidText: approvedVoiceProfile.phrasesToAvoid.joined(separator: ", "),
-                isApproved: true,
-                canonicalPayloadJSON: (try? encodeJSONString(approvedVoiceProfile)) ?? "",
-                evidenceFingerprint: VoiceExampleFingerprint.make(from: retainedExamples)
+                destinationID: input.destinationID,
+                label: "@\(handle)",
+                profileURLString: profileURL,
+                isPrimary: true,
+                sortOrder: index
             ))
         }
-        let settings = ReminderSettings(
-            dailyEnabled: draft.dailyReminderEnabled,
-            dailyHour: draft.dailyReminderHour,
-            weeklyEnabled: draft.weeklyReminderEnabled,
-            weeklyWeekday: 2,
-            weeklyHour: draft.weeklyReminderHour
-        )
-        context.insert(settings)
-        let installationIdentity = try? await credentialStore.load()
-        context.insert(SubscriptionState(access: installationIdentity?.access ?? .freeJourney, trialEnd: installationIdentity?.promotionalEntitlementEndsAt))
-        try? context.save()
-        do {
-            try await reminderService.apply(settings)
-        } catch {
-            notice = .info("Your profile is ready. Reminders stayed off because notification permission was not available.")
+
+        if fetchOne(ReminderSettings.self, context: context) == nil {
+            context.insert(ReminderSettings(
+                masterEnabled: true,
+                dailyEnabled: draft.dailyReminderEnabled,
+                dailyHour: draft.dailyReminderHour,
+                dailyMinute: draft.dailyReminderMinute,
+                weeklyEnabled: draft.weeklyReminderEnabled,
+                weeklyWeekday: draft.weeklyReminderWeekday,
+                weeklyHour: draft.weeklyReminderHour,
+                weeklyMinute: draft.weeklyReminderMinute
+            ))
         }
-        return true
+        if fetchOne(SubscriptionState.self, context: context) == nil {
+            context.insert(SubscriptionState(
+                access: installationIdentity?.access ?? .freeJourney,
+                trialEnd: installationIdentity?.promotionalEntitlementEndsAt
+            ))
+        }
+
+        do {
+            try context.save()
+            await refreshReminderSchedule(context: context)
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("Setup could not be saved. Please try again. \(error.localizedDescription)")
+            return false
+        }
     }
 
-    func applyReminderSettings(_ settings: ReminderSettings, context: ModelContext) async {
+    func applyReminderSettings(
+        _ settings: ReminderSettings,
+        context: ModelContext,
+        requestPermission: Bool = false
+    ) async {
         settings.updatedAt = Date()
         do {
             try context.save()
-            try await reminderService.apply(settings)
+            if requestPermission, settings.masterEnabled {
+                _ = try await reminderService.requestAuthorization()
+            }
+            nextNotificationPreviews = try await reminderService.reconcile(context: context, now: Date())
+            notificationAuthorization = await reminderService.authorizationStatus()
         } catch {
-            settings.dailyEnabled = false
-            settings.weeklyEnabled = false
-            settings.updatedAt = Date()
-            try? context.save()
-            notice = .info("Notifications stayed off because permission was not available.")
+            notificationAuthorization = await reminderService.authorizationStatus()
+            notice = .info(error.localizedDescription)
         }
     }
 
     func refreshReminderSchedule(context: ModelContext) async {
-        guard let settings = try? context.fetch(FetchDescriptor<ReminderSettings>()).first else { return }
-        try? await reminderService.apply(settings)
+        notificationAuthorization = await reminderService.authorizationStatus()
+        do {
+            nextNotificationPreviews = try await reminderService.reconcile(context: context, now: Date())
+        } catch {
+            nextNotificationPreviews = []
+        }
+    }
+
+    @discardableResult
+    func requestNotificationPermission(context: ModelContext) async -> Bool {
+        do {
+            let granted = try await reminderService.requestAuthorization()
+            notificationAuthorization = await reminderService.authorizationStatus()
+            nextNotificationPreviews = try await reminderService.reconcile(context: context, now: Date())
+            return granted
+        } catch {
+            notificationAuthorization = await reminderService.authorizationStatus()
+            notice = .info(error.localizedDescription)
+            return false
+        }
     }
 
     var calendarAuthorization: AgentCalendarAuthorization {
@@ -498,6 +576,11 @@ final class AppModel {
         // reset in production) may be torn down before that task resumes.
         WidgetSnapshotService.refresh(context: context)
         refreshCalendarSync(context: context)
+        if reminderService is LocalReminderService {
+            Task { @MainActor [weak self] in
+                await self?.refreshReminderSchedule(context: context)
+            }
+        }
     }
 
     func applyFocusReminder(
@@ -507,14 +590,17 @@ final class AppModel {
     ) async {
         details.updatedAt = Date()
         do {
+            if details.reminderEnabled {
+                guard let reminderDate = details.reminderDate, reminderDate > Date() else {
+                    throw ReminderServiceError.reminderDatePassed
+                }
+                if await reminderService.authorizationStatus() == .notDetermined {
+                    _ = try await reminderService.requestAuthorization()
+                }
+            }
             try context.save()
-            try await reminderService.applyFocusReminder(
-                id: details.id,
-                enabled: details.reminderEnabled,
-                date: details.reminderDate,
-                title: focusTitle,
-                body: details.note.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
+            nextNotificationPreviews = try await reminderService.reconcile(context: context, now: Date())
+            notificationAuthorization = await reminderService.authorizationStatus()
         } catch {
             details.reminderEnabled = false
             details.updatedAt = Date()
@@ -613,6 +699,7 @@ final class AppModel {
         socialAccountID: UUID? = nil,
         durationSeconds: Int,
         targetDate: Date,
+        includesTargetTime: Bool = false,
         context: ModelContext
     ) -> (brief: CreativeBrief, output: PlatformOutput)? {
         guard can(.createSpark, context: context) else { return nil }
@@ -641,6 +728,7 @@ final class AppModel {
             status: .draft
         )
         output.targetDate = targetDate
+        output.includesTargetTime = includesTargetTime
         context.insert(output)
 
         do {
@@ -698,10 +786,14 @@ final class AppModel {
         copy.compensationType = brief.compensationType
         copy.compensationAmount = brief.compensationAmount
         copy.compensationCurrencyCode = brief.compensationCurrencyCode
+        copy.brandHasNetTerms = brief.brandHasNetTerms
+        copy.brandNetTermsDays = brief.brandNetTermsDays
         copy.giftedProductDescription = brief.giftedProductDescription
         copy.giftedEstimatedValue = brief.giftedEstimatedValue
         copy.promoCode = brief.promoCode
         copy.promoLinkString = brief.promoLinkString
+        copy.moodBoardEnabled = brief.moodBoardEnabled
+        copy.moodBoardURLString = brief.moodBoardURLString
         copy.agendaDate = brief.agendaDate
         context.insert(copy)
 
@@ -727,6 +819,7 @@ final class AppModel {
         outputCopy.recurrenceMonthDay = output.recurrenceMonthDay
         outputCopy.recurrenceEndDate = output.recurrenceEndDate
         outputCopy.includesTargetTime = output.includesTargetTime
+        outputCopy.publishedURLString = ""
         context.insert(outputCopy)
 
         let sourceBriefID = brief.id
@@ -747,6 +840,7 @@ final class AppModel {
                 notes: task.notes,
                 estimatedMinutes: task.estimatedMinutes,
                 targetDate: task.targetDate,
+                includesTargetTime: task.includesTargetTime,
                 dailyFocusDate: task.dailyFocusDate,
                 dailyFocusTitle: task.dailyFocusTitle,
                 dailyFocusTemplateEntryID: task.dailyFocusTemplateEntryID,
@@ -840,6 +934,7 @@ final class AppModel {
         socialAccountID: UUID? = nil,
         durationSeconds: Int,
         targetDate: Date,
+        includesTargetTime: Bool = false,
         context: ModelContext
     ) -> CreativeBrief? {
         guard can(.createSpark, context: context) else { return nil }
@@ -878,6 +973,7 @@ final class AppModel {
             status: .draft
         )
         output.targetDate = targetDate
+        output.includesTargetTime = includesTargetTime
         context.insert(output)
 
         do {
@@ -905,7 +1001,7 @@ final class AppModel {
     }
 
     @discardableResult
-    func createTask(title: String, kind: CreatorTaskKind, lane: TaskLane = .pillar, priority: TaskPriority = .none, targetDate: Date?, focusAssignment: DailyFocusTaskAssignment? = nil, recurrence: TaskRecurrenceFrequency = .none, context: ModelContext) -> CreatorTask? {
+    func createTask(title: String, kind: CreatorTaskKind, lane: TaskLane = .pillar, priority: TaskPriority = .none, targetDate: Date?, includesTargetTime: Bool = false, focusAssignment: DailyFocusTaskAssignment? = nil, recurrence: TaskRecurrenceFrequency = .none, context: ModelContext) -> CreatorTask? {
         guard can(.createTask, context: context) else { return nil }
         let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
@@ -918,6 +1014,7 @@ final class AppModel {
             lane: focusAssignment == nil ? lane : .production,
             priority: priority.normalized,
             targetDate: targetDate,
+            includesTargetTime: includesTargetTime,
             dailyFocusDate: focusAssignment?.date,
             dailyFocusTitle: focusAssignment?.title,
             dailyFocusTemplateEntryID: focusAssignment?.templateEntryID,
@@ -1458,6 +1555,12 @@ final class AppModel {
         }
         let previousDate = output.targetDate
         if [.spark, .developing].contains(brief.status), output.status == .draft {
+            rescheduleLinkedTasks(
+                for: output,
+                from: previousDate,
+                to: date,
+                context: context
+            )
             output.targetDate = date
             if brief.agendaDate == nil || brief.agendaDate == previousDate { brief.agendaDate = date }
             brief.updatedAt = Date()
@@ -1469,6 +1572,12 @@ final class AppModel {
             notice = .info("Approve this brief before adding focus tasks or posting targets.")
             return
         }
+        rescheduleLinkedTasks(
+            for: output,
+            from: previousDate,
+            to: date,
+            context: context
+        )
         if brief.agendaDate == nil || brief.agendaDate == previousDate { brief.agendaDate = date }
         BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
         try? context.save()
@@ -1487,6 +1596,7 @@ final class AppModel {
             date,
             includesTime: output.includesTargetTime
         )
+        let previousDate = output.targetDate
         if brief.status == .spark || brief.status == .developing {
             BriefLifecycle.approve(brief)
             if let profile = fetchOne(CreatorProfile.self, context: context), !profile.onboardingCompleted {
@@ -1497,6 +1607,12 @@ final class AppModel {
             notice = .info("Finish this post before scheduling it.")
             return false
         }
+        rescheduleLinkedTasks(
+            for: output,
+            from: previousDate,
+            to: scheduledDate,
+            context: context
+        )
         brief.agendaDate = scheduledDate
         BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
 
@@ -1564,10 +1680,135 @@ final class AppModel {
         }
     }
 
+    func applyPendingWidgetTaskCompletions(
+        context: ModelContext,
+        defaults: UserDefaults? = UserDefaults(suiteName: AgentCyWidgetShared.appGroupIdentifier),
+        refreshWidgets: Bool = true
+    ) {
+        do {
+            let actions = try WidgetTaskCompletionActionStore.pending(defaults: defaults)
+            guard !actions.isEmpty else { return }
+
+            let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+            let taskByID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
+            let briefByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
+            var acknowledged: [WidgetTaskCompletionAction] = []
+
+            for action in actions {
+                guard let task = taskByID[action.taskID] else {
+                    acknowledged.append(action)
+                    continue
+                }
+                guard task.isCompleted != action.isCompleted else {
+                    acknowledged.append(action)
+                    continue
+                }
+
+                let linkedBrief = task.briefID.flatMap { briefByID[$0] }
+                if task.briefID != nil, linkedBrief == nil || linkedBrief?.status == .archived {
+                    acknowledged.append(action)
+                    continue
+                }
+
+                let previousMilestoneExists: Bool
+                if let briefID = task.briefID {
+                    previousMilestoneExists = tasks.contains {
+                        $0.id != task.id && $0.briefID == briefID && $0.recordingMilestoneEmitted
+                    }
+                } else {
+                    previousMilestoneExists = true
+                }
+
+                _ = BriefLifecycle.toggleTask(task, brief: linkedBrief)
+                if previousMilestoneExists && task.recordingMilestoneEmitted {
+                    task.recordingMilestoneEmitted = false
+                }
+                if task.isCompleted {
+                    try RecurringTaskMaterializer.createNextOccurrence(after: task, context: context)
+                }
+                acknowledged.append(action)
+            }
+
+            try context.save()
+            try WidgetTaskCompletionActionStore.remove(acknowledged, defaults: defaults)
+            if refreshWidgets {
+                queueCalendarSync(context: context)
+            }
+        } catch {
+            notice = .error("That widget task could not be updated yet. Open agent.cy and try once more.")
+        }
+    }
+
     func archive(_ brief: CreativeBrief, context: ModelContext) {
         BriefLifecycle.archive(brief)
         try? context.save()
         queueCalendarSync(context: context)
+    }
+
+    @discardableResult
+    func deletePost(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        scope: PostDeletionScope,
+        context: ModelContext
+    ) -> Bool {
+        guard can(.editExisting, context: context), output.briefID == brief.id else { return false }
+
+        do {
+            let allOutputs = try context.fetch(FetchDescriptor<PlatformOutput>())
+            let selectedOutputs = PostSeriesDeletionPolicy.outputsToDelete(
+                selected: output,
+                from: allOutputs,
+                scope: scope
+            )
+            let briefIDs = Set(selectedOutputs.map(\.briefID))
+            let outputIDs = Set(allOutputs.lazy.filter { briefIDs.contains($0.briefID) }.map(\.id))
+
+            let allTasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            allTasks
+                .filter {
+                    $0.briefID.map(briefIDs.contains) == true ||
+                        $0.platformOutputID.map(outputIDs.contains) == true
+                }
+                .forEach(context.delete)
+
+            let allAttachments = try context.fetch(FetchDescriptor<CreatorAttachment>())
+            allAttachments
+                .filter {
+                    briefIDs.contains($0.briefID) ||
+                        $0.platformOutputID.map(outputIDs.contains) == true
+                }
+                .forEach(context.delete)
+
+            let proposals = try context.fetch(FetchDescriptor<PendingBriefProposal>())
+            proposals.filter { briefIDs.contains($0.briefID) }.forEach(context.delete)
+
+            let threads = try context.fetch(FetchDescriptor<ConversationThread>())
+                .filter { $0.briefID.map(briefIDs.contains) == true }
+            let threadIDs = Set(threads.map(\.id))
+            let messages = try context.fetch(FetchDescriptor<ConversationMessage>())
+                .filter { threadIDs.contains($0.threadID) }
+            messages.forEach(context.delete)
+            threads.forEach(context.delete)
+
+            allOutputs.filter { outputIDs.contains($0.id) }.forEach(context.delete)
+            let allBriefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+            allBriefs.filter { briefIDs.contains($0.id) }.forEach(context.delete)
+            try context.save()
+
+            for briefID in briefIDs {
+                briefProposals.removeValue(forKey: briefID)
+                revisionProposals.removeValue(forKey: briefID)
+            }
+            notice = .info(briefIDs.count == 1 ? "Post deleted." : "Future series posts deleted.")
+            queueCalendarSync(context: context)
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That post could not be deleted.")
+            return false
+        }
     }
 
     @discardableResult
@@ -1664,6 +1905,14 @@ final class AppModel {
             case .archive:
                 BriefLifecycle.archive(brief)
             }
+            if choice == .move {
+                rescheduleLinkedTasks(
+                    for: output,
+                    from: previousDate,
+                    to: output.targetDate,
+                    context: context
+                )
+            }
             if brief.agendaDate == nil || brief.agendaDate == previousDate {
                 brief.agendaDate = output.targetDate
             }
@@ -1686,12 +1935,54 @@ final class AppModel {
         case .archive:
             BriefLifecycle.archive(brief)
         }
+        if choice == .move {
+            rescheduleLinkedTasks(
+                for: output,
+                from: previousDate,
+                to: output.targetDate,
+                context: context
+            )
+        }
         if (choice == .move || choice == .pause),
            (brief.agendaDate == nil || brief.agendaDate == previousDate) {
             brief.agendaDate = output.targetDate
         }
         try? context.save()
         queueCalendarSync(context: context)
+    }
+
+    @discardableResult
+    func rescheduleLinkedTasks(
+        for output: PlatformOutput,
+        from previousDate: Date?,
+        to newDate: Date?,
+        context: ModelContext
+    ) -> Int {
+        guard let previousDate, let newDate,
+              !Calendar.current.isDate(previousDate, inSameDayAs: newDate)
+        else { return 0 }
+
+        let allTasks = (try? context.fetch(FetchDescriptor<CreatorTask>())) ?? []
+        var movedCount = 0
+        for task in allTasks where !task.isCompleted {
+            guard PostTaskReschedulePolicy.isLinked(
+                taskBriefID: task.briefID,
+                taskOutputID: task.platformOutputID,
+                toOutputID: output.id,
+                briefID: output.briefID
+            ) else { continue }
+
+            task.targetDate = PostTaskReschedulePolicy.alignedDate(
+                task.targetDate,
+                to: newDate,
+                includesTime: task.includesTargetTime
+            )
+            if task.dailyFocusDate != nil {
+                task.dailyFocusDate = Calendar.current.startOfDay(for: newDate)
+            }
+            movedCount += 1
+        }
+        return movedCount
     }
 
     func createRepurposedSpark(from brief: CreativeBrief, context: ModelContext) -> CreativeBrief? {
@@ -1805,6 +2096,7 @@ final class AppModel {
     @discardableResult
     func saveWeeklyFocus(
         _ assignments: [PillarWeekday: [DailyFocusKind]],
+        taskTemplates: [PillarWeekday: [DailyFocusTaskTemplateDefinition]]? = nil,
         context: ModelContext
     ) -> Bool {
         let existing = (try? context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())) ?? []
@@ -1827,6 +2119,22 @@ final class AppModel {
             entry.secondaryKind = selected.count > 1 ? selected[1] : nil
             entry.title = DailyFocusKind.combinedTitle(selected)
             entry.isActive = !selected.isEmpty
+            if let taskTemplates {
+                let selectedSet = Set(selected)
+                entry.focusTaskTemplates = (taskTemplates[weekday] ?? [])
+                    .filter {
+                        selectedSet.contains($0.focusKind) &&
+                            !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                    .enumerated()
+                    .map { index, definition in
+                        var value = definition
+                        value.title = value.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        value.priority = value.priority.normalized
+                        value.sortOrder = index
+                        return value
+                    }
+            }
             if previous != selected {
                 entry.note = ""
             }
@@ -1840,6 +2148,11 @@ final class AppModel {
 
         do {
             try context.save()
+            if taskTemplates != nil {
+                try FocusTaskRecurrenceService.reconcile(context: context)
+                queueCalendarSync(context: context)
+                WidgetSnapshotService.refresh(context: context)
+            }
             return true
         } catch {
             notice = .error("Weekly focus could not be saved: \(error.localizedDescription)")
@@ -2370,34 +2683,6 @@ final class AppModel {
         (0...1).contains(draft.confidence)
     }
 
-    private func onboardingVoiceProfile(from draft: OnboardingDraft) -> VoiceProfileWire? {
-        guard let data = draft.voiceProfilePayloadJSON.data(using: .utf8),
-              let baseline = try? JSONDecoder().decode(VoiceProfileWire.self, from: data) else {
-            return nil
-        }
-        let summary = draft.voiceSummary.trimmingCharacters(in: .whitespacesAndNewlines)
-        let signatureQualities = editableVoiceList(draft.voiceTraits)
-        guard !summary.isEmpty, !signatureQualities.isEmpty else { return nil }
-
-        return VoiceProfileWire(
-            summary: summary,
-            tone: baseline.tone,
-            sentenceStyle: baseline.sentenceStyle,
-            signatureQualities: signatureQualities,
-            phrasesToUse: baseline.phrasesToUse,
-            phrasesToAvoid: editableVoiceList(draft.voiceAvoid),
-            guidance: baseline.guidance,
-            confidence: baseline.confidence
-        )
-    }
-
-    private func editableVoiceList(_ value: String) -> [String] {
-        value
-            .components(separatedBy: CharacterSet(charactersIn: ",\n"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
-
     private func normalizedExampleText(_ value: String) -> String {
         value
             .lowercased()
@@ -2437,27 +2722,6 @@ final class AppModel {
 
     private func fetchOne<T: PersistentModel>(_ type: T.Type, context: ModelContext) -> T? {
         try? context.fetch(FetchDescriptor<T>()).first
-    }
-
-    private func onboardingCreatorContext(from draft: OnboardingDraft) -> CreatorContextWire {
-        let examples = draft.voiceExamples.filter(\.isUsableEvidence).prefix(5).enumerated().map { index, example in
-            VoiceExampleWire(
-                exampleId: example.id,
-                order: index,
-                text: example.trimmedText,
-                source: example.source,
-                creatorConfirmed: true
-            )
-        }
-        return CreatorContextWire(
-            name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
-            primaryGoal: draft.goal.trimmingCharacters(in: .whitespacesAndNewlines),
-            selectedPlatforms: draft.platforms.sorted { $0.rawValue < $1.rawValue },
-            voiceExamples: examples,
-            voiceProfile: nil,
-            pillars: [],
-            librarySummaries: []
-        )
     }
 
     private func creatorContextWire(profile: CreatorProfile, context: ModelContext) -> CreatorContextWire? {

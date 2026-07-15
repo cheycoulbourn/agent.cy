@@ -11,7 +11,7 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     TARGETED_DEVICE_FAMILY: "1"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "115"
+    CURRENT_PROJECT_VERSION: "134"
     DEVELOPMENT_LANGUAGE: en
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     # Design tokens are programmatic so simulator/source builds and the asset
@@ -74,6 +74,7 @@ targets:
         AGENTCY_API_BASE_URL: "$(AGENTCY_API_BASE_URL)"
         AGENTCY_USE_LIVE_AI: "$(AGENTCY_USE_LIVE_AI)"
         AGENTCY_CLOUDKIT_ENABLED: "$(AGENTCY_CLOUDKIT_ENABLED)"
+        # Required by private CloudKit mirroring. Notification content remains local-only.
         UIBackgroundModes:
           - remote-notification
         NSAppTransportSecurity:

@@ -41,6 +41,7 @@ struct QuickCaptureView: View {
     @State private var postFormatID = PublishingCatalog.instagramReelID
     @State private var postSocialAccountID: UUID?
     @State private var postDurationSeconds = ContentFormat.shortForm.defaultDuration
+    @State private var postIncludesTime = false
     @State private var taskTitle = ""
     @State private var taskNotes = ""
     @State private var taskPillarID: UUID?
@@ -52,6 +53,7 @@ struct QuickCaptureView: View {
     @State private var draftSubtasks: [DraftCaptureSubtask] = []
     @State private var showTaskDueDatePicker = false
     @State private var addTarget = false
+    @State private var taskIncludesTime = false
     @State private var targetDate = Date()
     @State private var ideas: [IdeaDirection] = []
     @State private var ideaPhase: CyIdeaRequestPhase = .idle
@@ -206,7 +208,8 @@ struct QuickCaptureView: View {
             .sheet(isPresented: $showTaskDueDatePicker) {
                 CaptureTaskDueDateSheet(
                     date: $targetDate,
-                    hasDueDate: $addTarget
+                    hasDueDate: $addTarget,
+                    includesTime: $taskIncludesTime
                 )
                 .preferredColorScheme(appModel.appearancePreference.colorSchemeOverride)
                 .presentationDetents([.large])
@@ -730,6 +733,7 @@ struct QuickCaptureView: View {
             lane: taskLane,
             priority: taskPriority,
             targetDate: addTarget ? targetDate : nil,
+            includesTargetTime: addTarget && taskIncludesTime,
             focusAssignment: taskFocusAssignment,
             recurrence: taskRecurrence,
             context: context
@@ -817,7 +821,15 @@ struct QuickCaptureView: View {
                 AgentDurationPicker(seconds: $postDurationSeconds, format: contentFormat)
             }
 
-            DatePicker("Date and time", selection: $targetDate, displayedComponents: [.date, .hourAndMinute])
+            DatePicker("Date", selection: $targetDate, displayedComponents: .date)
+
+            Toggle("Include a time", isOn: $postIncludesTime)
+                .font(.agentBody.weight(.semibold))
+                .tint(Color.actionAccent)
+
+            if postIncludesTime {
+                DatePicker("Time", selection: $targetDate, displayedComponents: .hourAndMinute)
+            }
 
             Button("Save post", systemImage: "checkmark") {
                 savePost(title: postTitle)
@@ -867,15 +879,18 @@ struct QuickCaptureView: View {
     }
 
     private var taskDueDateLabel: String {
-        guard addTarget else { return "Set date and time" }
-        return targetDate.formatted(
-            .dateTime
-                .weekday(.abbreviated)
-                .month(.abbreviated)
-                .day()
-                .hour()
-                .minute()
-        )
+        guard addTarget else { return "Set a date" }
+        if taskIncludesTime {
+            return targetDate.formatted(
+                .dateTime
+                    .weekday(.abbreviated)
+                    .month(.abbreviated)
+                    .day()
+                    .hour()
+                    .minute()
+            )
+        }
+        return targetDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
     }
 
     private var headerTitle: String {
@@ -1003,6 +1018,7 @@ struct QuickCaptureView: View {
             socialAccountID: postSocialAccountID,
             durationSeconds: postDurationSeconds,
             targetDate: targetDate,
+            includesTargetTime: postIncludesTime,
             context: context
         )
         didSavePost = savedBrief != nil
@@ -1019,6 +1035,7 @@ struct QuickCaptureView: View {
             socialAccountID: postSocialAccountID,
             durationSeconds: postDurationSeconds,
             targetDate: targetDate,
+            includesTargetTime: postIncludesTime,
             context: context
         ) else { return }
 
@@ -1097,6 +1114,7 @@ struct QuickCaptureView: View {
                 socialAccountID: postSocialAccountID,
                 durationSeconds: postDurationSeconds,
                 targetDate: targetDate,
+                includesTargetTime: postIncludesTime,
                 context: context
             ) != nil
         }
@@ -1172,12 +1190,16 @@ private struct CaptureTaskDueDateSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding private var date: Date
     @Binding private var hasDueDate: Bool
+    @Binding private var includesTime: Bool
     @State private var selectedDate: Date
+    @State private var selectedIncludesTime: Bool
 
-    init(date: Binding<Date>, hasDueDate: Binding<Bool>) {
+    init(date: Binding<Date>, hasDueDate: Binding<Bool>, includesTime: Binding<Bool>) {
         _date = date
         _hasDueDate = hasDueDate
+        _includesTime = includesTime
         _selectedDate = State(initialValue: date.wrappedValue)
+        _selectedIncludesTime = State(initialValue: includesTime.wrappedValue)
     }
 
     var body: some View {
@@ -1186,7 +1208,7 @@ private struct CaptureTaskDueDateSheet: View {
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                         MetaLabel("Task due")
-                        Text("Choose a date and time.")
+                        Text("Choose a date. Add a time only if it matters.")
                             .font(.agentHeadline)
                             .foregroundStyle(Color.agentText)
                     }
@@ -1198,12 +1220,27 @@ private struct CaptureTaskDueDateSheet: View {
                     )
                     .datePickerStyle(.graphical)
 
-                    DatePicker(
-                        "Time",
-                        selection: $selectedDate,
-                        displayedComponents: .hourAndMinute
-                    )
-                    .font(.agentBody)
+                    VStack(spacing: 0) {
+                        Toggle("Include a time", isOn: $selectedIncludesTime)
+                            .font(.agentBody.weight(.semibold))
+                            .tint(Color.actionAccent)
+                            .frame(minHeight: 52)
+
+                        if selectedIncludesTime {
+                            Divider().overlay(Color.agentHairline)
+                            HStack {
+                                Text("Time").font(.agentBody)
+                                Spacer()
+                                DatePicker(
+                                    "Time",
+                                    selection: $selectedDate,
+                                    displayedComponents: .hourAndMinute
+                                )
+                                .labelsHidden()
+                            }
+                            .frame(minHeight: 52)
+                        }
+                    }
 
                     if hasDueDate {
                         Button("Remove due date", role: .destructive) {
@@ -1225,9 +1262,12 @@ private struct CaptureTaskDueDateSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Use date") {
-                        date = selectedDate
+                        Button("Use date") {
+                        date = selectedIncludesTime
+                            ? selectedDate
+                            : Calendar.current.startOfDay(for: selectedDate)
                         hasDueDate = true
+                        includesTime = selectedIncludesTime
                         dismiss()
                     }
                 }
