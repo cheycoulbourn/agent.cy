@@ -41,3 +41,6 @@
 - Creator examples carry a confirmed source label: typed text, text from a public post, or screenshot-derived text. Only confirmed text reaches the proxy. Prompts never claim to fetch a post, open a URL, or inspect an image.
 - Initial voice-profile extraction requires three confirmed examples, but other creation operations accept an empty example list so examples can be deferred.
 - Revision and Teach Cy results are staged locally. Counters settle only after a validated proposal is persisted, and acceptance rejects stale source versions or creator edits.
+- Global chat receives compact summaries for up to 20 non-archived posts and 20 current top-level tasks from the active creator account. Incomplete drafts remain eligible; empty optional fields are omitted instead of excluding the post.
+- Post summaries may include pillar, format, hook, caption, schedule, posting state, and task progress. Task summaries may include their post or pillar relationship. The full local database and unrelated account data never enter the request.
+- A `createTask` chat action must contain a validated task proposal. The app shows that proposal for explicit acceptance and uses the source conversation message to prevent duplicate creation.

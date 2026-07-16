@@ -8,6 +8,257 @@ private struct CyPlateItem: Identifiable {
     let title: String
 }
 
+enum CyTaskAttentionPolicy {
+    static func visibleOpenTasks(
+        tasks: [CreatorTask],
+        activeBriefIDs: Set<UUID>,
+        outputs: [PlatformOutput],
+        briefs: [CreativeBrief],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [CreatorTask] {
+        tasks.filter { task in
+            guard !task.isCompleted,
+                  !task.isSkipped,
+                  task.parentTaskID == nil
+            else { return false }
+
+            let linkedOutput = task.platformOutputID.flatMap { outputID in
+                outputs.first { $0.id == outputID }
+            }
+            if let linkedBriefID = task.briefID ?? linkedOutput?.briefID,
+               !activeBriefIDs.contains(linkedBriefID) {
+                return false
+            }
+
+            return TaskListVisibilityPolicy.includes(
+                collection: TaskCollectionPolicy.collection(
+                    briefID: task.briefID,
+                    platformOutputID: task.platformOutputID
+                ),
+                focusTaskTemplateID: task.focusTaskTemplateID,
+                recurrence: task.recurrence,
+                recurrenceRootTaskID: task.recurrenceRootTaskID,
+                targetDate: visibilityDate(for: task, outputs: outputs, briefs: briefs),
+                now: now,
+                calendar: calendar
+            )
+        }
+    }
+
+    static func isPastDue(
+        _ task: CreatorTask,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard !task.isCompleted, let targetDate = task.targetDate else { return false }
+        return calendar.startOfDay(for: targetDate) < calendar.startOfDay(for: now)
+    }
+
+    private static func visibilityDate(
+        for task: CreatorTask,
+        outputs: [PlatformOutput],
+        briefs: [CreativeBrief]
+    ) -> Date? {
+        if let targetDate = task.targetDate { return targetDate }
+        if let dailyFocusDate = task.dailyFocusDate { return dailyFocusDate }
+        if let outputID = task.platformOutputID,
+           let targetDate = outputs.first(where: { $0.id == outputID })?.targetDate {
+            return targetDate
+        }
+        if let briefID = task.briefID {
+            if let targetDate = outputs
+                .filter({ $0.briefID == briefID })
+                .compactMap(\.targetDate)
+                .min() {
+                return targetDate
+            }
+            return briefs.first(where: { $0.id == briefID })?.agendaDate
+        }
+        return nil
+    }
+}
+
+struct CyMarkdownBlock: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case heading(level: Int)
+        case paragraph
+        case bullet
+        case numbered(marker: String)
+        case quote
+    }
+
+    let id: Int
+    let kind: Kind
+    let text: String
+}
+
+enum CyMarkdownParser {
+    static func blocks(from source: String) -> [CyMarkdownBlock] {
+        let normalized = source
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let readable = insertBreaksBeforeInlineLabels(in: normalized)
+        let lines = readable.components(separatedBy: "\n")
+        var result: [CyMarkdownBlock] = []
+        var paragraphLines: [String] = []
+
+        func append(_ kind: CyMarkdownBlock.Kind, _ text: String) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            result.append(CyMarkdownBlock(id: result.count, kind: kind, text: trimmed))
+        }
+
+        func flushParagraph() {
+            guard !paragraphLines.isEmpty else { return }
+            append(.paragraph, paragraphLines.joined(separator: " "))
+            paragraphLines.removeAll(keepingCapacity: true)
+        }
+
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else {
+                flushParagraph()
+                continue
+            }
+
+            if let heading = heading(in: line) {
+                flushParagraph()
+                append(.heading(level: heading.level), heading.text)
+            } else if let bullet = prefixedText(in: line, prefixes: ["- ", "* ", "• "]) {
+                flushParagraph()
+                append(.bullet, bullet)
+            } else if let numbered = numberedText(in: line) {
+                flushParagraph()
+                append(.numbered(marker: numbered.marker), numbered.text)
+            } else if line.hasPrefix("> ") {
+                flushParagraph()
+                append(.quote, String(line.dropFirst(2)))
+            } else {
+                paragraphLines.append(line)
+            }
+        }
+
+        flushParagraph()
+        return result
+    }
+
+    private static func insertBreaksBeforeInlineLabels(in source: String) -> String {
+        // Models occasionally return valid inline Markdown without paragraph
+        // breaks. Promote bold labels ending in a colon into separate blocks so
+        // a useful response never becomes one dense wall of text on iPhone.
+        let pattern = #"(?<!^)(?<!\n)\s+(\*\*[^*\n]{1,80}:\*\*)"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return source }
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        return expression.stringByReplacingMatches(
+            in: source,
+            range: range,
+            withTemplate: "\n\n$1"
+        )
+    }
+
+    private static func heading(in line: String) -> (level: Int, text: String)? {
+        let markers = line.prefix { $0 == "#" }
+        guard !markers.isEmpty, markers.count <= 3 else { return nil }
+        let remainder = line.dropFirst(markers.count)
+        guard remainder.first == " " else { return nil }
+        return (markers.count, String(remainder.dropFirst()))
+    }
+
+    private static func prefixedText(in line: String, prefixes: [String]) -> String? {
+        guard let prefix = prefixes.first(where: line.hasPrefix) else { return nil }
+        return String(line.dropFirst(prefix.count))
+    }
+
+    private static func numberedText(in line: String) -> (marker: String, text: String)? {
+        guard let separator = line.firstIndex(of: ".") else { return nil }
+        let marker = line[..<separator]
+        guard !marker.isEmpty, marker.allSatisfy(\.isNumber) else { return nil }
+        let textStart = line.index(after: separator)
+        guard textStart < line.endIndex, line[textStart] == " " else { return nil }
+        return (String(marker), String(line[line.index(after: textStart)...]))
+    }
+}
+
+private struct CyMarkdownResponseView: View {
+    let source: String
+
+    private var blocks: [CyMarkdownBlock] {
+        CyMarkdownParser.blocks(from: source)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            ForEach(blocks) { block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: CyMarkdownBlock) -> some View {
+        switch block.kind {
+        case .heading(let level):
+            Text(inlineMarkdown(block.text))
+                .font(level == 1 ? .agentTitle : .agentHeadline)
+                .foregroundStyle(Color.agentText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, block.id == 0 ? 0 : AgentSpacing.x1)
+        case .paragraph:
+            Text(inlineMarkdown(block.text))
+                .font(.agentBody)
+                .foregroundStyle(Color.agentText)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        case .bullet:
+            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                Circle()
+                    .fill(Color.cyAccent)
+                    .frame(width: 5, height: 5)
+                Text(inlineMarkdown(block.text))
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentText)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .numbered(let marker):
+            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                Text(marker)
+                    .font(.agentMono)
+                    .foregroundStyle(Color.cyAccent)
+                    .frame(width: 18, alignment: .leading)
+                Text(inlineMarkdown(block.text))
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentText)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .quote:
+            Text(inlineMarkdown(block.text))
+                .font(.agentBody)
+                .italic()
+                .foregroundStyle(Color.agentSecondary)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, AgentSpacing.x3)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.cyAccent)
+                        .frame(width: 2)
+                }
+        }
+    }
+
+    private func inlineMarkdown(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+}
+
 struct AskCyView: View {
     private let bottomClearance: CGFloat
     @Environment(AppModel.self) private var appModel
@@ -489,7 +740,7 @@ struct AskCyView: View {
         case .creator:
             VStack(alignment: .trailing, spacing: AgentSpacing.x2) {
                 Text(message.text)
-                    .font(.agentSubtext)
+                    .font(.agentBody)
                     .foregroundStyle(Color.agentCanvas)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -524,57 +775,95 @@ struct AskCyView: View {
                 MetaLabel(label)
             }
 
-            Text(renderedMarkdown(message.text))
-                .font(.agentSubtext)
-                .foregroundStyle(Color.agentText)
+            CyMarkdownResponseView(source: message.text)
                 .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, AgentSpacing.x4)
-                .padding(.vertical, 14)
-                .background(Color.agentSurface)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 16,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 16,
-                        topTrailingRadius: 16
-                    )
-                )
+                .padding(AgentSpacing.x4)
+                .background(Color.cyAccent.opacity(0.045), in: .rect(cornerRadius: AgentRadius.panel))
                 .overlay {
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 16,
-                        bottomLeadingRadius: 4,
-                        bottomTrailingRadius: 16,
-                        topTrailingRadius: 16
-                    )
-                    .stroke(Color.agentBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: AgentRadius.panel)
+                        .stroke(Color.cyAccent.opacity(0.16), lineWidth: 0.75)
                 }
-                .frame(maxWidth: 342, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if !message.chatSuggestions.isEmpty {
-                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    ForEach(Array(message.chatSuggestions.enumerated()), id: \.offset) { _, suggestion in
+                VStack(alignment: .leading, spacing: 0) {
+                    MetaLabel("Continue with")
+                        .foregroundStyle(Color.agentSecondary)
+                        .padding(.horizontal, AgentSpacing.x3)
+                        .padding(.vertical, AgentSpacing.x2)
+
+                    ForEach(Array(message.chatSuggestions.enumerated()), id: \.offset) { index, suggestion in
                         Button {
                             prompt = suggestion.prompt
                             composerIsFocused = true
                         } label: {
                             HStack(spacing: AgentSpacing.x2) {
                                 Text(suggestion.label)
-                                    .font(.agentSubtext.weight(.medium))
+                                    .font(.agentBody.weight(.medium))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 Image(systemName: "arrow.up.right")
                                     .font(.system(size: 11, weight: .semibold))
                             }
                             .foregroundStyle(Color.agentText)
                             .padding(.horizontal, AgentSpacing.x3)
-                            .frame(minHeight: 44)
-                            .background(Color.agentSurface, in: .capsule)
-                            .overlay { Capsule().stroke(Color.agentBorder, lineWidth: 1) }
+                            .frame(minHeight: 48)
                         }
                         .buttonStyle(.plain)
+                        .overlay(alignment: .top) {
+                            if index > 0 {
+                                Rectangle()
+                                    .fill(Color.agentHairline)
+                                    .frame(height: 1)
+                                    .padding(.horizontal, AgentSpacing.x3)
+                            }
+                        }
                     }
                 }
-                .frame(maxWidth: 342, alignment: .leading)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.panel)
+                        .stroke(Color.agentBorder, lineWidth: 0.75)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let taskProposal = proposedTask(for: message) {
+                let wasAdded = taskWasAdded(from: message)
+                Button {
+                    addProposedTask(taskProposal, from: message)
+                } label: {
+                    HStack(alignment: .center, spacing: AgentSpacing.x3) {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                            MetaLabel(wasAdded ? "TASK ADDED" : "PROPOSED TASK")
+                                .foregroundStyle(Color.cyAccent)
+                            Text(taskProposal.title)
+                                .font(.agentBody.weight(.semibold))
+                                .foregroundStyle(Color.agentText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(taskProposal.kind.title)
+                                .font(.agentMono)
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Image(systemName: wasAdded ? "checkmark" : "plus")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.onCyAccent)
+                            .frame(width: 36, height: 36)
+                            .background(Color.cyAccent, in: .circle)
+                    }
+                    .padding(.horizontal, AgentSpacing.x3)
+                    .padding(.vertical, AgentSpacing.x3)
+                    .background(Color.cyAccent.opacity(0.07), in: .rect(cornerRadius: AgentRadius.panel))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.cyAccent.opacity(0.32), lineWidth: 0.75)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(wasAdded)
+                .accessibilityLabel(wasAdded ? "Task added" : "Add task, \(taskProposal.title)")
+                .accessibilityHint("Adds Cy's proposed task to your task list")
             }
 
             if canSendResponseToPost(message) {
@@ -591,7 +880,7 @@ struct AskCyView: View {
                     }
                     .foregroundStyle(Color.cyAccent)
                     .padding(.horizontal, AgentSpacing.x3)
-                    .frame(maxWidth: 342, minHeight: 44)
+                    .frame(maxWidth: .infinity, minHeight: 44)
                     .background(Color.cyAccent.opacity(0.07), in: .capsule)
                     .overlay { Capsule().stroke(Color.cyAccent.opacity(0.38), lineWidth: 1) }
                     .shadow(color: Color.cyAccent.opacity(0.10), radius: 12, y: 4)
@@ -604,12 +893,14 @@ struct AskCyView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func renderedMarkdown(_ text: String) -> AttributedString {
+    private func plainText(from markdown: String) -> String {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .full,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        let rendered = (try? AttributedString(markdown: markdown, options: options))
+            ?? AttributedString(markdown)
+        return String(rendered.characters)
     }
 
     private var typingIndicator: some View {
@@ -629,7 +920,7 @@ struct AskCyView: View {
                     Text(composerPlaceholder)
                         .foregroundStyle(Color.agentSecondary)
                 }
-                    .font(.agentSubtext)
+                    .font(.agentBody)
                     .foregroundStyle(Color.agentText)
                     .lineLimit(1...4)
                     .focused($composerIsFocused)
@@ -697,10 +988,17 @@ struct AskCyView: View {
                   isLate(output, now: now) else { return nil }
             return output.briefID
         }).count
-        let unfinishedTaskCount = tasks.filter { task in
-            guard !task.isCompleted, task.parentTaskID == nil else { return false }
-            return task.briefID.map(activeBriefIDs.contains) ?? true
+        let visibleOpenTasks = CyTaskAttentionPolicy.visibleOpenTasks(
+            tasks: tasks,
+            activeBriefIDs: activeBriefIDs,
+            outputs: outputs,
+            briefs: activeBriefs,
+            now: now
+        )
+        let pastDueTaskCount = visibleOpenTasks.filter {
+            CyTaskAttentionPolicy.isPastDue($0, now: now)
         }.count
+        let openTaskCount = visibleOpenTasks.count - pastDueTaskCount
         let unscheduledIdeaCount = activeBriefs.filter { brief in
             guard brief.status == .spark || brief.status == .developing else { return false }
             return !outputs.contains { $0.briefID == brief.id && $0.targetDate != nil }
@@ -714,11 +1012,18 @@ struct AskCyView: View {
                 title: latePostCount == 1 ? "Post needs a new date" : "Posts need new dates"
             ))
         }
-        if unfinishedTaskCount > 0 {
+        if pastDueTaskCount > 0 {
+            items.append(CyPlateItem(
+                id: "past-due-tasks",
+                count: pastDueTaskCount,
+                title: pastDueTaskCount == 1 ? "Task is past due" : "Tasks are past due"
+            ))
+        }
+        if openTaskCount > 0 {
             items.append(CyPlateItem(
                 id: "unfinished-tasks",
-                count: unfinishedTaskCount,
-                title: unfinishedTaskCount == 1 ? "Task is still open" : "Tasks are still open"
+                count: openTaskCount,
+                title: openTaskCount == 1 ? "Task is open" : "Tasks are open"
             ))
         }
         if unscheduledIdeaCount > 0 {
@@ -754,17 +1059,27 @@ struct AskCyView: View {
             )
         }
 
-        let openTask = tasks
-            .filter {
-                !$0.isCompleted &&
-                    $0.parentTaskID == nil &&
-                    ($0.briefID.map(activeBriefIDs.contains) ?? true)
-            }
+        let openTask = CyTaskAttentionPolicy.visibleOpenTasks(
+            tasks: tasks,
+            activeBriefIDs: activeBriefIDs,
+            outputs: outputs,
+            briefs: activeBriefs,
+            now: now
+        )
             .sorted(by: {
-                ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture)
+                let leftPastDue = CyTaskAttentionPolicy.isPastDue($0, now: now)
+                let rightPastDue = CyTaskAttentionPolicy.isPastDue($1, now: now)
+                if leftPastDue != rightPastDue { return leftPastDue }
+                return ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture)
             })
             .first
         if let openTask {
+            if CyTaskAttentionPolicy.isPastDue(openTask, now: now) {
+                return (
+                    "\(openTask.title) is past due. Want to decide what to do with it?",
+                    "Help me complete, move, or skip \(openTask.title)."
+                )
+            }
             return (
                 "\(openTask.title) is still open. Want to decide the next step together?",
                 "Help me decide the next step for \(openTask.title)."
@@ -1058,6 +1373,51 @@ struct AskCyView: View {
         return message.proposedActionKind == .reviseBrief || message.proposedActionKind == .developSpark
     }
 
+    private func proposedTask(for message: ConversationMessage) -> ChatTaskProposalWire? {
+        guard message.proposedActionKind == .createTask else { return nil }
+        return message.proposedAction?.task
+    }
+
+    private func taskWasAdded(from message: ConversationMessage) -> Bool {
+        tasks.contains { $0.sourceConversationMessageID == message.id }
+    }
+
+    private func addProposedTask(
+        _ proposal: ChatTaskProposalWire,
+        from message: ConversationMessage
+    ) {
+        guard !taskWasAdded(from: message) else { return }
+        let linkedBrief: CreativeBrief?
+        if let postID = proposal.postId {
+            guard let post = briefs.first(where: { $0.id == postID && $0.status != .archived }) else {
+                appModel.notice = .error("That post could not be found. The task was not added.")
+                return
+            }
+            linkedBrief = post
+        } else {
+            linkedBrief = nil
+        }
+        let linkedOutput = linkedBrief.flatMap { brief in
+            outputs.first { $0.briefID == brief.id }
+        }
+        guard let task = appModel.createTask(
+            title: proposal.title,
+            kind: proposal.kind,
+            lane: linkedBrief == nil ? .pillar : .production,
+            priority: proposal.priority,
+            targetDate: proposal.targetDate,
+            includesTargetTime: proposal.includesTargetTime,
+            briefID: linkedBrief?.id,
+            pillarID: linkedBrief?.pillarID,
+            platformOutputID: linkedOutput?.id,
+            sourceConversationMessageID: message.id,
+            context: context
+        ) else { return }
+        task.notes = message.proposedActionSummary
+        try? context.save()
+        appModel.notice = .info("Task added.")
+    }
+
     private func sendResponseToPost(_ message: ConversationMessage) {
         guard let briefID = message.referencedBriefID,
               let brief = briefs.first(where: { $0.id == briefID }) else {
@@ -1065,7 +1425,7 @@ struct AskCyView: View {
             return
         }
 
-        let cleanResponse = String(renderedMarkdown(message.text).characters)
+        let cleanResponse = plainText(from: message.text)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanResponse.isEmpty else { return }
         if brief.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -173,7 +173,7 @@ export const operationDefinitions = [
     effort: "low",
     maxTokens: 900,
     reservationCostMicros: 20_000,
-    systemPrompt: `${sharedSystemPrompt}\nAnswer the creator’s current content-creation question using compact relevant context. Proposed actions remain proposals.`,
+    systemPrompt: `${sharedSystemPrompt}\nAnswer the creator’s current content-creation question using compact relevant context. creatorContext.librarySummaries and creatorContext.taskSummaries are current, real app records for the active account; use them when answering about posts, posting history, schedules, pillars, or work to do, and never claim no history when those arrays contain relevant records. Make assistantMessage easy to scan on an iPhone: use a short opening, blank lines between paragraphs, and bullets or numbered steps for three or more related items. Never return one dense paragraph. Use clean Markdown with short headings and bold emphasis when useful; never use HTML. Keep the response under 350 words unless the creator explicitly requests more detail. When the creator explicitly asks to create or add one task, return a createTask proposedAction with complete task details; connect it to an exact supplied postId only when the task clearly belongs to that post. Proposed actions remain proposals.`,
     allowanceFor: paidOnly,
   },
   {

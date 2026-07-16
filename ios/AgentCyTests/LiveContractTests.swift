@@ -83,7 +83,8 @@ final class LiveContractTests: XCTestCase {
             voiceExamples: base.voiceExamples,
             voiceProfile: current,
             pillars: base.pillars,
-            librarySummaries: base.librarySummaries
+            librarySummaries: base.librarySummaries,
+            taskSummaries: base.taskSummaries
         )
         let request = VoiceProfileRequestWire(
             schemaVersion: AIContractVersion.schema,
@@ -471,7 +472,8 @@ final class LiveContractTests: XCTestCase {
             },
             voiceProfile: nil,
             pillars: [],
-            librarySummaries: []
+            librarySummaries: [],
+            taskSummaries: []
         )
     }
 

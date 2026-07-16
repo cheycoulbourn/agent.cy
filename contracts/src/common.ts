@@ -122,10 +122,38 @@ export const BriefSummarySchema = z
   .object({
     briefId: z.uuid(),
     title: shortText,
-    premise: mediumText,
-    takeaway: mediumText,
+    premise: mediumText.optional(),
+    takeaway: mediumText.optional(),
+    notes: z.string().trim().min(1).max(500).optional(),
+    hook: z.string().trim().min(1).max(500).optional(),
+    caption: z.string().trim().min(1).max(500).optional(),
+    pillarId: z.uuid().optional(),
+    pillarName: shortText.optional(),
+    format: shortText.optional(),
     status: BriefStatusSchema,
     platforms: SelectedPlatformsSchema,
+    targetDate: z.iso.datetime({ offset: true }).optional(),
+    includesTargetTime: z.boolean().optional(),
+    postedAt: z.iso.datetime({ offset: true }).optional(),
+    taskCount: z.number().int().nonnegative().max(100).default(0),
+    completedTaskCount: z.number().int().nonnegative().max(100).default(0),
+  })
+  .strict()
+  .refine((summary) => summary.completedTaskCount <= summary.taskCount, {
+    message: "Completed task count cannot exceed task count",
+  });
+
+export const TaskSummarySchema = z
+  .object({
+    taskId: z.uuid(),
+    title: shortText,
+    kind: TaskKindSchema,
+    priority: z.enum(["none", "high", "urgent"]),
+    isCompleted: z.boolean(),
+    targetDate: z.iso.datetime({ offset: true }).optional(),
+    includesTargetTime: z.boolean(),
+    postId: z.uuid().optional(),
+    pillarId: z.uuid().optional(),
   })
   .strict();
 
@@ -143,6 +171,7 @@ export const CreatorContextSchema = z
     voiceProfile: VoiceProfileSchema.optional(),
     pillars: z.array(PillarSummarySchema).max(10),
     librarySummaries: z.array(BriefSummarySchema).max(20),
+    taskSummaries: z.array(TaskSummarySchema).max(20).default([]),
   })
   .strict()
   .superRefine((contextValue, refinementContext) => {
@@ -223,6 +252,7 @@ export type VoiceExample = z.infer<typeof VoiceExampleSchema>;
 export type VoiceProfile = z.infer<typeof VoiceProfileSchema>;
 export type PillarSummary = z.infer<typeof PillarSummarySchema>;
 export type BriefSummary = z.infer<typeof BriefSummarySchema>;
+export type TaskSummary = z.infer<typeof TaskSummarySchema>;
 export type CreatorContext = z.infer<typeof CreatorContextSchema>;
 export type AiRequestMetadata = z.infer<typeof AiRequestMetadataSchema>;
 export type ContextualAiRequestMetadata = z.infer<

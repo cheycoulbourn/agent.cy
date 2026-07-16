@@ -72,6 +72,7 @@ const creatorContext = {
   voiceProfile,
   pillars: [],
   librarySummaries: [],
+  taskSummaries: [],
 } as const;
 
 const metadata = {
@@ -234,6 +235,74 @@ describe("AI contracts", () => {
         voiceProfile: undefined,
       }).success,
     ).toBe(true);
+  });
+
+  it("accepts compact post and task history for Cy", () => {
+    const context = {
+      ...creatorContext,
+      librarySummaries: [
+        {
+          briefId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          title: "DITL vlog",
+          notes: "Show the real version of the day.",
+          hook: "This is what the day actually looked like.",
+          caption: "A real day, not a perfect routine.",
+          pillarId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          pillarName: "Lifestyle",
+          format: "Reel",
+          status: "scheduled",
+          platforms: ["instagramReels"],
+          targetDate: "2026-07-20T23:00:00.000Z",
+          includesTargetTime: true,
+          taskCount: 2,
+          completedTaskCount: 1,
+        },
+      ],
+      taskSummaries: [
+        {
+          taskId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          title: "Edit the first cut",
+          kind: "editing",
+          priority: "high",
+          isCompleted: false,
+          targetDate: "2026-07-20T18:00:00.000Z",
+          includesTargetTime: true,
+          postId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          pillarId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        },
+      ],
+    };
+
+    expect(CreatorContextSchema.safeParse(context).success).toBe(true);
+  });
+
+  it("requires complete task details for a create-task chat action", () => {
+    const valid = {
+      assistantMessage: "I prepared one editing task for you to review.",
+      suggestions: [],
+      proposedAction: {
+        kind: "createTask",
+        summary: "Edit the first cut for DITL vlog.",
+        task: {
+          title: "Edit the first cut",
+          kind: "editing",
+          priority: "high",
+          includesTargetTime: false,
+          postId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+      },
+    };
+
+    expect(ChatTurnResultSchema.safeParse(valid).success).toBe(true);
+    expect(
+      ChatTurnResultSchema.safeParse({
+        ...valid,
+        proposedAction: {
+          kind: "createTask",
+          summary: "Edit the first cut for DITL vlog.",
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("requires three confirmed examples for initial voice extraction", () => {

@@ -1099,7 +1099,7 @@ final class AppModel {
     }
 
     @discardableResult
-    func createTask(title: String, kind: CreatorTaskKind, lane: TaskLane = .pillar, priority: TaskPriority = .none, targetDate: Date?, includesTargetTime: Bool = false, focusAssignment: DailyFocusTaskAssignment? = nil, recurrence: TaskRecurrenceFrequency = .none, context: ModelContext) -> CreatorTask? {
+    func createTask(title: String, kind: CreatorTaskKind, lane: TaskLane = .pillar, priority: TaskPriority = .none, targetDate: Date?, includesTargetTime: Bool = false, focusAssignment: DailyFocusTaskAssignment? = nil, recurrence: TaskRecurrenceFrequency = .none, briefID: UUID? = nil, pillarID: UUID? = nil, platformOutputID: UUID? = nil, sourceConversationMessageID: UUID? = nil, context: ModelContext) -> CreatorTask? {
         guard can(.createTask, context: context) else { return nil }
         let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
@@ -1107,6 +1107,10 @@ final class AppModel {
             return nil
         }
         let task = CreatorTask(
+            briefID: briefID,
+            pillarID: pillarID,
+            platformOutputID: platformOutputID,
+            sourceConversationMessageID: sourceConversationMessageID,
             title: cleaned,
             kind: focusAssignment?.taskKind ?? kind,
             lane: focusAssignment == nil ? lane : .production,
@@ -3039,13 +3043,15 @@ final class AppModel {
             voiceProfile = nil
         }
 
-        let pillars = ((try? context.fetch(FetchDescriptor<Pillar>(sortBy: [SortDescriptor(\.createdAt)]))) ?? [])
+        let activePillarRecords = ((try? context.fetch(FetchDescriptor<Pillar>(sortBy: [SortDescriptor(\.createdAt)]))) ?? [])
             .filter {
                 !$0.isArchived &&
                     !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                     WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
             }
-            .prefix(10)
+        let pillarRecords = Array(activePillarRecords.prefix(10))
+        let pillarByID = Dictionary(uniqueKeysWithValues: activePillarRecords.map { ($0.id, $0) })
+        let pillars = pillarRecords
             .map { pillar in
                 let detail = pillar.detail.trimmingCharacters(in: .whitespacesAndNewlines)
                 return PillarSummaryWire(pillarId: pillar.id, name: pillar.name.trimmingCharacters(in: .whitespacesAndNewlines), description: detail.isEmpty ? nil : detail)
@@ -3054,25 +3060,84 @@ final class AppModel {
         let allOutputs = ((try? context.fetch(FetchDescriptor<PlatformOutput>())) ?? []).filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
         }
+        let activeTasks = ((try? context.fetch(FetchDescriptor<CreatorTask>())) ?? [])
+            .filter {
+                !$0.isSkipped &&
+                    $0.parentTaskID == nil &&
+                    WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
+            }
+        let tasksByBrief = Dictionary(grouping: activeTasks.filter { $0.briefID != nil }) {
+            $0.briefID!
+        }
+
+        func snippet(_ value: String) -> String? {
+            let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { return nil }
+            return String(cleaned.prefix(500))
+        }
+
         let summaries = ((try? context.fetch(FetchDescriptor<CreativeBrief>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]))) ?? [])
             .filter {
                 $0.status != .archived &&
-                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces) &&
-                !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !$0.premise.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !$0.takeaway.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces) &&
+                    !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
             .prefix(20)
             .map { brief -> BriefSummaryWire in
-                let outputPlatforms = Array(Set(allOutputs.filter { $0.briefID == brief.id }.map(\.platform)))
+                let briefOutputs = allOutputs.filter { $0.briefID == brief.id }
+                let outputPlatforms = Array(Set(briefOutputs.map(\.platform)))
                     .sorted { $0.rawValue < $1.rawValue }
+                let primaryOutput = briefOutputs.sorted { lhs, rhs in
+                    let lhsDate = lhs.targetDate ?? lhs.postedAt ?? .distantFuture
+                    let rhsDate = rhs.targetDate ?? rhs.postedAt ?? .distantFuture
+                    return lhsDate < rhsDate
+                }.first
+                let briefTasks = tasksByBrief[brief.id] ?? []
+                let pillar = brief.pillarID.flatMap { pillarByID[$0] }
+                let formatName = primaryOutput?.formatID.flatMap { formatID in
+                    PublishingCatalog.formatSeeds.first(where: { $0.0 == formatID })?.2
+                }
                 return BriefSummaryWire(
                     briefId: brief.id,
                     title: brief.title.trimmingCharacters(in: .whitespacesAndNewlines),
-                    premise: brief.premise.trimmingCharacters(in: .whitespacesAndNewlines),
-                    takeaway: brief.takeaway.trimmingCharacters(in: .whitespacesAndNewlines),
+                    premise: snippet(brief.premise),
+                    takeaway: snippet(brief.takeaway),
+                    notes: snippet(brief.notes),
+                    hook: snippet(brief.spokenHook),
+                    caption: primaryOutput.flatMap { snippet($0.caption) },
+                    pillarId: pillar?.id,
+                    pillarName: pillar?.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    format: formatName,
                     status: brief.status,
-                    platforms: outputPlatforms.isEmpty ? selectedPlatforms : outputPlatforms
+                    platforms: outputPlatforms.isEmpty ? selectedPlatforms : outputPlatforms,
+                    targetDate: primaryOutput?.targetDate,
+                    includesTargetTime: primaryOutput.map(\.includesTargetTime),
+                    postedAt: briefOutputs.compactMap(\.postedAt).max(),
+                    taskCount: briefTasks.count,
+                    completedTaskCount: briefTasks.filter(\.isCompleted).count
+                )
+            }
+
+        let taskSummaries = activeTasks
+            .sorted { lhs, rhs in
+                if lhs.isCompleted != rhs.isCompleted { return !lhs.isCompleted }
+                let lhsDate = lhs.targetDate ?? .distantFuture
+                let rhsDate = rhs.targetDate ?? .distantFuture
+                if lhsDate != rhsDate { return lhsDate < rhsDate }
+                return lhs.createdAt > rhs.createdAt
+            }
+            .prefix(20)
+            .map { task in
+                TaskSummaryWire(
+                    taskId: task.id,
+                    title: String(task.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160)),
+                    kind: task.kind,
+                    priority: task.priority.normalized,
+                    isCompleted: task.isCompleted,
+                    targetDate: task.targetDate,
+                    includesTargetTime: task.includesTargetTime,
+                    postId: task.briefID,
+                    pillarId: task.pillarID
                 )
             }
 
@@ -3083,7 +3148,8 @@ final class AppModel {
             voiceExamples: voiceExamples,
             voiceProfile: voiceProfile,
             pillars: Array(pillars),
-            librarySummaries: Array(summaries)
+            librarySummaries: Array(summaries),
+            taskSummaries: Array(taskSummaries)
         )
     }
 

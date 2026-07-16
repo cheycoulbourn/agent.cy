@@ -535,6 +535,8 @@ final class CreatorTask {
     var briefID: UUID?
     var pillarID: UUID?
     var platformOutputID: UUID?
+    /// Makes an accepted Cy task proposal idempotent across relaunches.
+    var sourceConversationMessageID: UUID?
     var parentTaskID: UUID?
     var title: String = ""
     var notes: String = ""
@@ -570,11 +572,12 @@ final class CreatorTask {
     /// a creator's explicit lane choice.
     var bootstrapVersion: Int = 0
 
-    init(id: UUID = UUID(), briefID: UUID? = nil, pillarID: UUID? = nil, platformOutputID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, lane: TaskLane = .production, priority: TaskPriority = .none, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, includesTargetTime: Bool = false, dailyFocusDate: Date? = nil, dailyFocusTitle: String? = nil, dailyFocusTemplateEntryID: UUID? = nil, focusTaskTemplateID: UUID? = nil, isFocusTemplateCustomized: Bool = false, recurrence: TaskRecurrenceFrequency = .none, recurrenceRootTaskID: UUID? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), briefID: UUID? = nil, pillarID: UUID? = nil, platformOutputID: UUID? = nil, sourceConversationMessageID: UUID? = nil, parentTaskID: UUID? = nil, title: String = "", kind: CreatorTaskKind = .planning, lane: TaskLane = .production, priority: TaskPriority = .none, notes: String = "", estimatedMinutes: Int? = nil, targetDate: Date? = nil, includesTargetTime: Bool = false, dailyFocusDate: Date? = nil, dailyFocusTitle: String? = nil, dailyFocusTemplateEntryID: UUID? = nil, focusTaskTemplateID: UUID? = nil, isFocusTemplateCustomized: Bool = false, recurrence: TaskRecurrenceFrequency = .none, recurrenceRootTaskID: UUID? = nil, sortOrder: Int = 0, isRecordingMilestoneDesignated: Bool = false, createdAt: Date = Date()) {
         self.id = id
         self.briefID = briefID
         self.pillarID = pillarID
         self.platformOutputID = platformOutputID
+        self.sourceConversationMessageID = sourceConversationMessageID
         self.parentTaskID = parentTaskID
         self.title = title
         self.notes = notes
@@ -1021,6 +1024,9 @@ final class ConversationMessage {
     var chatSuggestionsJSON: String = ""
     var proposedActionKindRaw: String = ""
     var proposedActionSummary: String = ""
+    /// Complete structured action payload. The legacy scalar fields remain so
+    /// older synced records continue to decode during the additive migration.
+    var proposedActionPayloadJSON: String = ""
     var referencedBriefID: UUID?
     var createdAt: Date = Date()
 
@@ -1041,6 +1047,7 @@ final class ConversationMessage {
         self.chatSuggestionsJSON = Self.encodeSuggestions(suggestions)
         self.proposedActionKindRaw = proposedAction?.kind.rawValue ?? ""
         self.proposedActionSummary = proposedAction?.summary ?? ""
+        self.proposedActionPayloadJSON = Self.encodeProposedAction(proposedAction)
         self.referencedBriefID = referencedBriefID
         self.createdAt = createdAt
     }
@@ -1066,9 +1073,27 @@ final class ConversationMessage {
         set { proposedActionKindRaw = newValue?.rawValue ?? "" }
     }
 
+    var proposedAction: ChatProposedActionWire? {
+        if let data = proposedActionPayloadJSON.data(using: .utf8),
+           let action = try? JSONDecoder.agentCy.decode(ChatProposedActionWire.self, from: data) {
+            return action
+        }
+        guard let kind = proposedActionKind else { return nil }
+        return ChatProposedActionWire(kind: kind, summary: proposedActionSummary)
+    }
+
     private static func encodeSuggestions(_ suggestions: [ChatSuggestionWire]) -> String {
         guard !suggestions.isEmpty,
               let data = try? JSONEncoder().encode(suggestions),
+              let json = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return json
+    }
+
+    private static func encodeProposedAction(_ action: ChatProposedActionWire?) -> String {
+        guard let action,
+              let data = try? JSONEncoder.agentCy.encode(action),
               let json = String(data: data, encoding: .utf8) else {
             return ""
         }

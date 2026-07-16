@@ -42,10 +42,33 @@ struct PillarSummaryWire: Codable, Sendable {
 struct BriefSummaryWire: Codable, Sendable {
     let briefId: UUID
     let title: String
-    let premise: String
-    let takeaway: String
+    let premise: String?
+    let takeaway: String?
+    let notes: String?
+    let hook: String?
+    let caption: String?
+    let pillarId: UUID?
+    let pillarName: String?
+    let format: String?
     let status: BriefStatus
     let platforms: [CreatorPlatform]
+    let targetDate: Date?
+    let includesTargetTime: Bool?
+    let postedAt: Date?
+    let taskCount: Int
+    let completedTaskCount: Int
+}
+
+struct TaskSummaryWire: Codable, Sendable {
+    let taskId: UUID
+    let title: String
+    let kind: CreatorTaskKind
+    let priority: TaskPriority
+    let isCompleted: Bool
+    let targetDate: Date?
+    let includesTargetTime: Bool
+    let postId: UUID?
+    let pillarId: UUID?
 }
 
 struct CreatorContextWire: Codable, Sendable {
@@ -56,6 +79,7 @@ struct CreatorContextWire: Codable, Sendable {
     let voiceProfile: VoiceProfileWire?
     let pillars: [PillarSummaryWire]
     let librarySummaries: [BriefSummaryWire]
+    let taskSummaries: [TaskSummaryWire]
 }
 
 struct SparkWire: Codable, Sendable {
@@ -229,6 +253,15 @@ struct ChatSuggestionWire: Codable, Sendable {
     let prompt: String
 }
 
+struct ChatTaskProposalWire: Codable, Sendable {
+    let title: String
+    let kind: CreatorTaskKind
+    let priority: TaskPriority
+    let targetDate: Date?
+    let includesTargetTime: Bool
+    let postId: UUID?
+}
+
 enum ChatProposedActionKindWire: String, Codable, Sendable {
     case developSpark
     case reviseBrief
@@ -239,6 +272,17 @@ enum ChatProposedActionKindWire: String, Codable, Sendable {
 struct ChatProposedActionWire: Codable, Sendable {
     let kind: ChatProposedActionKindWire
     let summary: String
+    let task: ChatTaskProposalWire?
+
+    init(
+        kind: ChatProposedActionKindWire,
+        summary: String,
+        task: ChatTaskProposalWire? = nil
+    ) {
+        self.kind = kind
+        self.summary = summary
+        self.task = task
+    }
 }
 
 struct ChatTurnResultWire: Codable, Sendable {

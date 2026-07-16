@@ -88,7 +88,8 @@ final class AIOperationIDRegistryTests: XCTestCase {
                 voiceExamples: [],
                 voiceProfile: nil,
                 pillars: [],
-                librarySummaries: []
+                librarySummaries: [],
+                taskSummaries: []
             ),
             count: 3,
             startingPoint: nil,

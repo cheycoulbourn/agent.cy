@@ -507,7 +507,7 @@ actor AgentCyAPIClient {
     private struct PhaseProbe: Decodable { let phase: AIProgressPhase }
 }
 
-private extension JSONEncoder {
+extension JSONEncoder {
     static var agentCy: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -516,7 +516,7 @@ private extension JSONEncoder {
     }
 }
 
-private extension JSONDecoder {
+extension JSONDecoder {
     static var agentCy: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

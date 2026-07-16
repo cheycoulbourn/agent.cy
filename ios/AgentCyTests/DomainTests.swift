@@ -204,6 +204,37 @@ final class DomainTests: XCTestCase {
         XCTAssertNil(profile.customCyQuickPrompts)
     }
 
+    func testCyTaskAttentionUsesTaskPageVisibilityAndSeparatesPastDue() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 12))!
+        let activeBriefID = UUID()
+        let visibleDate = calendar.date(from: DateComponents(year: 2026, month: 7, day: 16))!
+        let pastDate = calendar.date(from: DateComponents(year: 2026, month: 7, day: 15))!
+        let futureDate = calendar.date(from: DateComponents(year: 2026, month: 7, day: 23))!
+
+        let visible = CreatorTask(briefID: activeBriefID, title: "Visible", targetDate: visibleDate)
+        let pastDue = CreatorTask(title: "Past due", targetDate: pastDate)
+        let hiddenFuture = CreatorTask(briefID: activeBriefID, title: "Future", targetDate: futureDate)
+        let hiddenRecurring = CreatorTask(title: "Future focus", targetDate: futureDate)
+        hiddenRecurring.focusTaskTemplateID = UUID()
+        let completed = CreatorTask(title: "Completed", targetDate: visibleDate)
+        completed.isCompleted = true
+        let skipped = CreatorTask(title: "Skipped", targetDate: visibleDate)
+        skipped.isSkipped = true
+
+        let result = CyTaskAttentionPolicy.visibleOpenTasks(
+            tasks: [visible, pastDue, hiddenFuture, hiddenRecurring, completed, skipped],
+            activeBriefIDs: [activeBriefID],
+            outputs: [],
+            briefs: [],
+            now: now,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(Set(result.map(\.title)), ["Visible", "Past due"])
+        XCTAssertEqual(result.filter { CyTaskAttentionPolicy.isPastDue($0, now: now, calendar: calendar) }.count, 1)
+    }
+
     func testConversationMessageStoresStructuredCyActions() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -229,6 +260,39 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(saved.proposedActionKind, .reviseBrief)
         XCTAssertEqual(saved.proposedActionSummary, "Apply the response to the post")
         XCTAssertEqual(saved.referencedBriefID, briefID)
+    }
+
+    func testConversationMessagePreservesCyTaskProposalDetails() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let postID = UUID()
+        let dueDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let message = ConversationMessage(
+            role: .cy,
+            text: "I prepared one task for you to review.",
+            proposedAction: ChatProposedActionWire(
+                kind: .createTask,
+                summary: "Edit the first cut for DITL vlog.",
+                task: ChatTaskProposalWire(
+                    title: "Edit the first cut",
+                    kind: .editing,
+                    priority: .high,
+                    targetDate: dueDate,
+                    includesTargetTime: true,
+                    postId: postID
+                )
+            )
+        )
+        context.insert(message)
+        try context.save()
+
+        let saved = try XCTUnwrap(context.fetch(FetchDescriptor<ConversationMessage>()).first)
+        XCTAssertEqual(saved.proposedActionKind, .createTask)
+        XCTAssertEqual(saved.proposedAction?.task?.title, "Edit the first cut")
+        XCTAssertEqual(saved.proposedAction?.task?.kind, .editing)
+        XCTAssertEqual(saved.proposedAction?.task?.priority, .high)
+        XCTAssertEqual(saved.proposedAction?.task?.targetDate, dueDate)
+        XCTAssertEqual(saved.proposedAction?.task?.postId, postID)
     }
 
     func testCreatorVibeAndAppearancePersistTogether() throws {
@@ -2219,6 +2283,45 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(CyVoiceHeading.forMessage("I noticed a pattern in your strongest ideas.", index: 0), .noticed)
         XCTAssertEqual(CyVoiceHeading.forMessage("Here is a clean first draft.", index: 0), .says)
         XCTAssertEqual(CyVoiceHeading.forMessage("Here is another direction.", index: 1), .hasAnIdea)
+    }
+
+    func testCyMarkdownParserPreservesReadableResponseHierarchy() {
+        let blocks = CyMarkdownParser.blocks(from: """
+        # Plan your week
+
+        Start with three posts.
+
+        - Monday: Lifestyle
+        - Wednesday: Beauty
+        1. Choose the strongest idea
+        """)
+
+        XCTAssertEqual(blocks.map(\.kind), [
+            .heading(level: 1),
+            .paragraph,
+            .bullet,
+            .bullet,
+            .numbered(marker: "1")
+        ])
+        XCTAssertEqual(blocks.map(\.text), [
+            "Plan your week",
+            "Start with three posts.",
+            "Monday: Lifestyle",
+            "Wednesday: Beauty",
+            "Choose the strongest idea"
+        ])
+    }
+
+    func testCyMarkdownParserBreaksUpDenseInlineLabels() {
+        let blocks = CyMarkdownParser.blocks(
+            from: "Start with three posts. **Draft week:** **Monday — Lifestyle:** Film a day in your life. **Questions:** Which pillar matters most?"
+        )
+
+        XCTAssertEqual(blocks.count, 4)
+        XCTAssertEqual(blocks[0].text, "Start with three posts.")
+        XCTAssertEqual(blocks[1].text, "**Draft week:**")
+        XCTAssertEqual(blocks[2].text, "**Monday — Lifestyle:** Film a day in your life.")
+        XCTAssertEqual(blocks[3].text, "**Questions:** Which pillar matters most?")
     }
 
     func testWorkspaceScopeKeepsLegacyNilRecordsInDefaultAccountOnly() {

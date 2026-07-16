@@ -301,6 +301,17 @@ export const ChatSuggestionSchema = z
   })
   .strict();
 
+export const ChatTaskProposalSchema = z
+  .object({
+    title: shortText,
+    kind: TaskKindSchema,
+    priority: z.enum(["none", "high", "urgent"]),
+    targetDate: z.iso.datetime({ offset: true }).optional(),
+    includesTargetTime: z.boolean(),
+    postId: z.uuid().optional(),
+  })
+  .strict();
+
 export const ChatTurnResultSchema = z
   .object({
     assistantMessage: longText,
@@ -314,8 +325,25 @@ export const ChatTurnResultSchema = z
           "planWeek",
         ]),
         summary: mediumText,
+        task: ChatTaskProposalSchema.optional(),
       })
       .strict()
+      .superRefine((action, context) => {
+        if (action.kind === "createTask" && action.task === undefined) {
+          context.addIssue({
+            code: "custom",
+            path: ["task"],
+            message: "Task details are required for createTask actions",
+          });
+        }
+        if (action.kind !== "createTask" && action.task !== undefined) {
+          context.addIssue({
+            code: "custom",
+            path: ["task"],
+            message: "Task details are only allowed for createTask actions",
+          });
+        }
+      })
       .nullable(),
   })
   .strict();

@@ -46,7 +46,8 @@ final class ServiceTests: XCTestCase {
             pillars: zip(pillarIDs, ["Lifestyle", "Beauty", "Tech"]).map { id, name in
                 PillarSummaryWire(pillarId: id, name: name, description: nil)
             },
-            librarySummaries: base.librarySummaries
+            librarySummaries: base.librarySummaries,
+            taskSummaries: base.taskSummaries
         )
 
         let ideas = try await PreviewCreativeService().findIdeas(context: context, mode: .collaborate)
@@ -147,6 +148,61 @@ final class ServiceTests: XCTestCase {
         }
         XCTAssertFalse(requiresUpgrade)
         XCTAssertNil(appModel.notice)
+    }
+
+    func testAskCyReceivesIncompletePostsAndCurrentTaskContext() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        )
+        let pillar = Pillar(name: "Lifestyle", colorHex: "55705B")
+        let post = CreativeBrief(title: "DITL vlog", premise: "", status: .scheduled)
+        post.pillarID = pillar.id
+        post.notes = "Show the unpolished version of the day."
+        post.spokenHook = "This is what the day actually looked like."
+        let output = PlatformOutput(briefID: post.id, platform: .instagramReels, status: .scheduled)
+        output.caption = "A real day, not a perfect routine."
+        output.targetDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let task = CreatorTask(
+            briefID: post.id,
+            pillarID: pillar.id,
+            platformOutputID: output.id,
+            title: "Edit the first cut",
+            kind: .editing,
+            priority: .high,
+            targetDate: output.targetDate
+        )
+        context.insert(profile)
+        context.insert(SubscriptionState(access: .paid))
+        context.insert(pillar)
+        context.insert(post)
+        context.insert(output)
+        context.insert(task)
+        try context.save()
+
+        let service = CapturingChatCreativeService()
+        let appModel = AppModel(creativeService: service)
+        _ = await appModel.askCy("What do I have planned?", context: context)
+
+        let captured = try XCTUnwrap(service.capturedContext)
+        let postSummary = try XCTUnwrap(captured.librarySummaries.first { $0.briefId == post.id })
+        XCTAssertNil(postSummary.premise)
+        XCTAssertEqual(postSummary.notes, "Show the unpolished version of the day.")
+        XCTAssertEqual(postSummary.hook, "This is what the day actually looked like.")
+        XCTAssertEqual(postSummary.caption, "A real day, not a perfect routine.")
+        XCTAssertEqual(postSummary.pillarName, "Lifestyle")
+        XCTAssertEqual(postSummary.targetDate, output.targetDate)
+        XCTAssertEqual(postSummary.taskCount, 1)
+        XCTAssertEqual(postSummary.completedTaskCount, 0)
+        let taskSummary = try XCTUnwrap(captured.taskSummaries.first { $0.taskId == task.id })
+        XCTAssertEqual(taskSummary.title, "Edit the first cut")
+        XCTAssertEqual(taskSummary.priority, .high)
+        XCTAssertEqual(taskSummary.postId, post.id)
     }
 
     func testIdeaPresentationKeepsUpgradeAndTransientFailuresSeparate() {
@@ -636,7 +692,8 @@ final class ServiceTests: XCTestCase {
             },
             voiceProfile: nil,
             pillars: [],
-            librarySummaries: []
+            librarySummaries: [],
+            taskSummaries: []
         )
     }
 }
@@ -727,4 +784,29 @@ private struct NoCreditsIdeasCreativeService: CreativeServicing {
     func proposeRevision(of brief: ReadyBriefWire, localBriefID: UUID, revisionNumber: Int, scope: BriefRevisionFieldWire, instruction: String, mode: AssistanceMode, context: CreatorContextWire, baseline: BriefProposal, sourceUpdatedAt: Date, sourceTaskIDs: [UUID]) async throws -> BriefRevisionProposal { throw noCreditsError }
     func proposeVoiceProfileChange(profileID: UUID, sourceVersion: Int, sourceUpdatedAt: Date, current: VoiceProfileDraft, instruction: String, mode: AssistanceMode, context: CreatorContextWire) async throws -> VoiceProfileChangeProposal { throw noCreditsError }
     func reply(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> String { throw noCreditsError }
+}
+
+@MainActor
+private final class CapturingChatCreativeService: CreativeServicing {
+    var capturedContext: CreatorContextWire?
+
+    func reply(
+        to message: String,
+        mode: AssistanceMode,
+        context: CreatorContextWire,
+        conversation: [ConversationMessageWire],
+        relevantBriefIDs: [UUID]
+    ) async throws -> String {
+        capturedContext = context
+        return "I found your current posts and tasks."
+    }
+
+    func extractVoiceProfile(context: CreatorContextWire, mode: AssistanceMode) async throws -> VoiceProfileExtraction { throw TestError.unused }
+    func findIdeas(context: CreatorContextWire, mode: AssistanceMode) async throws -> [IdeaDirection] { throw TestError.unused }
+    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], postContext: String?) async throws -> String { throw TestError.unused }
+    func composeProposal(from brief: CreativeBrief, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> BriefProposal { throw TestError.unused }
+    func proposeRevision(of brief: ReadyBriefWire, localBriefID: UUID, revisionNumber: Int, scope: BriefRevisionFieldWire, instruction: String, mode: AssistanceMode, context: CreatorContextWire, baseline: BriefProposal, sourceUpdatedAt: Date, sourceTaskIDs: [UUID]) async throws -> BriefRevisionProposal { throw TestError.unused }
+    func proposeVoiceProfileChange(profileID: UUID, sourceVersion: Int, sourceUpdatedAt: Date, current: VoiceProfileDraft, instruction: String, mode: AssistanceMode, context: CreatorContextWire) async throws -> VoiceProfileChangeProposal { throw TestError.unused }
+
+    private enum TestError: Error { case unused }
 }

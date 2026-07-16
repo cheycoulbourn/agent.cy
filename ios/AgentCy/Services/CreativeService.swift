@@ -674,7 +674,8 @@ struct RemoteCreativeService: CreativeServicing {
               context.voiceExamples.count <= 5,
               context.voiceExamples.allSatisfy(\.creatorConfirmed),
               context.pillars.count <= 10,
-              context.librarySummaries.count <= 20 else {
+              context.librarySummaries.count <= 20,
+              context.taskSummaries.count <= 20 else {
             throw CreativeServiceError.invalidCreatorContext("Cy could not use this creator context safely. Review your profile and try again.")
         }
     }
