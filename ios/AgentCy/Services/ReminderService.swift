@@ -298,7 +298,7 @@ final class LocalReminderService: ReminderServicing {
                     accountID: $0.socialAccountID
                 )
             },
-            tasks: tasks.map {
+            tasks: tasks.filter { !$0.isSkipped }.map {
                 NotificationTaskSnapshot(
                     id: $0.id,
                     briefID: $0.briefID,

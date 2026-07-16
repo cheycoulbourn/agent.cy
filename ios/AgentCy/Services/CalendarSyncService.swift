@@ -84,10 +84,11 @@ enum CalendarSyncPolicy {
     static func shouldSyncTask(
         hasTargetDate: Bool,
         isSubtask: Bool,
+        isSkipped: Bool = false,
         linkedBriefIsArchived: Bool,
         syncEnabled: Bool
     ) -> Bool {
-        syncEnabled && hasTargetDate && !isSubtask && !linkedBriefIsArchived
+        syncEnabled && hasTargetDate && !isSubtask && !isSkipped && !linkedBriefIsArchived
     }
 
     static func postTiming(
@@ -264,6 +265,7 @@ final class EventKitCalendarSyncService: CalendarSyncServicing {
             let shouldSync = CalendarSyncPolicy.shouldSyncTask(
                 hasTargetDate: task.targetDate != nil,
                 isSubtask: task.parentTaskID != nil,
+                isSkipped: task.isSkipped,
                 linkedBriefIsArchived: linkedBriefIsArchived,
                 syncEnabled: syncTasks
             )

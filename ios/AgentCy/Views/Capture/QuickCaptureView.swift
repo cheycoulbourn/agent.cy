@@ -373,23 +373,22 @@ struct QuickCaptureView: View {
 
     @ViewBuilder
     private var cySuggestionsContent: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
             switch ideaPhase {
             case .upgradeRequired(let message):
                 cyProUpsell(message: message)
             case .loading:
-                suggestionsHeader(title: "Finding ideas.")
-                HStack(spacing: AgentSpacing.x3) {
-                    CyThinkingMark(color: .cyAccent, size: 18)
-                    Text("Using your goals, pillars, and saved work.")
-                        .font(.agentSubtext)
-                        .foregroundStyle(Color.agentSecondary)
-                }
-                .padding(AgentSpacing.x4)
-                .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                suggestionsHeader(
+                    title: "Finding ideas.",
+                    subtitle: "Using your goals, pillars, and saved work.",
+                    isLoading: true
+                )
+                CyIdeaLoadingStack()
             case .loaded:
-                suggestionsHeader(title: "Three ideas.")
+                suggestionsHeader(
+                    title: "Three ways in.",
+                    subtitle: "Save what fits. Unsaved ideas disappear when you leave."
+                )
                 cyIdeaDirections
             case .unavailable(let message):
                 cyUnavailableNotice(message: message)
@@ -399,12 +398,51 @@ struct QuickCaptureView: View {
         }
     }
 
-    private func suggestionsHeader(title: String) -> some View {
-        EditorialHeader(
-            kicker: "Cy ideas",
-            title: title,
-            subtitle: "Save what fits. Unsaved ideas disappear when you leave."
-        )
+    private func suggestionsHeader(
+        title: String,
+        subtitle: String,
+        isLoading: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(spacing: AgentSpacing.x2) {
+                if isLoading {
+                    CyThinkingMark(color: .cyAccent, size: 15)
+                } else {
+                    CyAsterisk(color: .cyAccent, size: 15, strokeWidth: 1.4)
+                }
+                MetaLabel("Cy · Ideas")
+                    .foregroundStyle(Color.cyAccent)
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                if !isLoading {
+                    Button {
+                        Task { await loadIdeas() }
+                    } label: {
+                        Text("Try again")
+                            .font(.agentMono)
+                            .tracking(1.2)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Color.cyAccent)
+                            .frame(minHeight: 44)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Replaces these ideas with three new suggestions")
+                }
+            }
+
+            Text(title)
+                .font(.agentDisplay)
+                .tracking(-0.6)
+                .foregroundStyle(Color.agentText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(subtitle)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func cyProUpsell(message: String) -> some View {
@@ -502,6 +540,7 @@ struct QuickCaptureView: View {
     private var sparkComposer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
             HStack {
+                MetaLabel("New idea")
                 Spacer()
                 Button {
                     Task { await loadIdeas() }
@@ -585,6 +624,9 @@ struct QuickCaptureView: View {
                     number: index + 1,
                     idea: idea,
                     suggestedPillarName: suggestedPillar(for: idea)?.name,
+                    suggestedPillarColor: suggestedPillar(for: idea).map {
+                        Color(agentHex: $0.resolvedColorHex(in: activePillars))
+                    },
                     isSaved: savedGeneratedIdeaIDs.contains(idea.id)
                 ) {
                     saveGeneratedIdea(idea)
@@ -1429,62 +1471,137 @@ private struct IdeaDirectionRow: View {
     let number: Int
     let idea: IdeaDirection
     let suggestedPillarName: String?
+    let suggestedPillarColor: Color?
     let isSaved: Bool
     let select: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            HStack {
-                MetaLabel("Idea \(number)")
-                Spacer()
-                if let suggestedPillarName {
-                    MetaLabel(suggestedPillarName)
-                        .foregroundStyle(Color.cyAccent)
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(spacing: AgentSpacing.x2) {
+                if let suggestedPillarColor {
+                    Circle()
+                        .fill(suggestedPillarColor)
+                        .frame(width: 7, height: 7)
                 }
-            }
-            Text(idea.title)
-                .font(.agentTitle)
-                .foregroundStyle(Color.agentText)
+                MetaLabel(suggestedPillarName ?? "No pillar")
+                    .foregroundStyle(Color.cyAccent)
 
-            Text(idea.premise)
-                .font(.agentBody)
-                .foregroundStyle(Color.agentText)
-
-            HStack(alignment: .top, spacing: AgentSpacing.x3) {
-                Image(systemName: "quote.opening")
-                    .font(.agentHeadline)
-                    .foregroundStyle(Color.actionAccent)
-                Text(idea.opening)
-                    .font(.agentBody)
-                    .italic()
-                    .foregroundStyle(Color.agentText)
-            }
-            .padding(AgentSpacing.x4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
-
-            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                MetaLabel("Why it fits")
-                Text(idea.assumption)
-                    .font(.agentSubtext)
+                Spacer()
+                MetaLabel("Idea \(number)")
                     .foregroundStyle(Color.agentSecondary)
             }
 
-            Button(isSaved ? "Saved to Idea Bank" : "Save idea", systemImage: isSaved ? "checkmark" : "plus") { select() }
-                .buttonStyle(AgentSecondaryButtonStyle())
-                .disabled(isSaved)
+            Text(idea.title)
+                .font(.paperInter(size: 18, weight: .semibold, relativeTo: .headline))
+                .tracking(-0.2)
+                .foregroundStyle(Color.agentText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(idea.premise)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("“\(idea.opening)”")
+                .font(.paperInter(size: 14, weight: .medium, relativeTo: .body))
+                .italic()
+                .foregroundStyle(Color.agentText)
+                .lineSpacing(2)
+                .padding(AgentSpacing.x3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color.cyAccent.opacity(colorScheme == .dark ? 0.09 : 0.045),
+                    in: .rect(cornerRadius: 12)
+                )
+
+            Button(action: select) {
+                HStack(spacing: 6) {
+                    Text(isSaved ? "Saved to Idea Bank" : "Save idea")
+                    Image(systemName: isSaved ? "checkmark" : "arrow.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.cyAccent)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .disabled(isSaved)
         }
-        .padding(AgentSpacing.x4)
-        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .padding(.horizontal, 20)
+        .padding(.vertical, AgentSpacing.x4)
+        .background(
+            Color.cyAccent.opacity(
+                colorScheme == .dark ? (isSaved ? 0.14 : 0.10) : (isSaved ? 0.085 : 0.055)
+            ),
+            in: .rect(cornerRadius: 16)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: AgentRadius.panel)
-                .stroke(Color.cyAccent.opacity(isSaved ? 0.82 : 0.48), lineWidth: isSaved ? 1.5 : 1)
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    Color.cyAccent.opacity(
+                        colorScheme == .dark ? (isSaved ? 0.48 : 0.32) : (isSaved ? 0.30 : 0.18)
+                    ),
+                    lineWidth: 1
+                )
         }
         .shadow(
-            color: Color.cyAccent.opacity(colorScheme == .dark ? (isSaved ? 0.22 : 0.14) : (isSaved ? 0.16 : 0.1)),
-            radius: isSaved ? 18 : 12,
-            y: 4
+            color: Color.cyAccent.opacity(colorScheme == .dark ? 0.08 : 0.06),
+            radius: 12
         )
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct CyIdeaLoadingStack: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: AgentSpacing.x3) {
+            ForEach(0..<3, id: \.self) { index in
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    HStack {
+                        Capsule()
+                            .fill(Color.cyAccent.opacity(0.18))
+                            .frame(width: CGFloat(70 + (index * 12)), height: 8)
+                        Spacer()
+                        Capsule()
+                            .fill(Color.agentText.opacity(0.07))
+                            .frame(width: 42, height: 8)
+                    }
+
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(Color.agentText.opacity(0.10))
+                        .frame(width: CGFloat(170 + (index * 18)), height: 18)
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.agentText.opacity(0.07))
+                            .frame(height: 10)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.agentText.opacity(0.07))
+                            .frame(width: CGFloat(210 + (index * 16)), height: 10)
+                    }
+
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.cyAccent.opacity(colorScheme == .dark ? 0.09 : 0.045))
+                        .frame(height: 48)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, AgentSpacing.x4)
+                .background(
+                    Color.cyAccent.opacity(colorScheme == .dark ? 0.08 : 0.045),
+                    in: .rect(cornerRadius: 16)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.cyAccent.opacity(colorScheme == .dark ? 0.24 : 0.14), lineWidth: 1)
+                }
+                .accessibilityLabel("Finding idea \(index + 1)")
+            }
+        }
     }
 }
 

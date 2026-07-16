@@ -562,7 +562,8 @@ enum MCPBridgeService {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
         }
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>()).filter {
-            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+            !$0.isSkipped &&
+                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
         }
         let destinations = try context.fetch(FetchDescriptor<PublishingDestination>())
         let formats = try context.fetch(FetchDescriptor<PublishingFormat>())
@@ -882,14 +883,12 @@ enum MCPBridgeService {
     }
 
     private static func prepare(directory: URL) throws {
-        try FileManager.default.createDirectory(
-            at: directory.appending(path: "requests", directoryHint: .isDirectory),
-            withIntermediateDirectories: true
-        )
-        try FileManager.default.createDirectory(
-            at: directory.appending(path: "responses", directoryHint: .isDirectory),
-            withIntermediateDirectories: true
-        )
+        for folder in ["requests", "responses", "cy-requests", "cy-responses", "cy-processing"] {
+            try FileManager.default.createDirectory(
+                at: directory.appending(path: folder, directoryHint: .isDirectory),
+                withIntermediateDirectories: true
+            )
+        }
     }
 
     private static func writeReadme(directory: URL) throws {
@@ -901,8 +900,10 @@ enum MCPBridgeService {
         - `snapshot.json` is a read-only workspace snapshot written by the app.
         - `requests/` contains proposals waiting for approval in Cy.
         - `responses/` contains approval receipts for Claude or Codex.
+        - `cy-requests/` and `cy-responses/` carry private Local Cy requests between this iPhone and your Mac.
+        - `cy-runtime.json` reports whether the Local Cy worker is available.
 
-        Do not edit `snapshot.json` directly. agent.cy validates every queued change before applying it.
+        Do not edit these files directly. agent.cy validates every result and every queued change before using it.
         """
         try Data(text.utf8).write(
             to: directory.appending(path: "README.md"),

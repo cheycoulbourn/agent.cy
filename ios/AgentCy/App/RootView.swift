@@ -58,6 +58,7 @@ struct RootView: View {
             try? FocusTaskRecurrenceService.reconcile(context: context)
             let repairedPostTasks = (try? PostTaskScheduleRepairService.reconcileOnce(context: context)) ?? 0
             await appModel.refreshInstallationCredentialStatus(context: context)
+            DevelopmentSubscriptionAccess.applyLocalCyPro(context: context)
             appModel.applyPendingWidgetTaskCompletions(context: context)
             WidgetSnapshotService.refresh(context: context)
             appModel.refreshCalendarSync(context: context)

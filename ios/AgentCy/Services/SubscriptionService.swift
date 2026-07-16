@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct SubscriptionOffering: Equatable, Sendable {
     let monthlyPrice: String
@@ -65,6 +66,25 @@ enum SubscriptionServiceFactory {
         if !useLiveAI { return PreviewSubscriptionService() }
 #endif
         return UnavailableLiveSubscriptionService()
+    }
+}
+
+/// Gives the creator a non-billing Pro entitlement while testing Local Cy in a
+/// development build. Release builds never alter App Store or server access.
+enum DevelopmentSubscriptionAccess {
+    @MainActor
+    static func applyLocalCyPro(context: ModelContext) {
+#if DEBUG
+        guard LocalCyPreferences.isEnabledAndConnected else { return }
+        let descriptor = FetchDescriptor<SubscriptionState>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        guard let state = try? context.fetch(descriptor).first else { return }
+        state.access = .comped
+        state.trialEnd = nil
+        state.updatedAt = Date()
+        try? context.save()
+#endif
     }
 }
 

@@ -27,13 +27,11 @@ struct AgentPostCard: View {
             }
 
             if let footerActionTitle, let footerAction {
-                Button(footerActionTitle, action: footerAction)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(isAlertStatus ? Color.agentDestructive : Color.agentText)
-                    .underline(pattern: .solid)
-                    .buttonStyle(.plain)
-                    .frame(minHeight: 32, alignment: .leading)
-                    .accessibilityHint("Choose a new posting date and time")
+                AgentInlinePostAction(
+                    title: footerActionTitle,
+                    isAlert: isAlertStatus,
+                    action: footerAction
+                )
             }
         }
         .foregroundStyle(Color.agentText)
@@ -101,7 +99,7 @@ struct AgentPostCard: View {
 
     private var cardBackground: Color {
         if status == .draft { return .agentSurface }
-        return accent.opacity(colorScheme == .dark ? 0.24 : 0.10)
+        return accent.opacity(colorScheme == .dark ? 0.30 : 0.16)
     }
 
     private var cardBorder: Color {
@@ -136,5 +134,21 @@ struct AgentPostCard: View {
     private var statusBadgeBorder: Color {
         if isAlertStatus || status == .posted { return .clear }
         return Color.agentText.opacity(0.20)
+    }
+}
+
+struct AgentInlinePostAction: View {
+    let title: String
+    var isAlert = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(title, action: action)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(isAlert ? Color.agentDestructive : Color.agentText)
+            .underline(pattern: .solid)
+            .buttonStyle(.plain)
+            .frame(minHeight: 32, alignment: .leading)
+            .accessibilityHint("Choose a new posting date and time")
     }
 }

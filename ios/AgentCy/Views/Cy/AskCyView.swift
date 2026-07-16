@@ -33,12 +33,16 @@ struct AskCyView: View {
     @State private var showConversationHistory = false
     @State private var showProUpsell = false
     @State private var showProAccessDetails = false
+    @State private var remoteIsConnected = false
+    @State private var sendTask: Task<Void, Never>?
+    @State private var activeSendID: UUID?
+    @State private var sentToPostMessageIDs: Set<UUID> = []
     @FocusState private var composerIsFocused: Bool
 
     private var threads: [ConversationThread] { scoped(allThreads) }
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
-    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var tasks: [CreatorTask] { scoped(allTasks).filter { !$0.isSkipped } }
     private var pillars: [Pillar] { scoped(allPillars) }
     private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
         values.filter {
@@ -73,6 +77,10 @@ struct AskCyView: View {
             topRail
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.top, AgentSpacing.x8)
+                .padding(.bottom, AgentSpacing.x2)
+
+            remoteStatusRow
+                .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.bottom, showsConversation && !messages.isEmpty ? AgentSpacing.x1 : AgentSpacing.x4)
 
             if showReviewCompletion {
@@ -100,6 +108,7 @@ struct AskCyView: View {
         .task {
             while !Task.isCancelled {
                 reloadPendingReviews()
+                await reloadRemoteStatus()
                 try? await Task.sleep(for: .seconds(4))
             }
         }
@@ -311,6 +320,31 @@ struct AskCyView: View {
         }
     }
 
+    private var remoteStatusRow: some View {
+        return HStack(spacing: AgentSpacing.x2) {
+            Circle()
+                .fill(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
+                .frame(width: 7, height: 7)
+            MetaLabel("Remote status")
+            Spacer(minLength: AgentSpacing.x2)
+            Text(remoteIsConnected ? "Connected" : "Unavailable")
+                .font(.agentMono)
+                .foregroundStyle(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
+        }
+        .frame(minHeight: 24)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Remote status, \(remoteIsConnected ? "connected" : "unavailable")")
+    }
+
+    @MainActor
+    private func reloadRemoteStatus() async {
+        guard LocalCyPreferences.isEnabledAndConnected else {
+            remoteIsConnected = false
+            return
+        }
+        remoteIsConnected = await LocalCyAIClient.shared.isRemoteAvailable()
+    }
+
     private var opening: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             CyAsterisk(color: .cyAccent, size: 36, strokeWidth: 2)
@@ -381,9 +415,9 @@ struct AskCyView: View {
 
                 ZStack {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        starter(primaryStarter)
-                        starter("Give me three ideas in my style")
-                        starter("Turn a rough note into a post")
+                        ForEach(Array(starterPrompts.enumerated()), id: \.offset) { _, quickPrompt in
+                            starter(quickPrompt)
+                        }
                     }
                     .blur(radius: hasProAccess ? 0 : 3.5)
                     .opacity(hasProAccess ? 1 : 0.52)
@@ -449,9 +483,9 @@ struct AskCyView: View {
     private func messageView(_ message: ConversationMessage) -> some View {
         switch message.role {
         case .cy:
-            assistantMessage(label: "Cy", text: message.text, showsAsterisk: true)
+            assistantMessage(message, label: "Cy", showsAsterisk: true)
         case .claude:
-            assistantMessage(label: "Claude · Imported", text: message.text, showsAsterisk: false)
+            assistantMessage(message, label: "Claude · Imported", showsAsterisk: false)
         case .creator:
             VStack(alignment: .trailing, spacing: AgentSpacing.x2) {
                 Text(message.text)
@@ -477,7 +511,11 @@ struct AskCyView: View {
         }
     }
 
-    private func assistantMessage(label: String, text: String, showsAsterisk: Bool) -> some View {
+    private func assistantMessage(
+        _ message: ConversationMessage,
+        label: String,
+        showsAsterisk: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             HStack(spacing: AgentSpacing.x2) {
                 if showsAsterisk {
@@ -486,7 +524,7 @@ struct AskCyView: View {
                 MetaLabel(label)
             }
 
-            Text(text)
+            Text(renderedMarkdown(message.text))
                 .font(.agentSubtext)
                 .foregroundStyle(Color.agentText)
                 .textSelection(.enabled)
@@ -512,8 +550,66 @@ struct AskCyView: View {
                     .stroke(Color.agentBorder, lineWidth: 1)
                 }
                 .frame(maxWidth: 342, alignment: .leading)
+
+            if !message.chatSuggestions.isEmpty {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    ForEach(Array(message.chatSuggestions.enumerated()), id: \.offset) { _, suggestion in
+                        Button {
+                            prompt = suggestion.prompt
+                            composerIsFocused = true
+                        } label: {
+                            HStack(spacing: AgentSpacing.x2) {
+                                Text(suggestion.label)
+                                    .font(.agentSubtext.weight(.medium))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundStyle(Color.agentText)
+                            .padding(.horizontal, AgentSpacing.x3)
+                            .frame(minHeight: 44)
+                            .background(Color.agentSurface, in: .capsule)
+                            .overlay { Capsule().stroke(Color.agentBorder, lineWidth: 1) }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: 342, alignment: .leading)
+            }
+
+            if canSendResponseToPost(message) {
+                Button {
+                    sendResponseToPost(message)
+                } label: {
+                    HStack(spacing: AgentSpacing.x2) {
+                        CyAsterisk(color: .cyAccent, size: 13, strokeWidth: 1.4)
+                        Text(sentToPostMessageIDs.contains(message.id) ? "Sent to post" : "Send to post")
+                            .font(.agentSubtext.weight(.semibold))
+                        Spacer(minLength: AgentSpacing.x2)
+                        Image(systemName: sentToPostMessageIDs.contains(message.id) ? "checkmark" : "arrow.right")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.cyAccent)
+                    .padding(.horizontal, AgentSpacing.x3)
+                    .frame(maxWidth: 342, minHeight: 44)
+                    .background(Color.cyAccent.opacity(0.07), in: .capsule)
+                    .overlay { Capsule().stroke(Color.cyAccent.opacity(0.38), lineWidth: 1) }
+                    .shadow(color: Color.cyAccent.opacity(0.10), radius: 12, y: 4)
+                }
+                .buttonStyle(.plain)
+                .disabled(sentToPostMessageIDs.contains(message.id))
+                .accessibilityHint("Adds Cy's response to the referenced post notes and opens the post")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func renderedMarkdown(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 
     private var typingIndicator: some View {
@@ -540,21 +636,7 @@ struct AskCyView: View {
                     .padding(.leading, AgentSpacing.x3)
                     .padding(.vertical, AgentSpacing.x3)
 
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(canSend ? Color.onCyAccent : Color.agentSecondary)
-                        .frame(width: 44, height: 44)
-                        .background(canSend ? Color.cyAccent : Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(canSend ? Color.cyAccent : Color.agentBorder, lineWidth: 1)
-                        }
-                        .shadow(color: canSend ? Color.cyAccent.opacity(0.24) : .clear, radius: 10, y: 4)
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
+                composerActionButton
             }
             .padding(6)
             .frame(minHeight: 56)
@@ -564,11 +646,40 @@ struct AskCyView: View {
                     .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
                     .allowsHitTesting(false)
             }
-            .shadow(color: Color.black.opacity(0.12), radius: 14, y: 4)
+            .shadow(color: Color(white: 0).opacity(0.12), radius: 14, y: 4)
         }
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.vertical, AgentSpacing.x2)
         .padding(.bottom, bottomClearance)
+    }
+
+    private var composerActionButton: some View {
+        let isEnabled = isSending || canSend
+        let foreground = isEnabled ? Color.onCyAccent : Color.agentSecondary
+        let background = isEnabled ? Color.cyAccent : Color.agentSurface
+        let border = isEnabled ? Color.cyAccent : Color.agentBorder
+        return Button {
+            if isSending {
+                stopSending()
+            } else {
+                send()
+            }
+        } label: {
+            Image(systemName: isSending ? "stop.fill" : "arrow.up")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(foreground)
+                .frame(width: 44, height: 44)
+                .background(background, in: .circle)
+                .overlay { Circle().stroke(border, lineWidth: 1) }
+                .shadow(
+                    color: isEnabled ? Color.cyAccent.opacity(0.24) : Color.clear,
+                    radius: 10,
+                    y: 4
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityLabel(isSending ? "Stop Cy" : "Send")
     }
 
     private var displayName: String {
@@ -638,8 +749,8 @@ struct AskCyView: View {
         if let lateOutput,
            let lateBrief = activeBriefs.first(where: { $0.id == lateOutput.briefID }) {
             return (
-                "The date for \(lateBrief.title) has passed. Want to choose a new one together?",
-                "Help me reschedule \(lateBrief.title)."
+                "The date for \(quotedPostTitle(lateBrief.title)) has passed. Want to choose a new one together?",
+                "Help me reschedule \(quotedPostTitle(lateBrief.title))."
             )
         }
 
@@ -666,7 +777,7 @@ struct AskCyView: View {
         }) {
             return (
                 "Let’s expand on some of these ideas",
-                "Keep shaping \(idea.title)."
+                "Keep shaping \(quotedPostTitle(idea.title))."
             )
         }
 
@@ -688,7 +799,18 @@ struct AskCyView: View {
     }
 
     private var primaryStarter: String {
-        currentDraft.map { "Keep shaping \($0.title)" } ?? "Help me choose what to make next"
+        currentDraft.map { "Keep shaping \(quotedPostTitle($0.title))" } ?? CreatorProfile.defaultCyQuickPrompts[0]
+    }
+
+    private var starterPrompts: [String] {
+        profiles.first?.customCyQuickPrompts ?? [
+            primaryStarter,
+            CreatorProfile.defaultCyQuickPrompts[1]
+        ]
+    }
+
+    private func quotedPostTitle(_ title: String) -> String {
+        "“\(title.trimmingCharacters(in: .whitespacesAndNewlines))”"
     }
 
     private var composerPlaceholder: String { "Ask Cy anything" }
@@ -874,17 +996,94 @@ struct AskCyView: View {
         thread.updatedAt = Date()
         try? context.save()
 
+        let sendID = UUID()
+        activeSendID = sendID
         isSending = true
         let conversation = Array((priorMessages + [creatorMessage]).suffix(24)).map {
             ConversationMessageWire(messageId: $0.id, role: $0.role == .creator ? .user : .assistant, content: $0.text)
         }
-        Task {
-            if let reply = await appModel.askCy(text, conversation: conversation, context: context) {
-                context.insert(ConversationMessage(threadID: thread.id, role: .cy, text: reply))
+        let referencedBrief = referencedBrief(for: text)
+        sendTask = Task {
+            if let reply = await appModel.askCy(
+                text,
+                conversation: conversation,
+                about: referencedBrief,
+                context: context
+            ) {
+                guard !Task.isCancelled else { return }
+                context.insert(ConversationMessage(
+                    threadID: thread.id,
+                    role: .cy,
+                    text: reply.assistantMessage,
+                    suggestions: reply.suggestions,
+                    proposedAction: reply.proposedAction,
+                    referencedBriefID: referencedBrief?.id
+                ))
                 thread.updatedAt = Date()
                 try? context.save()
             }
+            guard activeSendID == sendID else { return }
+            activeSendID = nil
+            sendTask = nil
             isSending = false
+        }
+    }
+
+    private func stopSending() {
+        activeSendID = nil
+        sendTask?.cancel()
+        sendTask = nil
+        isSending = false
+    }
+
+    private func referencedBrief(for message: String) -> CreativeBrief? {
+        let normalizedMessage = message.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: .current
+        )
+        let namedBrief = briefs.first { brief in
+            let title = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard title.count >= 3 else { return false }
+            return normalizedMessage.contains(title.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            ))
+        }
+        return namedBrief ?? currentDraft
+    }
+
+    private func canSendResponseToPost(_ message: ConversationMessage) -> Bool {
+        guard !sentToPostMessageIDs.contains(message.id),
+              message.referencedBriefID != nil else { return false }
+        return message.proposedActionKind == .reviseBrief || message.proposedActionKind == .developSpark
+    }
+
+    private func sendResponseToPost(_ message: ConversationMessage) {
+        guard let briefID = message.referencedBriefID,
+              let brief = briefs.first(where: { $0.id == briefID }) else {
+            appModel.notice = .error("That post could not be found.")
+            return
+        }
+
+        let cleanResponse = String(renderedMarkdown(message.text).characters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanResponse.isEmpty else { return }
+        if brief.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            brief.notes = cleanResponse
+        } else if !brief.notes.contains(cleanResponse) {
+            brief.notes += "\n\n" + cleanResponse
+        }
+        brief.updatedAt = Date()
+        do {
+            try context.save()
+            sentToPostMessageIDs.insert(message.id)
+            appModel.notice = .info("Added to \(brief.title).")
+            appModel.widgetBriefOpensEditor = true
+            appModel.widgetBriefID = brief.id
+            appModel.requestedPlanMode = .week
+            appModel.selectedTab = .today
+        } catch {
+            appModel.notice = .error("That response could not be added to the post.")
         }
     }
 

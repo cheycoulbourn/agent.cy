@@ -235,7 +235,22 @@ struct OnboardingView: View {
                     ],
                     spacing: AgentSpacing.x3
                 ) {
-                    ForEach(CreatorVibePalette.allCases) { palette in
+                    ForEach(CreatorVibePalette.standardPalettes) { palette in
+                        vibePaletteButton(palette)
+                    }
+                }
+
+                PaperFieldLabel("Signature")
+                    .padding(.top, AgentSpacing.x2)
+
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: AgentSpacing.x3),
+                        GridItem(.flexible(), spacing: AgentSpacing.x3)
+                    ],
+                    spacing: AgentSpacing.x3
+                ) {
+                    ForEach(CreatorVibePalette.signaturePalettes) { palette in
                         vibePaletteButton(palette)
                     }
                 }

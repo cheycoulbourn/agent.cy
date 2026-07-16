@@ -47,7 +47,6 @@ struct TasksView: View {
     }
 
     @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
     @Query(sort: \CreatorTask.createdAt, order: .reverse) private var tasks: [CreatorTask]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
@@ -57,13 +56,13 @@ struct TasksView: View {
     @State private var collection: TaskCollection = .postTasks
     @State private var status: StatusFilter = .open
     @State private var isFilterPresented = false
-    @State private var deletedBundle: DeletedTaskBundle?
-    @State private var clearUndoTask: Task<Void, Never>?
+    @State private var collapsedMyTaskDays: Set<String> = []
 
     private func filtered(for collection: TaskCollection) -> [CreatorTask] {
         tasks
             .filter { task in
                 guard task.parentTaskID == nil,
+                      !task.isSkipped,
                       WorkspaceScope.includes(
                         task.workspaceID,
                         activeWorkspaceID: appModel.activeWorkspaceID,
@@ -143,21 +142,6 @@ struct TasksView: View {
             .animation(.snappy(duration: 0.24), value: collection)
         }
         .toolbar(.hidden, for: .navigationBar)
-        .safeAreaInset(edge: .bottom) {
-            if deletedBundle != nil {
-                HStack {
-                    Text("Task deleted").font(.agentSubtext)
-                    Spacer()
-                    Button("Undo", action: undoDelete).font(.agentSubtext.weight(.semibold))
-                }
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(height: 48)
-                .foregroundStyle(Color.agentCanvas)
-                .background(Color.agentText, in: .capsule)
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.bottom, AgentSpacing.x2)
-            }
-        }
         .agentScreen()
     }
 
@@ -275,12 +259,14 @@ struct TasksView: View {
 
     private func openList(for collection: TaskCollection) -> some View {
         List {
-            if shouldGroupByDueDate(for: collection) {
+            if shouldGroupByDueDate(for: collection) || collection == .myTasks {
                 ForEach(dueDateGroups(for: collection)) { group in
                     Section {
-                        ForEach(group.tasks) { task in row(task) }
+                        if !isCollapsed(group, collection: collection) {
+                            ForEach(group.tasks) { task in row(task) }
+                        }
                     } header: {
-                        dueDateGroupHeader(group)
+                        dueDateGroupHeader(group, collection: collection)
                     }
                     .textCase(nil)
                 }
@@ -301,6 +287,7 @@ struct TasksView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .contentMargins(.bottom, 104, for: .scrollContent)
     }
 
     private func completedList(for collection: TaskCollection) -> some View {
@@ -310,7 +297,7 @@ struct TasksView: View {
                     Section {
                         ForEach(group.tasks) { task in row(task) }
                     } header: {
-                        dueDateGroupHeader(group)
+                        dueDateGroupHeader(group, collection: collection)
                     }
                     .textCase(nil)
                 }
@@ -320,6 +307,7 @@ struct TasksView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .contentMargins(.bottom, 104, for: .scrollContent)
     }
 
     private func row(_ task: CreatorTask) -> some View {
@@ -337,10 +325,6 @@ struct TasksView: View {
             .listRowBackground(Color.agentCanvas)
             .listRowSeparatorTint(Color.agentHairline)
             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button("Delete", role: .destructive) { delete(task) }
-                    .tint(Color.agentDestructive)
-            }
     }
 
     private func dueDateGroups(for collection: TaskCollection) -> [TaskDueDateGroup] {
@@ -364,14 +348,38 @@ struct TasksView: View {
         dueDateGroups(for: collection).count > 1
     }
 
-    private func dueDateGroupHeader(_ group: TaskDueDateGroup) -> some View {
-        HStack {
-            MetaLabel(group.title)
-            Spacer()
-            MetaLabel("\(group.tasks.count)")
+    private func dueDateGroupHeader(_ group: TaskDueDateGroup, collection: TaskCollection) -> some View {
+        let canCollapse = collection == .myTasks && status == .open
+        return Button {
+            guard canCollapse else { return }
+            if collapsedMyTaskDays.contains(group.id) {
+                collapsedMyTaskDays.remove(group.id)
+            } else {
+                collapsedMyTaskDays.insert(group.id)
+            }
+        } label: {
+            HStack(spacing: AgentSpacing.x2) {
+                MetaLabel(group.title)
+                    .foregroundStyle(group.isPastDue ? Color.cyAccent : Color.agentSecondary)
+                Spacer()
+                MetaLabel("\(group.tasks.count)")
+                if canCollapse {
+                    Image(systemName: isCollapsed(group, collection: collection) ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(width: 20, height: 20)
+                }
+            }
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .allowsHitTesting(canCollapse)
         .padding(.top, AgentSpacing.x4)
         .padding(.bottom, AgentSpacing.x2)
+    }
+
+    private func isCollapsed(_ group: TaskDueDateGroup, collection: TaskCollection) -> Bool {
+        collection == .myTasks && status == .open && collapsedMyTaskDays.contains(group.id)
     }
 
     private func sortTasks(_ lhs: CreatorTask, _ rhs: CreatorTask) -> Bool {
@@ -403,28 +411,6 @@ struct TasksView: View {
         appModel.presentedSheet = .quickCapture
     }
 
-    private func delete(_ task: CreatorTask) {
-        clearUndoTask?.cancel()
-        let affected = [task] + tasks.filter { $0.parentTaskID == task.id }
-        deletedBundle = DeletedTaskBundle(tasks: affected.map(TaskSnapshot.init))
-        affected.forEach(context.delete)
-        try? context.save()
-        appModel.queueCalendarSync(context: context)
-        clearUndoTask = Task {
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled else { return }
-            await MainActor.run { deletedBundle = nil }
-        }
-    }
-
-    private func undoDelete() {
-        guard let deletedBundle else { return }
-        clearUndoTask?.cancel()
-        for snapshot in deletedBundle.tasks { context.insert(snapshot.model) }
-        try? context.save()
-        appModel.queueCalendarSync(context: context)
-        self.deletedBundle = nil
-    }
 }
 
 struct TaskDueDateGroup: Identifiable {
@@ -440,7 +426,15 @@ struct TaskDueDateGroup: Identifiable {
         guard let day else { return "No due date" }
         if Calendar.current.isDateInToday(day) { return "Today" }
         if Calendar.current.isDateInTomorrow(day) { return "Tomorrow" }
+        if isPastDue {
+            return "Past due · \(day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))"
+        }
         return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    }
+
+    var isPastDue: Bool {
+        guard let day else { return false }
+        return Calendar.current.startOfDay(for: day) < Calendar.current.startOfDay(for: Date())
     }
 }
 
@@ -541,7 +535,7 @@ struct TaskRow: View {
                 metadata(linkedPostTitle.uppercased())
                 metadataDivider
             } else {
-                metadata(task.isCompleted ? "COMPLETED" : "OPEN")
+                metadata(task.isCompleted ? "COMPLETED" : (isOverdue ? "PAST DUE" : "OPEN"), color: statusColor)
                 metadataDivider
             }
             metadata(dateText.uppercased())
@@ -572,6 +566,15 @@ struct TaskRow: View {
         case .high: .orange
         default: .agentSecondary
         }
+    }
+
+    private var statusColor: Color {
+        isOverdue && !task.isCompleted ? .cyAccent : .agentSecondary
+    }
+
+    private var isOverdue: Bool {
+        guard let targetDate = task.targetDate else { return false }
+        return !task.isCompleted && Calendar.current.startOfDay(for: targetDate) < Calendar.current.startOfDay(for: Date())
     }
 
     private func checkboxColor(for task: CreatorTask) -> Color {
@@ -619,6 +622,17 @@ struct TaskDetailView: View {
     }
     private var isLinkedPostTask: Bool { task.briefID != nil || task.platformOutputID != nil }
     private var isDailyFocusLocked: Bool { task.dailyFocusDate != nil }
+    private var isOverdueMyTask: Bool {
+        guard !task.isCompleted,
+              !task.isSkipped,
+              TaskCollectionPolicy.collection(
+                briefID: task.briefID,
+                platformOutputID: task.platformOutputID
+              ) == .myTasks,
+              let targetDate = task.targetDate
+        else { return false }
+        return Calendar.current.startOfDay(for: targetDate) < Calendar.current.startOfDay(for: Date())
+    }
 
     var body: some View {
         ScrollView {
@@ -629,6 +643,10 @@ struct TaskDetailView: View {
                     .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
                     .tracking(-0.56)
                     .lineLimit(1...3)
+
+                if isOverdueMyTask {
+                    overdueActions
+                }
 
                 taskSetupRows
 
@@ -833,6 +851,52 @@ struct TaskDetailView: View {
         }
         .agentScreen()
         .agentKeyboardDismissal()
+    }
+
+    private var overdueActions: some View {
+        HStack(spacing: AgentSpacing.x2) {
+            overdueAction("Complete", isPrimary: true) {
+                appModel.toggleTask(task, context: context)
+                dismiss()
+            }
+            overdueAction("Move to today") {
+                appModel.moveTaskToToday(task, context: context)
+                dismiss()
+            }
+            overdueAction("Skip") {
+                appModel.skipTask(task, context: context)
+                dismiss()
+            }
+        }
+        .padding(AgentSpacing.x2)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.control)
+                .stroke(Color.agentBorder, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func overdueAction(
+        _ title: String,
+        isPrimary: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.paperInter(size: 13, weight: .semibold, relativeTo: .subheadline))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, minHeight: 42)
+                .foregroundStyle(isPrimary ? Color.agentCanvas : Color.agentText)
+                .background(isPrimary ? Color.agentText : Color.clear, in: .capsule)
+                .overlay {
+                    if !isPrimary {
+                        Capsule().stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
     }
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
@@ -1108,18 +1172,5 @@ private struct TaskDueDateEditor: View {
         components.hour = time.hour
         components.minute = time.minute
         return calendar.date(from: components) ?? day
-    }
-}
-
-private struct DeletedTaskBundle { let tasks: [TaskSnapshot] }
-private struct TaskSnapshot {
-    let id: UUID; let briefID: UUID?; let pillarID: UUID?; let outputID: UUID?; let parentID: UUID?; let title: String; let notes: String; let kind: CreatorTaskKind; let lane: TaskLane; let priority: TaskPriority; let completed: Bool; let target: Date?; let includesTargetTime: Bool; let dailyFocusDate: Date?; let dailyFocusTitle: String?; let dailyFocusTemplateEntryID: UUID?; let focusTaskTemplateID: UUID?; let isFocusTemplateCustomized: Bool; let recurrence: TaskRecurrenceFrequency; let recurrenceRootTaskID: UUID?; let order: Int; let completedAt: Date?; let recordingEmitted: Bool; let recordingDesignated: Bool; let createdAt: Date
-    init(_ task: CreatorTask) {
-        id = task.id; briefID = task.briefID; pillarID = task.pillarID; outputID = task.platformOutputID; parentID = task.parentTaskID; title = task.title; notes = task.notes; kind = task.kind; lane = task.lane; priority = task.priority; completed = task.isCompleted; target = task.targetDate; includesTargetTime = task.includesTargetTime; dailyFocusDate = task.dailyFocusDate; dailyFocusTitle = task.dailyFocusTitle; dailyFocusTemplateEntryID = task.dailyFocusTemplateEntryID; focusTaskTemplateID = task.focusTaskTemplateID; isFocusTemplateCustomized = task.isFocusTemplateCustomized; recurrence = task.recurrence; recurrenceRootTaskID = task.recurrenceRootTaskID; order = task.sortOrder; completedAt = task.completedAt; recordingEmitted = task.recordingMilestoneEmitted; recordingDesignated = task.isRecordingMilestoneDesignated; createdAt = task.createdAt
-    }
-    var model: CreatorTask {
-        let task = CreatorTask(id: id, briefID: briefID, pillarID: pillarID, platformOutputID: outputID, parentTaskID: parentID, title: title, kind: kind, lane: lane, priority: priority, notes: notes, targetDate: target, includesTargetTime: includesTargetTime, dailyFocusDate: dailyFocusDate, dailyFocusTitle: dailyFocusTitle, dailyFocusTemplateEntryID: dailyFocusTemplateEntryID, focusTaskTemplateID: focusTaskTemplateID, isFocusTemplateCustomized: isFocusTemplateCustomized, recurrence: recurrence, recurrenceRootTaskID: recurrenceRootTaskID, sortOrder: order, isRecordingMilestoneDesignated: recordingDesignated, createdAt: createdAt)
-        task.isCompleted = completed; task.completedAt = completedAt; task.recordingMilestoneEmitted = recordingEmitted
-        return task
     }
 }

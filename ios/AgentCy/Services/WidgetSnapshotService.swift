@@ -64,6 +64,7 @@ enum WidgetSnapshotService {
 
         let topLevelTasks = tasks.filter { $0.parentTaskID == nil }
         let todayTasks = topLevelTasks
+            .filter { !$0.isSkipped }
             .filter { $0.targetDate.map { calendar.isDate($0, inSameDayAs: today) } == true }
             .sorted(by: taskSort)
         let openTodayTasks = todayTasks.filter { !$0.isCompleted }

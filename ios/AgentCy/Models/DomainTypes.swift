@@ -612,9 +612,23 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
     case neutral
     case colorful
     case dark
+    case midnight
+    case soho
+    case tooCool
 
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .grayscale: "Stone"
+        case .pastel: "Soft Girl Era"
+        case .neutral: "Aesthetica"
+        case .colorful: "Vivrant Thing"
+        case .dark: "(not) Vivrant Thing"
+        case .soho: "Soho"
+        case .midnight: "Midnight"
+        case .tooCool: "Too Cool"
+        }
+    }
 
     static let fallbackPillarColorHexes = ["9B3A2E", "B47724", "55705B", "416B85", "76506F"]
 
@@ -625,17 +639,48 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
         case .neutral: "Grounded and warm"
         case .colorful: "Bright and expressive"
         case .dark: "Deep and moody"
+        case .soho: "Editorial and earthy"
+        case .midnight: "Smoky and grounded"
+        case .tooCool: "Clean and cinematic"
         }
     }
 
     var pillarColorHexes: [String] {
         switch self {
         case .grayscale: ["343434", "5A5A5A", "7C7C7C", "9E9E9E", "C2C2C2"]
-        case .pastel: ["D9A5A5", "F2D18A", "A7CBB0", "A9C8E8", "C5B1DD"]
+        case .pastel: ["F2C6CF", "F4F1E2", "D8EBF9", "FCE6B7", "D7D4B1"]
         case .neutral: ["443A35", "252525", "E4DDCC", "F8F4EE", "C5B49D"]
         case .colorful: ["E45545", "F0A202", "2E8B57", "3973C6", "8D4BC7"]
         case .dark: ["6C3547", "755321", "31594A", "2E4A66", "4F3D66"]
+        case .soho: ["895A38", "6B5932", "C2CDD4", "D2C4A2", "E7E6CA", "4F1615"]
+        case .midnight: ["0D0502", "4C2421", "B2A998", "CBCAC2", "998368"]
+        case .tooCool: ["440607", "1B2345", "E3DFD4", "020202", "4F4439", "64646D"]
         }
+    }
+
+    static let standardPalettes: [CreatorVibePalette] = [
+        .grayscale, .pastel, .neutral, .colorful, .dark, .midnight
+    ]
+
+    static let signaturePalettes: [CreatorVibePalette] = [.soho, .tooCool]
+}
+
+@MainActor
+enum PillarPaletteAssignment {
+    /// Applies one distinct palette color per active pillar. More than five
+    /// pillars are left unchanged rather than repeating colors unexpectedly.
+    @discardableResult
+    static func apply(_ palette: CreatorVibePalette, to pillars: [Pillar]) -> Int {
+        let activePillars = pillars.filter { !$0.isArchived }
+        let colors = palette.pillarColorHexes
+        guard !activePillars.isEmpty,
+              activePillars.count <= 5,
+              activePillars.count <= colors.count
+        else { return 0 }
+        for (index, pillar) in activePillars.enumerated() {
+            pillar.colorHex = colors[index]
+        }
+        return activePillars.count
     }
 }
 

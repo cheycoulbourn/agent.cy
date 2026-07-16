@@ -98,6 +98,15 @@ enum AccessAction: Sendable {
     case updatePosting
     case export
     case erase
+
+    var isCyGeneration: Bool {
+        switch self {
+        case .sparkDialogue, .askCy, .ideate, .compose, .extractVoiceProfile, .revise, .teachCy:
+            true
+        default:
+            false
+        }
+    }
 }
 
 enum AccessPolicy {

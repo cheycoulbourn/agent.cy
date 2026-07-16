@@ -12,7 +12,14 @@ enum FocusTaskRecurrenceService {
         weekCount: Int = 4,
         calendar: Calendar = .current
     ) throws {
-        let start = calendar.startOfDay(for: requestedStart)
+        let requestedDay = calendar.startOfDay(for: requestedStart)
+        let weekday = calendar.component(.weekday, from: requestedDay)
+        let daysSinceMonday = (weekday + 5) % 7
+        let start = calendar.date(
+            byAdding: .day,
+            value: -daysSinceMonday,
+            to: requestedDay
+        ) ?? requestedDay
         guard let end = calendar.date(byAdding: .weekOfYear, value: max(1, weekCount), to: start) else {
             return
         }
@@ -81,13 +88,13 @@ enum FocusTaskRecurrenceService {
             let key = OccurrenceKey(templateID: templateID, day: normalizedDay)
             if existingByKey[key] == nil {
                 existingByKey[key] = task
-            } else if !task.isFocusTemplateCustomized && !task.isCompleted {
+            } else if !task.isFocusTemplateCustomized && !task.isCompleted && !task.isSkipped {
                 context.delete(task)
             }
         }
 
         for (key, task) in existingByKey where desired[key] == nil {
-            if task.isFocusTemplateCustomized || task.isCompleted {
+            if task.isFocusTemplateCustomized || task.isCompleted || task.isSkipped {
                 task.focusTaskTemplateID = nil
             } else {
                 context.delete(task)
@@ -96,7 +103,7 @@ enum FocusTaskRecurrenceService {
 
         for (key, occurrence) in desired {
             if let task = existingByKey[key] {
-                guard !task.isFocusTemplateCustomized, !task.isCompleted else { continue }
+                guard !task.isFocusTemplateCustomized, !task.isCompleted, !task.isSkipped else { continue }
                 apply(occurrence, to: task)
             } else {
                 let task = CreatorTask(

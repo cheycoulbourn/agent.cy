@@ -49,6 +49,13 @@ final class CalendarSyncTests: XCTestCase {
             linkedBriefIsArchived: false,
             syncEnabled: true
         ))
+        XCTAssertFalse(CalendarSyncPolicy.shouldSyncTask(
+            hasTargetDate: true,
+            isSubtask: false,
+            isSkipped: true,
+            linkedBriefIsArchived: false,
+            syncEnabled: true
+        ))
     }
 
     func testPostsWithoutTimesBecomeOneDayEvents() throws {

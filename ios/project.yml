@@ -79,6 +79,7 @@ targets:
           - remote-notification
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: "Allow agent.cy to reach Local Cy on your Mac while both devices are on the same network."
         NSCalendarsFullAccessUsageDescription: "Allow agent.cy to add scheduled posts and tasks to your chosen calendar."
     entitlements:
       path: AgentCy/Support/AgentCy.entitlements

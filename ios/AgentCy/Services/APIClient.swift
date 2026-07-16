@@ -460,6 +460,14 @@ actor AgentCyAPIClient {
         result: Result.Type,
         onPhase: (@Sendable (AIProgressPhase) async -> Void)? = nil
     ) async throws -> Result {
+        if LocalCyPreferences.isEnabledAndConnected {
+            return try await LocalCyAIClient.shared.perform(
+                operation: operation,
+                request: body,
+                result: result,
+                onPhase: onPhase
+            )
+        }
         guard let identity = try await store.load() else { throw AgentCyAPIError.missingCredential }
         if let expiry = identity.credentialExpiresAt, expiry <= Date() { throw AgentCyAPIError.missingCredential }
         let data = try JSONEncoder.agentCy.encode(body)

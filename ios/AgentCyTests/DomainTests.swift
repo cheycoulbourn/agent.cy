@@ -4,6 +4,96 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testPaletteSelectionRecolorsFiveOrFewerPillarsInOrder() {
+        let pillars = (0..<5).map { index in
+            Pillar(name: "Pillar \(index + 1)", colorHex: "000000")
+        }
+
+        XCTAssertEqual(PillarPaletteAssignment.apply(.pastel, to: pillars), 5)
+        XCTAssertEqual(pillars.map(\.colorHex), CreatorVibePalette.pastel.pillarColorHexes)
+    }
+
+    func testPaletteSelectionLeavesMoreThanFivePillarsUnchanged() {
+        let pillars = (0..<6).map { index in
+            Pillar(name: "Pillar \(index + 1)", colorHex: "ABCDEF")
+        }
+
+        XCTAssertEqual(PillarPaletteAssignment.apply(.colorful, to: pillars), 0)
+        XCTAssertTrue(pillars.allSatisfy { $0.colorHex == "ABCDEF" })
+    }
+
+    func testOverdueMyTaskCanMoveToTodayWithoutChangingItsFocusTemplate() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let calendar = Calendar.current
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 16,
+            hour: 9
+        )))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let task = CreatorTask(
+            title: "Finish the edit",
+            targetDate: yesterday,
+            dailyFocusDate: yesterday,
+            focusTaskTemplateID: UUID()
+        )
+        context.insert(task)
+        try context.save()
+
+        AppModel(reminderService: PreviewReminderService()).moveTaskToToday(
+            task,
+            context: context,
+            now: today
+        )
+
+        XCTAssertEqual(task.targetDate.map(calendar.startOfDay(for:)), calendar.startOfDay(for: today))
+        XCTAssertEqual(task.dailyFocusDate.map(calendar.startOfDay(for:)), calendar.startOfDay(for: today))
+        XCTAssertTrue(task.isFocusTemplateCustomized)
+        XCTAssertNotNil(task.focusTaskTemplateID)
+    }
+
+    func testSkippingAnOverdueTaskDoesNotCompleteIt() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let task = CreatorTask(title: "Review the week", targetDate: Date().addingTimeInterval(-86_400))
+        context.insert(task)
+        try context.save()
+
+        AppModel(reminderService: PreviewReminderService()).skipTask(task, context: context)
+
+        XCTAssertTrue(task.isSkipped)
+        XCTAssertNotNil(task.skippedAt)
+        XCTAssertFalse(task.isCompleted)
+    }
+
+    func testUndoTaskCompletionRestoresTaskAndRemovesGeneratedRecurrence() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let model = AppModel(reminderService: PreviewReminderService())
+        let task = CreatorTask(
+            title: "Plan next week",
+            targetDate: Date(),
+            recurrence: .weekly
+        )
+        context.insert(task)
+        try context.save()
+
+        model.toggleTask(task, context: context)
+
+        XCTAssertTrue(task.isCompleted)
+        XCTAssertNotNil(model.taskCompletionUndo)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorTask>()).count, 2)
+
+        model.undoLastTaskCompletion(context: context)
+
+        XCTAssertFalse(task.isCompleted)
+        XCTAssertNil(task.completedAt)
+        XCTAssertNil(model.taskCompletionUndo)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorTask>()).count, 1)
+    }
+
     func testConversationTitleKeepsWholeWordsAtTheLengthBoundary() {
         let prompt = "Keep shaping My favorite things to take with me on a trip"
 
@@ -71,12 +161,74 @@ final class DomainTests: XCTestCase {
         )
     }
 
-    func testCreatorVibePalettesProvideFiveDistinctPillarColors() {
+    func testCreatorVibePalettesProvideAtLeastFiveDistinctPillarColors() {
         for palette in CreatorVibePalette.allCases {
-            XCTAssertEqual(palette.pillarColorHexes.count, 5)
-            XCTAssertEqual(Set(palette.pillarColorHexes).count, 5)
+            XCTAssertGreaterThanOrEqual(palette.pillarColorHexes.count, 5)
+            XCTAssertEqual(Set(palette.pillarColorHexes).count, palette.pillarColorHexes.count)
             XCTAssertTrue(palette.pillarColorHexes.allSatisfy { $0.count == 6 })
         }
+    }
+
+    func testNamedCreatorPalettesMatchTheirReferenceColors() {
+        XCTAssertEqual(CreatorVibePalette.grayscale.title, "Stone")
+        XCTAssertEqual(CreatorVibePalette.pastel.title, "Soft Girl Era")
+        XCTAssertEqual(CreatorVibePalette.neutral.title, "Aesthetica")
+        XCTAssertEqual(CreatorVibePalette.colorful.title, "Vivrant Thing")
+        XCTAssertEqual(CreatorVibePalette.dark.title, "(not) Vivrant Thing")
+        XCTAssertEqual(CreatorVibePalette.soho.title, "Soho")
+        XCTAssertEqual(CreatorVibePalette.midnight.pillarColorHexes, ["0D0502", "4C2421", "B2A998", "CBCAC2", "998368"])
+        XCTAssertEqual(CreatorVibePalette.tooCool.pillarColorHexes, ["440607", "1B2345", "E3DFD4", "020202", "4F4439", "64646D"])
+        XCTAssertEqual(CreatorVibePalette.allCases.suffix(2), [.soho, .tooCool])
+        XCTAssertEqual(CreatorVibePalette.signaturePalettes, [.soho, .tooCool])
+    }
+
+    func testCreatorProfileStoresTwoCompleteCustomCyQuickPrompts() {
+        let profile = CreatorProfile(name: "Chey")
+        XCTAssertNil(profile.customCyQuickPrompts)
+
+        profile.setCustomCyQuickPrompts([
+            "  Plan my week  ",
+            "Shape this idea"
+        ])
+
+        XCTAssertEqual(profile.customCyQuickPrompts, [
+            "Plan my week",
+            "Shape this idea"
+        ])
+
+        let longPrompt = String(repeating: "A", count: CreatorProfile.maxCyQuickPromptLength + 20)
+        profile.setCustomCyQuickPrompts([longPrompt, "Second prompt"])
+        XCTAssertEqual(profile.customCyQuickPrompts?.first?.count, CreatorProfile.maxCyQuickPromptLength)
+
+        profile.restoreDefaultCyQuickPrompts()
+        XCTAssertNil(profile.customCyQuickPrompts)
+    }
+
+    func testConversationMessageStoresStructuredCyActions() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let briefID = UUID()
+        let message = ConversationMessage(
+            role: .cy,
+            text: "**Try this hook.**",
+            suggestions: [
+                ChatSuggestionWire(label: "Make it shorter", prompt: "Shorten the hook")
+            ],
+            proposedAction: ChatProposedActionWire(
+                kind: .reviseBrief,
+                summary: "Apply the response to the post"
+            ),
+            referencedBriefID: briefID
+        )
+        context.insert(message)
+        try context.save()
+
+        let saved = try XCTUnwrap(context.fetch(FetchDescriptor<ConversationMessage>()).first)
+        XCTAssertEqual(saved.chatSuggestions.count, 1)
+        XCTAssertEqual(saved.chatSuggestions.first?.label, "Make it shorter")
+        XCTAssertEqual(saved.proposedActionKind, .reviseBrief)
+        XCTAssertEqual(saved.proposedActionSummary, "Apply the response to the post")
+        XCTAssertEqual(saved.referencedBriefID, briefID)
     }
 
     func testCreatorVibeAndAppearancePersistTogether() throws {

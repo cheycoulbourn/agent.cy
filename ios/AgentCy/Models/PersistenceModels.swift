@@ -47,6 +47,9 @@ final class CreatorProfile {
     var showsHookInPostEditor: Bool = true
     var showsBrandDealsInPostEditor: Bool = true
     var showsMoodBoardsInPostEditor: Bool = true
+    var customCyQuickPrompt1: String = ""
+    var customCyQuickPrompt2: String = ""
+    var customCyQuickPrompt3: String = ""
     var createdAt: Date = Date()
 
     init(
@@ -102,6 +105,37 @@ final class CreatorProfile {
     var vibePalette: CreatorVibePalette? {
         get { CreatorVibePalette(rawValue: vibePaletteRaw) }
         set { vibePaletteRaw = newValue?.rawValue ?? "" }
+    }
+
+    static let defaultCyQuickPrompts = [
+        "Help me choose what to make next",
+        "Turn a rough note into a post"
+    ]
+    static let maxCyQuickPromptLength = 42
+
+    var customCyQuickPrompts: [String]? {
+        let prompts = [customCyQuickPrompt1, customCyQuickPrompt2]
+            .map {
+                String(
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .prefix(Self.maxCyQuickPromptLength)
+                )
+            }
+        guard prompts.allSatisfy({ !$0.isEmpty }) else { return nil }
+        return prompts
+    }
+
+    func setCustomCyQuickPrompts(_ prompts: [String]) {
+        guard prompts.count == 2 else { return }
+        customCyQuickPrompt1 = String(prompts[0].trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maxCyQuickPromptLength))
+        customCyQuickPrompt2 = String(prompts[1].trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maxCyQuickPromptLength))
+        customCyQuickPrompt3 = ""
+    }
+
+    func restoreDefaultCyQuickPrompts() {
+        customCyQuickPrompt1 = ""
+        customCyQuickPrompt2 = ""
+        customCyQuickPrompt3 = ""
     }
 }
 
@@ -509,6 +543,10 @@ final class CreatorTask {
     var laneRaw: String = TaskLane.production.rawValue
     var priorityRaw: String = TaskPriority.medium.rawValue
     var isCompleted: Bool = false
+    /// A skipped task is hidden without being counted as completed. For recurring
+    /// focus tasks this affects only the materialized occurrence, not the template.
+    var isSkipped: Bool = false
+    var skippedAt: Date?
     var targetDate: Date?
     /// Existing records default to timed so an additive migration preserves their meaning.
     /// New tasks default to date-only through the initializer below.
@@ -979,19 +1017,62 @@ final class ConversationMessage {
     var threadID: UUID = UUID()
     var roleRaw: String = ConversationRole.creator.rawValue
     var text: String = ""
+    /// Structured Cy follow-ups are stored as JSON so CloudKit only mirrors a scalar field.
+    var chatSuggestionsJSON: String = ""
+    var proposedActionKindRaw: String = ""
+    var proposedActionSummary: String = ""
+    var referencedBriefID: UUID?
     var createdAt: Date = Date()
 
-    init(id: UUID = UUID(), threadID: UUID = UUID(), role: ConversationRole = .creator, text: String = "", createdAt: Date = Date()) {
+    init(
+        id: UUID = UUID(),
+        threadID: UUID = UUID(),
+        role: ConversationRole = .creator,
+        text: String = "",
+        suggestions: [ChatSuggestionWire] = [],
+        proposedAction: ChatProposedActionWire? = nil,
+        referencedBriefID: UUID? = nil,
+        createdAt: Date = Date()
+    ) {
         self.id = id
         self.threadID = threadID
         self.roleRaw = role.rawValue
         self.text = text
+        self.chatSuggestionsJSON = Self.encodeSuggestions(suggestions)
+        self.proposedActionKindRaw = proposedAction?.kind.rawValue ?? ""
+        self.proposedActionSummary = proposedAction?.summary ?? ""
+        self.referencedBriefID = referencedBriefID
         self.createdAt = createdAt
     }
 
     var role: ConversationRole {
         get { ConversationRole(rawValue: roleRaw) ?? .creator }
         set { roleRaw = newValue.rawValue }
+    }
+
+    var chatSuggestions: [ChatSuggestionWire] {
+        get {
+            guard let data = chatSuggestionsJSON.data(using: .utf8),
+                  let suggestions = try? JSONDecoder().decode([ChatSuggestionWire].self, from: data) else {
+                return []
+            }
+            return suggestions
+        }
+        set { chatSuggestionsJSON = Self.encodeSuggestions(newValue) }
+    }
+
+    var proposedActionKind: ChatProposedActionKindWire? {
+        get { ChatProposedActionKindWire(rawValue: proposedActionKindRaw) }
+        set { proposedActionKindRaw = newValue?.rawValue ?? "" }
+    }
+
+    private static func encodeSuggestions(_ suggestions: [ChatSuggestionWire]) -> String {
+        guard !suggestions.isEmpty,
+              let data = try? JSONEncoder().encode(suggestions),
+              let json = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return json
     }
 }
 

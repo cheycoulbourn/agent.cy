@@ -18,6 +18,8 @@ struct TodayView: View {
     @Query private var allFocusOverrides: [DailyFocusOverride]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var headerHeight: CGFloat = 0
+    @State private var selectedPostTaskOutput: PlatformOutput?
+    @State private var showPostTaskPicker = false
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var tasks: [CreatorTask] { scoped(allTasks) }
@@ -39,16 +41,32 @@ struct TodayView: View {
         self.showsHeader = showsHeader
     }
 
-    private var todayTasks: [CreatorTask] {
+    private var todayPostTasks: [CreatorTask] {
         tasks
             .filter {
                 !$0.isCompleted &&
+                    !$0.isSkipped &&
+                    $0.parentTaskID == nil &&
+                    TaskCollectionPolicy.collection(
+                        briefID: $0.briefID,
+                        platformOutputID: $0.platformOutputID
+                    ) == .postTasks &&
+                    taskBelongsToSelectedDay($0)
+            }
+            .sorted(by: taskSort)
+    }
+
+    private var todayMyTasks: [CreatorTask] {
+        tasks
+            .filter {
+                !$0.isCompleted &&
+                    !$0.isSkipped &&
                     $0.parentTaskID == nil &&
                     TaskCollectionPolicy.collection(
                         briefID: $0.briefID,
                         platformOutputID: $0.platformOutputID
                     ) == .myTasks &&
-                    ($0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } ?? false)
+                    taskBelongsToSelectedDay($0)
             }
             .sorted(by: taskSort)
     }
@@ -107,6 +125,29 @@ struct TodayView: View {
         .scrollDismissesKeyboard(.interactively)
         .toolbar(.hidden, for: .navigationBar)
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
+        .confirmationDialog(
+            "Add task to which post?",
+            isPresented: $showPostTaskPicker,
+            titleVisibility: .visible
+        ) {
+            ForEach(todayOutputs) { output in
+                if let brief = brief(for: output) {
+                    Button(outputTitle(output, brief: brief)) {
+                        selectedPostTaskOutput = output
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(item: $selectedPostTaskOutput) { output in
+            if let brief = brief(for: output) {
+                PostDraftTaskComposer(
+                    brief: brief,
+                    output: output,
+                    defaultDate: output.targetDate ?? day
+                )
+            }
+        }
         .agentDashboardScreen()
     }
 
@@ -222,24 +263,23 @@ struct TodayView: View {
     }
 
     private var taskSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            sectionHeading("Tasks", count: todayTasks.count, unit: "task")
-            if todayTasks.isEmpty {
-                Text("No tasks planned.")
-                    .font(.agentBody)
-                    .foregroundStyle(Color.agentSecondary)
-            } else {
-                ForEach(Array(todayTasks.prefix(4))) { task in
-                    TaskRow(task: task, allTasks: tasks)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(Color.agentHairline)
-                                .frame(height: 1)
-                        }
-                }
-            }
-            AgentAddActionRow(title: "Add task", action: addTaskForToday)
-                .accessibilityHint("Creates a task scheduled for this day")
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            dayTaskCollection(
+                title: TaskCollection.postTasks.title,
+                tasks: todayPostTasks,
+                emptyMessage: "No post tasks.",
+                addAction: addPostTaskForToday,
+                accessibilityHint: "Adds a task to a post scheduled for this day"
+            )
+
+            dayTaskCollection(
+                title: TaskCollection.myTasks.title,
+                tasks: todayMyTasks,
+                emptyMessage: "No tasks planned.",
+                addAction: addMyTaskForToday,
+                accessibilityHint: "Creates a task scheduled for this day"
+            )
+
             Button {
                 appModel.selectedTab = .tasks
             } label: {
@@ -253,6 +293,38 @@ struct TodayView: View {
                 .overlay(alignment: .top) { Rectangle().fill(Color.agentHairline).frame(height: 1) }
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    private func dayTaskCollection(
+        title: String,
+        tasks collectionTasks: [CreatorTask],
+        emptyMessage: String,
+        addAction: @escaping () -> Void,
+        accessibilityHint: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            sectionHeading(title, count: collectionTasks.count, unit: "task")
+
+            if collectionTasks.isEmpty {
+                Text(emptyMessage)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+            } else {
+                ForEach(Array(collectionTasks.prefix(4).enumerated()), id: \.element.id) { index, task in
+                    TaskRow(task: task, allTasks: tasks)
+                        .overlay(alignment: .bottom) {
+                            if index < min(collectionTasks.count, 4) - 1 {
+                                Rectangle()
+                                    .fill(Color.agentHairline)
+                                    .frame(height: 1)
+                            }
+                        }
+                }
+            }
+
+            AgentAddActionRow(title: "Add task", action: addAction)
+                .accessibilityHint(accessibilityHint)
         }
     }
 
@@ -287,7 +359,35 @@ struct TodayView: View {
         return (lhs.targetDate ?? .distantFuture) < (rhs.targetDate ?? .distantFuture)
     }
 
-    private func addTaskForToday() {
+    private func taskBelongsToSelectedDay(_ task: CreatorTask) -> Bool {
+        if task.dailyFocusDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true ||
+            task.targetDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true {
+            return true
+        }
+
+        if let outputID = task.platformOutputID,
+           todayOutputs.contains(where: { $0.id == outputID }) {
+            return true
+        }
+
+        return task.briefID.map { briefID in
+            todayOutputs.contains(where: { $0.briefID == briefID })
+        } == true
+    }
+
+    private func addPostTaskForToday() {
+        guard !todayOutputs.isEmpty else {
+            appModel.notice = .info("Schedule a post before adding a post task.")
+            return
+        }
+        if todayOutputs.count == 1 {
+            selectedPostTaskOutput = todayOutputs[0]
+        } else {
+            showPostTaskPicker = true
+        }
+    }
+
+    private func addMyTaskForToday() {
         appModel.quickCaptureTargetDate = day
         appModel.quickCapturePillarID = nil
         appModel.quickCaptureTaskLane = .production

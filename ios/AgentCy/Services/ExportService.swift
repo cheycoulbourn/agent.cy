@@ -44,6 +44,7 @@ struct LocalExportService: ExportServicing {
                 "goal": $0.goal,
                 "platforms": $0.selectedPlatforms.map(\.rawValue),
                 "assistanceMode": $0.assistanceMode.rawValue,
+                "customCyQuickPrompts": $0.customCyQuickPrompts ?? [],
                 "showsHookInPostEditor": $0.showsHookInPostEditor,
                 "showsBrandDealsInPostEditor": $0.showsBrandDealsInPostEditor,
                 "showsMoodBoardsInPostEditor": $0.showsMoodBoardsInPostEditor
@@ -165,6 +166,8 @@ struct LocalExportService: ExportServicing {
                     "notes": task.notes,
                     "estimatedMinutes": task.estimatedMinutes ?? NSNull(),
                     "isCompleted": task.isCompleted,
+                    "isSkipped": task.isSkipped,
+                    "skippedAt": task.skippedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "targetDate": task.targetDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "includesTargetTime": task.includesTargetTime,
                     "dailyFocusDate": task.dailyFocusDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
@@ -297,11 +300,12 @@ struct LocalExportService: ExportServicing {
                 .filter { $0.parentTaskID == nil }
                 .sorted { $0.sortOrder < $1.sortOrder }
                 .flatMap { task in
-                    let parentLine = "- [\(task.isCompleted ? "x" : " ")] \(task.title) (\(task.kind.title))"
+                    let skipped = task.isSkipped ? " · Skipped" : ""
+                    let parentLine = "- [\(task.isCompleted ? "x" : " ")] \(task.title) (\(task.kind.title)\(skipped))"
                     let childLines = allBriefTasks
                         .filter { $0.parentTaskID == task.id }
                         .sorted { $0.sortOrder < $1.sortOrder }
-                        .map { "  - [\($0.isCompleted ? "x" : " ")] \($0.title)" }
+                        .map { "  - [\($0.isCompleted ? "x" : " ")] \($0.title)\($0.isSkipped ? " (Skipped)" : "")" }
                     return [parentLine] + childLines
                 }
             if !briefTasks.isEmpty {
@@ -523,6 +527,7 @@ enum PostMarkdownExporter {
         for task in topLevel {
             var metadata: [String] = [task.kind.title]
             if task.priority.normalized != .none { metadata.append(task.priority.title) }
+            if task.isSkipped { metadata.append("Skipped") }
             if let targetDate = task.targetDate {
                 metadata.append(dateLabel(targetDate, includesTime: task.includesTargetTime))
             }

@@ -47,7 +47,8 @@ struct WeeklyFocusSetupView: View {
                                     WeeklyFocusDaySelectionView(
                                         day: day,
                                         selection: assignmentBinding(for: day),
-                                        taskTemplates: taskTemplateBinding(for: day)
+                                        taskTemplates: taskTemplateBinding(for: day),
+                                        saveChanges: persistChanges
                                     )
                                 } label: {
                                     HStack(spacing: AgentSpacing.x4) {
@@ -167,13 +168,22 @@ struct WeeklyFocusSetupView: View {
     }
 
     private func saveAndDismiss() {
-        if appModel.saveWeeklyFocus(
+        if persistChanges() {
+            dismiss()
+        }
+    }
+
+    @discardableResult
+    private func persistChanges() -> Bool {
+        let saved = appModel.saveWeeklyFocus(
             assignments,
             taskTemplates: taskTemplates,
             context: context
-        ) {
-            dismiss()
+        )
+        if saved {
+            savedSnapshot = currentSnapshot
         }
+        return saved
     }
 }
 
@@ -181,6 +191,7 @@ private struct WeeklyFocusDaySelectionView: View {
     let day: PillarWeekday
     @Binding var selection: [DailyFocusKind]
     @Binding var taskTemplates: [DailyFocusTaskTemplateDefinition]
+    let saveChanges: () -> Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -225,7 +236,9 @@ private struct WeeklyFocusDaySelectionView: View {
                 }
 
                     if selection.isEmpty {
-                        Button("Set \(day.title) to Rest") { dismiss() }
+                        Button("Set \(day.title) to Rest") {
+                            if saveChanges() { dismiss() }
+                        }
                             .buttonStyle(AgentPrimaryButtonStyle())
                     } else {
                         NavigationLink {
@@ -233,6 +246,7 @@ private struct WeeklyFocusDaySelectionView: View {
                                 day: day,
                                 focusKinds: selection,
                                 taskTemplates: $taskTemplates,
+                                saveChanges: saveChanges,
                                 finishDay: { dismiss() }
                             )
                         } label: {
@@ -305,6 +319,7 @@ private struct WeeklyFocusTaskTemplateEditor: View {
     let day: PillarWeekday
     let focusKinds: [DailyFocusKind]
     @Binding var taskTemplates: [DailyFocusTaskTemplateDefinition]
+    let saveChanges: () -> Bool
     let finishDay: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -346,6 +361,7 @@ private struct WeeklyFocusTaskTemplateEditor: View {
                     taskTemplates.removeAll {
                         $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     }
+                    guard saveChanges() else { return }
                     dismiss()
                     Task { @MainActor in
                         await Task.yield()
@@ -488,6 +504,7 @@ struct DailyFocusDetailView: View {
         tasks
             .filter {
                 $0.parentTaskID == nil &&
+                    !$0.isSkipped &&
                     AgendaContentVisibility.includesTask(
                         briefID: $0.briefID,
                         activeBriefIDs: activeBriefIDs

@@ -7,11 +7,14 @@
     "node": ">=24 <25"
   },
   "bin": {
-    "agentcy-mcp": "./dist/index.js"
+    "agentcy-mcp": "./dist/index.js",
+    "agentcy-local-cy": "./dist/local-cy.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:standalone": "pnpm build && node scripts/build-standalone.mjs",
+    "local-cy": "node dist/local-cy.js",
+    "local-cy:install": "pnpm build && node scripts/install-local-cy.mjs",
     "start": "node dist/index.js",
     "setup": "pnpm build && node scripts/setup.mjs",
     "test": "vitest run",
@@ -19,6 +22,7 @@
   },
   "dependencies": {
     "@agent-cy/contracts": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.210",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "zod": "^4.1.12"
   },

@@ -63,6 +63,7 @@
 		95F2186A4F90D79DCA081880 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F71A3E596508328E9247A219 /* OnboardingView.swift */; };
 		964EB0ABA5065F31CD12F33B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 5376911A687D79D19A8BF760 /* PrivacyInfo.xcprivacy */; };
 		9A256054B0263C53E7DA4229 /* CreatorAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040C9127F30DB821438BE7D6 /* CreatorAvatar.swift */; };
+		9E0CF64CB96395AACD7D8134 /* LocalCyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBA889DE666233D1DAF7731 /* LocalCyService.swift */; };
 		9F6BEE75819E8094D3A18EFD /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C42336B0994600F8593C1B /* WidgetViews.swift */; };
 		A2646ECD5551FFE8F5811E92 /* WidgetTaskCompletionIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EC56D0F9538E7410428720B /* WidgetTaskCompletionIntent.swift */; };
 		A57DAC9D72FCC6C1F4058698 /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */; };
@@ -154,6 +155,7 @@
 		21CD1E6AF82397A608BF0BAE /* AgentCyWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AgentCyWidgets.entitlements; sourceTree = "<group>"; };
 		248EE354EECA4376746664F1 /* LifecycleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleService.swift; sourceTree = "<group>"; };
 		2A093BBE992B4F9C8FB54026 /* CaptureIdeaIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureIdeaIntent.swift; sourceTree = "<group>"; };
+		2CBA889DE666233D1DAF7731 /* LocalCyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCyService.swift; sourceTree = "<group>"; };
 		2CE99C98B1218FE6C538B215 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		2E5218FDC69A00950C772AF0 /* MCPBridgeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPBridgeSettingsView.swift; sourceTree = "<group>"; };
 		33A704F49E659941C6F99564 /* ContentResetService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentResetService.swift; sourceTree = "<group>"; };
@@ -409,6 +411,7 @@
 				8390A3692666C8E89EF49FD4 /* ExportService.swift */,
 				4B4EDC5B1BA258252570EDBD /* FocusTaskRecurrenceService.swift */,
 				248EE354EECA4376746664F1 /* LifecycleService.swift */,
+				2CBA889DE666233D1DAF7731 /* LocalCyService.swift */,
 				9D7C4D8F8405A1A1D2C2E2EF /* MCPBridgeService.swift */,
 				C1A65D72577776031838A00C /* ModelContainerFactory.swift */,
 				6B5300E4EDA6FA5A925C9E40 /* NotificationPlanning.swift */,
@@ -745,6 +748,7 @@
 				426BABC582AE5B46D08938BB /* IdeaBankView.swift in Sources */,
 				95F0DBDEF2121E8561046FDA /* IdeaPostDraftView.swift in Sources */,
 				D04FD631F458EB3BB8602133 /* LifecycleService.swift in Sources */,
+				9E0CF64CB96395AACD7D8134 /* LocalCyService.swift in Sources */,
 				DD6819827FA590FD5D157859 /* MCPBridgeService.swift in Sources */,
 				898C04842282E4A46096FBF7 /* MCPBridgeSettingsView.swift in Sources */,
 				70C0DA88B1A344F0C116E3E6 /* ModelContainerFactory.swift in Sources */,

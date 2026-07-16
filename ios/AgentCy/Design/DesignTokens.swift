@@ -699,7 +699,6 @@ struct AgentDashboardSurface<Content: View>: View {
             .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
             .background(Color.agentSurface)
             .clipShape(.rect(cornerRadius: AgentRadius.dashboard))
-            .shadow(color: Color.black.opacity(0.045), radius: 18, y: 2)
     }
 }
 

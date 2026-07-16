@@ -43,6 +43,14 @@ enum QuickCaptureLaunchMode: Sendable {
     case cyIdeas
 }
 
+struct TaskCompletionUndoState: Identifiable, Equatable {
+    let taskID: UUID
+    let taskTitle: String
+    let generatedTaskID: UUID?
+
+    var id: UUID { taskID }
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -69,6 +77,7 @@ final class AppModel {
     var requestedPlanMode: PlanMode?
     var requestedSettingsPage: RequestedSettingsPage?
     var pendingCyPrompt: String?
+    var taskCompletionUndo: TaskCompletionUndoState?
     var notificationAuthorization: AgentNotificationAuthorization = .notDetermined
     var nextNotificationPreviews: [AgentNotificationPreview] = []
     var briefProposals: [UUID: BriefProposal] = [:]
@@ -104,6 +113,7 @@ final class AppModel {
     @ObservationIgnored private let installationRedemptionClient: InstallationRedemptionClient
     @ObservationIgnored private let privacyEraseCoordinator: PrivacyEraseCoordinator
     @ObservationIgnored private let contentResetService: any ContentResetServicing
+    @ObservationIgnored private var taskCompletionUndoDismissTask: Task<Void, Never>?
 
     init(
         creativeService: any CreativeServicing = PreviewCreativeService(),
@@ -1173,7 +1183,7 @@ final class AppModel {
                 requiresUpgrade: false
             )
         }
-        guard AccessPolicy.allows(.ideate, state: state) else {
+        guard LocalCyPreferences.isEnabledAndConnected || AccessPolicy.allows(.ideate, state: state) else {
             return .unavailable(
                 message: "Your three free idea sessions have been used.",
                 requiresUpgrade: true
@@ -1193,8 +1203,10 @@ final class AppModel {
             }
             let ideas = try await creativeService.findIdeas(context: creatorContext, mode: profile.assistanceMode)
             let state = subscriptionState(context)
-            state?.ideationRequestsUsed += 1
-            state?.updatedAt = Date()
+            if !LocalCyPreferences.isEnabledAndConnected {
+                state?.ideationRequestsUsed += 1
+                state?.updatedAt = Date()
+            }
             try? context.save()
             return .success(ideas)
         } catch is CancellationError {
@@ -1281,7 +1293,9 @@ final class AppModel {
             BriefLifecycle.beginDevelopment(brief)
             try context.save()
             briefProposals[brief.id] = proposal
-            if let state = subscriptionState(context), state.access == .freeJourney {
+            if !LocalCyPreferences.isEnabledAndConnected,
+               let state = subscriptionState(context),
+               state.access == .freeJourney {
                 let wasConsumed = state.freeBriefConsumed
                 state.freeBriefConsumed = true
                 state.updatedAt = Date()
@@ -1416,8 +1430,10 @@ final class AppModel {
                 throw CreativeServiceError.invalidLiveResponse("the revision proposal failed local integrity checks")
             }
             try persist(revision: revision, context: context)
-            state.revisionRequestsUsed += 1
-            state.updatedAt = Date()
+            if !LocalCyPreferences.isEnabledAndConnected {
+                state.revisionRequestsUsed += 1
+                state.updatedAt = Date()
+            }
             try context.save()
             revisionProposals[brief.id] = revision
         } catch {
@@ -1541,8 +1557,10 @@ final class AppModel {
                 throw CreativeServiceError.invalidLiveResponse("Teach Cy did not produce a valid profile change")
             }
             try persist(voiceProposal: proposal, context: context)
-            state.teachCyUpdatesUsed += 1
-            state.updatedAt = Date()
+            if !LocalCyPreferences.isEnabledAndConnected {
+                state.teachCyUpdatesUsed += 1
+                state.updatedAt = Date()
+            }
             try context.save()
             voiceProfileChangeProposal = proposal
         } catch {
@@ -1623,7 +1641,8 @@ final class AppModel {
     }
 
     func allows(_ action: AccessAction, context: ModelContext) -> Bool {
-        AccessPolicy.allows(action, state: subscriptionState(context))
+        if action.isCyGeneration, LocalCyPreferences.isEnabledAndConnected { return true }
+        return AccessPolicy.allows(action, state: subscriptionState(context))
     }
 
     func approve(brief: CreativeBrief, context: ModelContext) {
@@ -1745,6 +1764,8 @@ final class AppModel {
     }
 
     func toggleTask(_ task: CreatorTask, context: ModelContext) {
+        guard !task.isSkipped else { return }
+        let wasCompleted = task.isCompleted
         let linkedBrief = task.briefID.flatMap { brief(id: $0, context: context) }
         if task.briefID != nil, linkedBrief == nil || linkedBrief?.status == .archived {
             notice = .info("This task belongs to content that is no longer active.")
@@ -1764,13 +1785,117 @@ final class AppModel {
             task.recordingMilestoneEmitted = false
         }
         do {
+            var generatedTaskID: UUID?
             if task.isCompleted {
-                try RecurringTaskMaterializer.createNextOccurrence(after: task, context: context)
+                generatedTaskID = try RecurringTaskMaterializer.createNextOccurrence(
+                    after: task,
+                    context: context
+                )?.id
             }
             try context.save()
             queueCalendarSync(context: context)
+            if !wasCompleted, task.isCompleted {
+                presentTaskCompletionUndo(for: task, generatedTaskID: generatedTaskID)
+            } else if wasCompleted, !task.isCompleted, taskCompletionUndo?.taskID == task.id {
+                clearTaskCompletionUndo()
+            }
         } catch {
             notice = .error("That task could not be updated.")
+        }
+    }
+
+    func undoLastTaskCompletion(context: ModelContext) {
+        guard let undo = taskCompletionUndo else { return }
+        do {
+            let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            guard let task = tasks.first(where: { $0.id == undo.taskID }) else {
+                clearTaskCompletionUndo()
+                return
+            }
+            if task.isCompleted {
+                let linkedBrief = task.briefID.flatMap { brief(id: $0, context: context) }
+                _ = BriefLifecycle.toggleTask(task, brief: linkedBrief)
+                if task.isRecordingMilestoneDesignated {
+                    task.recordingMilestoneEmitted = false
+                }
+            }
+            if let generatedTaskID = undo.generatedTaskID,
+               let generated = tasks.first(where: { $0.id == generatedTaskID }) {
+                let generatedSubtasks = tasks.filter { $0.parentTaskID == generated.id }
+                generatedSubtasks.forEach(context.delete)
+                context.delete(generated)
+            }
+            try context.save()
+            clearTaskCompletionUndo()
+            queueCalendarSync(context: context)
+        } catch {
+            notice = .error("That task completion could not be undone.")
+        }
+    }
+
+    private func presentTaskCompletionUndo(
+        for task: CreatorTask,
+        generatedTaskID: UUID?
+    ) {
+        taskCompletionUndoDismissTask?.cancel()
+        let undo = TaskCompletionUndoState(
+            taskID: task.id,
+            taskTitle: task.title,
+            generatedTaskID: generatedTaskID
+        )
+        taskCompletionUndo = undo
+        taskCompletionUndoDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(7))
+            guard !Task.isCancelled, self?.taskCompletionUndo == undo else { return }
+            self?.taskCompletionUndo = nil
+        }
+    }
+
+    private func clearTaskCompletionUndo() {
+        taskCompletionUndoDismissTask?.cancel()
+        taskCompletionUndoDismissTask = nil
+        taskCompletionUndo = nil
+    }
+
+    func moveTaskToToday(_ task: CreatorTask, context: ModelContext, now: Date = Date()) {
+        guard !task.isCompleted, !task.isSkipped else { return }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        if task.includesTargetTime, let currentTarget = task.targetDate {
+            let time = calendar.dateComponents([.hour, .minute, .second], from: currentTarget)
+            var components = calendar.dateComponents([.year, .month, .day], from: today)
+            components.hour = time.hour
+            components.minute = time.minute
+            components.second = time.second
+            task.targetDate = calendar.date(from: components) ?? today
+        } else {
+            task.targetDate = today
+        }
+        if task.dailyFocusDate != nil {
+            task.dailyFocusDate = today
+        }
+        if task.focusTaskTemplateID != nil {
+            task.isFocusTemplateCustomized = true
+        }
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+        } catch {
+            notice = .error("That task could not be moved.")
+        }
+    }
+
+    func skipTask(_ task: CreatorTask, context: ModelContext, now: Date = Date()) {
+        guard !task.isCompleted, !task.isSkipped else { return }
+        task.isSkipped = true
+        task.skippedAt = now
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+        } catch {
+            task.isSkipped = false
+            task.skippedAt = nil
+            notice = .error("That task could not be skipped.")
         }
     }
 
@@ -1791,6 +1916,10 @@ final class AppModel {
 
             for action in actions {
                 guard let task = taskByID[action.taskID] else {
+                    acknowledged.append(action)
+                    continue
+                }
+                guard !task.isSkipped else {
                     acknowledged.append(action)
                     continue
                 }
@@ -2083,7 +2212,12 @@ final class AppModel {
         createSpark(text: "A new angle from \(brief.title): \(brief.takeaway)", source: .repurposedBrief, context: context)
     }
 
-    func askCy(_ message: String, conversation: [ConversationMessageWire]? = nil, about brief: CreativeBrief? = nil, context: ModelContext) async -> String? {
+    func askCy(
+        _ message: String,
+        conversation: [ConversationMessageWire]? = nil,
+        about brief: CreativeBrief? = nil,
+        context: ModelContext
+    ) async -> ChatTurnResultWire? {
         guard can(.askCy, context: context) else { return nil }
         do {
             guard let profile = fetchOne(CreatorProfile.self, context: context),
@@ -2098,13 +2232,15 @@ final class AppModel {
                 resolvedConversation.append(ConversationMessageWire(messageId: UUID(), role: .user, content: message))
             }
             resolvedConversation = Array(resolvedConversation.suffix(24))
-            return try await creativeService.reply(
+            return try await creativeService.replyWithActions(
                 to: message,
                 mode: profile.assistanceMode,
                 context: creatorContext,
                 conversation: resolvedConversation,
                 relevantBriefIDs: brief.map { [$0.id] } ?? []
             )
+        } catch is CancellationError {
+            return nil
         } catch {
             presentCreatorError(error, action: "The change")
             return nil
@@ -2828,6 +2964,7 @@ final class AppModel {
     }
 
     private func can(_ action: AccessAction, context: ModelContext) -> Bool {
+        if action.isCyGeneration, LocalCyPreferences.isEnabledAndConnected { return true }
         guard let state = subscriptionState(context) else {
             notice = .error("Access state is unavailable. New creation is paused so the free journey cannot be reset accidentally.")
             return false

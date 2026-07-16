@@ -102,6 +102,16 @@ struct SettingsView: View {
                                     value: "Connected"
                                 )
                             }
+                            if let profile = profiles.first {
+                                NavigationLink {
+                                    CyQuickPromptsSettingsView(profile: profile)
+                                } label: {
+                                    SettingsIndexRow(
+                                        title: "Quick prompts",
+                                        value: "2"
+                                    )
+                                }
+                            }
                             NavigationLink {
                                 MCPBridgeSettingsView()
                             } label: {

@@ -48,18 +48,31 @@ export class AgentCyWorkspace {
   readonly directory: string;
   readonly requestsDirectory: string;
   readonly responsesDirectory: string;
+  readonly localCyRequestsDirectory: string;
+  readonly localCyResponsesDirectory: string;
+  readonly localCyProcessingDirectory: string;
+  readonly localCyStatusPath: string;
+  readonly localCyConnectionPath: string;
   readonly snapshotPath: string;
 
   constructor(directory = defaultWorkspaceDirectory) {
     this.directory = resolve(directory);
     this.requestsDirectory = join(this.directory, "requests");
     this.responsesDirectory = join(this.directory, "responses");
+    this.localCyRequestsDirectory = join(this.directory, "cy-requests");
+    this.localCyResponsesDirectory = join(this.directory, "cy-responses");
+    this.localCyProcessingDirectory = join(this.directory, "cy-processing");
+    this.localCyStatusPath = join(this.directory, "cy-runtime.json");
+    this.localCyConnectionPath = join(this.directory, "cy-connection.json");
     this.snapshotPath = join(this.directory, "snapshot.json");
   }
 
   ensureDirectories(): void {
     mkdirSync(this.requestsDirectory, { recursive: true });
     mkdirSync(this.responsesDirectory, { recursive: true });
+    mkdirSync(this.localCyRequestsDirectory, { recursive: true });
+    mkdirSync(this.localCyResponsesDirectory, { recursive: true });
+    mkdirSync(this.localCyProcessingDirectory, { recursive: true });
   }
 
   readSnapshot(): McpBridgeSnapshot {

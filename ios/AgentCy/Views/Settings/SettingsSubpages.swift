@@ -621,10 +621,101 @@ struct CyAssistanceSettingsView: View {
     }
 }
 
+struct CyQuickPromptsSettingsView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
+    @Bindable var profile: CreatorProfile
+    @State private var prompts: [String]
+
+    init(profile: CreatorProfile) {
+        self.profile = profile
+        _prompts = State(initialValue: profile.customCyQuickPrompts ?? CreatorProfile.defaultCyQuickPrompts)
+    }
+
+    var body: some View {
+        SettingsPageShell(
+            kicker: "Cy",
+            title: "Quick prompts",
+            subtitle: "Choose two shortcuts for starting a new conversation."
+        ) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                SectionRuleHeader(title: "Your prompts", trailing: "2")
+
+                ForEach(prompts.indices, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                        SettingsTextField(
+                            label: "Prompt \(index + 1)",
+                            placeholder: "",
+                            text: promptBinding(at: index)
+                        )
+                        Text("\(prompts[index].count)/\(CreatorProfile.maxCyQuickPromptLength)")
+                            .font(.agentMono)
+                            .foregroundStyle(Color.agentSecondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
+
+                Text("These replace the two suggestions shown before you send the first message in a new Cy conversation.")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: AgentSpacing.x3) {
+                Button("Save prompts", action: savePrompts)
+                    .buttonStyle(AgentPrimaryButtonStyle())
+                    .disabled(!canSave)
+
+                Button("Restore defaults", action: restoreDefaults)
+                    .buttonStyle(AgentSecondaryButtonStyle())
+            }
+        }
+    }
+
+    private var normalizedPrompts: [String] {
+        prompts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    private var canSave: Bool {
+        normalizedPrompts.count == 2 && normalizedPrompts.allSatisfy { !$0.isEmpty }
+    }
+
+    private func promptBinding(at index: Int) -> Binding<String> {
+        Binding(
+            get: { prompts[index] },
+            set: { prompts[index] = String($0.prefix(CreatorProfile.maxCyQuickPromptLength)) }
+        )
+    }
+
+    private func savePrompts() {
+        guard canSave else { return }
+        profile.setCustomCyQuickPrompts(normalizedPrompts)
+        do {
+            try context.save()
+            appModel.notice = .info("Quick prompts updated.")
+        } catch {
+            appModel.notice = .error("Those quick prompts could not be saved.")
+        }
+    }
+
+    private func restoreDefaults() {
+        profile.restoreDefaultCyQuickPrompts()
+        prompts = CreatorProfile.defaultCyQuickPrompts
+        do {
+            try context.save()
+            appModel.notice = .info("Default quick prompts restored.")
+        } catch {
+            appModel.notice = .error("The default prompts could not be restored.")
+        }
+    }
+}
+
 struct AppearanceSettingsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Bindable var profile: CreatorProfile
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
 
     var body: some View {
         SettingsPageShell(
@@ -667,54 +758,87 @@ struct AppearanceSettingsView: View {
                     SectionRuleHeader(title: "Pillar colors")
 
                     VStack(spacing: 0) {
-                        ForEach(CreatorVibePalette.allCases) { palette in
-                            Button {
-                                profile.vibePalette = palette
-                                try? context.save()
-                            } label: {
-                                HStack(spacing: AgentSpacing.x3) {
-                                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                        Text(palette.title)
-                                            .font(.agentBody.weight(.semibold))
-                                        Text(palette.detail)
-                                            .font(.agentSubtext)
-                                            .foregroundStyle(Color.agentSecondary)
-                                    }
-
-                                    Spacer(minLength: AgentSpacing.x2)
-
-                                    HStack(spacing: 4) {
-                                        ForEach(palette.pillarColorHexes, id: \.self) { hex in
-                                            Circle()
-                                                .fill(Color(agentHex: hex))
-                                                .frame(width: 15, height: 15)
-                                                .overlay {
-                                                    Circle().stroke(Color.agentBorder, lineWidth: 0.75)
-                                                }
-                                        }
-                                    }
-
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .opacity(profile.vibePalette == palette ? 1 : 0)
-                                        .frame(width: 16)
-                                }
-                                .foregroundStyle(Color.agentText)
-                                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                                .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityAddTraits(profile.vibePalette == palette ? .isSelected : [])
+                        ForEach(CreatorVibePalette.standardPalettes) { palette in
+                            paletteRow(palette)
                         }
                     }
 
-                    Text("This replaces the default choices when you create or edit pillars and branches. Existing colors stay the same, and custom colors remain available.")
+                    MetaLabel("Signature")
+                        .padding(.top, AgentSpacing.x4)
+
+                    VStack(spacing: 0) {
+                        ForEach(CreatorVibePalette.signaturePalettes) { palette in
+                            paletteRow(palette)
+                        }
+                    }
+
+                    Text("Choosing a palette recolors up to five existing pillars for this account. If you have more than five, their current colors stay unchanged. Custom colors remain available.")
                         .font(.agentSubtext)
                         .foregroundStyle(Color.agentSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, AgentSpacing.x2)
                 }
             }
+        }
+    }
+
+    private func paletteRow(_ palette: CreatorVibePalette) -> some View {
+        Button {
+            selectPalette(palette)
+        } label: {
+            HStack(spacing: AgentSpacing.x3) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(palette.title)
+                        .font(.agentBody.weight(.semibold))
+                    Text(palette.detail)
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+
+                Spacer(minLength: AgentSpacing.x2)
+
+                HStack(spacing: 4) {
+                    ForEach(palette.pillarColorHexes, id: \.self) { hex in
+                        Circle()
+                            .fill(Color(agentHex: hex))
+                            .frame(width: 15, height: 15)
+                            .overlay {
+                                Circle().stroke(Color.agentBorder, lineWidth: 0.75)
+                            }
+                    }
+                }
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .opacity(profile.vibePalette == palette ? 1 : 0)
+                    .frame(width: 16)
+            }
+            .foregroundStyle(Color.agentText)
+            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(profile.vibePalette == palette ? .isSelected : [])
+    }
+
+    private var activeWorkspacePillars: [Pillar] {
+        allPillars.filter {
+            !$0.isArchived && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
+
+    private func selectPalette(_ palette: CreatorVibePalette) {
+        profile.vibePalette = palette
+        PillarPaletteAssignment.apply(palette, to: activeWorkspacePillars)
+        do {
+            try context.save()
+            WidgetSnapshotService.refresh(context: context)
+        } catch {
+            appModel.notice = .error("Those pillar colors could not be updated.")
         }
     }
 }
@@ -1385,33 +1509,12 @@ struct AccessSettingsView: View {
             if let subscription = subscriptions.first {
                 let effectiveAccess = AccessPolicy.effectiveAccess(for: subscription)
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-                    accessHero(effectiveAccess)
-
-                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                        SectionRuleHeader(title: "What agent.cy Pro includes")
-                        planBenefit("Ideas grounded in your goals and work")
-                        planBenefit("Content calendars, tasks, and weekly planning")
-                        planBenefit("Hooks, captions, platform posts, and revisions")
-                    }
-
                     VStack(alignment: .leading, spacing: 0) {
                         SectionRuleHeader(title: "Plan details")
-                        SettingsValueRow(
-                            title: "Current access",
-                            value: accessTitle(effectiveAccess),
-                            showsTopRule: false
-                        )
-                        if let trialEnd = subscription.trialEnd {
-                            SettingsValueRow(title: "Access ends", value: trialEnd.formatted(date: .abbreviated, time: .omitted))
-                        }
-                        SettingsValueRow(title: "Billing", value: "Monthly", isLast: true)
-                    }
-
-                    if effectiveAccess == .freeJourney || effectiveAccess == .expired {
-                        Button("Start 14-day trial") {
-                            Task { await appModel.startTrial(context: context) }
-                        }
-                        .buttonStyle(AgentCyPrimaryButtonStyle())
+                        currentAccessCard(effectiveAccess, subscription: subscription)
+                            .padding(.top, AgentSpacing.x4)
+                        proAccessCard(effectiveAccess)
+                            .padding(.top, AgentSpacing.x4)
                     }
 
                     Button("Restore purchases") {
@@ -1429,68 +1532,117 @@ struct AccessSettingsView: View {
         .onAppear { isRotating = true }
     }
 
-    private func accessHero(_ access: SubscriptionAccess) -> some View {
-        let proIsActive = access == .trial || access == .paid || access == .comped
+    private func currentAccessCard(
+        _ access: SubscriptionAccess,
+        subscription: SubscriptionState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(spacing: AgentSpacing.x3) {
+                MetaLabel("Current access")
+                Spacer()
+                Text(planStatus(access))
+                    .font(.agentMono)
+                    .foregroundStyle(Color.agentSecondary)
+                    .padding(.horizontal, AgentSpacing.x3)
+                    .frame(minHeight: 28)
+                    .background(Color.agentCanvas, in: .capsule)
+            }
+
+            Text(accessTitle(access))
+                .font(.agentHeadline)
+                .foregroundStyle(Color.agentText)
+
+            Text(accessDetail(access))
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let trialEnd = subscription.trialEnd {
+                HStack {
+                    Text(access == .trial ? "Trial ends" : "Access ends")
+                    Spacer()
+                    Text(trialEnd.formatted(date: .abbreviated, time: .omitted))
+                }
+                .font(.agentSubtext.weight(.medium))
+                .foregroundStyle(Color.agentText)
+                .padding(.top, AgentSpacing.x1)
+            }
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.agentBorder, lineWidth: 1)
+        }
+    }
+
+    private func proAccessCard(_ access: SubscriptionAccess) -> some View {
+        let isActive = proIsActive(access)
         return VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            HStack(alignment: .top, spacing: AgentSpacing.x4) {
+            HStack(alignment: .center, spacing: AgentSpacing.x3) {
                 ZStack {
                     Circle()
                         .fill(Color.cyAccent)
-                        .shadow(color: Color.cyAccent.opacity(0.3), radius: 18, y: 7)
-                    ZStack {
-                        CyAsterisk(color: .onCyAccent, size: 25, strokeWidth: 1.8)
-                        Circle()
-                            .fill(Color.onCyAccent.opacity(0.8))
-                            .frame(width: 4, height: 4)
-                            .offset(y: -25)
-                    }
-                    .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
-                    .animation(
-                        reduceMotion ? nil : .linear(duration: 8).repeatForever(autoreverses: false),
-                        value: isRotating
-                    )
+                        .shadow(color: Color.cyAccent.opacity(0.3), radius: 14, y: 6)
+                    CyAsterisk(color: .onCyAccent, size: 20, strokeWidth: 1.6)
+                        .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
+                        .animation(
+                            reduceMotion ? nil : .linear(duration: 8).repeatForever(autoreverses: false),
+                            value: isRotating
+                        )
                 }
-                .frame(width: 62, height: 62)
+                .frame(width: 48, height: 48)
 
-                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                    MetaLabel("Your plan")
+                VStack(alignment: .leading, spacing: 2) {
+                    MetaLabel("Pro access")
                         .foregroundStyle(Color.cyAccent)
-                    Text(proIsActive ? "agent.cy Pro is active." : "Create with Cy.")
-                        .font(.agentTitle)
+                    Text("Create your whole week with Cy.")
+                        .font(.agentHeadline)
                         .foregroundStyle(Color.agentText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
 
-                Text(planStatus(access))
+                Text(isActive ? "Active" : "$8.99/mo")
                     .font(.agentMono)
-                    .foregroundStyle(proIsActive ? Color.onCyAccent : Color.cyAccent)
+                    .foregroundStyle(Color.onCyAccent)
                     .padding(.horizontal, AgentSpacing.x3)
                     .frame(minHeight: 30)
-                    .background(proIsActive ? Color.cyAccent : Color.cyAccent.opacity(0.08), in: .capsule)
+                    .background(Color.cyAccent, in: .capsule)
             }
 
-            Text(accessDetail(access))
-                .font(.agentBody)
-                .foregroundStyle(Color.agentSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                planBenefit("Create new ideas, posts, tasks, and schedules")
+                planBenefit("Plan with Cy using your goals, pillars, and saved work")
+                planBenefit("Shape hooks, captions, platform posts, and revisions")
+            }
 
+            if !isActive {
+                Button("Start 14-day trial") {
+                    Task { await appModel.startTrial(context: context) }
+                }
+                .buttonStyle(AgentCyPrimaryButtonStyle())
+            } else {
+                Text("Included with your current plan.")
+                    .font(.agentSubtext.weight(.semibold))
+                    .foregroundStyle(Color.cyAccent)
+            }
         }
-        .padding(AgentSpacing.x6)
+        .padding(AgentSpacing.x4)
         .background(
             LinearGradient(
-                colors: [Color.cyAccent.opacity(0.09), Color.cyAccent.opacity(0.025)],
+                colors: [Color.cyAccent.opacity(0.12), Color.cyAccent.opacity(0.035)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
-            in: .rect(cornerRadius: 20)
+            in: .rect(cornerRadius: 22)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.cyAccent.opacity(0.2), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(Color.cyAccent.opacity(0.42), lineWidth: 1)
         }
-        .shadow(color: Color.cyAccent.opacity(0.09), radius: 20, y: 8)
+        .shadow(color: Color.cyAccent.opacity(0.13), radius: 20, y: 8)
     }
 
     private func planBenefit(_ text: String) -> some View {
@@ -1512,6 +1664,10 @@ struct AccessSettingsView: View {
         case .paid, .comped: "Pro"
         case .expired: "Expired"
         }
+    }
+
+    private func proIsActive(_ access: SubscriptionAccess) -> Bool {
+        access == .trial || access == .paid || access == .comped
     }
 
     private func accessTitle(_ access: SubscriptionAccess) -> String {

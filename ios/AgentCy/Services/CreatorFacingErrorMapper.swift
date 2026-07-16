@@ -10,6 +10,22 @@ enum CreatorFacingErrorMapper {
     static let postNotFound = "Post not found. It may have been moved or deleted."
 
     static func presentation(for error: Error, action: String? = nil) -> CreatorErrorPresentation {
+        if let localCy = error as? LocalCyError {
+            return .init(
+                message: localCy.errorDescription ?? "Cy is unavailable right now. Your work is saved.",
+                canRetry: localCy == .timedOut || localCy == .runtimeUnavailable,
+                requiresUpgrade: false
+            )
+        }
+
+        if let bridge = error as? MCPBridgeError {
+            return .init(
+                message: bridge.errorDescription ?? "Open Claude & Codex in Settings to reconnect Local Cy.",
+                canRetry: false,
+                requiresUpgrade: false
+            )
+        }
+
         if let reminder = error as? ReminderServiceError {
             switch reminder {
             case .permissionDenied:

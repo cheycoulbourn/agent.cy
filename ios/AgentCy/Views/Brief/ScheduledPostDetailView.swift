@@ -356,17 +356,10 @@ struct ScheduledPostDetailView: View {
             detailRow(label: "Platform", value: platformLabel)
             detailRow(label: "Duration", value: durationLabel)
             if isMissed {
-                Button("Reschedule") {
+                AgentInlinePostAction(title: "Reschedule", isAlert: true) {
                     showRescheduler = true
                 }
-                .buttonStyle(
-                    AgentPrimaryButtonStyle(
-                        background: .agentDestructive,
-                        foreground: .onCyAccent
-                    )
-                )
                 .padding(.top, AgentSpacing.x2)
-                .accessibilityHint("Choose a new posting date and time")
             }
         }
         .padding(.horizontal, AgentSpacing.x4)

@@ -330,7 +330,7 @@ struct PillarDetailView: View {
     private var pillars: [Pillar] { scoped(allPillars) }
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
-    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var tasks: [CreatorTask] { scoped(allTasks).filter { !$0.isSkipped } }
     private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
         values.filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)

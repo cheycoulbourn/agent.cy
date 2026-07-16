@@ -52,7 +52,7 @@ final class NotificationActionMutationService {
 
     func completeTask(id: UUID) throws {
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
-        guard let task = tasks.first(where: { $0.id == id }), !task.isCompleted else { return }
+        guard let task = tasks.first(where: { $0.id == id }), !task.isCompleted, !task.isSkipped else { return }
         let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
         let linkedBrief = task.briefID.flatMap { id in briefs.first { $0.id == id } }
         guard task.briefID == nil || (linkedBrief != nil && linkedBrief?.status != .archived) else { return }
@@ -70,7 +70,7 @@ final class NotificationActionMutationService {
 
     func pauseTask(id: UUID) throws {
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
-        guard let task = tasks.first(where: { $0.id == id }), !task.isCompleted else { return }
+        guard let task = tasks.first(where: { $0.id == id }), !task.isCompleted, !task.isSkipped else { return }
         task.targetDate = nil
         task.includesTargetTime = false
         task.dailyFocusDate = nil

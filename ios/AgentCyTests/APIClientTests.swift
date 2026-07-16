@@ -3,6 +3,18 @@ import XCTest
 @testable import AgentCy
 
 final class APIClientTests: XCTestCase {
+    func testLocalCyStatusAllowsNormalICloudPropagationDelay() {
+        let status = LocalCyRuntimeStatus(
+            schemaVersion: 1,
+            status: "ready",
+            updatedAt: Date().addingTimeInterval(-90),
+            model: "Claude Sonnet",
+            message: "Local Cy is ready on this Mac."
+        )
+
+        XCTAssertTrue(status.isRecentlyAvailable)
+    }
+
     func testAPIBaseURLRequiresHTTPSExceptForExplicitLocalDevelopment() {
         XCTAssertEqual(
             APIConfiguration.validatedBaseURL("https://api.agent.cy", allowInsecureLocalhost: false),

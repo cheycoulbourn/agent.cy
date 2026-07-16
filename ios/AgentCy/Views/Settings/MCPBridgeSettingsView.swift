@@ -27,6 +27,8 @@ struct MCPBridgeSettingsView: View {
     @State private var copiedProjectPrompt = false
     @State private var promptEditorExpanded = false
     @State private var refreshID = UUID()
+    @State private var localCyEnabled = LocalCyPreferences.isEnabled
+    @State private var localCyStatus: LocalCyRuntimeStatus?
     @AppStorage("agentcy.mcp.projectPrompt") private var projectPrompt = MCPBridgeStarterPrompt.defaultValue
 
     var body: some View {
@@ -39,6 +41,7 @@ struct MCPBridgeSettingsView: View {
                 .id(refreshID)
 
             if MCPBridgePreferences.isConnected {
+                localCySection
                 pendingSection
                 demoSection
                 syncSection
@@ -84,6 +87,50 @@ struct MCPBridgeSettingsView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(4))
                 reload()
+            }
+        }
+    }
+
+    private var localCySection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            SectionRuleHeader(title: "Local Cy")
+            AgentInsetSurface {
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    HStack(alignment: .center, spacing: AgentSpacing.x3) {
+                        ZStack {
+                            Circle()
+                                .fill(localCyStatus?.isRecentlyAvailable == true ? Color.cyAccent : Color.agentCanvas)
+                                .frame(width: 42, height: 42)
+                            CyAsterisk(
+                                color: localCyStatus?.isRecentlyAvailable == true ? .onCyAccent : .agentText,
+                                size: 19,
+                                strokeWidth: 1.7
+                            )
+                        }
+                        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                            Text(localCyStatus?.isRecentlyAvailable == true ? "Mac available" : "Mac not detected")
+                                .font(.agentBody.weight(.semibold))
+                            Text(localCyStatus?.message ?? "Run the Local Cy worker on your Mac to use your Claude subscription.")
+                                .font(.agentSubtext)
+                                .foregroundStyle(Color.agentSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: AgentSpacing.x2)
+                        Toggle("", isOn: Binding(
+                            get: { localCyEnabled },
+                            set: { enabled in
+                                localCyEnabled = enabled
+                                LocalCyPreferences.isEnabled = enabled
+                            }
+                        ))
+                        .labelsHidden()
+                    }
+
+                    Text("When enabled, Cy requests are handled by Claude on your Mac. Your Claude credentials never leave the computer, and Railway is not used for generation.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -365,6 +412,9 @@ struct MCPBridgeSettingsView: View {
         }
         pendingRequests = requests
         refreshID = UUID()
+        Task {
+            localCyStatus = try? await LocalCyAIClient.shared.runtimeStatus()
+        }
     }
 
     private func show(_ error: Error, action: String) {

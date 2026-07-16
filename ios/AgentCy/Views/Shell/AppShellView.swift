@@ -61,6 +61,14 @@ struct AppShellView: View {
                     .padding(.bottom, AgentSpacing.x3)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
+
+                if !isKeyboardVisible, let undo = appModel.taskCompletionUndo {
+                    taskCompletionUndoToast(undo)
+                        .padding(.horizontal, AgentLayout.pageMargin + AgentSpacing.x1)
+                        .padding(.bottom, 88)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .zIndex(5)
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
@@ -117,6 +125,33 @@ struct AppShellView: View {
             guard phase == .active else { return }
             cueDate = Date()
         }
+    }
+
+    private func taskCompletionUndoToast(_ undo: TaskCompletionUndoState) -> some View {
+        HStack(spacing: AgentSpacing.x3) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Task completed")
+                    .font(.agentSubtext.weight(.semibold))
+                Text(undo.taskTitle)
+                    .font(.paperInter(size: 12, weight: .regular, relativeTo: .caption))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Undo") {
+                appModel.undoLastTaskCompletion(context: modelContext)
+            }
+            .font(.agentSubtext.weight(.bold))
+            .frame(minWidth: 56, minHeight: 44)
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, AgentSpacing.x4)
+        .padding(.trailing, AgentSpacing.x2)
+        .frame(minHeight: 58)
+        .foregroundStyle(Color.agentCanvas)
+        .background(Color.agentText, in: .capsule)
+        .shadow(color: Color.black.opacity(0.14), radius: 14, y: 6)
+        .animation(.snappy(duration: 0.24), value: appModel.taskCompletionUndo)
     }
 
     private func selectTab(_ tab: AppTab) {

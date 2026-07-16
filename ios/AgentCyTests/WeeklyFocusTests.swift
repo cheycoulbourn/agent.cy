@@ -37,6 +37,33 @@ final class WeeklyFocusTests: XCTestCase {
         XCTAssertNil(tuesday.secondaryKind)
     }
 
+    func testWeeklySetupSavesRecurringFocusTasksIntoMyTasks() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let model = AppModel(reminderService: PreviewReminderService())
+        let task = DailyFocusTaskTemplateDefinition(
+            focusKind: .planning,
+            title: "Review the idea bank",
+            priority: .high
+        )
+
+        XCTAssertTrue(model.saveWeeklyFocus(
+            [.monday: [.planning]],
+            taskTemplates: [.monday: [task]],
+            context: context
+        ))
+
+        let savedTasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        XCTAssertFalse(savedTasks.isEmpty)
+        XCTAssertTrue(savedTasks.allSatisfy { $0.focusTaskTemplateID == task.id })
+        XCTAssertTrue(savedTasks.allSatisfy {
+            TaskCollectionPolicy.collection(
+                briefID: $0.briefID,
+                platformOutputID: $0.platformOutputID
+            ) == .myTasks
+        })
+    }
+
     func testResolverCombinesRecurringFocusAndClearedOverrideBecomesRest() throws {
         let calendar = testCalendar
         let monday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 13)))
@@ -215,6 +242,56 @@ final class WeeklyFocusTests: XCTestCase {
         )
     }
 
+    func testFocusTaskMaterializerIncludesTheWholeCurrentWeekWhenSavedMidweek() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let monday = try XCTUnwrap(testCalendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 13
+        )))
+        let thursday = try XCTUnwrap(testCalendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 16
+        )))
+        let definition = DailyFocusTaskTemplateDefinition(
+            focusKind: .planning,
+            title: "Review the idea bank"
+        )
+        let template = DailyFocusTemplateEntry(
+            weekday: .monday,
+            kind: .planning,
+            title: "Planning"
+        )
+        template.focusTaskTemplates = [definition]
+        context.insert(template)
+        try context.save()
+
+        try FocusTaskRecurrenceService.reconcile(
+            context: context,
+            from: thursday,
+            weekCount: 1,
+            calendar: testCalendar
+        )
+
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        XCTAssertEqual(tasks.count, 1)
+        XCTAssertEqual(
+            tasks.first?.targetDate.map(testCalendar.startOfDay(for:)),
+            testCalendar.startOfDay(for: monday)
+        )
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
+            collection: .myTasks,
+            focusTaskTemplateID: tasks.first?.focusTaskTemplateID,
+            recurrence: tasks.first?.recurrence ?? .none,
+            recurrenceRootTaskID: tasks.first?.recurrenceRootTaskID,
+            targetDate: tasks.first?.targetDate,
+            now: thursday,
+            calendar: testCalendar
+        ))
+    }
+
     func testFocusTemplateTaskDoesNotSpawnASecondRecurrenceChain() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -235,6 +312,59 @@ final class WeeklyFocusTests: XCTestCase {
 
         XCTAssertNil(next)
         XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorTask>()).count, 1)
+    }
+
+    func testSkippingOneFocusTaskOccurrenceLeavesFutureWeeksIntact() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let monday = try XCTUnwrap(testCalendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 13
+        )))
+        let definition = DailyFocusTaskTemplateDefinition(
+            focusKind: .editing,
+            title: "Edit the next post"
+        )
+        let template = DailyFocusTemplateEntry(
+            weekday: .monday,
+            kind: .editing,
+            title: "Editing"
+        )
+        template.focusTaskTemplates = [definition]
+        context.insert(template)
+        try context.save()
+
+        try FocusTaskRecurrenceService.reconcile(
+            context: context,
+            from: monday,
+            weekCount: 2,
+            calendar: testCalendar
+        )
+        var tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        let skipped = try XCTUnwrap(tasks.min(by: {
+            ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture)
+        }))
+        skipped.isSkipped = true
+        skipped.skippedAt = monday
+        template.focusTaskTemplates = [DailyFocusTaskTemplateDefinition(
+            id: definition.id,
+            focusKind: .editing,
+            title: "Finish the next edit"
+        )]
+        try context.save()
+
+        try FocusTaskRecurrenceService.reconcile(
+            context: context,
+            from: monday,
+            weekCount: 2,
+            calendar: testCalendar
+        )
+
+        tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        XCTAssertEqual(tasks.count, 2)
+        XCTAssertTrue(tasks.contains { $0.id == skipped.id && $0.isSkipped && $0.title == "Edit the next post" })
+        XCTAssertTrue(tasks.contains { !$0.isSkipped && $0.title == "Finish the next edit" })
     }
 
     private var testCalendar: Calendar {

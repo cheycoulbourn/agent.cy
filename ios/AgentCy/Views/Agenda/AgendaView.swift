@@ -601,6 +601,7 @@ struct AgendaView: View {
     private func tasks(on day: Date) -> [CreatorTask] {
         tasks.filter {
             $0.parentTaskID == nil &&
+                !$0.isSkipped &&
                 TaskCollectionPolicy.collection(
                     briefID: $0.briefID,
                     platformOutputID: $0.platformOutputID
@@ -818,6 +819,8 @@ struct DayAgendaView: View {
     @State private var showPillarOverwriteConfirmation = false
     @State private var dismissAfterPillarSave = false
     @State private var baselineDaySignature: String?
+    @State private var selectedPostTaskOutput: PlatformOutput?
+    @State private var showPostTaskPicker = false
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
@@ -857,6 +860,7 @@ struct DayAgendaView: View {
     private var dayTasks: [CreatorTask] {
         tasks.filter {
             $0.parentTaskID == nil &&
+                !$0.isSkipped &&
                 AgendaContentVisibility.includesTask(briefID: $0.briefID, activeBriefIDs: activeBriefIDs) &&
                 taskBelongsToDay($0)
         }
@@ -925,6 +929,29 @@ struct DayAgendaView: View {
             }
         }
         .sheet(item: $planner) { kind in DayPlannerSheet(day: day, kind: kind) }
+        .confirmationDialog(
+            "Add task to which post?",
+            isPresented: $showPostTaskPicker,
+            titleVisibility: .visible
+        ) {
+            ForEach(dayOutputs) { output in
+                if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
+                    Button(displayTitle(for: output, brief: brief)) {
+                        selectedPostTaskOutput = output
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(item: $selectedPostTaskOutput) { output in
+            if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
+                PostDraftTaskComposer(
+                    brief: brief,
+                    output: output,
+                    defaultDate: output.targetDate ?? day
+                )
+            }
+        }
         .navigationDestination(isPresented: $isChoosingPost) {
             AgendaPostIdeaPickerView(day: day)
         }
@@ -1169,16 +1196,32 @@ struct DayAgendaView: View {
             dayTaskCollection(
                 title: TaskCollection.postTasks.title,
                 tasks: postTasks,
-                emptyMessage: "No post tasks."
+                emptyMessage: "No post tasks.",
+                addAction: addPostTaskForDay
             )
 
             dayTaskCollection(
                 title: TaskCollection.myTasks.title,
                 tasks: myTasks,
-                emptyMessage: "No tasks planned."
+                emptyMessage: "No tasks planned.",
+                addAction: { planner = .task }
             )
 
-            AgentAddActionRow(title: "Add task") { planner = .task }
+            Button {
+                appModel.selectedTab = .tasks
+            } label: {
+                HStack {
+                    Text("See all tasks").font(.agentSubtext.weight(.medium))
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                }
+                .foregroundStyle(Color.agentText)
+                .padding(.top, AgentSpacing.x3)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.agentHairline).frame(height: 1)
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -1186,7 +1229,8 @@ struct DayAgendaView: View {
     private func dayTaskCollection(
         title: String,
         tasks collectionTasks: [CreatorTask],
-        emptyMessage: String
+        emptyMessage: String,
+        addAction: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionRuleHeader(title: title, trailing: "\(collectionTasks.count)")
@@ -1207,7 +1251,27 @@ struct DayAgendaView: View {
                     taskRows(collectionTasks)
                 }
             }
+
+            AgentAddActionRow(title: "Add task", action: addAction)
+                .padding(.top, AgentSpacing.x3)
         }
+    }
+
+    private func addPostTaskForDay() {
+        guard !dayOutputs.isEmpty else {
+            appModel.notice = .info("Schedule a post before adding a post task.")
+            return
+        }
+        if dayOutputs.count == 1 {
+            selectedPostTaskOutput = dayOutputs[0]
+        } else {
+            showPostTaskPicker = true
+        }
+    }
+
+    private func displayTitle(for output: PlatformOutput, brief: CreativeBrief) -> String {
+        let override = output.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        return override.isEmpty ? brief.title : override
     }
 
     private func taskRows(_ collectionTasks: [CreatorTask]) -> some View {

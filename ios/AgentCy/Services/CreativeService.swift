@@ -28,6 +28,29 @@ protocol CreativeServicing {
         context: CreatorContextWire
     ) async throws -> VoiceProfileChangeProposal
     func reply(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> String
+    func replyWithActions(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> ChatTurnResultWire
+}
+
+extension CreativeServicing {
+    func replyWithActions(
+        to message: String,
+        mode: AssistanceMode,
+        context: CreatorContextWire,
+        conversation: [ConversationMessageWire],
+        relevantBriefIDs: [UUID]
+    ) async throws -> ChatTurnResultWire {
+        ChatTurnResultWire(
+            assistantMessage: try await reply(
+                to: message,
+                mode: mode,
+                context: context,
+                conversation: conversation,
+                relevantBriefIDs: relevantBriefIDs
+            ),
+            suggestions: [],
+            proposedAction: nil
+        )
+    }
 }
 
 enum CreativeServiceError: LocalizedError {
@@ -607,6 +630,16 @@ struct RemoteCreativeService: CreativeServicing {
     }
 
     func reply(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> String {
+        try await replyWithActions(
+            to: message,
+            mode: mode,
+            context: context,
+            conversation: conversation,
+            relevantBriefIDs: relevantBriefIDs
+        ).assistantMessage
+    }
+
+    func replyWithActions(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> ChatTurnResultWire {
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CreativeServiceError.missingInput }
         try validateContext(context)
         let boundedConversation = Array(conversation.suffix(24))
@@ -626,7 +659,7 @@ struct RemoteCreativeService: CreativeServicing {
         guard !result.assistantMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CreativeServiceError.invalidLiveResponse("chat response was empty")
         }
-        return result.assistantMessage
+        return result
     }
 
     private func validateContext(_ context: CreatorContextWire) throws {
