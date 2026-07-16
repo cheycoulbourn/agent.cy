@@ -53,6 +53,52 @@ enum PostOutputDetailPolicy {
     }
 }
 
+enum FinalizedPostPresentation {
+    static func isMissed(
+        outputStatus: PlatformOutputStatus,
+        targetDate: Date?,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        AgendaDayPresentation.isOverdue(
+            targetDate: targetDate,
+            status: outputStatus,
+            now: now,
+            calendar: calendar
+        )
+    }
+
+    static func pageTitle(
+        outputStatus: PlatformOutputStatus,
+        targetDate: Date?,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        if outputStatus == .posted { return "Posted" }
+        return isMissed(
+            outputStatus: outputStatus,
+            targetDate: targetDate,
+            now: now,
+            calendar: calendar
+        ) ? "Missed post" : "Scheduled post"
+    }
+
+    static func statusTitle(
+        outputStatus: PlatformOutputStatus,
+        targetDate: Date?,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        if outputStatus == .posted { return "POSTED" }
+        return isMissed(
+            outputStatus: outputStatus,
+            targetDate: targetDate,
+            now: now,
+            calendar: calendar
+        ) ? "MISSED" : "SCHEDULED"
+    }
+}
+
 enum TaskLinkedPostPolicy {
     static func output(for task: CreatorTask, in outputs: [PlatformOutput]) -> PlatformOutput? {
         if let outputID = task.platformOutputID,
@@ -97,6 +143,7 @@ struct ScheduledPostDetailView: View {
     @Query private var attachments: [CreatorAttachment]
     @State private var showEditor = false
     @State private var showTaskComposer = false
+    @State private var showRescheduler = false
     @State private var confirmArchive = false
     @State private var confirmDelete = false
     @State private var selectedMoodBoardPreview: MoodBoardImagePreview?
@@ -157,7 +204,7 @@ struct ScheduledPostDetailView: View {
             .padding(.bottom, 140)
         }
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle(output.status == .posted ? "Posted" : "Scheduled post")
+        .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -219,6 +266,9 @@ struct ScheduledPostDetailView: View {
                 defaultDate: output.targetDate ?? Date()
             )
             .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $showRescheduler) {
+            PostRescheduleSheet(output: output)
         }
         .fullScreenCover(item: $selectedMoodBoardPreview) { preview in
             MoodBoardImageViewer(preview: preview)
@@ -284,11 +334,11 @@ struct ScheduledPostDetailView: View {
                     .tracking(0.6)
                     .padding(.horizontal, AgentSpacing.x2)
                     .frame(minHeight: 24)
-                    .background(output.status == .posted ? Color.actionAccent : Color.clear, in: .rect(cornerRadius: 6))
-                    .foregroundStyle(output.status == .posted ? Color.onAccent : Color.agentText)
+                    .background(statusBadgeBackground, in: .rect(cornerRadius: 6))
+                    .foregroundStyle(statusBadgeForeground)
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(output.status == .posted ? Color.clear : Color.agentText.opacity(0.20), lineWidth: 1)
+                            .stroke(statusBadgeBorder, lineWidth: 1)
                     }
             }
 
@@ -305,6 +355,19 @@ struct ScheduledPostDetailView: View {
             detailRow(label: "Date", value: scheduleDateText)
             detailRow(label: "Platform", value: platformLabel)
             detailRow(label: "Duration", value: durationLabel)
+            if isMissed {
+                Button("Reschedule") {
+                    showRescheduler = true
+                }
+                .buttonStyle(
+                    AgentPrimaryButtonStyle(
+                        background: .agentDestructive,
+                        foreground: .onCyAccent
+                    )
+                )
+                .padding(.top, AgentSpacing.x2)
+                .accessibilityHint("Choose a new posting date and time")
+            }
         }
         .padding(.horizontal, AgentSpacing.x4)
         .padding(.vertical, AgentSpacing.x4)
@@ -530,7 +593,35 @@ struct ScheduledPostDetailView: View {
         if !notes.isEmpty { return notes }
         return brief.premise.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    private var statusTitle: String { output.status == .posted ? "POSTED" : "SCHEDULED" }
+    private var isMissed: Bool {
+        FinalizedPostPresentation.isMissed(
+            outputStatus: output.status,
+            targetDate: output.targetDate
+        )
+    }
+    private var pageTitle: String {
+        FinalizedPostPresentation.pageTitle(
+            outputStatus: output.status,
+            targetDate: output.targetDate
+        )
+    }
+    private var statusTitle: String {
+        FinalizedPostPresentation.statusTitle(
+            outputStatus: output.status,
+            targetDate: output.targetDate
+        )
+    }
+    private var statusBadgeBackground: Color {
+        if isMissed { return .agentDestructive }
+        return output.status == .posted ? .actionAccent : .clear
+    }
+    private var statusBadgeForeground: Color {
+        if isMissed { return .onCyAccent }
+        return output.status == .posted ? .onAccent : .agentText
+    }
+    private var statusBadgeBorder: Color {
+        isMissed || output.status == .posted ? .clear : Color.agentText.opacity(0.20)
+    }
     private var scheduleDateText: String {
         guard let targetDate = output.targetDate else { return "Not set" }
         if output.includesTargetTime {

@@ -41,6 +41,58 @@ final class PostOutputDetailPolicyTests: XCTestCase {
         XCTAssertFalse(PostOutputDetailPolicy.usesFinalizedView(outputStatus: .ready, targetDate: nil))
     }
 
+    func testPastScheduledPostUsesMissedPresentation() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
+
+        XCTAssertTrue(FinalizedPostPresentation.isMissed(
+            outputStatus: .scheduled,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertEqual(FinalizedPostPresentation.pageTitle(
+            outputStatus: .scheduled,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ), "Missed post")
+        XCTAssertEqual(FinalizedPostPresentation.statusTitle(
+            outputStatus: .scheduled,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ), "MISSED")
+    }
+
+    func testPostedPostNeverUsesMissedPresentation() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
+
+        XCTAssertFalse(FinalizedPostPresentation.isMissed(
+            outputStatus: .posted,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertEqual(FinalizedPostPresentation.pageTitle(
+            outputStatus: .posted,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ), "Posted")
+        XCTAssertEqual(FinalizedPostPresentation.statusTitle(
+            outputStatus: .posted,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ), "POSTED")
+    }
+
     func testLinkedTaskUsesItsExactPlatformOutput() {
         let brief = CreativeBrief(title: "DITL vlog")
         let other = PlatformOutput(briefID: brief.id, platform: .tiktok)

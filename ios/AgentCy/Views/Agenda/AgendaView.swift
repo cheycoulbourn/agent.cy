@@ -1319,7 +1319,7 @@ enum AgendaContentVisibility {
 
 enum DayPlannerKind: String, Identifiable { case post, task; var id: String { rawValue } }
 
-private struct PostRescheduleSheet: View {
+struct PostRescheduleSheet: View {
     let output: PlatformOutput
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
