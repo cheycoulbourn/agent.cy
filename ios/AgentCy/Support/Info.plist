@@ -43,7 +43,7 @@
 		<true/>
 	</dict>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Allow agent.cy to add scheduled posts and production tasks to your chosen calendar.</string>
+	<string>Allow agent.cy to add scheduled posts and tasks to your chosen calendar.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>InterVariable.ttf</string>

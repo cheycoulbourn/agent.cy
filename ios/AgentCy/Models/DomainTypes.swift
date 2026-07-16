@@ -1,5 +1,58 @@
 import Foundation
 
+enum CreatorWorkspacePreferences {
+    static let activeWorkspaceKey = "agentcy.creator.activeWorkspaceID"
+
+    static var activeWorkspaceID: UUID? {
+        get {
+            UserDefaults.standard.string(forKey: activeWorkspaceKey).flatMap(UUID.init(uuidString:))
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue.uuidString, forKey: activeWorkspaceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: activeWorkspaceKey)
+            }
+        }
+    }
+}
+
+enum WorkspaceScope {
+    static func defaultWorkspace(in workspaces: [CreatorWorkspace]) -> CreatorWorkspace? {
+        workspaces
+            .filter { !$0.isArchived }
+            .sorted {
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            .first
+    }
+
+    static func activeWorkspaceID(
+        preferredID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> UUID? {
+        if let preferredID,
+           workspaces.contains(where: { $0.id == preferredID && !$0.isArchived }) {
+            return preferredID
+        }
+        return defaultWorkspace(in: workspaces)?.id
+    }
+
+    static func includes(
+        _ recordWorkspaceID: UUID?,
+        activeWorkspaceID preferredID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> Bool {
+        guard let activeID = activeWorkspaceID(preferredID: preferredID, workspaces: workspaces) else {
+            return recordWorkspaceID == nil
+        }
+        if let recordWorkspaceID { return recordWorkspaceID == activeID }
+        return defaultWorkspace(in: workspaces)?.id == activeID
+    }
+}
+
 enum AssistanceMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case drive
     case collaborate
@@ -344,7 +397,7 @@ enum TaskCollection: String, CaseIterable, Identifiable, Sendable {
     case myTasks
 
     var id: String { rawValue }
-    var title: String { self == .postTasks ? "Post Tasks" : "My Tasks" }
+    var title: String { self == .postTasks ? "Post tasks" : "My tasks" }
 }
 
 enum TaskCollectionPolicy {
@@ -450,7 +503,7 @@ enum DailyFocusKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .editing: "Editing"
         case .publishing, .posting: "Publishing"
         case .community: "Community"
-        case .businessAdmin, .admin: "Business/Admin"
+        case .businessAdmin, .admin: "Business & admin"
         case .custom: "Custom"
         }
     }
@@ -553,6 +606,39 @@ enum AppearancePreference: String, CaseIterable, Codable, Identifiable, Sendable
     var title: String { rawValue.capitalized }
 }
 
+enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
+    case grayscale
+    case pastel
+    case neutral
+    case colorful
+    case dark
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+
+    static let fallbackPillarColorHexes = ["9B3A2E", "B47724", "55705B", "416B85", "76506F"]
+
+    var detail: String {
+        switch self {
+        case .grayscale: "Quiet and minimal"
+        case .pastel: "Soft and airy"
+        case .neutral: "Grounded and warm"
+        case .colorful: "Bright and expressive"
+        case .dark: "Deep and moody"
+        }
+    }
+
+    var pillarColorHexes: [String] {
+        switch self {
+        case .grayscale: ["343434", "5A5A5A", "7C7C7C", "9E9E9E", "C2C2C2"]
+        case .pastel: ["D9A5A5", "F2D18A", "A7CBB0", "A9C8E8", "C5B1DD"]
+        case .neutral: ["443A35", "252525", "E4DDCC", "F8F4EE", "C5B49D"]
+        case .colorful: ["E45545", "F0A202", "2E8B57", "3973C6", "8D4BC7"]
+        case .dark: ["6C3547", "755321", "31594A", "2E4A66", "4F3D66"]
+        }
+    }
+}
+
 enum ConversationContextKind: String, Codable, Sendable {
     case none
     case brief
@@ -601,38 +687,6 @@ enum SubscriptionAccess: String, CaseIterable, Codable, Sendable {
     var canEditExisting: Bool { true }
 }
 
-enum AIConnectionMode: String, CaseIterable, Codable, Identifiable, Sendable {
-    case cyIncluded
-    case claudeSubscription
-
-    static let storageKey = "agentCy.aiConnectionMode"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .cyIncluded: "Cy included"
-        case .claudeSubscription: "Claude subscription"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .cyIncluded: "Cy included"
-        case .claudeSubscription: "Claude handoff"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .cyIncluded:
-            "Ask Cy and keep the full conversation inside agent.cy."
-        case .claudeSubscription:
-            "Send a prepared prompt to the official Claude app, then bring the response back."
-        }
-    }
-}
-
 enum ConversationRole: String, Codable, Sendable {
     case creator
     case cy
@@ -657,10 +711,10 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
 
     var symbol: String {
         switch self {
-        case .today: "house.fill"
-        case .tasks: "checkmark.circle"
-        case .pillars: "square.grid.2x2"
-        case .ideaBank: "lightbulb"
+        case .today: "calendar"
+        case .tasks: "checkmark"
+        case .pillars: "rectangle.3.group"
+        case .ideaBank: "tray"
         case .cy: "sparkles"
         }
     }
@@ -932,6 +986,8 @@ struct OnboardingDraft: Equatable, Sendable {
     var telemetryConsent = false
     var name = ""
     var goal = ""
+    var vibePalette: CreatorVibePalette?
+    var appearance: AppearancePreference? = .system
     var platforms: Set<CreatorPlatform> = []
     // Retained while the Paper-led onboarding flow is migrated so existing
     // onboarding services and saved drafts continue to compile and decode.
@@ -950,4 +1006,11 @@ struct OnboardingDraft: Equatable, Sendable {
     var weeklyReminderWeekday = 2
     var weeklyReminderHour = 9
     var weeklyReminderMinute = 0
+}
+
+/// Adopted by creator-owned records that belong to one account workspace.
+/// A nil value is intentionally retained for CloudKit migration compatibility
+/// and is treated as belonging to the default workspace.
+protocol WorkspaceScopedRecord {
+    var workspaceID: UUID? { get }
 }

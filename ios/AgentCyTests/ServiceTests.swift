@@ -34,6 +34,26 @@ final class ServiceTests: XCTestCase {
         XCTAssertTrue(ideas.allSatisfy { !$0.assumption.isEmpty })
     }
 
+    func testPreviewCreativeServiceDoesNotAssignEveryIdeaToTheFirstPillar() async throws {
+        let pillarIDs = [UUID(), UUID(), UUID()]
+        let base = creatorContext()
+        let context = CreatorContextWire(
+            name: base.name,
+            primaryGoal: base.primaryGoal,
+            selectedPlatforms: base.selectedPlatforms,
+            voiceExamples: base.voiceExamples,
+            voiceProfile: base.voiceProfile,
+            pillars: zip(pillarIDs, ["Lifestyle", "Beauty", "Tech"]).map { id, name in
+                PillarSummaryWire(pillarId: id, name: name, description: nil)
+            },
+            librarySummaries: base.librarySummaries
+        )
+
+        let ideas = try await PreviewCreativeService().findIdeas(context: context, mode: .collaborate)
+
+        XCTAssertEqual(ideas.map(\.suggestedPillarID), pillarIDs.map(Optional.some))
+    }
+
     func testCancellingIdeaGenerationDoesNotShowAnErrorNotice() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -230,7 +250,7 @@ final class ServiceTests: XCTestCase {
         let data = try Data(contentsOf: url)
         XCTAssertEqual(Array(data.prefix(4)), [0x50, 0x4B, 0x03, 0x04])
         XCTAssertNotNil(data.range(of: Data("agentcy-export.json".utf8)))
-        XCTAssertNotNil(data.range(of: Data("briefs.md".utf8)))
+        XCTAssertNotNil(data.range(of: Data("posts.md".utf8)))
         XCTAssertNotNil(data.range(of: Data("pendingBriefProposals".utf8)))
         XCTAssertNotNil(data.range(of: Data("Pending proposal title".utf8)))
         XCTAssertNotNil(data.range(of: Data("@ari.creates".utf8)))
@@ -263,6 +283,286 @@ final class ServiceTests: XCTestCase {
 
         XCTAssertNotNil(data.range(of: Data(safePath.utf8)))
         XCTAssertNil(data.range(of: Data(unsafePath.utf8)))
+    }
+
+    func testPostMarkdownExportCreatesCleanNotionReadyHandoff() {
+        let brief = CreativeBrief(
+            title: "The small shift",
+            premise: "Show the useful change behind the result.",
+            status: .scheduled
+        )
+        brief.spokenHook = "The result was not the part that changed everything."
+        brief.scriptBeats = ["Name the old approach.", "Show the turning point."]
+        brief.notes = "Keep the delivery conversational."
+        brief.isBrandCollaboration = true
+        brief.brandName = "North Star"
+        brief.compensationType = .paid
+        brief.compensationAmount = 750
+        brief.compensationCurrencyCode = "USD"
+
+        let pillar = Pillar(name: "Lifestyle", colorHex: "FED3FF")
+        brief.pillarID = pillar.id
+        let destination = PublishingDestination(name: "Instagram", builtInKind: .instagram)
+        let format = PublishingFormat(destinationID: destination.id, name: "Reel", kind: .shortVideo)
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: .instagramReels,
+            destinationID: destination.id,
+            formatID: format.id,
+            durationSeconds: 45,
+            status: .scheduled
+        )
+        output.caption = "Save this for the next time you feel stuck."
+        output.targetDate = Date(timeIntervalSince1970: 1_800_000_000)
+        output.includesTargetTime = true
+
+        let task = CreatorTask(
+            briefID: brief.id,
+            title: "Film the talking head",
+            kind: .filming,
+            priority: .high
+        )
+        let attachment = CreatorAttachment(
+            ownerKind: .postMedia,
+            briefID: brief.id,
+            platformOutputID: output.id,
+            fileName: "opening-shot.mov",
+            kind: .video,
+            uniformTypeIdentifier: "public.movie",
+            byteCount: 42,
+            localRelativePath: ""
+        )
+
+        let markdown = PostMarkdownExporter.makeMarkdown(
+            brief: brief,
+            outputs: [output],
+            tasks: [task],
+            pillar: pillar,
+            destinations: [destination],
+            formats: [format],
+            socialAccounts: [],
+            attachments: [attachment],
+            exportedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+
+        XCTAssertTrue(markdown.hasPrefix("# The small shift\n"))
+        XCTAssertTrue(markdown.contains("## Overview"))
+        XCTAssertTrue(markdown.contains("- **Status:** Scheduled"))
+        XCTAssertTrue(markdown.contains("- **Pillar:** Lifestyle"))
+        XCTAssertTrue(markdown.contains("### Instagram · Reel"))
+        XCTAssertTrue(markdown.contains("#### Caption"))
+        XCTAssertTrue(markdown.contains("## Brand collaboration"))
+        XCTAssertTrue(markdown.contains("- [ ] Film the talking head — Filming · High"))
+        XCTAssertTrue(markdown.contains("- **Post media:** opening-shot.mov"))
+        XCTAssertFalse(markdown.contains("## First-frame text"))
+        XCTAssertFalse(markdown.contains(brief.id.uuidString))
+        XCTAssertEqual(PostMarkdownExporter.defaultFileName(for: brief), "the-small-shift.md")
+    }
+
+    func testMCPBridgeSnapshotIncludesCleanPostHandoffWithoutAttachmentBytes() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey", goal: "Create consistently")
+        let pillar = Pillar(role: .anchor, name: "Lifestyle", colorHex: "fed3ff", assignedWeekdays: [.monday])
+        let brief = CreativeBrief(title: "A clear handoff", premise: "Keep the idea useful.", status: .ready)
+        brief.pillarID = pillar.id
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .ready)
+        output.caption = "A finished caption."
+        let task = CreatorTask(briefID: brief.id, title: "Film opening", kind: .filming)
+        let attachment = CreatorAttachment(
+            ownerKind: .postMedia,
+            briefID: brief.id,
+            fileName: "private-image.jpg",
+            kind: .photo,
+            uniformTypeIdentifier: "public.jpeg",
+            byteCount: 4,
+            localRelativePath: "",
+            cloudData: Data([0xDE, 0xAD, 0xBE, 0xEF])
+        )
+        context.insert(profile)
+        context.insert(pillar)
+        context.insert(brief)
+        context.insert(output)
+        context.insert(task)
+        context.insert(attachment)
+
+        let snapshot = try MCPBridgeService.makeSnapshot(context: context)
+        let post = try XCTUnwrap(snapshot.posts.first)
+        let data = try JSONEncoder().encode(snapshot)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let encodedPillars = try XCTUnwrap(object["pillars"] as? [[String: Any]])
+        let encodedPosts = try XCTUnwrap(object["posts"] as? [[String: Any]])
+        let encodedOutputs = try XCTUnwrap(encodedPosts.first?["outputs"] as? [[String: Any]])
+        let encodedTasks = try XCTUnwrap(encodedPosts.first?["tasks"] as? [[String: Any]])
+
+        XCTAssertEqual(snapshot.schemaVersion, 1)
+        XCTAssertEqual(snapshot.pillars.first?.colorHex, "FED3FF")
+        XCTAssertEqual(post.outputs.first?.caption, "A finished caption.")
+        XCTAssertTrue(post.markdown.contains("# A clear handoff"))
+        XCTAssertTrue(post.markdown.contains("private-image.jpg"))
+        XCTAssertNil(data.range(of: Data([0xDE, 0xAD, 0xBE, 0xEF])))
+        XCTAssertTrue(encodedPillars.first?["parentPillarId"] is NSNull)
+        XCTAssertTrue(encodedOutputs.first?["account"] is NSNull)
+        XCTAssertTrue(encodedOutputs.first?["targetDate"] is NSNull)
+        XCTAssertTrue(encodedTasks.first?["outputId"] is NSNull)
+        XCTAssertTrue(encodedTasks.first?["parentTaskId"] is NSNull)
+    }
+
+    func testMCPBridgeReadsFractionalSecondCLIRequestsFromFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-mcp-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let requests = directory.appending(path: "requests", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: requests, withIntermediateDirectories: true)
+        let id = UUID()
+        let json = """
+        {
+          "schemaVersion": 1,
+          "id": "\(id.uuidString)",
+          "createdAt": "2026-07-15T17:30:22.123Z",
+          "source": "codex",
+          "type": "createIdea",
+          "payload": { "title": "A CLI idea", "notes": "Keep it concrete." }
+        }
+        """
+        try Data(json.utf8).write(to: requests.appending(path: "\(id.uuidString).json"))
+
+        let pending = try MCPBridgeService.pendingRequests(directory: directory)
+
+        XCTAssertEqual(pending.map(\.id), [id])
+        XCTAssertEqual(pending.first?.title, "Save an idea")
+        XCTAssertEqual(pending.first?.summary, "A CLI idea")
+    }
+
+    func testMCPBridgeQueuesReusableDemoDraftForReview() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let pillar = Pillar(role: .anchor, name: "Lifestyle", colorHex: "FED3FF")
+        context.insert(pillar)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-demo-mcp-\(UUID().uuidString)", directoryHint: .isDirectory)
+
+        let queued = try MCPBridgeService.queueDemoDraft(context: context, directory: directory)
+        let pending = try MCPBridgeService.pendingRequests(directory: directory)
+
+        XCTAssertEqual(queued.type, "createPostDraft")
+        XCTAssertEqual(pending.map(\.id), [queued.id])
+        XCTAssertEqual(pending.first?.payload.pillarId, pillar.id)
+        XCTAssertFalse(pending.first?.payload.caption?.isEmpty ?? true)
+        XCTAssertNotEqual(pending.first?.payload.caption, pending.first?.payload.notes)
+    }
+
+    func testMCPBridgeDoesNotSilentlyDropUnreadableRequestFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-mcp-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let requests = directory.appending(path: "requests", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: requests, withIntermediateDirectories: true)
+        let validID = UUID()
+        let validJSON = """
+        {
+          "schemaVersion": 1,
+          "id": "\(validID.uuidString)",
+          "createdAt": "2026-07-15T17:30:22.123Z",
+          "source": "codex",
+          "type": "createIdea",
+          "payload": { "title": "A CLI idea" }
+        }
+        """
+        try Data(validJSON.utf8).write(to: requests.appending(path: "\(validID.uuidString).json"))
+        try Data("{ temporarily unavailable".utf8).write(
+            to: requests.appending(path: "incomplete.json")
+        )
+
+        XCTAssertThrowsError(try MCPBridgeService.pendingRequests(directory: directory))
+    }
+
+    func testMCPBridgeRestoresPremiseAfterLegacyEditorCopiedNotesIntoIt() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let brief = CreativeBrief(
+            title: "Review-safe post",
+            premise: "The original premise",
+            status: .spark
+        )
+        brief.notes = "Detailed production notes"
+        context.insert(brief)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-mcp-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try MCPBridgeService.sync(context: context, directory: directory)
+        brief.premise = brief.notes
+
+        XCTAssertTrue(
+            try MCPBridgeService.restorePremiseIfNotesWereCopied(brief, directory: directory)
+        )
+        XCTAssertEqual(brief.premise, "The original premise")
+        XCTAssertEqual(brief.notes, "Detailed production notes")
+    }
+
+    func testMCPBridgeMovesLegacyFormatAndCallToActionOutOfNotes() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let brief = CreativeBrief(title: "A slow Asheville day", status: .spark)
+        brief.notes = """
+        FORMAT
+        Instagram Reel · 45 seconds
+
+        STRUCTURE
+        1. Open on the road.
+        2. Let the day unfold.
+
+        CALL TO ACTION
+        Save this for a slower Asheville day.
+
+        STORIES
+        1. Share the arrival.
+        """
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: .instagramReels,
+            destinationID: PublishingCatalog.instagramID,
+            formatID: nil,
+            status: .draft
+        )
+        let reel = PublishingFormat(
+            id: PublishingCatalog.instagramReelID,
+            destinationID: PublishingCatalog.instagramID,
+            name: "Reel",
+            kind: .shortVideo
+        )
+        context.insert(brief)
+        context.insert(output)
+        context.insert(reel)
+
+        XCTAssertTrue(try MCPBridgeService.migrateStructuredPostFields(context: context))
+        XCTAssertEqual(brief.ctaIntent, "Save this for a slower Asheville day.")
+        XCTAssertEqual(output.cta, "Save this for a slower Asheville day.")
+        XCTAssertEqual(output.formatID, PublishingCatalog.instagramReelID)
+        XCTAssertEqual(
+            brief.notes,
+            "STRUCTURE\n1. Open on the road.\n2. Let the day unfold.\n\nSTORIES\n1. Share the arrival."
+        )
+    }
+
+    func testApprovedCLISchedulePromotesDraftBeforeScheduling() throws {
+        let brief = CreativeBrief(title: "Reviewed draft", status: .spark)
+        let output = PlatformOutput(briefID: brief.id, status: .draft)
+        let date = Date(timeIntervalSince1970: 1_800_100_000)
+
+        try MCPBridgeService.prepareForApprovedScheduling(brief)
+        XCTAssertEqual(brief.status, .ready)
+        XCTAssertTrue(BriefLifecycle.schedule(output, for: date, brief: brief))
+        BriefLifecycle.synchronize(brief, outputs: [output])
+
+        XCTAssertEqual(brief.status, .scheduled)
+        XCTAssertEqual(output.status, .scheduled)
+        XCTAssertEqual(output.targetDate, date)
+    }
+
+    func testApprovedCLIScheduleDoesNotReviveArchivedPost() {
+        let brief = CreativeBrief(title: "Archived", status: .archived)
+
+        XCTAssertThrowsError(try MCPBridgeService.prepareForApprovedScheduling(brief))
+        XCTAssertEqual(brief.status, .archived)
     }
 
     func testCanonicalComposeResultDecodesAndMapsToNonpersistentProposal() throws {

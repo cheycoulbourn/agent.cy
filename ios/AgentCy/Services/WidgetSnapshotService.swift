@@ -4,9 +4,13 @@ import WidgetKit
 
 @MainActor
 enum WidgetSnapshotService {
-    static func refresh(context: ModelContext, now: Date = Date()) {
+    static func refresh(
+        context: ModelContext,
+        now: Date = Date(),
+        workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
+    ) {
         do {
-            let snapshot = try makeSnapshot(context: context, now: now)
+            let snapshot = try makeSnapshot(context: context, now: now, workspaceID: workspaceID)
             try AgentCyWidgetSnapshotStore.save(snapshot)
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
@@ -16,20 +20,40 @@ enum WidgetSnapshotService {
         }
     }
 
-    static func makeSnapshot(context: ModelContext, now: Date = Date()) throws -> AgentCyWidgetSnapshot {
+    static func makeSnapshot(
+        context: ModelContext,
+        now: Date = Date(),
+        workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
+    ) throws -> AgentCyWidgetSnapshot {
+        let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+        let activeID = WorkspaceScope.activeWorkspaceID(preferredID: workspaceID, workspaces: workspaces)
         let profiles = try context.fetch(FetchDescriptor<CreatorProfile>())
         let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-            .filter { $0.status != .archived }
-        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
-        let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            .filter {
+                $0.status != .archived &&
+                    WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+            }
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
         let pillars = try context.fetch(FetchDescriptor<Pillar>())
-            .filter { !$0.isArchived }
+            .filter {
+                !$0.isArchived &&
+                    WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+            }
         let destinations = try context.fetch(FetchDescriptor<PublishingDestination>())
             .filter { !$0.isArchived }
         let formats = try context.fetch(FetchDescriptor<PublishingFormat>())
             .filter { !$0.isArchived }
-        let focusTemplates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())
-        let focusOverrides = try context.fetch(FetchDescriptor<DailyFocusOverride>())
+        let focusTemplates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let focusOverrides = try context.fetch(FetchDescriptor<DailyFocusOverride>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
 
         let briefByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
         let pillarByID = Dictionary(uniqueKeysWithValues: pillars.map { ($0.id, $0) })

@@ -115,6 +115,7 @@ enum AccessPolicy {
             }
         } else if access == .freeJourney, state.freeBriefConsumed {
             switch action {
+            case .createSpark, .createTask, .schedule: return true
             case .extractVoiceProfile: return true
             case .revise: return state.revisionRequestsUsed < 3
             case .teachCy: return state.teachCyUpdatesUsed < 1

@@ -1,7 +1,21 @@
 import XCTest
+import UIKit
 @testable import AgentCy
 
 final class PostOutputDetailPolicyTests: XCTestCase {
+    func testAppearancePreferencesMapToWindowStyles() {
+        XCTAssertEqual(AppearancePreference.system.userInterfaceStyle, .unspecified)
+        XCTAssertEqual(AppearancePreference.light.userInterfaceStyle, .light)
+        XCTAssertEqual(AppearancePreference.dark.userInterfaceStyle, .dark)
+    }
+
+    func testMCPReviewEditingIsAvailableForExistingPostChanges() {
+        XCTAssertTrue(MCPReviewEditPolicy.allowsEditing(type: "updatePost"))
+        XCTAssertTrue(MCPReviewEditPolicy.allowsEditing(type: "schedulePost"))
+        XCTAssertTrue(MCPReviewEditPolicy.allowsEditing(type: "createPostDraft"))
+        XCTAssertFalse(MCPReviewEditPolicy.allowsEditing(type: "addTask"))
+    }
+
     func testDatedDraftOnScheduledBriefAlwaysResumesPostEditor() {
         XCTAssertEqual(
             PostOutputDetailPolicy.destination(

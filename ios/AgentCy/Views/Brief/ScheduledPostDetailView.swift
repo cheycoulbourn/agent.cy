@@ -17,8 +17,6 @@ struct PostOutputDetailView: View {
             IdeaPostDraftView(brief: brief, output: output)
         case .finalizedPost:
             ScheduledPostDetailView(brief: brief, output: output)
-        case .brief:
-            BriefDetailView(brief: brief)
         }
     }
 }
@@ -27,7 +25,6 @@ enum PostOutputDetailPolicy {
     enum Destination: Equatable {
         case draftEditor
         case finalizedPost
-        case brief
     }
 
     static func destination(
@@ -44,7 +41,7 @@ enum PostOutputDetailPolicy {
         if usesFinalizedView(outputStatus: outputStatus, targetDate: targetDate) {
             return .finalizedPost
         }
-        return .brief
+        return .draftEditor
     }
 
     static func usesFinalizedView(
@@ -90,9 +87,12 @@ struct ScheduledPostDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var brief: CreativeBrief
     @Bindable var output: PlatformOutput
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query private var outputs: [PlatformOutput]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var tasks: [CreatorTask]
     @Query private var attachments: [CreatorAttachment]
     @State private var showEditor = false
@@ -101,6 +101,19 @@ struct ScheduledPostDetailView: View {
     @State private var confirmDelete = false
     @State private var selectedMoodBoardPreview: MoodBoardImagePreview?
     @State private var attachmentPreviewURL: URL?
+    @State private var markdownDocument: MarkdownFileDocument?
+    @State private var showMarkdownExporter = false
+
+    private var pillars: [Pillar] {
+        allPillars.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: brief.workspaceID ?? appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+    private var socialAccounts: [CreatorSocialAccount] {
+        allSocialAccounts.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: brief.workspaceID ?? appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     private struct DisplayField: Identifiable {
         let label: String
@@ -112,6 +125,10 @@ struct ScheduledPostDetailView: View {
         self.brief = brief
         self.output = output
         let briefID = brief.id
+        _outputs = Query(
+            filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
+            sort: \PlatformOutput.createdAt
+        )
         _tasks = Query(
             filter: #Predicate<CreatorTask> { $0.briefID == briefID },
             sort: \CreatorTask.sortOrder
@@ -131,6 +148,7 @@ struct ScheduledPostDetailView: View {
                 collaborationDetails
                 moodBoardDetails
                 publishedLink
+                notesSection
                 taskSection
                 postingAction
             }
@@ -139,12 +157,12 @@ struct ScheduledPostDetailView: View {
             .padding(.bottom, 140)
         }
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle(output.status == .posted ? "Posted post" : "Scheduled post")
+        .navigationTitle(output.status == .posted ? "Posted" : "Scheduled post")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Edit", systemImage: "pencil") {
+                    Button("Edit post", systemImage: "pencil") {
                         showEditor = true
                     }
                     Button(
@@ -152,6 +170,13 @@ struct ScheduledPostDetailView: View {
                         systemImage: output.status == .posted ? "arrow.uturn.backward" : "checkmark"
                     ) {
                         appModel.togglePosted(output: output, context: context)
+                    }
+                    Divider()
+                    Button("Copy Markdown", systemImage: "doc.on.doc") {
+                        copyMarkdown()
+                    }
+                    Button("Export Markdown", systemImage: "square.and.arrow.up") {
+                        exportMarkdown()
                     }
                     Divider()
                     Button("Archive", systemImage: "archivebox", role: .destructive) {
@@ -199,6 +224,13 @@ struct ScheduledPostDetailView: View {
             MoodBoardImageViewer(preview: preview)
         }
         .quickLookPreview($attachmentPreviewURL)
+        .fileExporter(
+            isPresented: $showMarkdownExporter,
+            document: markdownDocument,
+            contentType: .agentMarkdown,
+            defaultFilename: PostMarkdownExporter.defaultFileName(for: brief),
+            onCompletion: handleMarkdownExport
+        )
         .onChange(of: attachmentPreviewURL) { oldValue, newValue in
             guard newValue == nil, let oldValue else { return }
             try? FileManager.default.removeItem(at: oldValue)
@@ -210,7 +242,7 @@ struct ScheduledPostDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You can still find it in Your work.")
+            Text("You can find it later under Archived in the Idea Bank.")
         }
         .confirmationDialog("Delete this post?", isPresented: $confirmDelete, titleVisibility: .visible) {
             if PostSeriesDeletionPolicy.isPartOfSeries(output) {
@@ -264,13 +296,6 @@ struct ScheduledPostDetailView: View {
                 .font(.paperInter(size: 32, weight: .bold, relativeTo: .largeTitle))
                 .tracking(-0.64)
                 .fixedSize(horizontal: false, vertical: true)
-
-            if !summary.isEmpty {
-                Text(summary)
-                    .font(.agentBody)
-                    .foregroundStyle(Color.agentSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
@@ -293,7 +318,7 @@ struct ScheduledPostDetailView: View {
     @ViewBuilder
     private var postContent: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            SectionRuleHeader(title: "Post")
+            SectionRuleHeader(title: "Post copy")
             if contentFields.isEmpty {
                 Text("No post copy has been added yet.")
                     .font(.agentBody)
@@ -320,7 +345,7 @@ struct ScheduledPostDetailView: View {
     private var collaborationDetails: some View {
         if brief.isBrandCollaboration {
             VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                SectionRuleHeader(title: "Brand collaboration")
+                SectionRuleHeader(title: "Collaboration")
                 detailRow(label: "Partner", value: brief.brandName.isEmpty ? "Not set" : brief.brandName)
                 detailRow(label: "Type", value: compensationSummary)
                 if brief.brandHasNetTerms {
@@ -418,6 +443,19 @@ struct ScheduledPostDetailView: View {
                         .font(.agentSubtext.weight(.semibold))
                         .foregroundStyle(Color.agentText)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var notesSection: some View {
+        if !summary.isEmpty {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                SectionRuleHeader(title: "Notes")
+                Text(summary)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -534,6 +572,38 @@ struct ScheduledPostDetailView: View {
         brief.updatedAt = Date()
         try? context.save()
         appModel.queueCalendarSync(context: context)
+    }
+    private var postMarkdownDocument: MarkdownFileDocument {
+        PostMarkdownExporter.makeDocument(
+            brief: brief,
+            outputs: outputs,
+            tasks: tasks,
+            pillar: selectedPillar,
+            destinations: destinations,
+            formats: formats,
+            socialAccounts: socialAccounts,
+            attachments: attachments
+        )
+    }
+    private func copyMarkdown() {
+        savePublishedLink()
+        UIPasteboard.general.string = postMarkdownDocument.text
+        appModel.notice = .info("Markdown copied.")
+    }
+    private func exportMarkdown() {
+        savePublishedLink()
+        markdownDocument = postMarkdownDocument
+        showMarkdownExporter = true
+    }
+    private func handleMarkdownExport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success:
+            appModel.notice = .info("Markdown saved to Files.")
+        case let .failure(error):
+            if (error as? CocoaError)?.code != .userCancelled {
+                appModel.notice = .error("That Markdown file could not be saved.")
+            }
+        }
     }
     private func openAttachment(_ attachment: CreatorAttachment) {
         guard let data = attachment.cloudData else {

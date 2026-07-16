@@ -14,6 +14,7 @@ struct DevelopBriefView: View {
     @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
     @State private var thread: ConversationThread?
     @State private var answer = ""
+    @State private var postProposal: BriefProposal?
     @FocusState private var answerIsFocused: Bool
 
     init(brief: CreativeBrief, output: PlatformOutput? = nil) {
@@ -91,7 +92,13 @@ struct DevelopBriefView: View {
             .toolbar(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(appModel.isWorking)
             .agentScreen()
-            .onAppear { thread = appModel.developmentThread(for: brief, context: context) }
+            .onAppear {
+                thread = appModel.developmentThread(for: brief, context: context)
+                postProposal = appModel.proposal(for: brief, context: context)
+            }
+            .sheet(item: $postProposal) { proposal in
+                PostProposalReviewView(brief: brief, initialProposal: proposal)
+            }
         }
         .agentKeyboardDismissal()
     }
@@ -105,9 +112,9 @@ struct DevelopBriefView: View {
                     .background(Color.agentSurface, in: .circle)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Close Post Spark")
+            .accessibilityLabel("Close Build with Cy")
 
-            MetaLabel("Cy · Post Spark")
+            MetaLabel("Cy · Post")
             Spacer()
         }
     }
@@ -117,7 +124,7 @@ struct DevelopBriefView: View {
             CyAsterisk(color: .cyAccent, size: 36, strokeWidth: 2)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Spark ideas for")
+                Text("Build out")
                     .font(.system(size: 32, weight: .regular))
                 Text(brief.title.isEmpty ? "this post." : "\(brief.title).")
                     .font(.agentDisplay)
@@ -133,7 +140,7 @@ struct DevelopBriefView: View {
 
     private var postContextCard: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            MetaLabel("Working from")
+            MetaLabel("Post details")
                 .foregroundStyle(Color.cyAccent)
 
             if !postNotes.isEmpty {
@@ -143,7 +150,7 @@ struct DevelopBriefView: View {
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Add a direction below and Cy will help you explore it.")
+                Text("Tell Cy what you want to shape or improve.")
                     .font(.agentSubtext)
                     .foregroundStyle(Color.agentSecondary)
             }
@@ -316,8 +323,12 @@ struct DevelopBriefView: View {
             }
 
             HStack {
-                MetaLabel("\(thread?.turnCount ?? 0) of 8")
+                MetaLabel("\(thread?.turnCount ?? 0) of 8 turns")
                 Spacer()
+                Button("Compose post") { composePost() }
+                    .font(.agentSubtext.weight(.semibold))
+                    .foregroundStyle(Color.cyAccent)
+                    .disabled(appModel.isWorking)
                 if answerIsFocused {
                     Button { answerIsFocused = false } label: {
                         Image(systemName: "keyboard.chevron.compact.down")
@@ -365,7 +376,7 @@ struct DevelopBriefView: View {
     private var starters: [String] {
         [
             "Give me three stronger angles for this post",
-            "Write five hooks in my voice",
+            "Write five hooks in my style",
             "Turn these notes into a clear post structure"
         ]
     }
@@ -409,6 +420,14 @@ struct DevelopBriefView: View {
                 postContext: postContext,
                 context: context
             )
+        }
+    }
+
+    private func composePost() {
+        answerIsFocused = false
+        Task {
+            await appModel.compose(brief: brief, context: context)
+            postProposal = appModel.proposal(for: brief, context: context)
         }
     }
 }

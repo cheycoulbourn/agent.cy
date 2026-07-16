@@ -2,13 +2,13 @@
 
 ## Local creator data
 
-Voice examples, voice profile, sparks, conversations, briefs, scripts, platform variants, tasks, pillars, schedules, reminders, and settings live in SwiftData and the creator's private iCloud database when available.
+Posts, ideas, conversations, scripts, platform details, tasks, pillars, schedules, reminders, and settings live in SwiftData and the creator's private iCloud database when available. Voice examples and voice profiles from earlier builds remain stored for backward compatibility, but the current release does not show or send them to Cy.
 
 Creator-owned social profile names and public profile links are stored as private manual references in the same local/private-iCloud store. They are not OAuth connections. agent.cy does not sign in to, fetch from, monitor, or publish to those profiles.
 
 The app remains usable locally without iCloud.
 
-Calendar integration is optional and device-local. When enabled, agent.cy uses Apple's EventKit framework to add and update the creator's scheduled posts and selected production tasks in a calendar already configured on the iPhone. Google credentials and OAuth tokens are never requested or stored by agent.cy. Calendar event identifiers stay in local preferences and are cleared when the calendar is disconnected or app data is erased. agent.cy does not import unrelated calendar events or send calendar data to its server or AI provider.
+Calendar integration is optional and device-local. When enabled, agent.cy uses Apple's EventKit framework to add and update the creator's scheduled posts and selected tasks in a calendar already configured on the iPhone. Google credentials and OAuth tokens are never requested or stored by agent.cy. Calendar event identifiers stay in local preferences and are cleared when the calendar is disconnected or app data is erased. agent.cy does not import unrelated calendar events or send calendar data to its server or AI provider.
 
 Creator-added reference files are copied into the private SwiftData store, capped at 25 MB per file, included in export and erase, and never attached to an AI request. SwiftData private CloudKit mirroring is store-wide; the app does not claim per-file selective sync.
 
@@ -34,7 +34,7 @@ Content-free request metadata and consented product events are retained for 30 d
 
 ## Export and erasure
 
-Export produces a ZIP with canonical JSON, readable Markdown briefs, and creator-added reference files. The JSON includes staged compositions, scoped revisions, and Teach Cy proposals so an unaccepted creator-visible proposal is not omitted from export.
+Export produces a ZIP with structured JSON, readable Markdown posts, and creator-added reference files. Earlier voice data and pending proposals remain included for backward compatibility even though the current release does not display them.
 
 When a live installation credential exists, Erase All Data first sends the authenticated `/v1/privacy/delete` request. The app deletes the device-only Keychain credential only after that request succeeds. If the service cannot be reached in a live build, local data and the credential remain intact so the creator can retry. Debug and fixture builds may continue with a clearly labeled local-only erase when no live identity or service is available.
 
@@ -49,4 +49,4 @@ Erase All Data removes:
 - Persisted composition, revision, and voice-profile proposals.
 - Installation-linked proxy metadata.
 
-A redeemed invitation remains a detached non-content tombstone so the same code cannot be reused.
+A minimal non-content record of a redeemed invitation remains so the same code cannot be reused.

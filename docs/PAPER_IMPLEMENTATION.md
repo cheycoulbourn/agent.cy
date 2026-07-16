@@ -50,8 +50,9 @@ All roles scale relative to an iOS text style. Inter Tight is not used.
 - Spacing follows `4`, `8`, `12`, `16`, `24`, `32`, `48`, and `64` points.
 - Radii use 8 points for controls, 16 for panels, 28 for floating surfaces, and capsules where appropriate.
 - Interactive targets remain at least 44 by 44 points.
+- Inline add actions use the shared `AgentAddActionRow` treatment and 15-point medium Inter. The plus mark, spacing, and type do not change by screen. Full-width primary creation or save buttons remain a separate control class.
 - Resting content is flat or separated by a solid hairline. Shadows are reserved for floating controls.
-- The native liquid-glass tab bar, sheets, and menus are preserved. The separate `+` chip opens creation; Cy is the fifth tab.
+- The native liquid-glass tab bar, sheets, and menus are preserved. Non-Cy tabs use thin, unfilled monochrome symbols; the Cy asterisk and separate `+` chip retain their branded forms.
 
 ## Information architecture
 

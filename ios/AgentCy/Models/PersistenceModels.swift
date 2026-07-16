@@ -2,6 +2,35 @@ import Foundation
 import SwiftData
 
 @Model
+final class CreatorWorkspace {
+    var id: UUID = UUID()
+    var profileID: UUID = UUID()
+    var name: String = ""
+    var primarySocialAccountID: UUID?
+    var isArchived: Bool = false
+    var sortOrder: Int = 0
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        profileID: UUID,
+        name: String,
+        primarySocialAccountID: UUID? = nil,
+        sortOrder: Int = 0,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.profileID = profileID
+        self.name = name
+        self.primarySocialAccountID = primarySocialAccountID
+        self.sortOrder = sortOrder
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+}
+
+@Model
 final class CreatorProfile {
     var id: UUID = UUID()
     var name: String = ""
@@ -10,10 +39,14 @@ final class CreatorProfile {
     var selectedDestinationIDsRaw: String = ""
     var assistanceModeRaw: String = AssistanceMode.collaborate.rawValue
     var appearanceRaw: String = AppearancePreference.system.rawValue
+    var vibePaletteRaw: String = ""
     var avatarImageData: Data?
     var adultConfirmed: Bool = false
     var telemetryConsent: Bool = false
     var onboardingCompleted: Bool = false
+    var showsHookInPostEditor: Bool = true
+    var showsBrandDealsInPostEditor: Bool = true
+    var showsMoodBoardsInPostEditor: Bool = true
     var createdAt: Date = Date()
 
     init(
@@ -26,6 +59,9 @@ final class CreatorProfile {
         adultConfirmed: Bool = false,
         telemetryConsent: Bool = false,
         onboardingCompleted: Bool = false,
+        showsHookInPostEditor: Bool = true,
+        showsBrandDealsInPostEditor: Bool = true,
+        showsMoodBoardsInPostEditor: Bool = true,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -37,6 +73,9 @@ final class CreatorProfile {
         self.adultConfirmed = adultConfirmed
         self.telemetryConsent = telemetryConsent
         self.onboardingCompleted = onboardingCompleted
+        self.showsHookInPostEditor = showsHookInPostEditor
+        self.showsBrandDealsInPostEditor = showsBrandDealsInPostEditor
+        self.showsMoodBoardsInPostEditor = showsMoodBoardsInPostEditor
         self.createdAt = createdAt
     }
 
@@ -58,6 +97,11 @@ final class CreatorProfile {
     var appearance: AppearancePreference {
         get { AppearancePreference(rawValue: appearanceRaw) ?? .system }
         set { appearanceRaw = newValue.rawValue }
+    }
+
+    var vibePalette: CreatorVibePalette? {
+        get { CreatorVibePalette(rawValue: vibePaletteRaw) }
+        set { vibePaletteRaw = newValue?.rawValue ?? "" }
     }
 }
 
@@ -143,6 +187,7 @@ final class VoiceProfile {
 @Model
 final class CreativeBrief {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var title: String = "Untitled spark"
     var premise: String = ""
     var notes: String = ""
@@ -252,6 +297,7 @@ final class CreativeBrief {
 @Model
 final class PendingBriefProposal {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var briefID: UUID = UUID()
     var payloadJSON: String = ""
     var proposalKindRaw: String = "composition"
@@ -307,6 +353,7 @@ final class PendingVoiceProfileProposal {
 @Model
 final class PlatformOutput {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var briefID: UUID = UUID()
     var platformRaw: String = CreatorPlatform.instagramReels.rawValue
     var destinationID: UUID?
@@ -377,6 +424,7 @@ final class PlatformOutput {
 @Model
 final class CreatorSocialAccount {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var profileID: UUID = UUID()
     var destinationID: UUID = UUID()
     var label: String = ""
@@ -449,6 +497,7 @@ final class CreatorSocialAccount {
 @Model
 final class CreatorTask {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var briefID: UUID?
     var pillarID: UUID?
     var platformOutputID: UUID?
@@ -534,6 +583,7 @@ final class CreatorTask {
 @Model
 final class Pillar {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var parentPillarID: UUID?
     var roleRaw: String = PillarRole.supporting.rawValue
     var name: String = ""
@@ -643,6 +693,7 @@ final class PublishingFormat {
 @Model
 final class DailyFocusTemplateEntry {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var weekdayRaw: Int = PillarWeekday.monday.rawValue
     var kindRaw: String = DailyFocusKind.custom.rawValue
     var secondaryKindRaw: String?
@@ -706,6 +757,7 @@ final class DailyFocusTemplateEntry {
 @Model
 final class DailyFocusOverride {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var date: Date = Date()
     var templateEntryID: UUID?
     var isCleared: Bool = false
@@ -746,6 +798,7 @@ final class DailyFocusOverride {
 @Model
 final class DailyFocusDayDetail {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var date: Date = Date()
     var note: String = ""
     var reminderEnabled: Bool = false
@@ -774,6 +827,7 @@ final class DailyFocusDayDetail {
 @Model
 final class PendingWeekProposal {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var weekStart: Date = Date()
     var payloadJSON: String = ""
     var sourceFingerprint: String = ""
@@ -795,6 +849,7 @@ final class PendingWeekProposal {
 @Model
 final class CreatorAttachment {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var ownerKindRaw: String = AttachmentOwnerKind.referenceFile.rawValue
     var briefID: UUID = UUID()
     var platformOutputID: UUID?
@@ -841,6 +896,7 @@ final class CreatorAttachment {
 @Model
 final class RhythmTemplate {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var name: String = "My rhythm"
     var entriesText: String = ""
     var isActive: Bool = true
@@ -858,6 +914,7 @@ final class RhythmTemplate {
 @Model
 final class WeekPlan {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var weekStart: Date = Date()
     var rhythmEntriesText: String = ""
     var notes: String = ""
@@ -875,6 +932,7 @@ final class WeekPlan {
 @Model
 final class ConversationThread {
     var id: UUID = UUID()
+    var workspaceID: UUID?
     var briefID: UUID?
     var contextKindRaw: String = ConversationContextKind.none.rawValue
     var contextID: UUID?
@@ -899,6 +957,21 @@ final class ConversationThread {
         set { contextKindRaw = newValue.rawValue }
     }
 }
+
+extension CreativeBrief: WorkspaceScopedRecord {}
+extension PendingBriefProposal: WorkspaceScopedRecord {}
+extension PlatformOutput: WorkspaceScopedRecord {}
+extension CreatorSocialAccount: WorkspaceScopedRecord {}
+extension CreatorTask: WorkspaceScopedRecord {}
+extension Pillar: WorkspaceScopedRecord {}
+extension DailyFocusTemplateEntry: WorkspaceScopedRecord {}
+extension DailyFocusOverride: WorkspaceScopedRecord {}
+extension DailyFocusDayDetail: WorkspaceScopedRecord {}
+extension PendingWeekProposal: WorkspaceScopedRecord {}
+extension CreatorAttachment: WorkspaceScopedRecord {}
+extension RhythmTemplate: WorkspaceScopedRecord {}
+extension WeekPlan: WorkspaceScopedRecord {}
+extension ConversationThread: WorkspaceScopedRecord {}
 
 @Model
 final class ConversationMessage {
@@ -1002,6 +1075,7 @@ final class SubscriptionState {
 
 enum AgentCySchema {
     static let types: [any PersistentModel.Type] = [
+        CreatorWorkspace.self,
         CreatorProfile.self,
         VoiceExample.self,
         VoiceProfile.self,

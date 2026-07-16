@@ -72,7 +72,7 @@ struct CaptureIdeaIntent: AppIntent {
 
         switch outcome {
         case .saved(let title):
-            let destination = pillar.pillarID == nil ? "Your work" : pillar.name
+            let destination = pillar.pillarID == nil ? "Idea Bank" : pillar.name
             return .result(dialog: "Saved \(title) to \(destination).")
         case .empty:
             return .result(dialog: "Tell me the idea you want to save.")
@@ -109,9 +109,16 @@ enum CaptureIdeaShortcutSaveOutcome: Equatable, Sendable {
 @ModelActor
 actor CaptureIdeaShortcutStore {
     func activePillarEntities() throws -> [CaptureIdeaPillarEntity] {
+        let workspaces = try modelContext.fetch(FetchDescriptor<CreatorWorkspace>())
+        let activeID = WorkspaceScope.activeWorkspaceID(
+            preferredID: CreatorWorkspacePreferences.activeWorkspaceID,
+            workspaces: workspaces
+        )
         let pillars = try modelContext.fetch(
             FetchDescriptor<Pillar>(sortBy: [SortDescriptor(\Pillar.createdAt)])
-        )
+        ).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
         return [.unfiled] + pillars
             .filter { !$0.isArchived }
             .map { pillarEntity(for: $0, among: pillars) }
@@ -132,16 +139,25 @@ actor CaptureIdeaShortcutStore {
             return .creationUnavailable
         }
 
+        let workspaces = try modelContext.fetch(FetchDescriptor<CreatorWorkspace>())
+        let activeID = WorkspaceScope.activeWorkspaceID(
+            preferredID: CreatorWorkspacePreferences.activeWorkspaceID,
+            workspaces: workspaces
+        )
         var resolvedPillarID: UUID?
         if let pillarID {
             let pillars = try modelContext.fetch(FetchDescriptor<Pillar>())
-            resolvedPillarID = pillars.contains { $0.id == pillarID && !$0.isArchived }
+            resolvedPillarID = pillars.contains {
+                $0.id == pillarID && !$0.isArchived &&
+                    WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+            }
                 ? pillarID
                 : nil
         }
 
         let title = Self.title(from: cleanIdea)
         let brief = CreativeBrief(title: title, premise: cleanIdea, source: .text)
+        brief.workspaceID = activeID
         brief.pillarID = resolvedPillarID
         modelContext.insert(brief)
         try modelContext.save()

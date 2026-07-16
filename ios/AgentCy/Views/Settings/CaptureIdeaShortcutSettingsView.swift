@@ -4,8 +4,8 @@ struct CaptureIdeaShortcutSettingsView: View {
     var body: some View {
         SettingsPageShell(
             kicker: "Shortcuts & widgets",
-            title: "Idea Capture Shortcut",
-            subtitle: "Capture an idea quickly, then keep your day visible from your Home Screen."
+            title: "Idea capture & widgets",
+            subtitle: "Capture an idea in the Idea Bank and keep your day visible from your Home Screen."
         ) {
             shortcutCard
 
@@ -24,7 +24,7 @@ struct CaptureIdeaShortcutSettingsView: View {
                 )
                 instructionRow(
                     number: "03",
-                    title: "Find it in Your work",
+                    title: "Find it in the Idea Bank",
                     detail: "agent.cy saves a new idea without opening the app."
                 )
             }
@@ -39,7 +39,7 @@ struct CaptureIdeaShortcutSettingsView: View {
                 setupStep(number: "5", text: "Choose Double Tap, then select Capture Idea under Shortcuts.")
 
                 Link(destination: URL(string: "shortcuts://create-shortcut")!) {
-                    Label("agent.cy Shortcuts", systemImage: "plus")
+                    Text("Create shortcut")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(AgentSecondaryButtonStyle())
@@ -92,7 +92,7 @@ struct CaptureIdeaShortcutSettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                Text("Idea Capture Shortcut")
+                Text("Idea capture")
                     .font(.agentHeadline)
                     .foregroundStyle(Color.agentText)
                 Text("IDEA + PILLAR · SAVES PRIVATELY")

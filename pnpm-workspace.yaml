@@ -1,6 +1,8 @@
 packages:
   - contracts
+  - mcp
   - server
 
 allowBuilds:
   esbuild: true
+  node: true

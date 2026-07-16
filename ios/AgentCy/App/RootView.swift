@@ -47,9 +47,11 @@ struct RootView: View {
             destinationView
             #endif
         }
-        .preferredColorScheme(preferredColorScheme)
         .onChange(of: profiles.first?.appearanceRaw, initial: true) { _, rawValue in
             appModel.appearancePreference = rawValue.flatMap { AppearancePreference(rawValue: $0) } ?? .system
+        }
+        .onChange(of: appModel.appearancePreference, initial: true) { _, preference in
+            AgentAppearanceController.apply(preference)
         }
         .task {
             appModel.removeLegacySimplifyPrefixes(context: context)
@@ -59,6 +61,7 @@ struct RootView: View {
             appModel.applyPendingWidgetTaskCompletions(context: context)
             WidgetSnapshotService.refresh(context: context)
             appModel.refreshCalendarSync(context: context)
+            try? MCPBridgeService.sync(context: context)
             if repairedPostTasks > 0 {
                 await appModel.refreshReminderSchedule(context: context)
             }
@@ -90,10 +93,6 @@ struct RootView: View {
             case .app:
                 AppShellView()
             }
-    }
-
-    private var preferredColorScheme: ColorScheme? {
-        appModel.appearancePreference.colorSchemeOverride
     }
 
     private var destination: RootDestination {
@@ -179,9 +178,13 @@ struct RootView: View {
     }
 
     private func prepareQuickCapture(idea: Bool, post: Bool, task: Bool) {
-        appModel.quickCaptureStartsWithIdeas = idea
-        appModel.quickCaptureStartsWithPost = post
-        appModel.quickCaptureStartsWithTask = task
+        if post {
+            appModel.setQuickCaptureMode(.post)
+        } else if task {
+            appModel.setQuickCaptureMode(.task)
+        } else {
+            appModel.setQuickCaptureMode(.idea)
+        }
         appModel.quickCaptureTargetDate = nil
         appModel.quickCapturePillarID = nil
         appModel.quickCaptureTaskLane = nil

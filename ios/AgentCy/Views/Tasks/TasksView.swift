@@ -7,13 +7,25 @@ struct TaskNavigationRoute: Hashable {
 
 private struct TaskNavigationDestinationView: View {
     let route: TaskNavigationRoute
+    @Environment(AppModel.self) private var appModel
     @Query(sort: \CreatorTask.createdAt, order: .reverse) private var tasks: [CreatorTask]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
 
     var body: some View {
-        if let task = tasks.first(where: { $0.id == route.taskID }) {
+        if let task = tasks.first(where: {
+            $0.id == route.taskID && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }) {
             TaskDetailView(task: task)
         } else {
-            ContentUnavailableView("Task unavailable", systemImage: "checkmark.square")
+            ContentUnavailableView(
+                "Task not found",
+                systemImage: "checkmark.square",
+                description: Text("It may have been completed or deleted.")
+            )
         }
     }
 }
@@ -30,7 +42,7 @@ struct TasksView: View {
     private enum StatusFilter: String, CaseIterable, Identifiable {
         case open = "Open"
         case completed = "Completed"
-        case archive = "Archive"
+        case archive = "Archived"
         var id: String { rawValue }
     }
 
@@ -40,6 +52,7 @@ struct TasksView: View {
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var profiles: [CreatorProfile]
     @State private var collection: TaskCollection = .postTasks
     @State private var status: StatusFilter = .open
@@ -47,10 +60,15 @@ struct TasksView: View {
     @State private var deletedBundle: DeletedTaskBundle?
     @State private var clearUndoTask: Task<Void, Never>?
 
-    private var filtered: [CreatorTask] {
+    private func filtered(for collection: TaskCollection) -> [CreatorTask] {
         tasks
             .filter { task in
                 guard task.parentTaskID == nil,
+                      WorkspaceScope.includes(
+                        task.workspaceID,
+                        activeWorkspaceID: appModel.activeWorkspaceID,
+                        workspaces: workspaces
+                      ),
                       TaskCollectionPolicy.collection(
                         briefID: task.briefID,
                         platformOutputID: task.platformOutputID
@@ -77,7 +95,13 @@ struct TasksView: View {
     }
 
     private var archivedBriefIDs: Set<UUID> {
-        Set(briefs.lazy.filter { $0.status == .archived }.map(\.id))
+        Set(briefs.lazy.filter {
+            $0.status == .archived && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }.map(\.id))
     }
 
     private func visibilityDate(for task: CreatorTask) -> Date? {
@@ -109,22 +133,14 @@ struct TasksView: View {
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.bottom, AgentSpacing.x4)
 
-            if filtered.isEmpty {
-                ContentUnavailableView {
-                    Text(emptyTitle)
-                } description: {
-                    Text(emptyDescription)
-                } actions: {
-                    if status == .open, collection == .myTasks {
-                        Button("Add task") { openTaskComposer() }
-                            .buttonStyle(AgentCompactPrimaryButtonStyle())
-                    }
+            TabView(selection: $collection) {
+                ForEach(TaskCollection.allCases) { page in
+                    taskPage(for: page)
+                        .tag(page)
                 }
-            } else if status != .open {
-                completedList
-            } else {
-                openList
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .animation(.snappy(duration: 0.24), value: collection)
         }
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
@@ -148,7 +164,7 @@ struct TasksView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             AgentPageRail(
-                breadcrumb: "§ Tasks",
+                breadcrumb: "Tasks",
                 profile: profiles.first,
                 openSettings: { appModel.presentedSheet = .settings }
             ) {
@@ -218,28 +234,49 @@ struct TasksView: View {
         .accessibilityValue(status.rawValue)
     }
 
-    private var emptyTitle: String {
+    @ViewBuilder
+    private func taskPage(for collection: TaskCollection) -> some View {
+        let visibleTasks = filtered(for: collection)
+        if visibleTasks.isEmpty {
+            ContentUnavailableView {
+                Text(emptyTitle(for: collection))
+            } description: {
+                Text(emptyDescription(for: collection))
+            } actions: {
+                if status == .open, collection == .myTasks {
+                    Button("Add task") { openTaskComposer() }
+                        .buttonStyle(AgentCompactPrimaryButtonStyle())
+                }
+            }
+        } else if status != .open {
+            completedList(for: collection)
+        } else {
+            openList(for: collection)
+        }
+    }
+
+    private func emptyTitle(for collection: TaskCollection) -> String {
         switch status {
         case .open: collection == .postTasks ? "No post tasks yet" : "No tasks yet"
-        case .completed: "Nothing completed yet"
-        case .archive: "Nothing archived"
+        case .completed: "No completed tasks."
+        case .archive: "No archived tasks."
         }
     }
 
-    private var emptyDescription: String {
+    private func emptyDescription(for collection: TaskCollection) -> String {
         switch status {
         case .open: collection == .postTasks
-            ? "Tasks connected to posts will appear here."
+            ? "Tasks added to posts appear here."
             : "Add one clear next step."
-        case .completed: "Completed tasks will appear here."
-        case .archive: "Tasks from archived posts will appear here."
+        case .completed: ""
+        case .archive: "Tasks from archived posts appear here."
         }
     }
 
-    private var openList: some View {
+    private func openList(for collection: TaskCollection) -> some View {
         List {
-            if shouldGroupByDueDate {
-                ForEach(dueDateGroups) { group in
+            if shouldGroupByDueDate(for: collection) {
+                ForEach(dueDateGroups(for: collection)) { group in
                     Section {
                         ForEach(group.tasks) { task in row(task) }
                     } header: {
@@ -248,7 +285,7 @@ struct TasksView: View {
                     .textCase(nil)
                 }
             } else {
-                ForEach(filtered) { task in row(task) }
+                ForEach(filtered(for: collection)) { task in row(task) }
             }
             if collection == .myTasks {
                 AgentAddActionRow(title: "Add task") { openTaskComposer() }
@@ -266,10 +303,10 @@ struct TasksView: View {
         .scrollContentBackground(.hidden)
     }
 
-    private var completedList: some View {
+    private func completedList(for collection: TaskCollection) -> some View {
         List {
-            if shouldGroupByDueDate {
-                ForEach(dueDateGroups) { group in
+            if shouldGroupByDueDate(for: collection) {
+                ForEach(dueDateGroups(for: collection)) { group in
                     Section {
                         ForEach(group.tasks) { task in row(task) }
                     } header: {
@@ -278,7 +315,7 @@ struct TasksView: View {
                     .textCase(nil)
                 }
             } else {
-                ForEach(filtered) { task in row(task) }
+                ForEach(filtered(for: collection)) { task in row(task) }
             }
         }
         .listStyle(.plain)
@@ -306,8 +343,8 @@ struct TasksView: View {
             }
     }
 
-    private var dueDateGroups: [TaskDueDateGroup] {
-        let grouped = Dictionary(grouping: filtered) { task in
+    private func dueDateGroups(for collection: TaskCollection) -> [TaskDueDateGroup] {
+        let grouped = Dictionary(grouping: filtered(for: collection)) { task in
             task.targetDate.map(Calendar.current.startOfDay(for:))
         }
         return grouped.map { day, tasks in
@@ -323,8 +360,8 @@ struct TasksView: View {
         }
     }
 
-    private var shouldGroupByDueDate: Bool {
-        dueDateGroups.count > 1
+    private func shouldGroupByDueDate(for collection: TaskCollection) -> Bool {
+        dueDateGroups(for: collection).count > 1
     }
 
     private func dueDateGroupHeader(_ group: TaskDueDateGroup) -> some View {
@@ -359,8 +396,7 @@ struct TasksView: View {
     }
 
     private func openTaskComposer() {
-        appModel.quickCaptureStartsWithTask = true
-        appModel.quickCaptureStartsWithPost = false
+        appModel.setQuickCaptureMode(.task)
         appModel.quickCapturePillarID = nil
         appModel.quickCaptureTaskLane = .production
         appModel.quickCaptureTaskFocus = nil
@@ -505,7 +541,7 @@ struct TaskRow: View {
                 metadata(linkedPostTitle.uppercased())
                 metadataDivider
             } else {
-                metadata(task.isCompleted ? "DONE" : "OPEN")
+                metadata(task.isCompleted ? "COMPLETED" : "OPEN")
                 metadataDivider
             }
             metadata(dateText.uppercased())
@@ -626,7 +662,7 @@ struct TaskDetailView: View {
                             if let linkedOutput {
                                 PostOutputDetailView(brief: linkedBrief, output: linkedOutput)
                             } else {
-                                BriefDetailView(brief: linkedBrief)
+                                IdeaPostDraftView(brief: linkedBrief)
                             }
                         } label: {
                             Text(linkedBrief.title)
@@ -759,8 +795,8 @@ struct TaskDetailView: View {
                             showCompletedSubtasks.toggle()
                         }
                     }
-                    Button("Duplicate") { duplicate() }
-                    Button("Delete", role: .destructive) { confirmDelete = true }
+                    Button("Duplicate task") { duplicate() }
+                    Button("Delete task", role: .destructive) { confirmDelete = true }
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 14, weight: .semibold))
@@ -789,7 +825,7 @@ struct TaskDetailView: View {
         }
         .confirmationDialog("Delete this task?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete task", role: .destructive) { appModel.deleteTask(task, context: context); dismiss() }
-        } message: { Text("Its subtasks will also be deleted.") }
+        } message: { Text("This also deletes its subtasks.") }
         .sheet(isPresented: $showDueDateEditor) {
             TaskDueDateEditor(task: task)
                 .presentationDetents([.large])
@@ -802,7 +838,7 @@ struct TaskDetailView: View {
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var selectedPillar: Pillar? { activePillars.first { $0.id == task.pillarID } }
     private var dueDateLabel: String {
-        guard let date = task.targetDate ?? task.dailyFocusDate else { return "Set a date" }
+        guard let date = task.targetDate ?? task.dailyFocusDate else { return "No due date" }
         if task.includesTargetTime {
             return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
         }
@@ -829,7 +865,7 @@ struct TaskDetailView: View {
                 } label: {
                     TaskEditorSetupRow(
                         label: "Pillar",
-                        value: selectedPillar?.name ?? "Pick a pillar",
+                        value: selectedPillar?.name ?? "No pillar",
                         color: selectedPillar.map { Color(agentHex: $0.resolvedColorHex(in: activePillars)) }
                     )
                 }
@@ -863,11 +899,11 @@ struct TaskDetailView: View {
                 Button("Open") {
                     if task.isCompleted { appModel.toggleTask(task, context: context) }
                 }
-                Button("Done") {
+                Button("Completed") {
                     if !task.isCompleted { appModel.toggleTask(task, context: context) }
                 }
             } label: {
-                TaskEditorSetupRow(label: "Status", value: task.isCompleted ? "Done" : "Open")
+                TaskEditorSetupRow(label: "Status", value: task.isCompleted ? "Completed" : "Open")
             }
 
             Button { showDueDateEditor = true } label: {
@@ -1021,7 +1057,7 @@ private struct TaskDueDateEditor: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Use date", action: apply)
+                    Button("Set date", action: apply)
                         .fontWeight(.semibold)
                 }
             }

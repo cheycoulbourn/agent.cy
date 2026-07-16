@@ -8,15 +8,28 @@ struct TodayView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Query private var profiles: [CreatorProfile]
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
-    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
-    @Query private var pillars: [Pillar]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
+    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
+    @Query private var allPillars: [Pillar]
     @Query private var destinations: [PublishingDestination]
     @Query private var formats: [PublishingFormat]
-    @Query private var focusTemplates: [DailyFocusTemplateEntry]
-    @Query private var focusOverrides: [DailyFocusOverride]
+    @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
+    @Query private var allFocusOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var headerHeight: CGFloat = 0
+
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
+    private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
+    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
+        values.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
 
@@ -110,7 +123,7 @@ struct TodayView: View {
 
     private var focusSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            MetaLabel("\(day.formatted(.dateTime.weekday(.wide)))'s Focus")
+            MetaLabel("\(day.formatted(.dateTime.weekday(.wide)))’s focus")
             NavigationLink {
                 DailyFocusDetailView(date: day)
             } label: {
@@ -141,7 +154,7 @@ struct TodayView: View {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 13, weight: .medium))
                         }
-                        Text("No focus is assigned today.")
+                        Text("Nothing is planned.")
                             .font(.agentBody)
                             .foregroundStyle(Color.agentSecondary)
                     }
@@ -169,8 +182,8 @@ struct TodayView: View {
 
             if goingLiveOutputs.isEmpty, draftedOutputs.isEmpty {
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                    sectionHeading(Calendar.current.isDateInToday(day) ? "Posts today" : "Posts", count: 0, unit: "post")
-                    Text("Nothing is planned for this day.")
+                    sectionHeading("Posts", count: 0, unit: "post")
+                    Text("No posts planned.")
                         .font(.agentBody)
                         .foregroundStyle(Color.agentSecondary)
                 }
@@ -178,21 +191,6 @@ struct TodayView: View {
 
             AgentAddActionRow(title: "Schedule post", action: addPostForToday)
                 .accessibilityHint("Creates a post scheduled for this day")
-            Button {
-                withAnimation(.snappy(duration: 0.24)) {
-                    planMode = .week
-                }
-            } label: {
-                HStack {
-                    Text("View week").font(.agentSubtext.weight(.medium))
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                }
-                .foregroundStyle(Color.agentText)
-                .padding(.top, AgentSpacing.x3)
-                .overlay(alignment: .top) { Rectangle().fill(Color.agentHairline).frame(height: 1) }
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -225,9 +223,9 @@ struct TodayView: View {
 
     private var taskSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            sectionHeading(Calendar.current.isDateInToday(day) ? "Today's tasks" : "Tasks", count: todayTasks.count, unit: "task")
+            sectionHeading("Tasks", count: todayTasks.count, unit: "task")
             if todayTasks.isEmpty {
-                Text("No tasks are scheduled for this day.")
+                Text("No tasks planned.")
                     .font(.agentBody)
                     .foregroundStyle(Color.agentSecondary)
             } else {
@@ -301,18 +299,14 @@ struct TodayView: View {
                 templateEntryID: $0.templateEntryID
             )
         }
-        appModel.quickCaptureStartsWithTask = true
-        appModel.quickCaptureStartsWithPost = false
-        appModel.quickCaptureStartsWithIdeas = false
+        appModel.setQuickCaptureMode(.task)
         appModel.presentedSheet = .quickCapture
     }
 
     private func addPostForToday() {
         appModel.quickCaptureTargetDate = day
         appModel.quickCapturePillarID = nil
-        appModel.quickCaptureStartsWithTask = false
-        appModel.quickCaptureStartsWithPost = true
-        appModel.quickCaptureStartsWithIdeas = false
+        appModel.setQuickCaptureMode(.post)
         appModel.presentedSheet = .quickCapture
     }
 

@@ -10,11 +10,18 @@ struct WeeklyFocusSetupView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query private var templates: [DailyFocusTemplateEntry]
+    @Query private var allTemplates: [DailyFocusTemplateEntry]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var assignments: [PillarWeekday: [DailyFocusKind]] = [:]
     @State private var taskTemplates: [PillarWeekday: [DailyFocusTaskTemplateDefinition]] = [:]
     @State private var didLoad = false
     @State private var savedSnapshot: DraftSnapshot?
+
+    private var templates: [DailyFocusTemplateEntry] {
+        allTemplates.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -23,7 +30,7 @@ struct WeeklyFocusSetupView: View {
                     EditorialHeader(
                         kicker: "Weekly focus",
                         title: "Batch your week.",
-                        subtitle: "Choose up to two focuses for each day. Empty days stay Rest."
+                        subtitle: "Choose up to two focuses per day. Unassigned days are Rest."
                     )
 
                     AgentInsetSurface {
@@ -182,7 +189,7 @@ private struct WeeklyFocusDaySelectionView: View {
                 EditorialHeader(
                     kicker: day.title,
                     title: selection.isEmpty ? "Rest." : DailyFocusKind.combinedTitle(selection) + ".",
-                    subtitle: "Choose up to two kinds of work to batch on \(day.title)s."
+                    subtitle: "Choose up to two kinds of work for \(day.title)s."
                 )
 
                 VStack(alignment: .leading, spacing: 0) {
@@ -218,7 +225,7 @@ private struct WeeklyFocusDaySelectionView: View {
                 }
 
                     if selection.isEmpty {
-                        Button("Use Rest for \(day.title)") { dismiss() }
+                        Button("Set \(day.title) to Rest") { dismiss() }
                             .buttonStyle(AgentPrimaryButtonStyle())
                     } else {
                         NavigationLink {
@@ -229,7 +236,7 @@ private struct WeeklyFocusDaySelectionView: View {
                                 finishDay: { dismiss() }
                             )
                         } label: {
-                            Label("Next: weekly tasks", systemImage: "arrow.right")
+                            Label("Next: recurring tasks", systemImage: "arrow.right")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(AgentPrimaryButtonStyle())
@@ -307,7 +314,7 @@ private struct WeeklyFocusTaskTemplateEditor: View {
                 EditorialHeader(
                     kicker: "Repeats every \(day.title)",
                     title: "Set the next steps.",
-                    subtitle: "These tasks return each week. Edit, remove, or add anything you need."
+                    subtitle: "These tasks repeat every week."
                 )
 
                 ForEach(focusKinds) { kind in
@@ -316,7 +323,8 @@ private struct WeeklyFocusTaskTemplateEditor: View {
                             HStack(alignment: .firstTextBaseline) {
                                 MetaLabel(kind.title)
                                 Spacer()
-                                MetaLabel("\(definitions(for: kind).count) tasks")
+                                let count = definitions(for: kind).count
+                                MetaLabel("\(count) \(count == 1 ? "task" : "tasks")")
                             }
                             .padding(.bottom, AgentSpacing.x3)
 
@@ -350,7 +358,7 @@ private struct WeeklyFocusTaskTemplateEditor: View {
             .padding(.top, AgentSpacing.x6)
             .padding(.bottom, AgentSpacing.x12)
         }
-        .navigationTitle("Weekly tasks")
+        .navigationTitle("Recurring tasks")
         .navigationBarTitleDisplayMode(.inline)
         .agentScreen()
         .agentKeyboardDismissal()
@@ -432,17 +440,31 @@ struct DailyFocusDetailView: View {
 
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
-    @Query private var templates: [DailyFocusTemplateEntry]
-    @Query private var overrides: [DailyFocusOverride]
-    @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
-    @Query private var savedDetails: [DailyFocusDayDetail]
+    @Query private var allTemplates: [DailyFocusTemplateEntry]
+    @Query private var allOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
+    @Query private var allSavedDetails: [DailyFocusDayDetail]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var detailRecord: DailyFocusDayDetail?
     @State private var note = ""
     @State private var reminderEnabled = false
     @State private var reminderDate = Date()
     @State private var didLoad = false
+
+    private var templates: [DailyFocusTemplateEntry] { scoped(allTemplates) }
+    private var overrides: [DailyFocusOverride] { scoped(allOverrides) }
+    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private var savedDetails: [DailyFocusDayDetail] { scoped(allSavedDetails) }
+    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
+        values.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+    @State private var showFocusEditor = false
 
     private var focus: ResolvedDailyFocus? {
         DailyFocusResolver.resolve(date: date, templates: templates, overrides: overrides)
@@ -474,14 +496,6 @@ struct DailyFocusDetailView: View {
             }
             .sorted(by: sortTasks)
     }
-    private var postTasks: [CreatorTask] {
-        dayTasks.filter {
-            TaskCollectionPolicy.collection(
-                briefID: $0.briefID,
-                platformOutputID: $0.platformOutputID
-            ) == .postTasks
-        }
-    }
     private var myTasks: [CreatorTask] {
         dayTasks.filter {
             TaskCollectionPolicy.collection(
@@ -505,31 +519,11 @@ struct DailyFocusDetailView: View {
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        MetaLabel("Direction")
+                        MetaLabel("Plan")
                         Text(directive)
                             .font(.agentBody)
                             .foregroundStyle(Color.agentText)
                             .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if let focus, !focus.kinds.isEmpty {
-                        Rectangle()
-                            .fill(Color.agentHairline)
-                            .frame(height: 1)
-
-                        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                            MetaLabel(focus.kinds.count == 1 ? "Focus area" : "Focus areas")
-                            ForEach(focus.kinds) { kind in
-                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                    Text(kind.title)
-                                        .font(.agentSubtext.weight(.semibold))
-                                    Text(kind.directive)
-                                        .font(.agentSubtext)
-                                        .foregroundStyle(Color.agentSecondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
                     }
 
                     if focus?.durationMinutes != nil || focus?.time != nil {
@@ -549,34 +543,12 @@ struct DailyFocusDetailView: View {
                             }
                         }
                     }
-                }
-                .padding(AgentSpacing.x6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
 
-                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-                    focusTaskCollection(
-                        title: TaskCollection.postTasks.title,
-                        tasks: postTasks,
-                        emptyMessage: "No post tasks for this day."
-                    )
+                    Rectangle().fill(Color.agentHairline).frame(height: 1)
 
-                    focusTaskCollection(
-                        title: TaskCollection.myTasks.title,
-                        tasks: myTasks,
-                        emptyMessage: "No personal or focus tasks for this day."
-                    )
-
-                    AgentAddActionRow(title: "Add task", action: addFocusTask)
-                }
-                .padding(AgentSpacing.x6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
-
-                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                     AgentMultilineField(
                         label: "Notes",
-                        placeholder: "Add context for this focus day",
+                        placeholder: "",
                         text: $note,
                         lineLimit: 2...5
                     )
@@ -608,6 +580,19 @@ struct DailyFocusDetailView: View {
                 .padding(AgentSpacing.x6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                    focusTaskCollection(
+                        title: TaskCollection.myTasks.title,
+                        tasks: myTasks,
+                        emptyMessage: "No tasks planned."
+                    )
+
+                    AgentAddActionRow(title: "Add task", action: addFocusTask)
+                }
+                .padding(AgentSpacing.x6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
@@ -615,6 +600,14 @@ struct DailyFocusDetailView: View {
         }
         .navigationTitle("Focus")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") { showFocusEditor = true }
+            }
+        }
+        .sheet(isPresented: $showFocusEditor) {
+            DailyFocusEditorView(date: date)
+        }
         .onAppear(perform: loadDetails)
         .onChange(of: note) { _, _ in persistDetails(scheduleReminder: false) }
         .onChange(of: reminderEnabled) { _, _ in persistDetails(scheduleReminder: true) }
@@ -767,6 +760,7 @@ struct DailyFocusDetailView: View {
 
         let item = detailRecord ?? DailyFocusDayDetail(date: date)
         if item.modelContext == nil {
+            item.workspaceID = appModel.resolvedWorkspaceID(context: context)
             context.insert(item)
             detailRecord = item
         }
@@ -785,8 +779,7 @@ struct DailyFocusDetailView: View {
     }
 
     private func addFocusTask() {
-        appModel.quickCaptureStartsWithTask = true
-        appModel.quickCaptureStartsWithPost = false
+        appModel.setQuickCaptureMode(.task)
         appModel.quickCaptureTargetDate = date
         appModel.quickCaptureTaskLane = .production
         appModel.quickCaptureTaskFocus = DailyFocusTaskAssignment(
@@ -806,12 +799,23 @@ struct DailyFocusEditorView: View {
         case recurring
     }
 
+    private struct DraftSnapshot: Equatable {
+        let selection: [DailyFocusKind]
+        let note: String
+        let scope: Scope
+        let includeDuration: Bool
+        let durationMinutes: Int
+        let includeTime: Bool
+        let startMinutes: Int
+    }
+
     let date: Date
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query private var templates: [DailyFocusTemplateEntry]
-    @Query private var overrides: [DailyFocusOverride]
+    @Query private var allTemplates: [DailyFocusTemplateEntry]
+    @Query private var allOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var selection: [DailyFocusKind] = []
     @State private var note = ""
     @State private var scope: Scope
@@ -821,6 +825,18 @@ struct DailyFocusEditorView: View {
     @State private var startTime = Date()
     @State private var detailsExpanded = false
     @State private var didLoad = false
+    @State private var savedSnapshot: DraftSnapshot?
+
+    private var templates: [DailyFocusTemplateEntry] {
+        allTemplates.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+    private var overrides: [DailyFocusOverride] {
+        allOverrides.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     private var weekday: PillarWeekday {
         PillarWeekday(rawValue: Calendar.current.component(.weekday, from: date)) ?? .monday
@@ -863,7 +879,7 @@ struct DailyFocusEditorView: View {
                         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                             AgentMultilineField(
                                 label: "Note",
-                                placeholder: "Optional note",
+                                placeholder: "",
                                 text: $note,
                                 lineLimit: 2...4
                             )
@@ -891,10 +907,6 @@ struct DailyFocusEditorView: View {
                     }
                     .font(.agentHeadline)
 
-                    Button(scope == .recurring ? "Save every \(weekday.title)" : "Save this date") {
-                        save()
-                    }
-                    .buttonStyle(AgentPrimaryButtonStyle())
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, AgentLayout.pageMargin)
@@ -908,6 +920,21 @@ struct DailyFocusEditorView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", systemImage: "xmark") { dismiss() }
                         .labelStyle(.iconOnly)
+                }
+                if hasChanges {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: save) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Color.black)
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.circle)
+                        .controlSize(.large)
+                        .tint(Color.white)
+                        .accessibilityLabel("Save focus")
+                    }
                 }
             }
             .onAppear(perform: load)
@@ -976,6 +1003,7 @@ struct DailyFocusEditorView: View {
         guard !didLoad else { return }
         didLoad = true
         guard let focus = DailyFocusResolver.resolve(date: date, templates: templates, overrides: overrides) else {
+            savedSnapshot = currentSnapshot
             return
         }
         selection = Array(focus.kinds.prefix(2))
@@ -985,6 +1013,25 @@ struct DailyFocusEditorView: View {
         startTime = focus.time ?? Date()
         includeTime = focus.time != nil
         detailsExpanded = !note.isEmpty || includeDuration || includeTime
+        savedSnapshot = currentSnapshot
+    }
+
+    private var currentSnapshot: DraftSnapshot {
+        let calendar = Calendar.current
+        return DraftSnapshot(
+            selection: selection,
+            note: note,
+            scope: scope,
+            includeDuration: includeDuration,
+            durationMinutes: durationMinutes,
+            includeTime: includeTime,
+            startMinutes: calendar.component(.hour, from: startTime) * 60 + calendar.component(.minute, from: startTime)
+        )
+    }
+
+    private var hasChanges: Bool {
+        guard didLoad, let savedSnapshot else { return false }
+        return currentSnapshot != savedSnapshot
     }
 
     private var storedCustomNote: String {
@@ -1007,7 +1054,10 @@ struct DailyFocusEditorView: View {
         if scope == .recurring {
             let entry = templates.first(where: { $0.weekday == weekday })
                 ?? DailyFocusTemplateEntry(weekday: weekday, kind: .custom, title: "Rest")
-            if entry.modelContext == nil { context.insert(entry) }
+            if entry.modelContext == nil {
+                entry.workspaceID = appModel.resolvedWorkspaceID(context: context)
+                context.insert(entry)
+            }
             entry.kind = selection.first ?? .custom
             entry.secondaryKind = selection.count > 1 ? selection[1] : nil
             entry.title = title
@@ -1023,7 +1073,10 @@ struct DailyFocusEditorView: View {
         } else {
             let item = overrides.first(where: { calendar.isDate($0.date, inSameDayAs: date) })
                 ?? DailyFocusOverride(date: date)
-            if item.modelContext == nil { context.insert(item) }
+            if item.modelContext == nil {
+                item.workspaceID = appModel.resolvedWorkspaceID(context: context)
+                context.insert(item)
+            }
             item.templateEntryID = templates.first(where: { $0.weekday == weekday })?.id
             item.kind = selection.first ?? .custom
             item.secondaryKind = selection.count > 1 ? selection[1] : nil
@@ -1037,10 +1090,17 @@ struct DailyFocusEditorView: View {
 
         do {
             try context.save()
+            if scope == .recurring {
+                try FocusTaskRecurrenceService.reconcile(
+                    context: context,
+                    workspaceID: appModel.resolvedWorkspaceID(context: context)
+                )
+                appModel.queueCalendarSync(context: context)
+            }
             WidgetSnapshotService.refresh(context: context)
             dismiss()
         } catch {
-            appModel.notice = .error("Focus could not be saved: \(error.localizedDescription)")
+            appModel.presentCreatorError(error, action: "The focus")
         }
     }
 }

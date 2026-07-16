@@ -5,10 +5,10 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [CreatorProfile]
-    @Query private var voiceExamples: [VoiceExample]
     @Query private var subscriptions: [SubscriptionState]
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var reminders: [ReminderSettings]
     @AppStorage(CalendarIntegrationPreferences.selectedCalendarTitleKey) private var calendarTitle = ""
     @AppStorage(CalendarIntegrationPreferences.syncScheduledPostsKey) private var syncCalendarPosts = false
@@ -66,6 +66,16 @@ struct SettingsView: View {
                         }
 
                         SettingsIndexSection(title: "Publishing") {
+                            if let profile = profiles.first {
+                                NavigationLink {
+                                    NewPostSettingsView(profile: profile)
+                                } label: {
+                                    SettingsIndexRow(
+                                        title: "New post",
+                                        value: "\(enabledPostSectionCount(for: profile)) enabled"
+                                    )
+                                }
+                            }
                             NavigationLink {
                                 PublishingSettingsView()
                             } label: {
@@ -89,7 +99,15 @@ struct SettingsView: View {
                             } label: {
                                 SettingsIndexRow(
                                     title: "Cy connection",
-                                    value: "Connected",
+                                    value: "Connected"
+                                )
+                            }
+                            NavigationLink {
+                                MCPBridgeSettingsView()
+                            } label: {
+                                SettingsIndexRow(
+                                    title: "Claude & Codex",
+                                    value: MCPBridgePreferences.isConnected ? "Connected" : "Set up",
                                     isLast: true
                                 )
                             }
@@ -100,8 +118,8 @@ struct SettingsView: View {
                                 CaptureIdeaShortcutSettingsView()
                             } label: {
                                 SettingsIndexRow(
-                                    title: "Idea Capture Shortcut",
-                                    value: "Setup",
+                                    title: "Idea capture & widgets",
+                                    value: "Set up",
                                     isLast: true
                                 )
                             }
@@ -114,11 +132,6 @@ struct SettingsView: View {
                                 SettingsIndexRow(title: "Preview onboarding", value: "Review")
                             }
                             .buttonStyle(.plain)
-                            NavigationLink {
-                                VoiceExamplesView(embeddedInNavigation: true)
-                            } label: {
-                                SettingsIndexRow(title: "Voice examples", value: "\(readyExampleCount)")
-                            }
                             NavigationLink {
                                 AccessSettingsView()
                             } label: {
@@ -181,6 +194,7 @@ struct SettingsView: View {
             switch page {
             case .notifications: NotificationSettingsView()
             case .access: AccessSettingsView()
+            case .mcpBridge: MCPBridgeSettingsView()
             }
         }
         .agentKeyboardDismissal()
@@ -193,21 +207,27 @@ struct SettingsView: View {
             if let profile = profiles.first {
                 OnboardingView(
                     previewOnly: true,
-                    initialDraft: OnboardingDraft(name: profile.name, goal: profile.goal)
+                    initialDraft: OnboardingDraft(
+                        name: profile.name,
+                        goal: profile.goal,
+                        vibePalette: profile.vibePalette,
+                        appearance: profile.appearance
+                    )
                 )
             }
         }
     }
 
-    private var readyExampleCount: Int {
-        guard let profileID = profiles.first?.id else { return 0 }
-        return voiceExamples.filter {
-            $0.profileID == profileID && $0.creatorConfirmed && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }.count
-    }
-
     private var activeDestinationCount: Int {
         destinations.filter { !$0.isArchived }.count
+    }
+
+    private func enabledPostSectionCount(for profile: CreatorProfile) -> Int {
+        [
+            profile.showsHookInPostEditor,
+            profile.showsBrandDealsInPostEditor,
+            profile.showsMoodBoardsInPostEditor,
+        ].filter { $0 }.count
     }
 
     private var reminderSummary: String {
@@ -222,7 +242,7 @@ struct SettingsView: View {
             reminder.draftPrepRemindersEnabled,
             reminder.accessRemindersEnabled,
         ].filter { $0 }.count
-        return count == 0 ? "Off" : "\(count) on"
+        return count == 0 ? "Off" : "\(count) enabled"
     }
 
     private var calendarSummary: String {
@@ -232,6 +252,10 @@ struct SettingsView: View {
     }
 
     private func accountSummary(for profile: CreatorProfile) -> String {
+        if let activeID = appModel.activeWorkspaceID,
+           let workspace = workspaces.first(where: { $0.id == activeID && !$0.isArchived }) {
+            return workspace.name
+        }
         let active = socialAccounts.filter { $0.profileID == profile.id && !$0.isArchived }
         if let primary = active.first(where: \.isPrimary) { return primary.label }
         if let first = active.first { return first.label }
@@ -241,7 +265,7 @@ struct SettingsView: View {
     private var accessSummary: String {
         guard let subscription = subscriptions.first else { return "Free" }
         return switch AccessPolicy.effectiveAccess(for: subscription) {
-        case .freeJourney: "Free"
+        case .freeJourney: "8 Cy credits"
         case .trial: "Trial"
         case .paid: "Paid"
         case .comped: "Promotional"
@@ -279,7 +303,7 @@ struct NewDestinationView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
+                    Button("Create destination") {
                         let destination = PublishingDestination(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
                         context.insert(destination)
                         context.insert(PublishingFormat(destinationID: destination.id, name: formatName.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind))
@@ -290,166 +314,5 @@ struct NewDestinationView: View {
             }
         }
         .agentKeyboardDismissal()
-    }
-}
-
-private struct TeachCyRequestView: View {
-    @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
-    let freeUpdatesRemaining: Int?
-    @State private var instruction = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    AgentMultilineField(
-                        label: "Guidance",
-                        placeholder: "For example: Keep my openings shorter and less polished",
-                        text: $instruction,
-                        lineLimit: 3...8
-                    )
-                } header: {
-                    Text("What should Cy learn?")
-                } footer: {
-                    Text("Be specific. Cy will propose a new version of your voice profile without changing your three examples.")
-                }
-                if let freeUpdatesRemaining {
-                    Section("Free journey") {
-                        LabeledContent("Teach Cy updates remaining", value: "\(freeUpdatesRemaining)")
-                    }
-                }
-                Button("Prepare voice update", systemImage: "quote.bubble") {
-                    Task {
-                        await appModel.requestTeachCy(instruction: instruction, context: context)
-                        if appModel.voiceProfileProposal(context: context) != nil { dismiss() }
-                    }
-                }
-                .buttonStyle(AgentPrimaryButtonStyle())
-                .disabled(instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appModel.isWorking)
-            }
-            .scrollContentBackground(.hidden)
-            .background(Color.agentCanvas)
-            .navigationTitle("Teach Cy")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
-                }
-            }
-        }
-        .agentKeyboardDismissal()
-    }
-}
-
-private struct VoiceProfileProposalReviewView: View {
-    @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
-    @State private var proposal: VoiceProfileChangeProposal
-
-    init(initialProposal: VoiceProfileChangeProposal) {
-        _proposal = State(initialValue: initialProposal)
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                    EditorialHeader(
-                        kicker: "Proposed voice profile · v\(proposal.sourceVersion + 1)",
-                        title: "You decide what Cy learns.",
-                        subtitle: "Edit the proposed profile below. Accepting creates a new approved version and keeps your original examples unchanged."
-                    )
-
-                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                        SectionRuleHeader(title: "Current summary")
-                        Text(proposal.baseline.summary).font(.agentBody).foregroundStyle(Color.agentSecondary)
-                        SectionRuleHeader(title: "Proposed summary")
-                        ProfileTextField(label: "Summary", text: $proposal.edited.summary)
-                    }
-
-                    ProfileTextField(label: "Tone · one per line", text: listBinding(\.tone))
-                    ProfileTextField(label: "Sentence style", text: $proposal.edited.sentenceStyle)
-                    ProfileTextField(label: "Signature qualities · one per line", text: listBinding(\.signatureQualities))
-                    ProfileTextField(label: "Phrases to use · one per line", text: listBinding(\.phrasesToUse))
-                    ProfileTextField(label: "Phrases to avoid · one per line", text: listBinding(\.phrasesToAvoid))
-                    ProfileTextField(label: "Guidance · one per line", text: listBinding(\.guidance))
-
-                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                        MetaLabel("Voice confidence · \(Int(proposal.edited.confidence * 100))%")
-                        Slider(value: $proposal.edited.confidence, in: 0...1, step: 0.01)
-                            .accessibilityLabel("Voice confidence")
-                    }
-
-                    if !proposal.assumptions.isEmpty {
-                        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                            SectionRuleHeader(title: "Assumptions")
-                            ForEach(proposal.assumptions, id: \.self) { Text("• \($0)").font(.agentBody).foregroundStyle(Color.agentSecondary) }
-                        }
-                    }
-                    if !proposal.evidenceNotes.isEmpty {
-                        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                            SectionRuleHeader(title: "Evidence used")
-                            ForEach(proposal.evidenceNotes, id: \.self) { Text("• \($0)").font(.agentBody).foregroundStyle(Color.agentSecondary) }
-                        }
-                    }
-
-                    Button("Accept voice update", systemImage: "checkmark") {
-                        appModel.acceptVoiceProfileChange(proposal, context: context)
-                        dismiss()
-                    }
-                    .buttonStyle(AgentPrimaryButtonStyle())
-                    Button("Keep current profile") {
-                        appModel.discardVoiceProfileChange(context: context)
-                        dismiss()
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .padding(AgentSpacing.x6)
-            }
-            .navigationTitle("Review voice update")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
-                }
-            }
-            .agentScreen()
-        }
-        .agentKeyboardDismissal()
-    }
-
-    private func listBinding(_ keyPath: WritableKeyPath<VoiceProfileDraft, [String]>) -> Binding<String> {
-        Binding(
-            get: { proposal.edited[keyPath: keyPath].joined(separator: "\n") },
-            set: { value in
-                proposal.edited[keyPath: keyPath] = value
-                    .split(separator: "\n")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            }
-        )
-    }
-}
-
-private struct ProfileTextField: View {
-    let label: String
-    @Binding var text: String
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            AgentInputHeader(title: label, isEditing: isFocused) { isFocused = false }
-            TextField(label, text: $text, axis: .vertical)
-                .font(.agentBody)
-                .lineLimit(2...8)
-                .padding(AgentSpacing.x4)
-                .background(Color.agentSurface)
-                .clipShape(.rect(cornerRadius: AgentRadius.control))
-                .overlay(RoundedRectangle(cornerRadius: AgentRadius.control).stroke(Color.agentBorder, lineWidth: 1))
-                .focused($isFocused)
-        }
     }
 }

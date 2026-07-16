@@ -147,6 +147,7 @@ enum RecurringTaskMaterializer {
         calendar: Calendar = .current
     ) throws -> CreatorTask? {
         guard task.parentTaskID == nil,
+              task.focusTaskTemplateID == nil,
               task.recurrence != .none,
               let targetDate = task.targetDate,
               let nextDate = RecurringTaskSchedule.nextDate(

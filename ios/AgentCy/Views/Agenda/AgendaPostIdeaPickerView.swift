@@ -2,20 +2,29 @@ import SwiftData
 import SwiftUI
 
 struct AgendaPostIdeaPickerView: View {
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Environment(AppModel.self) private var appModel
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
 
     let day: Date
 
     @State private var editorRoute: AgendaPostEditorRoute?
 
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
+        values.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var activePillarIDs: Set<UUID> { Set(activePillars.map(\.id)) }
     private var ideas: [CreativeBrief] {
         briefs.filter { brief in
-            guard let pillarID = brief.pillarID else { return false }
-            return activePillarIDs.contains(pillarID) &&
-                (brief.status == .spark || brief.status == .developing)
+            let isFiledHere = brief.pillarID.map(activePillarIDs.contains) ?? true
+            return isFiledHere && (brief.status == .spark || brief.status == .developing)
         }
     }
     private var plannedDate: Date {
@@ -28,7 +37,7 @@ struct AgendaPostIdeaPickerView: View {
                 EditorialHeader(
                     kicker: day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()),
                     title: "Schedule a post.",
-                    subtitle: "Start fresh or choose an idea you've already saved."
+                    subtitle: "Start a new post for this day or choose a saved idea."
                 )
 
                 AgentInsetSurface {
@@ -125,7 +134,8 @@ private struct AgendaPostEditorDestination: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Query private var profiles: [CreatorProfile]
-    @Query private var briefs: [CreativeBrief]
+    @Query private var allBriefs: [CreativeBrief]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
 
     let route: AgendaPostEditorRoute
 
@@ -134,6 +144,12 @@ private struct AgendaPostEditorDestination: View {
     @State private var hasPreparedNewDraft = false
     @State private var creationFailed = false
 
+    private var briefs: [CreativeBrief] {
+        allBriefs.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+
     var body: some View {
         Group {
             switch route {
@@ -141,7 +157,7 @@ private struct AgendaPostEditorDestination: View {
                 if let brief = briefs.first(where: { $0.id == briefID }) {
                     IdeaPostDraftView(brief: brief, suggestedTargetDate: suggestedDate)
                 } else {
-                    unavailableState("That idea is no longer available.")
+                    unavailableState("Post not found. It may have been moved or deleted.")
                 }
             case .new:
                 if let newBrief, let newOutput {
@@ -161,12 +177,12 @@ private struct AgendaPostEditorDestination: View {
                 } else if creationFailed {
                     unavailableState("This post draft could not be started.")
                 } else {
-                    ProgressView("Opening post draft…")
+                    ProgressView("Opening your draft…")
                         .frame(maxWidth: .infinity, minHeight: 240)
                 }
             }
         }
-        .navigationTitle("New Post")
+        .navigationTitle("New post")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: route.id) {
             guard case .new(let date) = route, !hasPreparedNewDraft else { return }

@@ -79,7 +79,7 @@ targets:
           - remote-notification
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-        NSCalendarsFullAccessUsageDescription: "Allow agent.cy to add scheduled posts and production tasks to your chosen calendar."
+        NSCalendarsFullAccessUsageDescription: "Allow agent.cy to add scheduled posts and tasks to your chosen calendar."
     entitlements:
       path: AgentCy/Support/AgentCy.entitlements
       properties:

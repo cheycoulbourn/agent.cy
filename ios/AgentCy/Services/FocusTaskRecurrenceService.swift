@@ -7,6 +7,7 @@ enum FocusTaskRecurrenceService {
     /// creator to complete the previous occurrence first.
     static func reconcile(
         context: ModelContext,
+        workspaceID requestedWorkspaceID: UUID? = nil,
         from requestedStart: Date = Date(),
         weekCount: Int = 4,
         calendar: Calendar = .current
@@ -16,10 +17,29 @@ enum FocusTaskRecurrenceService {
             return
         }
 
+        let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+        let workspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: requestedWorkspaceID ?? CreatorWorkspacePreferences.activeWorkspaceID,
+            workspaces: workspaces
+        )
         let templates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())
-        let activeTemplates = templates.filter(\.isActive)
+        let activeTemplates = templates.filter {
+            $0.isActive && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: workspaceID,
+                workspaces: workspaces
+            )
+        }
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
-        let generated = tasks.filter { $0.focusTaskTemplateID != nil && $0.parentTaskID == nil }
+        let generated = tasks.filter {
+            $0.focusTaskTemplateID != nil &&
+                $0.parentTaskID == nil &&
+                WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: workspaceID,
+                    workspaces: workspaces
+                )
+        }
 
         var desired: [OccurrenceKey: DesiredOccurrence] = [:]
         var day = start
@@ -92,6 +112,7 @@ enum FocusTaskRecurrenceService {
                     focusTaskTemplateID: occurrence.definition.id,
                     sortOrder: occurrence.definition.sortOrder
                 )
+                task.workspaceID = workspaceID
                 context.insert(task)
             }
         }

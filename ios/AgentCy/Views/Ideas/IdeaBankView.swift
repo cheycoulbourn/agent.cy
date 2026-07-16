@@ -4,26 +4,39 @@ import SwiftUI
 private enum IdeaBankFilter: Hashable {
     case all
     case unfiled
+    case archived
     case pillar(UUID)
 }
 
 struct IdeaBankView: View {
     @Environment(AppModel.self) private var appModel
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query private var profiles: [CreatorProfile]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var headerHeight: CGFloat = 0
     @State private var search = ""
     @State private var selectedFilter: IdeaBankFilter = .all
     @State private var isFilterPresented = false
     @State private var selectedIdea: CreativeBrief?
 
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
+        values.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var ideas: [CreativeBrief] {
         briefs.filter { brief in
             let isIdea = brief.status == .spark || brief.status == .developing
+            let matchesLifecycle = selectedFilter == .archived
+                ? brief.status == .archived
+                : isIdea
             let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard isIdea, !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard matchesLifecycle, !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return false
             }
             let matchesSearch = query.isEmpty
@@ -63,7 +76,7 @@ struct IdeaBankView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             AgentPageRail(
-                breadcrumb: "§ Idea Bank",
+                breadcrumb: "Idea Bank",
                 profile: profiles.first,
                 openSettings: { appModel.presentedSheet = .settings }
             ) {
@@ -118,6 +131,7 @@ struct IdeaBankView: View {
         VStack(alignment: .leading, spacing: 0) {
             filterChoice(title: "All ideas", filter: .all)
             filterChoice(title: "Unfiled", filter: .unfiled, isUnfiled: true)
+            filterChoice(title: "Archived", filter: .archived)
 
             if !activePillars.isEmpty {
                 Divider()
@@ -237,7 +251,7 @@ struct IdeaBankView: View {
                             .font(.system(size: 9, weight: .medium))
                     }
                 Text("Save an idea")
-                    .font(.paperInter(size: 17, weight: .medium, relativeTo: .body))
+                    .font(.agentAddAction)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .foregroundStyle(Color.agentText)
@@ -249,9 +263,7 @@ struct IdeaBankView: View {
 
     private func saveIdea() {
         appModel.quickCapturePillarID = nil
-        appModel.quickCaptureStartsWithIdeas = true
-        appModel.quickCaptureStartsWithPost = false
-        appModel.quickCaptureStartsWithTask = false
+        appModel.setQuickCaptureMode(.idea)
         appModel.presentedSheet = .quickCapture
     }
 
@@ -266,6 +278,8 @@ struct IdeaBankView: View {
             return true
         case .unfiled:
             return pillar(for: brief) == nil
+        case .archived:
+            return true
         case .pillar(let pillarID):
             return brief.pillarID == pillarID
         }
@@ -277,6 +291,8 @@ struct IdeaBankView: View {
             return "All ideas"
         case .unfiled:
             return "Unfiled"
+        case .archived:
+            return "Archived"
         case .pillar(let pillarID):
             return activePillars.first(where: { $0.id == pillarID })?.name ?? "Pillar"
         }
@@ -288,9 +304,11 @@ struct IdeaBankView: View {
         }
         switch selectedFilter {
         case .all:
-            return "Save an idea and it will be ready here."
+            return "No ideas yet."
         case .unfiled:
             return "No unfiled ideas."
+        case .archived:
+            return "No archived work."
         case .pillar:
             return "No ideas saved under \(selectedFilterTitle)."
         }

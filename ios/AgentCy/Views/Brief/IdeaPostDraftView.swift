@@ -11,7 +11,6 @@ struct IdeaPostDraftView: View {
     @State private var createdOutput: PlatformOutput?
     @State private var showDevelopment = false
     @State private var creationFailed = false
-    @State private var hasAttemptedCreation = false
 
     init(brief: CreativeBrief, output: PlatformOutput? = nil, suggestedTargetDate: Date? = nil) {
         self.brief = brief
@@ -50,14 +49,14 @@ struct IdeaPostDraftView: View {
                 .padding(.bottom, 120)
             } else if creationFailed {
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                    Text("This idea could not be opened yet.")
+                    Text("Couldn’t open this idea.")
                         .font(.agentHeadline)
                     Button("Try again") { createDraft() }
                         .buttonStyle(AgentSecondaryButtonStyle())
                 }
                 .padding(AgentLayout.pageMargin)
             } else {
-                ProgressView("Opening post draft…")
+                ProgressView("Opening your draft…")
                     .frame(maxWidth: .infinity, minHeight: 240)
             }
         }
@@ -74,8 +73,6 @@ struct IdeaPostDraftView: View {
     }
 
     private func createDraft() {
-        guard !hasAttemptedCreation else { return }
-        hasAttemptedCreation = true
         creationFailed = false
         createdOutput = appModel.ensurePostDraft(for: brief, context: context)
         creationFailed = createdOutput == nil

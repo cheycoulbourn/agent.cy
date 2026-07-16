@@ -42,6 +42,21 @@ final class CaptureIdeaShortcutTests: XCTestCase {
         XCTAssertEqual(entities.map(\.name), ["No pillar", "Teaching"])
     }
 
+    func testShortcutLeavesIdeaUnfiledWhenNoPillarIsSelected() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        context.insert(Pillar(name: "Lifestyle"))
+        try context.save()
+
+        let store = CaptureIdeaShortcutStore(modelContainer: container)
+        let outcome = try await store.save(idea: "An unfiled thought", pillarID: nil)
+
+        XCTAssertEqual(outcome, .saved(title: "An unfiled thought"))
+        let brief = try XCTUnwrap(context.fetch(FetchDescriptor<CreativeBrief>()).first)
+        XCTAssertNil(brief.pillarID, "The shortcut must never fall back to the first pillar.")
+    }
+
     func testShortcutRespectsExpiredCreationAccess() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext

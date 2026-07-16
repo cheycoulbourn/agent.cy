@@ -22,6 +22,9 @@ struct AgentCyApp: App {
         #endif
         do {
             try StoreBootstrapService.run(context: container.mainContext)
+            if try MCPBridgeService.migrateStructuredPostFields(context: container.mainContext) {
+                try container.mainContext.save()
+            }
         } catch {
             assertionFailure("The local store could not be prepared: \(error.localizedDescription)")
         }
@@ -53,6 +56,12 @@ struct AgentCyApp: App {
         if let profile = try? container.mainContext.fetch(FetchDescriptor<CreatorProfile>()).first {
             model.appearancePreference = AppearancePreference(rawValue: profile.appearanceRaw) ?? .system
         }
+        let workspaces = (try? container.mainContext.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
+        model.activeWorkspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: CreatorWorkspacePreferences.activeWorkspaceID,
+            workspaces: workspaces
+        )
+        CreatorWorkspacePreferences.activeWorkspaceID = model.activeWorkspaceID
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if usesPreviewData,
@@ -82,6 +91,7 @@ struct AgentCyApp: App {
                     try? FocusTaskRecurrenceService.reconcile(context: container.mainContext)
                     appModel.applyPendingWidgetTaskCompletions(context: container.mainContext)
                     WidgetSnapshotService.refresh(context: container.mainContext)
+                    try? MCPBridgeService.sync(context: container.mainContext)
                     Task { await appModel.refreshReminderSchedule(context: container.mainContext) }
                 }
         }

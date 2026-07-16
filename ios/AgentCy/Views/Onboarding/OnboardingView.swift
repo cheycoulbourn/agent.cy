@@ -6,8 +6,8 @@ struct OnboardingView: View {
     private enum Step: Int, CaseIterable, Identifiable {
         case welcome
         case name
+        case vibe
         case pillars
-        case voice
         case platforms
         case notifications
         case ready
@@ -18,8 +18,8 @@ struct OnboardingView: View {
             switch self {
             case .welcome: "Welcome"
             case .name: "About you"
+            case .vibe: "Your vibe"
             case .pillars: "Your content"
-            case .voice: "Your voice"
             case .platforms: "Where you post"
             case .notifications: "Notifications"
             case .ready: "Ready"
@@ -36,7 +36,6 @@ struct OnboardingView: View {
     @State private var draft: OnboardingDraft
     @State private var transitionEdge: Edge = .trailing
     @State private var pillarEditorDraft: OnboardingPillarDraft?
-    @State private var showsVoiceEditor = false
 
     init(previewOnly: Bool = false, initialDraft: OnboardingDraft = OnboardingDraft()) {
         self.previewOnly = previewOnly
@@ -69,20 +68,14 @@ struct OnboardingView: View {
                 pillar: editingDraft,
                 role: pillarRole(for: editingDraft.id),
                 canDelete: draft.pillars.contains(where: { $0.id == editingDraft.id }),
+                paletteHexes: draft.vibePalette?.pillarColorHexes ?? CreatorVibePalette.fallbackPillarColorHexes,
                 onSave: savePillar,
                 onDelete: { deletePillar(id: editingDraft.id) }
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $showsVoiceEditor) {
-            OnboardingVoiceEditor(
-                examples: $draft.voiceExamples,
-                onNotice: { appModel.notice = .info($0) }
-            )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
+        .preferredColorScheme(draft.appearance?.colorSchemeOverride)
         .agentScreen()
         .agentKeyboardDismissal()
         .task { await appModel.refreshReminderSchedule(context: context) }
@@ -131,10 +124,10 @@ struct OnboardingView: View {
             welcomeStep
         case .name:
             nameStep
+        case .vibe:
+            vibeStep
         case .pillars:
             pillarsStep
-        case .voice:
-            voiceStep
         case .platforms:
             platformsStep
         case .notifications:
@@ -153,7 +146,7 @@ struct OnboardingView: View {
                         .font(.paperInter(size: 36, weight: .bold, relativeTo: .largeTitle))
                         .tracking(-0.8)
                         .multilineTextAlignment(.center)
-                    Text("A clear place to shape your ideas, plan your week, and make the work.")
+                    Text("A clear place to save ideas, plan your week, and create the work.")
                         .font(.paperInter(size: 18, weight: .regular, relativeTo: .body))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(Color.agentSecondary)
@@ -165,7 +158,7 @@ struct OnboardingView: View {
             VStack(spacing: 0) {
                 PaperOnboardingFeature(title: "Capture the idea", detail: "Save it before it disappears.")
                 PaperOnboardingFeature(title: "Shape the post", detail: "Turn a rough thought into something usable.")
-                PaperOnboardingFeature(title: "Plan the work", detail: "Keep posts and production tasks in one rhythm.")
+                PaperOnboardingFeature(title: "Plan the work", detail: "Keep posts and tasks in one plan.")
             }
             .padding(.top, AgentSpacing.x12)
 
@@ -176,7 +169,7 @@ struct OnboardingView: View {
                     isOn: $draft.adultConfirmed
                 )
                 PaperConsentRow(
-                    title: "Share content-free diagnostics",
+                    title: "Share app diagnostics",
                     detail: "Optional. Your ideas and writing are never included.",
                     isOn: $draft.telemetryConsent
                 )
@@ -189,7 +182,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x12) {
             PaperOnboardingPrompt(
                 title: "What should Cy call you?",
-                subtitle: "This is the name you will see throughout the app."
+                subtitle: "This is how Cy will greet you."
             )
 
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
@@ -206,14 +199,147 @@ struct OnboardingView: View {
                             .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
                     }
             }
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                PaperFieldLabel("What are you working toward?")
+                TextField("", text: $draft.goal, axis: .vertical)
+                    .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
+                    .lineLimit(2...4)
+                    .padding(AgentSpacing.x4)
+                    .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
+                    }
+                Text("Cy uses this goal to keep suggestions relevant.")
+                    .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
+                    .foregroundStyle(Color.agentSecondary)
+            }
         }
+    }
+
+    private var vibeStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            PaperOnboardingPrompt(
+                title: "What’s your vibe?",
+                subtitle: "Choose a starting palette for your pillars and the app appearance you prefer."
+            )
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                PaperFieldLabel("Pillar colors")
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: AgentSpacing.x3),
+                        GridItem(.flexible(), spacing: AgentSpacing.x3)
+                    ],
+                    spacing: AgentSpacing.x3
+                ) {
+                    ForEach(CreatorVibePalette.allCases) { palette in
+                        vibePaletteButton(palette)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                PaperFieldLabel("Appearance")
+                HStack(spacing: AgentSpacing.x3) {
+                    vibeAppearanceButton(.system)
+                    vibeAppearanceButton(.light)
+                    vibeAppearanceButton(.dark)
+                }
+            }
+
+            Text("This is only a starting point. You can choose custom pillar colors and change your appearance later.")
+                .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func vibePaletteButton(_ palette: CreatorVibePalette) -> some View {
+        let isSelected = draft.vibePalette == palette
+        return Button {
+            selectVibePalette(palette)
+        } label: {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x2) {
+                    Text(palette.title)
+                        .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                }
+
+                HStack(spacing: 5) {
+                    ForEach(Array(palette.pillarColorHexes.enumerated()), id: \.offset) { _, colorHex in
+                        Circle()
+                            .fill(Color(agentHex: colorHex))
+                            .frame(width: 15, height: 15)
+                            .overlay {
+                                Circle().stroke(Color.agentText.opacity(0.10), lineWidth: 0.5)
+                            }
+                    }
+                }
+
+                Text(palette.detail)
+                    .font(.paperInter(size: 12, weight: .regular, relativeTo: .caption))
+                    .foregroundStyle(Color.agentSecondary)
+                    .lineLimit(1)
+            }
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 102, alignment: .topLeading)
+            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(isSelected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(palette.title), \(palette.detail)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func vibeAppearanceButton(_ appearance: AppearancePreference) -> some View {
+        let isSelected = draft.appearance == appearance
+        return Button {
+            draft.appearance = appearance
+        } label: {
+            HStack(spacing: AgentSpacing.x3) {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(appearance == .dark ? Color(agentHex: "141414") : Color(agentHex: "FDFDFB"))
+                    .frame(width: 34, height: 34)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(appearance == .dark ? Color.white.opacity(0.24) : Color.black.opacity(0.12), lineWidth: 1)
+                    }
+                Text(appearance.title)
+                    .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .bold))
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(isSelected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var pillarsStep: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
             PaperOnboardingPrompt(
-                title: "What do you create about?",
-                subtitle: "Start with one central pillar. Add branches now or whenever you are ready."
+                title: "What brings your content together?",
+                subtitle: "Start with the anchor pillar everything leads back to. Add supporting pillars now or later."
             )
 
             VStack(spacing: AgentSpacing.x3) {
@@ -251,7 +377,7 @@ struct OnboardingView: View {
 
                 if draft.pillars.count < 4 {
                     Button {
-                        pillarEditorDraft = OnboardingPillarDraft()
+                        pillarEditorDraft = OnboardingPillarDraft(colorHex: nextPillarColorHex)
                     } label: {
                         HStack(spacing: AgentSpacing.x3) {
                             Image(systemName: "plus")
@@ -283,49 +409,11 @@ struct OnboardingView: View {
         }
     }
 
-    private var voiceStep: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-            PaperOnboardingPrompt(
-                title: "Want Cy to learn your voice?",
-                subtitle: "Add real examples now, or teach Cy later from Settings."
-            )
-
-            VStack(spacing: AgentSpacing.x3) {
-                Button { showsVoiceEditor = true } label: {
-                    PaperOnboardingActionRow(
-                        symbol: "text.alignleft",
-                        title: "Add writing samples",
-                        detail: draft.voiceExamples.isEmpty
-                            ? "Paste captions, scripts, or posts."
-                            : "\(usableExampleCount) example\(usableExampleCount == 1 ? "" : "s") added"
-                    )
-                }
-                .buttonStyle(.plain)
-
-                Button { showsVoiceEditor = true } label: {
-                    PaperOnboardingActionRow(
-                        symbol: "photo.on.rectangle",
-                        title: "Use a link or screenshot",
-                        detail: "Instagram links stay local. Screenshots are read on-device."
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-
-            HStack(alignment: .top, spacing: AgentSpacing.x3) {
-                CyAsterisk(size: 15, strokeWidth: 1.6)
-                Text("Cy will not build a voice profile until you ask. Setup never spends an AI request.")
-                    .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
-                    .foregroundStyle(Color.agentSecondary)
-            }
-        }
-    }
-
     private var platformsStep: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
             PaperOnboardingPrompt(
-                title: "Where do you create?",
-                subtitle: "Choose the formats you use. Add a handle only if you want the account saved as a reference."
+                title: "Where do you post?",
+                subtitle: "Choose your platforms and formats. Add a handle only if you want it saved as a private reference."
             )
 
             VStack(spacing: AgentSpacing.x3) {
@@ -399,7 +487,7 @@ struct OnboardingView: View {
                     .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
             }
 
-            Text("Your content stays on this iPhone. You can change every notification category later in Settings.")
+            Text("Notifications are scheduled locally on this iPhone. You can change every category later in Settings.")
                 .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
                 .foregroundStyle(Color.agentSecondary)
         }
@@ -463,37 +551,21 @@ struct OnboardingView: View {
                     Text("You’re ready, \(displayName).")
                         .font(.paperInter(size: 36, weight: .bold, relativeTo: .largeTitle))
                         .tracking(-0.8)
-                    Text("Your creative workspace is set up. Everything here can change as your work does.")
+                    Text("Your workspace is ready. You can change any of this later.")
                         .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
                         .foregroundStyle(Color.agentSecondary)
                 }
             }
 
             VStack(spacing: 0) {
+                PaperReadyRow(label: "Vibe", value: vibeReadySummary)
                 PaperReadyRow(label: "Pillars", value: pillarReadySummary)
-                PaperReadyRow(label: "Voice", value: usableExampleCount == 0 ? "Add later" : "\(usableExampleCount) saved")
                 PaperReadyRow(label: "Platforms", value: platformReadySummary)
                 PaperReadyRow(label: "Notifications", value: notificationReadySummary)
             }
             .padding(.horizontal, AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: 16))
 
-            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                PaperFieldLabel("What are you working toward?")
-                TextField("", text: $draft.goal, axis: .vertical)
-                    .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
-                    .lineLimit(2...4)
-                    .padding(AgentSpacing.x4)
-                    .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-                    .background(Color.agentSurface, in: .rect(cornerRadius: 16))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
-                    }
-                Text("Cy uses this goal to keep suggestions relevant.")
-                    .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
-                    .foregroundStyle(Color.agentSecondary)
-            }
         }
     }
 
@@ -531,7 +603,10 @@ struct OnboardingView: View {
 
             if skipIsAvailable {
                 Button("Skip for now") {
-                    if step == .notifications {
+                    if step == .vibe {
+                        draft.vibePalette = nil
+                        draft.appearance = nil
+                    } else if step == .notifications {
                         draft.dailyReminderEnabled = false
                         draft.weeklyReminderEnabled = false
                     }
@@ -560,8 +635,8 @@ struct OnboardingView: View {
     }
 
     private var skipIsAvailable: Bool {
-        (step == .pillars && draft.pillars.isEmpty) ||
-            (step == .voice && usableExampleCount == 0) ||
+        step == .vibe ||
+            (step == .pillars && draft.pillars.isEmpty) ||
             (step == .platforms && draft.platforms.isEmpty) ||
             step == .notifications
     }
@@ -571,10 +646,13 @@ struct OnboardingView: View {
         case .welcome:
             draft.adultConfirmed
         case .name:
-            !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !draft.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .vibe:
+            draft.vibePalette != nil && draft.appearance != nil
         case .ready:
-            previewOnly || !draft.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .pillars, .voice, .platforms, .notifications:
+            true
+        case .pillars, .platforms, .notifications:
             true
         }
     }
@@ -584,8 +662,9 @@ struct OnboardingView: View {
         return trimmed.isEmpty ? "creator" : trimmed
     }
 
-    private var usableExampleCount: Int {
-        draft.voiceExamples.filter(\.isUsableEvidence).count
+    private var vibeReadySummary: String {
+        guard let palette = draft.vibePalette, let appearance = draft.appearance else { return "Choose later" }
+        return "\(palette.title) · \(appearance.title)"
     }
 
     private var pillarReadySummary: String {
@@ -666,6 +745,19 @@ struct OnboardingView: View {
             draft.pillars.append(pillar)
         }
         pillarEditorDraft = nil
+    }
+
+    private var nextPillarColorHex: String {
+        guard let colors = draft.vibePalette?.pillarColorHexes, !colors.isEmpty else { return "55705B" }
+        return colors[draft.pillars.count % colors.count]
+    }
+
+    private func selectVibePalette(_ palette: CreatorVibePalette) {
+        draft.vibePalette = palette
+        let colors = palette.pillarColorHexes
+        for index in draft.pillars.indices {
+            draft.pillars[index].colorHex = colors[index % colors.count]
+        }
     }
 
     private func deletePillar(id: UUID) {
@@ -971,6 +1063,7 @@ private struct OnboardingPillarEditor: View {
     @State private var draft: OnboardingPillarDraft
     let role: PillarRole
     let canDelete: Bool
+    let paletteHexes: [String]
     let onSave: (OnboardingPillarDraft) -> Void
     let onDelete: () -> Void
 
@@ -978,12 +1071,14 @@ private struct OnboardingPillarEditor: View {
         pillar: OnboardingPillarDraft,
         role: PillarRole,
         canDelete: Bool,
+        paletteHexes: [String],
         onSave: @escaping (OnboardingPillarDraft) -> Void,
         onDelete: @escaping () -> Void
     ) {
         _draft = State(initialValue: pillar)
         self.role = role
         self.canDelete = canDelete
+        self.paletteHexes = paletteHexes
         self.onSave = onSave
         self.onDelete = onDelete
     }
@@ -1004,7 +1099,7 @@ private struct OnboardingPillarEditor: View {
 
                     VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                         PaperFieldLabel("Color")
-                        OnboardingColorChooser(selectedHex: $draft.colorHex)
+                        OnboardingColorChooser(colors: paletteHexes, selectedHex: $draft.colorHex)
                     }
 
                     VStack(alignment: .leading, spacing: AgentSpacing.x3) {
@@ -1057,7 +1152,7 @@ private struct OnboardingPillarEditor: View {
 }
 
 private struct OnboardingColorChooser: View {
-    private let colors = ["9B3A2E", "B47724", "55705B", "416B85", "76506F"]
+    let colors: [String]
     @Binding var selectedHex: String
 
     var body: some View {
@@ -1068,6 +1163,9 @@ private struct OnboardingColorChooser: View {
                         .fill(Color(agentHex: hex))
                         .frame(width: 32, height: 32)
                         .padding(AgentSpacing.x1)
+                        .overlay {
+                            Circle().stroke(Color.agentBorder, lineWidth: 0.75)
+                        }
                         .overlay {
                             Circle().stroke(selectedHex.caseInsensitiveCompare(hex) == .orderedSame ? Color.agentText : Color.clear, lineWidth: 2)
                         }
@@ -1120,65 +1218,6 @@ private struct OnboardingWeekdayChooser: View {
                 .accessibilityValue(selection.contains(day) ? "Selected" : "Not selected")
             }
         }
-    }
-}
-
-private struct OnboardingVoiceEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @Binding var examples: [VoiceExampleDraft]
-    let onNotice: (String) -> Void
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                    Text("Add up to five examples that sound like you. A link is only a local reference, so include the words or a screenshot too.")
-                        .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
-                        .foregroundStyle(Color.agentSecondary)
-
-                    ForEach(Array(examples.enumerated()), id: \.element.id) { index, example in
-                        VoiceExampleInputCard(
-                            example: binding(for: example.id),
-                            number: index + 1,
-                            onRemove: examples.count > 1 ? { examples.removeAll { $0.id == example.id } } : nil,
-                            onNotice: onNotice
-                        )
-                    }
-
-                    if examples.count < 5 {
-                        Button("Add another example", systemImage: "plus") {
-                            examples.append(VoiceExampleDraft())
-                        }
-                        .buttonStyle(AgentSecondaryButtonStyle())
-                    }
-                }
-                .padding(AgentLayout.pageMargin)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("Teach Cy")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", systemImage: "checkmark") { dismiss() }
-                        .labelStyle(.iconOnly)
-                }
-            }
-            .onAppear {
-                if examples.isEmpty { examples.append(VoiceExampleDraft()) }
-            }
-            .agentScreen()
-            .agentKeyboardDismissal()
-        }
-    }
-
-    private func binding(for id: UUID) -> Binding<VoiceExampleDraft> {
-        Binding(
-            get: { examples.first(where: { $0.id == id }) ?? VoiceExampleDraft(id: id) },
-            set: { updated in
-                guard let index = examples.firstIndex(where: { $0.id == id }) else { return }
-                examples[index] = updated
-            }
-        )
     }
 }
 

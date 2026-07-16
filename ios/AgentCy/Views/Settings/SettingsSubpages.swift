@@ -232,45 +232,51 @@ struct CreatorProfileSettingsView: View {
 }
 
 struct AccountSwitcherSettingsView: View {
+    @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Bindable var profile: CreatorProfile
 
-    private var activeAccounts: [CreatorSocialAccount] {
-        socialAccounts.filter { $0.profileID == profile.id && !$0.isArchived }
+    private var activeWorkspaces: [CreatorWorkspace] {
+        workspaces.filter { $0.profileID == profile.id && !$0.isArchived }
     }
 
     var body: some View {
         SettingsPageShell(
             kicker: "Accounts",
             title: "Switch account",
-            subtitle: "Choose the default account Cy uses for each platform."
+            subtitle: "Each account keeps its own posts, pillars, tasks, ideas, and weekly focus."
         ) {
-            if activeAccounts.isEmpty {
-                Text("Add an account first, then return here to choose its platform default.")
+            if activeWorkspaces.isEmpty {
+                Text("Add an account first, then return here to switch its workspace.")
                     .font(.agentBody)
                     .foregroundStyle(Color.agentSecondary)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(activeAccounts.enumerated()), id: \.element.id) { index, account in
+                    ForEach(Array(activeWorkspaces.enumerated()), id: \.element.id) { index, workspace in
                         Button {
-                            makePrimary(account)
+                            appModel.switchWorkspace(to: workspace.id, context: context)
                         } label: {
                             HStack(spacing: AgentSpacing.x3) {
                                 VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                    Text(account.label)
+                                    Text(workspace.name)
                                         .font(.agentBody.weight(.semibold))
-                                    MetaLabel(destinationName(for: account))
+                                    if let account = socialAccount(for: workspace) {
+                                        MetaLabel(destinationName(for: account))
+                                    } else {
+                                        MetaLabel("CONTENT ACCOUNT")
+                                    }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                                if account.isPrimary {
-                                    Text("Default")
+                                if appModel.activeWorkspaceID == workspace.id {
+                                    Text("Active")
                                         .font(.agentMono)
                                         .foregroundStyle(Color.cyAccent)
                                 }
-                                Image(systemName: account.isPrimary ? "checkmark" : "circle")
+                                Image(systemName: appModel.activeWorkspaceID == workspace.id ? "checkmark" : "circle")
                                     .font(.system(size: 13, weight: .semibold))
                                     .frame(width: 24, height: 24)
                             }
@@ -282,29 +288,30 @@ struct AccountSwitcherSettingsView: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Use \(account.label) by default for \(destinationName(for: account))")
-                        .accessibilityAddTraits(account.isPrimary ? .isSelected : [])
+                        .accessibilityLabel("Switch to \(workspace.name)")
+                        .accessibilityAddTraits(appModel.activeWorkspaceID == workspace.id ? .isSelected : [])
                     }
                 }
             }
 
-            Text("Switching changes the default for new posts. Existing posts keep the account already assigned to them.")
+            Text("Switching changes the complete creator workspace. Content from your other accounts stays saved and returns when you switch back.")
                 .font(.agentSubtext)
                 .foregroundStyle(Color.agentSecondary)
         }
+    }
+
+    private func socialAccount(for workspace: CreatorWorkspace) -> CreatorSocialAccount? {
+        if let accountID = workspace.primarySocialAccountID,
+           let account = socialAccounts.first(where: { $0.id == accountID && !$0.isArchived }) {
+            return account
+        }
+        return socialAccounts.first(where: { $0.workspaceID == workspace.id && !$0.isArchived })
     }
 
     private func destinationName(for account: CreatorSocialAccount) -> String {
         destinations.first(where: { $0.id == account.destinationID })?.name ?? "Platform"
     }
 
-    private func makePrimary(_ account: CreatorSocialAccount) {
-        for peer in activeAccounts where peer.destinationID == account.destinationID {
-            peer.isPrimary = peer.id == account.id
-            peer.updatedAt = Date()
-        }
-        try? context.save()
-    }
 }
 
 private struct SocialAccountRow: View {
@@ -359,11 +366,13 @@ private struct SocialAccountRow: View {
 }
 
 struct SocialAccountEditorView: View {
+    @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
     @Query private var outputs: [PlatformOutput]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
 
     let profile: CreatorProfile
     let account: CreatorSocialAccount?
@@ -444,13 +453,13 @@ struct SocialAccountEditorView: View {
                let first = activeDestinations.first {
                 destinationID = first.id
             }
-            if account == nil && accounts(for: destinationID).isEmpty { isPrimary = true }
+            if account == nil { isPrimary = true }
             updateSuggestedURL()
         }
         .onChange(of: label) { _, _ in updateSuggestedURL() }
         .onChange(of: destinationID) { _, newDestinationID in
             if account == nil || account?.destinationID != newDestinationID {
-                isPrimary = accounts(for: newDestinationID).isEmpty
+                isPrimary = account == nil || accounts(for: newDestinationID).isEmpty
             }
             updateSuggestedURL()
         }
@@ -458,7 +467,7 @@ struct SocialAccountEditorView: View {
             Button("Remove account", role: .destructive) { remove() }
             Button("Keep account", role: .cancel) {}
         } message: {
-            Text("Existing posts stay intact. This account will no longer be available for new post versions.")
+            Text("Existing posts stay intact. This account will no longer be available for new posts.")
         }
     }
 
@@ -498,7 +507,8 @@ struct SocialAccountEditorView: View {
             $0.profileID == profile.id &&
                 $0.destinationID == destinationID &&
                 !$0.isArchived &&
-                $0.id != excludedID
+                $0.id != excludedID &&
+                (account == nil || $0.workspaceID == account?.workspaceID)
         }
     }
 
@@ -507,7 +517,7 @@ struct SocialAccountEditorView: View {
               let normalizedURL = resolvedProfileURLString else { return }
         let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         let peers = accounts(for: destinationID, excluding: account?.id)
-        let shouldBePrimary = isPrimary || !peers.contains(where: \.isPrimary)
+        let shouldBePrimary = account == nil || isPrimary || !peers.contains(where: \.isPrimary)
         let savedAccount: CreatorSocialAccount
 
         if let account {
@@ -518,6 +528,12 @@ struct SocialAccountEditorView: View {
             account.isPrimary = shouldBePrimary
             account.updatedAt = Date()
             savedAccount = account
+
+            if let workspace = workspaces.first(where: { $0.id == account.workspaceID }) {
+                workspace.name = cleanLabel
+                workspace.primarySocialAccountID = account.id
+                workspace.updatedAt = Date()
+            }
 
             if oldDestinationID != destinationID {
                 for output in outputs where output.socialAccountID == account.id && output.destinationID != destinationID {
@@ -535,6 +551,14 @@ struct SocialAccountEditorView: View {
                 isPrimary: shouldBePrimary,
                 sortOrder: nextSortOrder
             )
+            let workspace = CreatorWorkspace(
+                profileID: profile.id,
+                name: cleanLabel,
+                primarySocialAccountID: newAccount.id,
+                sortOrder: (workspaces.map(\.sortOrder).max() ?? -1) + 1
+            )
+            newAccount.workspaceID = workspace.id
+            context.insert(workspace)
             context.insert(newAccount)
             savedAccount = newAccount
         }
@@ -543,6 +567,9 @@ struct SocialAccountEditorView: View {
             for peer in peers { peer.isPrimary = false; peer.updatedAt = Date() }
         }
         try? context.save()
+        if let workspaceID = savedAccount.workspaceID {
+            appModel.switchWorkspace(to: workspaceID, context: context)
+        }
         dismiss()
     }
 
@@ -603,38 +630,89 @@ struct AppearanceSettingsView: View {
         SettingsPageShell(
             kicker: "Display",
             title: "Appearance",
-            subtitle: "Choose the look that feels best right now."
+            subtitle: "Choose your display mode and pillar color palette."
         ) {
-            VStack(spacing: 0) {
-                ForEach(Array(AppearancePreference.allCases.enumerated()), id: \.element.id) { index, appearance in
-                    Button {
-                        profile.appearance = appearance
-                        appModel.appearancePreference = appearance
-                        try? context.save()
-                    } label: {
-                        HStack(spacing: AgentSpacing.x4) {
-                            AppearanceSwatch(appearance: appearance)
-                            Text(appearance.title)
-                                .font(.agentHeadline)
-                                .foregroundStyle(Color.agentText)
-                            Spacer()
-                            if profile.appearance == appearance {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(Color.agentText)
+            VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    SectionRuleHeader(title: "Mode")
+
+                    VStack(spacing: 0) {
+                        ForEach(AppearancePreference.allCases) { appearance in
+                            Button {
+                                profile.appearance = appearance
+                                appModel.appearancePreference = appearance
+                                AgentAppearanceController.apply(appearance)
+                                try? context.save()
+                            } label: {
+                                HStack(spacing: AgentSpacing.x4) {
+                                    AppearanceSwatch(appearance: appearance)
+                                    Text(appearance.title)
+                                        .font(.agentHeadline)
+                                        .foregroundStyle(Color.agentText)
+                                    Spacer()
+                                    if profile.appearance == appearance {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(Color.agentText)
+                                    }
+                                }
+                                .frame(minHeight: 64)
+                                .contentShape(.rect)
                             }
-                        }
-                        .frame(minHeight: 72)
-                        .contentShape(.rect)
-                        .overlay(alignment: .top) {
-                            Rectangle().fill(Color.agentBorder).frame(height: 1)
-                        }
-                        .overlay(alignment: .bottom) {
-                            if index == AppearancePreference.allCases.count - 1 {
-                                Rectangle().fill(Color.agentBorder).frame(height: 1)
-                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .buttonStyle(.plain)
+                }
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    SectionRuleHeader(title: "Pillar colors")
+
+                    VStack(spacing: 0) {
+                        ForEach(CreatorVibePalette.allCases) { palette in
+                            Button {
+                                profile.vibePalette = palette
+                                try? context.save()
+                            } label: {
+                                HStack(spacing: AgentSpacing.x3) {
+                                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                        Text(palette.title)
+                                            .font(.agentBody.weight(.semibold))
+                                        Text(palette.detail)
+                                            .font(.agentSubtext)
+                                            .foregroundStyle(Color.agentSecondary)
+                                    }
+
+                                    Spacer(minLength: AgentSpacing.x2)
+
+                                    HStack(spacing: 4) {
+                                        ForEach(palette.pillarColorHexes, id: \.self) { hex in
+                                            Circle()
+                                                .fill(Color(agentHex: hex))
+                                                .frame(width: 15, height: 15)
+                                                .overlay {
+                                                    Circle().stroke(Color.agentBorder, lineWidth: 0.75)
+                                                }
+                                        }
+                                    }
+
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .opacity(profile.vibePalette == palette ? 1 : 0)
+                                        .frame(width: 16)
+                                }
+                                .foregroundStyle(Color.agentText)
+                                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                                .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(profile.vibePalette == palette ? .isSelected : [])
+                        }
+                    }
+
+                    Text("This replaces the default choices when you create or edit pillars and branches. Existing colors stay the same, and custom colors remain available.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, AgentSpacing.x2)
                 }
             }
         }
@@ -662,6 +740,69 @@ private struct AppearanceSwatch: View {
         .frame(width: 42, height: 42)
         .clipShape(.rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.agentBorder, lineWidth: 1))
+    }
+}
+
+struct NewPostSettingsView: View {
+    @Environment(\.modelContext) private var context
+    @Bindable var profile: CreatorProfile
+
+    var body: some View {
+        SettingsPageShell(
+            kicker: "Publishing",
+            title: "New post",
+            subtitle: "Choose the optional sections you want while planning a post."
+        ) {
+            SectionRuleHeader(title: "Optional sections")
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                postSectionToggle(
+                    title: "Hook",
+                    detail: "Keep a dedicated opening line in the post editor.",
+                    isOn: $profile.showsHookInPostEditor
+                )
+                postSectionToggle(
+                    title: "Brand deals",
+                    detail: "Track partners, compensation, terms, and deal files.",
+                    isOn: $profile.showsBrandDealsInPostEditor
+                )
+                postSectionToggle(
+                    title: "Mood boards",
+                    detail: "Add visual references and inspiration images.",
+                    isOn: $profile.showsMoodBoardsInPostEditor
+                )
+            }
+
+            Text("Turning a section off keeps new posts simpler. Existing information is never removed.")
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onDisappear { try? context.save() }
+    }
+
+    private func postSectionToggle(
+        title: String,
+        detail: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .center, spacing: AgentSpacing.x4) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                Text(title)
+                    .font(.agentBody.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                Text(detail)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: AgentSpacing.x4)
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .tint(Color.actionAccent)
+                .fixedSize()
+        }
+        .frame(minHeight: 52)
     }
 }
 
@@ -808,7 +949,7 @@ struct CalendarIntegrationSettingsView: View {
         SettingsPageShell(
             kicker: "Publishing",
             title: "Calendar",
-            subtitle: "Keep scheduled work beside the rest of your week."
+            subtitle: "Add scheduled posts and tasks to a calendar on this iPhone."
         ) {
             if isConnected {
                 connectedContent
@@ -862,7 +1003,7 @@ struct CalendarIntegrationSettingsView: View {
     private var connectedContent: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                SectionRuleHeader(title: "Calendar")
+                SectionRuleHeader(title: "Sync to")
                 Menu {
                     ForEach(calendars) { calendar in
                         Button {
@@ -900,12 +1041,12 @@ struct CalendarIntegrationSettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                SectionRuleHeader(title: "Sync")
+                SectionRuleHeader(title: "Include")
                 Toggle("Scheduled posts", isOn: $syncScheduledPosts)
                     .font(.agentBody)
                     .tint(.actionAccent)
                     .frame(minHeight: 48)
-                Toggle("Production tasks", isOn: $syncTasks)
+                Toggle("Tasks", isOn: $syncTasks)
                     .font(.agentBody)
                     .tint(.actionAccent)
                     .frame(minHeight: 48)
@@ -925,7 +1066,7 @@ struct CalendarIntegrationSettingsView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
             }
 
-            Text("agent.cy remains the source of truth. Changes made directly in Calendar do not change your agent.cy agenda.")
+            Text("Changes made in Calendar do not update agent.cy.")
                 .font(.agentSubtext)
                 .foregroundStyle(Color.agentSecondary)
         }
@@ -1051,11 +1192,11 @@ private struct NotificationSettingsContent: View {
                 reminderRow(title: "Timed tasks", detail: "15 minutes before tasks with a saved time.", isOn: $settings.taskRemindersEnabled)
                 reminderRow(title: "Draft preparation", detail: "The evening before a planned post is still a draft.", isOn: $settings.draftPrepRemindersEnabled)
                 if settings.draftPrepRemindersEnabled {
-                    timeRow("Draft check", selection: timeBinding(hour: \.draftPrepHour, minute: \.draftPrepMinute))
+                    timeRow("Evening time", selection: timeBinding(hour: \.draftPrepHour, minute: \.draftPrepMinute))
                 }
                 reminderRow(title: "Missed posts", detail: "One calm check-in if a scheduled post is still open.", isOn: $settings.missedPostRemindersEnabled)
                 if settings.missedPostRemindersEnabled {
-                    timeRow("Date-only deadline", selection: timeBinding(hour: \.dateOnlyDeadlineHour, minute: \.dateOnlyDeadlineMinute))
+                    timeRow("Untimed post check-in", selection: timeBinding(hour: \.dateOnlyDeadlineHour, minute: \.dateOnlyDeadlineMinute))
                 }
                 reminderRow(title: "Trial or access", detail: "One reminder 24 hours before access changes.", isOn: $settings.accessRemindersEnabled)
             }
@@ -1231,59 +1372,151 @@ private struct NotificationSettingsContent: View {
 struct AccessSettingsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var subscriptions: [SubscriptionState]
+    @State private var isRotating = false
 
     var body: some View {
         SettingsPageShell(
             kicker: "Access",
             title: "Your plan",
-            subtitle: "See what is available and manage your App Store access."
+            subtitle: "Plan and create with Cy."
         ) {
             if let subscription = subscriptions.first {
                 let effectiveAccess = AccessPolicy.effectiveAccess(for: subscription)
-                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                    MetaLabel("Current access")
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(accessTitle(effectiveAccess))
-                            .font(.agentTitle)
-                            .foregroundStyle(Color.agentText)
-                        Spacer()
-                        MetaLabel(effectiveAccess.canCreate ? "Active" : "Expired")
-                            .foregroundStyle(effectiveAccess.canCreate ? Color.agentSuccess : Color.agentDestructive)
+                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                    accessHero(effectiveAccess)
+
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        SectionRuleHeader(title: "What agent.cy Pro includes")
+                        planBenefit("Ideas grounded in your goals and work")
+                        planBenefit("Content calendars, tasks, and weekly planning")
+                        planBenefit("Hooks, captions, platform posts, and revisions")
                     }
-                    Text(accessDetail(effectiveAccess))
-                        .font(.agentBody)
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        SectionRuleHeader(title: "Plan details")
+                        SettingsValueRow(
+                            title: "Current access",
+                            value: accessTitle(effectiveAccess),
+                            showsTopRule: false
+                        )
+                        if let trialEnd = subscription.trialEnd {
+                            SettingsValueRow(title: "Access ends", value: trialEnd.formatted(date: .abbreviated, time: .omitted))
+                        }
+                        SettingsValueRow(title: "Billing", value: "Monthly", isLast: true)
+                    }
+
+                    if effectiveAccess == .freeJourney || effectiveAccess == .expired {
+                        Button("Start 14-day trial") {
+                            Task { await appModel.startTrial(context: context) }
+                        }
+                        .buttonStyle(AgentCyPrimaryButtonStyle())
+                    }
+
+                    Button("Restore purchases") {
+                        Task { await appModel.restorePurchases(context: context) }
+                    }
+                    .buttonStyle(AgentSecondaryButtonStyle())
+
+                    Text("$8.99 a month after the trial. TestFlight access may be promotional and does not collect real money.")
+                        .font(.agentSubtext)
                         .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.bottom, AgentSpacing.x4)
-
-                if let trialEnd = subscription.trialEnd {
-                    SettingsValueRow(title: "Access ends", value: trialEnd.formatted(date: .abbreviated, time: .omitted))
-                }
-                SettingsValueRow(title: "Billing", value: "Monthly", isLast: true)
-
-                if effectiveAccess == .freeJourney || effectiveAccess == .expired {
-                    Button("Start 14-day trial") {
-                        Task { await appModel.startTrial(context: context) }
-                    }
-                    .buttonStyle(AgentPrimaryButtonStyle())
-                }
-
-                Button("Restore purchases") {
-                    Task { await appModel.restorePurchases(context: context) }
-                }
-                .buttonStyle(AgentSecondaryButtonStyle())
-
-                Text("$8.99 a month after the trial. TestFlight access may be promotional and does not collect real money.")
-                    .font(.agentSubtext)
-                    .foregroundStyle(Color.agentSecondary)
             }
+        }
+        .onAppear { isRotating = true }
+    }
+
+    private func accessHero(_ access: SubscriptionAccess) -> some View {
+        let proIsActive = access == .trial || access == .paid || access == .comped
+        return VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            HStack(alignment: .top, spacing: AgentSpacing.x4) {
+                ZStack {
+                    Circle()
+                        .fill(Color.cyAccent)
+                        .shadow(color: Color.cyAccent.opacity(0.3), radius: 18, y: 7)
+                    ZStack {
+                        CyAsterisk(color: .onCyAccent, size: 25, strokeWidth: 1.8)
+                        Circle()
+                            .fill(Color.onCyAccent.opacity(0.8))
+                            .frame(width: 4, height: 4)
+                            .offset(y: -25)
+                    }
+                    .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
+                    .animation(
+                        reduceMotion ? nil : .linear(duration: 8).repeatForever(autoreverses: false),
+                        value: isRotating
+                    )
+                }
+                .frame(width: 62, height: 62)
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    MetaLabel("Your plan")
+                        .foregroundStyle(Color.cyAccent)
+                    Text(proIsActive ? "agent.cy Pro is active." : "Create with Cy.")
+                        .font(.agentTitle)
+                        .foregroundStyle(Color.agentText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(planStatus(access))
+                    .font(.agentMono)
+                    .foregroundStyle(proIsActive ? Color.onCyAccent : Color.cyAccent)
+                    .padding(.horizontal, AgentSpacing.x3)
+                    .frame(minHeight: 30)
+                    .background(proIsActive ? Color.cyAccent : Color.cyAccent.opacity(0.08), in: .capsule)
+            }
+
+            Text(accessDetail(access))
+                .font(.agentBody)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+        }
+        .padding(AgentSpacing.x6)
+        .background(
+            LinearGradient(
+                colors: [Color.cyAccent.opacity(0.09), Color.cyAccent.opacity(0.025)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: .rect(cornerRadius: 20)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color.cyAccent.opacity(0.2), lineWidth: 1)
+        }
+        .shadow(color: Color.cyAccent.opacity(0.09), radius: 20, y: 8)
+    }
+
+    private func planBenefit(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: AgentSpacing.x3) {
+            CyAsterisk(color: .cyAccent, size: 12, strokeWidth: 1.2)
+                .frame(width: 16, height: 19)
+            Text(text)
+                .font(.agentSubtext.weight(.medium))
+                .foregroundStyle(Color.agentText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+    }
+
+    private func planStatus(_ access: SubscriptionAccess) -> String {
+        switch access {
+        case .freeJourney: "Free"
+        case .trial: "Trial"
+        case .paid, .comped: "Pro"
+        case .expired: "Expired"
         }
     }
 
     private func accessTitle(_ access: SubscriptionAccess) -> String {
         switch access {
-        case .freeJourney: "First brief free"
+        case .freeJourney: "8 Cy credits"
         case .trial: "14-day trial"
         case .paid: "Monthly"
         case .comped: "Promotional access"
@@ -1293,7 +1526,7 @@ struct AccessSettingsView: View {
 
     private func accessDetail(_ access: SubscriptionAccess) -> String {
         switch access {
-        case .freeJourney: "Your first complete brief is included."
+        case .freeJourney: "Use your included credits for Cy ideas, planning, and revisions."
         case .trial: "Then $8.99 a month. Cancel anytime in App Store settings."
         case .paid: "$8.99 a month through the App Store."
         case .comped: "Your current access is provided at no charge."
@@ -1315,18 +1548,18 @@ struct ExportSettingsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 MetaLabel("Your export includes")
                     .padding(.bottom, AgentSpacing.x3)
-                SettingsPlainRow("Briefs and post versions")
-                SettingsPlainRow("Tasks, pillars, and week plans")
-                SettingsPlainRow("Voice examples and profile")
-                SettingsPlainRow("Readable Markdown and canonical JSON", isLast: true)
+                SettingsPlainRow("Posts, platform details, and attachments")
+                SettingsPlainRow("Tasks, pillars, and plans")
+                SettingsPlainRow("Profile, conversations, and settings")
+                SettingsPlainRow("Readable Markdown and structured JSON", isLast: true)
             }
 
-            Button("Prepare export") { appModel.export(context: context) }
+            Button("Create export") { appModel.export(context: context) }
                 .buttonStyle(AgentPrimaryButtonStyle())
 
             if let exportURL = appModel.exportURL {
                 ShareLink(item: exportURL) {
-                    Text("Save or share ZIP").frame(maxWidth: .infinity)
+                    Text("Save or share export").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(AgentSecondaryButtonStyle())
             }
@@ -1354,7 +1587,7 @@ struct EraseDataSettingsView: View {
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 MetaLabel("This cannot be undone")
                     .foregroundStyle(Color.agentDestructive)
-                Text("Your briefs, tasks, pillars, conversations, voice profile, reminders, local files, and private iCloud records will be removed.")
+                Text("Your posts, tasks, pillars, conversations, reminders, local files, and private iCloud records will be removed.")
                     .font(.agentBody)
                     .foregroundStyle(Color.agentText)
             }
@@ -1363,7 +1596,7 @@ struct EraseDataSettingsView: View {
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 MetaLabel("Before you erase")
-                Text("Export a copy first if you may want this work later. A non-content invite tombstone may remain so a redeemed code cannot be reused.")
+                Text("Export a copy first if you may want this work later. If you used an invite code, agent.cy keeps only a private record that it was redeemed so it cannot be used again.")
                     .font(.agentBody)
                     .foregroundStyle(Color.agentSecondary)
             }
@@ -1409,7 +1642,7 @@ struct ResetPostsAndTasksSettingsView: View {
         ) {
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                 MetaLabel("This will clear")
-                SettingsPlainRow("Posts, drafts, and post versions")
+                SettingsPlainRow("Posts and drafts")
                 SettingsPlainRow("Idea Bank entries and schedules")
                 SettingsPlainRow("Open and completed tasks", isLast: true)
             }
@@ -1418,7 +1651,7 @@ struct ResetPostsAndTasksSettingsView: View {
                 MetaLabel("This will stay")
                 SettingsPlainRow("Anchor pillar and branches")
                 SettingsPlainRow("Creator profile and social accounts")
-                SettingsPlainRow("Voice, destinations, reminders, and access", isLast: true)
+                SettingsPlainRow("Destinations, reminders, and access", isLast: true)
             }
 
             VStack(spacing: AgentSpacing.x3) {
@@ -1518,6 +1751,7 @@ private struct SettingsValueRow: View {
     let title: String
     let value: String
     var isLast = false
+    var showsTopRule = true
 
     var body: some View {
         HStack {
@@ -1526,7 +1760,9 @@ private struct SettingsValueRow: View {
             Text(value).font(.agentBody).foregroundStyle(Color.agentSecondary)
         }
         .frame(minHeight: 54)
-        .overlay(alignment: .top) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
+        .overlay(alignment: .top) {
+            if showsTopRule { Rectangle().fill(Color.agentBorder).frame(height: 1) }
+        }
         .overlay(alignment: .bottom) {
             if isLast { Rectangle().fill(Color.agentBorder).frame(height: 1) }
         }

@@ -4,6 +4,131 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testConversationTitleKeepsWholeWordsAtTheLengthBoundary() {
+        let prompt = "Keep shaping My favorite things to take with me on a trip"
+
+        XCTAssertEqual(
+            ConversationTitleFormatter.title(from: prompt),
+            prompt
+        )
+        XCTAssertFalse(ConversationTitleFormatter.title(from: prompt).hasSuffix(" t"))
+    }
+
+    func testConversationTitleTruncatesOnlyBetweenWords() {
+        XCTAssertEqual(
+            ConversationTitleFormatter.title(
+                from: "one two three four five",
+                maximumLength: 13
+            ),
+            "one two three"
+        )
+    }
+
+    func testConversationTitleRepairsAnExistingCharacterTruncatedTitle() {
+        let prompt = "Keep shaping My favorite things to take with me on a trip"
+
+        XCTAssertEqual(
+            ConversationTitleFormatter.resolvedTitle(
+                savedTitle: String(prompt.prefix(54)),
+                firstCreatorMessage: prompt
+            ),
+            prompt
+        )
+    }
+
+    func testDeletingConversationRemovesOnlyItsMessages() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let deletedThread = ConversationThread(title: "Delete me")
+        let keptThread = ConversationThread(title: "Keep me")
+        let deletedMessage = ConversationMessage(
+            threadID: deletedThread.id,
+            role: .creator,
+            text: "Remove this transcript"
+        )
+        let keptMessage = ConversationMessage(
+            threadID: keptThread.id,
+            role: .creator,
+            text: "Keep this transcript"
+        )
+        [deletedThread, keptThread].forEach(context.insert)
+        [deletedMessage, keptMessage].forEach(context.insert)
+        try context.save()
+
+        try ConversationDeletionService.delete(
+            deletedThread,
+            messages: [deletedMessage, keptMessage],
+            context: context
+        )
+
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<ConversationThread>()).map(\.id),
+            [keptThread.id]
+        )
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<ConversationMessage>()).map(\.id),
+            [keptMessage.id]
+        )
+    }
+
+    func testCreatorVibePalettesProvideFiveDistinctPillarColors() {
+        for palette in CreatorVibePalette.allCases {
+            XCTAssertEqual(palette.pillarColorHexes.count, 5)
+            XCTAssertEqual(Set(palette.pillarColorHexes).count, 5)
+            XCTAssertTrue(palette.pillarColorHexes.allSatisfy { $0.count == 6 })
+        }
+    }
+
+    func testCreatorVibeAndAppearancePersistTogether() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey")
+        profile.vibePalette = .pastel
+        profile.appearance = .dark
+        context.insert(profile)
+        try context.save()
+
+        let saved = try XCTUnwrap(context.fetch(FetchDescriptor<CreatorProfile>()).first)
+        XCTAssertEqual(saved.vibePalette, .pastel)
+        XCTAssertEqual(saved.appearance, .dark)
+    }
+
+    func testSavingPostNotesDoesNotOverwritePremise() {
+        let brief = CreativeBrief(
+            title: "Review-safe post",
+            premise: "The original premise",
+            status: .spark
+        )
+        brief.notes = "Detailed production notes"
+
+        PostDraftSavePolicy.prepare(brief)
+
+        XCTAssertEqual(brief.premise, "The original premise")
+        XCTAssertEqual(brief.notes, "Detailed production notes")
+    }
+
+    func testNewPostOptionalSectionsDefaultOnAndPersistCreatorChoices() throws {
+        let defaults = CreatorProfile()
+        XCTAssertTrue(defaults.showsHookInPostEditor)
+        XCTAssertTrue(defaults.showsBrandDealsInPostEditor)
+        XCTAssertTrue(defaults.showsMoodBoardsInPostEditor)
+
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            showsHookInPostEditor: false,
+            showsBrandDealsInPostEditor: true,
+            showsMoodBoardsInPostEditor: false
+        )
+        context.insert(profile)
+        try context.save()
+
+        let saved = try XCTUnwrap(context.fetch(FetchDescriptor<CreatorProfile>()).first)
+        XCTAssertFalse(saved.showsHookInPostEditor)
+        XCTAssertTrue(saved.showsBrandDealsInPostEditor)
+        XCTAssertFalse(saved.showsMoodBoardsInPostEditor)
+    }
+
     func testRecurringScheduleBuildsFutureDatesAndSupportsDateOnlyTargets() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
@@ -624,14 +749,14 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(AccessPolicy.allows(.export, state: state, at: now))
     }
 
-    func testConsumedFreeJourneyFailsClosedForNewWork() {
+    func testConsumedFreeJourneyKeepsManualCreationAvailableButLocksCy() {
         let state = SubscriptionState(access: .freeJourney)
         state.freeBriefConsumed = true
-        XCTAssertFalse(AccessPolicy.allows(.createSpark, state: state))
-        XCTAssertFalse(AccessPolicy.allows(.createTask, state: state))
+        XCTAssertTrue(AccessPolicy.allows(.createSpark, state: state))
+        XCTAssertTrue(AccessPolicy.allows(.createTask, state: state))
         XCTAssertFalse(AccessPolicy.allows(.sparkDialogue, state: state))
         XCTAssertFalse(AccessPolicy.allows(.askCy, state: state))
-        XCTAssertFalse(AccessPolicy.allows(.schedule, state: state))
+        XCTAssertTrue(AccessPolicy.allows(.schedule, state: state))
         XCTAssertFalse(AccessPolicy.allows(.createSpark, state: nil))
         XCTAssertTrue(AccessPolicy.allows(.revise, state: state))
         XCTAssertTrue(AccessPolicy.allows(.teachCy, state: state))
@@ -639,6 +764,28 @@ final class DomainTests: XCTestCase {
         state.teachCyUpdatesUsed = 1
         XCTAssertFalse(AccessPolicy.allows(.revise, state: state))
         XCTAssertFalse(AccessPolicy.allows(.teachCy, state: state))
+    }
+
+    func testQuickCaptureModesAreMutuallyExclusive() {
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        model.setQuickCaptureMode(.cyIdeas)
+        XCTAssertTrue(model.quickCaptureStartsWithIdeas)
+
+        model.setQuickCaptureMode(.post)
+        XCTAssertTrue(model.quickCaptureStartsWithPost)
+        XCTAssertFalse(model.quickCaptureStartsWithIdeas)
+        XCTAssertFalse(model.quickCaptureStartsWithTask)
+
+        model.setQuickCaptureMode(.task)
+        XCTAssertTrue(model.quickCaptureStartsWithTask)
+        XCTAssertFalse(model.quickCaptureStartsWithIdeas)
+        XCTAssertFalse(model.quickCaptureStartsWithPost)
+
+        model.setQuickCaptureMode(.idea)
+        XCTAssertFalse(model.quickCaptureStartsWithIdeas)
+        XCTAssertFalse(model.quickCaptureStartsWithPost)
+        XCTAssertFalse(model.quickCaptureStartsWithTask)
     }
 
     func testFreeAllowanceCounters() {
@@ -1860,6 +2007,22 @@ final class DomainTests: XCTestCase {
         )
     }
 
+    func testPostCalendarMarksEveryDateAssignedToAPillarWeekday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let monday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 13)))
+        let tuesday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 14)))
+        let markers = [
+            PillarCalendarMarker(weekday: .monday, colorHex: "FFFFD8"),
+            PillarCalendarMarker(weekday: .monday, colorHex: "ffffd8"),
+            PillarCalendarMarker(weekday: .monday, colorHex: "416B85"),
+            PillarCalendarMarker(weekday: .tuesday, colorHex: "9B3A2E")
+        ]
+
+        XCTAssertEqual(markers.colorHexes(for: monday, calendar: calendar), ["FFFFD8", "416B85"])
+        XCTAssertEqual(markers.colorHexes(for: tuesday, calendar: calendar), ["9B3A2E"])
+    }
+
     func testCaptureDraftResolverIgnoresEmptyFormsAndNamesNotesOnlyPosts() {
         XCTAssertNil(CaptureDraftResolver.ideaText("  \n "))
         XCTAssertEqual(CaptureDraftResolver.ideaText("  A useful idea  "), "A useful idea")
@@ -1877,6 +2040,60 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(CyVoiceHeading.forMessage("I noticed a pattern in your strongest ideas.", index: 0), .noticed)
         XCTAssertEqual(CyVoiceHeading.forMessage("Here is a clean first draft.", index: 0), .says)
         XCTAssertEqual(CyVoiceHeading.forMessage("Here is another direction.", index: 1), .hasAnIdea)
+    }
+
+    func testWorkspaceScopeKeepsLegacyNilRecordsInDefaultAccountOnly() {
+        let profileID = UUID()
+        let first = CreatorWorkspace(profileID: profileID, name: "Primary", sortOrder: 0)
+        let second = CreatorWorkspace(profileID: profileID, name: "Second", sortOrder: 1)
+
+        XCTAssertTrue(WorkspaceScope.includes(nil, activeWorkspaceID: first.id, workspaces: [first, second]))
+        XCTAssertFalse(WorkspaceScope.includes(nil, activeWorkspaceID: second.id, workspaces: [first, second]))
+        XCTAssertTrue(WorkspaceScope.includes(second.id, activeWorkspaceID: second.id, workspaces: [first, second]))
+        XCTAssertFalse(WorkspaceScope.includes(first.id, activeWorkspaceID: second.id, workspaces: [first, second]))
+    }
+
+    func testWorkspaceMigrationPartitionsExistingAccountsAndTheirPosts() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey", onboardingCompleted: true)
+        let instagramID = PublishingCatalog.instagramID
+        let firstAccount = CreatorSocialAccount(
+            profileID: profile.id,
+            destinationID: instagramID,
+            label: "@first",
+            profileURLString: "https://instagram.com/first",
+            isPrimary: true,
+            sortOrder: 0
+        )
+        let secondAccount = CreatorSocialAccount(
+            profileID: profile.id,
+            destinationID: instagramID,
+            label: "@second",
+            profileURLString: "https://instagram.com/second",
+            sortOrder: 1
+        )
+        let firstBrief = CreativeBrief(title: "First account post")
+        let secondBrief = CreativeBrief(title: "Second account post")
+        let firstOutput = PlatformOutput(briefID: firstBrief.id, socialAccountID: firstAccount.id)
+        let secondOutput = PlatformOutput(briefID: secondBrief.id, socialAccountID: secondAccount.id)
+        context.insert(profile)
+        context.insert(firstAccount)
+        context.insert(secondAccount)
+        context.insert(firstBrief)
+        context.insert(secondBrief)
+        context.insert(firstOutput)
+        context.insert(secondOutput)
+
+        try StoreBootstrapService.run(context: context)
+
+        let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+        XCTAssertEqual(workspaces.count, 2)
+        XCTAssertNotEqual(firstAccount.workspaceID, secondAccount.workspaceID)
+        XCTAssertEqual(firstBrief.workspaceID, firstAccount.workspaceID)
+        XCTAssertEqual(firstOutput.workspaceID, firstAccount.workspaceID)
+        XCTAssertEqual(secondBrief.workspaceID, secondAccount.workspaceID)
+        XCTAssertEqual(secondOutput.workspaceID, secondAccount.workspaceID)
     }
 }
 

@@ -12,6 +12,10 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "dev:server": "pnpm --filter @agent-cy/server dev",
+    "mcp:build": "pnpm --filter @agent-cy/mcp build",
+    "mcp:package": "pnpm --filter @agent-cy/mcp build:standalone",
+    "mcp:setup": "pnpm --filter @agent-cy/mcp run setup",
+    "mcp:start": "pnpm --filter @agent-cy/mcp start",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
   }

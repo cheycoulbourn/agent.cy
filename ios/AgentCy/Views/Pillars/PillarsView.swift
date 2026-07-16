@@ -9,13 +9,23 @@ private enum PillarsRoute: Hashable {
 
 struct PillarsView: View {
     @Environment(AppModel.self) private var appModel
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var outputs: [PlatformOutput]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var allOutputs: [PlatformOutput]
     @Query private var profiles: [CreatorProfile]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var headerHeight: CGFloat = 0
     @State private var showNewPillar = false
     @State private var newPillarParentID: UUID?
+
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
+        values.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var anchor: Pillar? {
@@ -83,7 +93,7 @@ struct PillarsView: View {
                 }) {
                     PostOutputDetailView(brief: brief, output: output)
                 } else {
-                    BriefDetailView(brief: brief)
+                    IdeaPostDraftView(brief: brief)
                 }
             } else {
                 unavailableDestination
@@ -124,7 +134,7 @@ struct PillarsView: View {
     private func anchorHero(_ anchor: Pillar) -> some View {
         let metrics = PillarMetrics(
             pillar: anchor,
-            includesBranches: true,
+            includesBranches: false,
             pillars: activePillars,
             briefs: briefs,
             outputs: outputs
@@ -160,7 +170,7 @@ struct PillarsView: View {
 
             PillarStatsRow(
                 values: [metrics.ideaCount, metrics.thisWeekCount, metrics.postedCount],
-                labels: ["Idea bank", "This week", "Posted"]
+                labels: ["Ideas", "This week", "Posted"]
             )
             .padding(.vertical, AgentSpacing.x4)
             .overlay(alignment: .top) { PaperHairline() }
@@ -174,7 +184,7 @@ struct PillarsView: View {
             HStack(spacing: AgentSpacing.x2) {
                 PaperPillarMeta("Branches", weight: .semibold, tracking: 1.6)
                 PaperHairline().frame(maxWidth: .infinity)
-                PaperPillarMeta("Extensions of you", tracking: 1)
+                PaperPillarMeta("Supporting pillars", tracking: 1)
             }
 
             ForEach(branches) { branch in
@@ -203,10 +213,10 @@ struct PillarsView: View {
     private var emptyAnchor: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
             PaperPillarMeta("Anchor")
-            Text("Start with the idea everything leads back to.")
+            Text("Start with the pillar everything leads back to.")
                 .font(.paperInter(size: 28, weight: .medium, relativeTo: .title))
                 .tracking(-0.7)
-            Text("Your anchor is the central focus. Branches support it without replacing it.")
+            Text("Your anchor is the central pillar. Branches support it.")
                 .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
                 .foregroundStyle(Color.agentSecondary)
             Button("Create your anchor") {
@@ -229,7 +239,7 @@ private struct PillarInlineAddAction: View {
                     .stroke(Color.agentSecondary, style: StrokeStyle(lineWidth: 1.25, dash: [2, 2]))
                     .frame(width: 10, height: 10)
                 Text(title)
-                    .font(.paperInter(size: 17, weight: .medium, relativeTo: .body))
+                    .font(.agentAddAction)
                     .tracking(-0.25)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "plus")
@@ -303,10 +313,12 @@ struct PillarDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     let pillar: Pillar
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var outputs: [PlatformOutput]
-    @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var allOutputs: [PlatformOutput]
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
+    @Query private var profiles: [CreatorProfile]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var selectedTab: ContentTab
     @State private var headerHeight: CGFloat = 0
     @State private var isEditing = false
@@ -314,6 +326,16 @@ struct PillarDetailView: View {
     @State private var draftDetail: String
     @State private var draftColorHex: String
     @State private var confirmDelete = false
+
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
+        values.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     init(pillar: Pillar, initialTab: ContentTab = .ideas) {
         self.pillar = pillar
@@ -327,9 +349,11 @@ struct PillarDetailView: View {
     private var anchor: Pillar { pillar.resolvedAnchor(in: activePillars) }
     private var isAnchor: Bool { pillar.id == anchor.id }
     private var branches: [Pillar] { activePillars.filter { $0.parentPillarID == pillar.id } }
-    private var familyIDs: Set<UUID> { isAnchor ? Set([pillar.id] + branches.map(\.id)) : [pillar.id] }
+    private var paletteHexes: [String] {
+        profiles.first?.vibePalette?.pillarColorHexes ?? CreatorVibePalette.fallbackPillarColorHexes
+    }
     private var familyBriefs: [CreativeBrief] {
-        briefs.filter { $0.pillarID.map(familyIDs.contains) == true && $0.status != .archived }
+        briefs.filter { $0.pillarID == pillar.id && $0.status != .archived }
     }
     private var ideas: [CreativeBrief] {
         familyBriefs.filter { $0.status == .spark || $0.status == .developing }
@@ -364,7 +388,7 @@ struct PillarDetailView: View {
                             daysPicker
                             PillarStatsRow(
                                 values: [ideas.count, scheduled.count, posted.count],
-                                labels: ["Idea bank", "Scheduled", "Posted"]
+                                labels: ["Ideas", "Scheduled", "Posted"]
                             )
                             contentTabs
                             contentList
@@ -382,7 +406,7 @@ struct PillarDetailView: View {
             Button(deleteConfirmationAction, role: .destructive) { deletePillar() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Posts, ideas, and tasks will remain, but they will no longer be assigned to this pillar.")
+            Text(deleteConfirmationMessage)
         }
         .agentDashboardScreen()
         .agentKeyboardDismissal()
@@ -484,14 +508,14 @@ struct PillarDetailView: View {
     private var colorSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             PaperPillarMeta("Color", weight: .semibold, tracking: 1.6)
-            PillarColorChooser(selectedHex: $draftColorHex)
+            PillarColorChooser(paletteHexes: paletteHexes, selectedHex: $draftColorHex)
         }
     }
 
     private var daysPicker: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             HStack {
-                PaperPillarMeta("Days · Tap to toggle", weight: .semibold, tracking: 1.6)
+                PaperPillarMeta("Days", weight: .semibold, tracking: 1.6)
                 Spacer()
                 PaperPillarMeta("\(pillar.assignedWeekdays.count) of 7")
             }
@@ -594,8 +618,8 @@ struct PillarDetailView: View {
                             Image(systemName: "plus").font(.system(size: 9, weight: .medium))
                         }
                         .frame(width: 18, height: 18)
-                        Text("Capture an idea")
-                            .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
+                        Text("Save an idea")
+                            .font(.agentAddAction)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .foregroundStyle(Color.agentText)
@@ -610,8 +634,7 @@ struct PillarDetailView: View {
 
     private func captureIdea() {
         appModel.quickCapturePillarID = pillar.id
-        appModel.quickCaptureStartsWithPost = false
-        appModel.quickCaptureStartsWithTask = false
+        appModel.setQuickCaptureMode(.idea)
         appModel.presentedSheet = .quickCapture
     }
 
@@ -625,9 +648,9 @@ struct PillarDetailView: View {
     }
     private var emptyMessage: String {
         switch selectedTab {
-        case .ideas: "Ideas captured for this pillar will appear here."
-        case .scheduled: "Nothing is scheduled yet."
-        case .posted: "Posted work will appear here."
+        case .ideas: "No ideas yet."
+        case .scheduled: "No scheduled posts."
+        case .posted: "Nothing posted yet."
         }
     }
 
@@ -654,6 +677,12 @@ struct PillarDetailView: View {
     private var deleteConfirmationAction: String {
         isAnchor && !branches.isEmpty ? "Delete pillar and branches" : "Delete pillar"
     }
+    private var deleteConfirmationMessage: String {
+        if isAnchor && !branches.isEmpty {
+            return "These pillars will be removed. Their posts, ideas, and tasks will stay saved but become unfiled."
+        }
+        return "Posts, ideas, and tasks will stay saved but become unfiled."
+    }
 
     private func beginEditing() {
         draftName = pillar.name
@@ -678,7 +707,7 @@ struct PillarDetailView: View {
             try context.save()
             withAnimation(.snappy(duration: 0.2)) { isEditing = false }
         } catch {
-            appModel.notice = .error("This pillar could not be saved.")
+            appModel.notice = .error("Couldn’t save this pillar. Try again.")
         }
     }
 
@@ -693,7 +722,7 @@ struct PillarDetailView: View {
             )
             dismiss()
         } catch {
-            appModel.notice = .error("This pillar could not be deleted.")
+            appModel.notice = .error("Couldn’t delete this pillar. Try again.")
         }
     }
 }
@@ -754,7 +783,7 @@ private struct PillarContentRow: View {
     }
     private var metadata: String {
         switch brief.source {
-        case .voiceTranscript: "Voice note"
+        case .voiceTranscript: "Captured idea"
         case .cyDirection: "Spark · From Cy"
         case .repurposedBrief: "Spark · Repurposed"
         case .text: "Captured by shortcut"
@@ -763,13 +792,17 @@ private struct PillarContentRow: View {
 }
 
 struct NewPillarView: View {
+    @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query private var profiles: [CreatorProfile]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var name = ""
     @State private var colorHex = PillarColorOption.sage.hex
     @State private var parentPillarID: UUID?
     @State private var assignedWeekdays: Set<PillarWeekday> = []
+    @State private var didApplyPaletteDefault = false
     let onSave: (Pillar) -> Void
 
     init(parentPillarID: UUID? = nil, onSave: @escaping (Pillar) -> Void = { _ in }) {
@@ -777,8 +810,16 @@ struct NewPillarView: View {
         self.onSave = onSave
     }
 
+    private var pillars: [Pillar] {
+        allPillars.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var anchor: Pillar? { activePillars.first { $0.parentPillarID == nil } }
+    private var paletteHexes: [String] {
+        profiles.first?.vibePalette?.pillarColorHexes ?? CreatorVibePalette.fallbackPillarColorHexes
+    }
 
     var body: some View {
         NavigationStack {
@@ -787,7 +828,7 @@ struct NewPillarView: View {
                     TextField("Name", text: $name)
                         .agentSingleLineSubmit()
                 }
-                Section("Color") { PillarColorChooser(selectedHex: $colorHex) }
+                Section("Color") { PillarColorChooser(paletteHexes: paletteHexes, selectedHex: $colorHex) }
                 Section("Days") { WeekdayChooser(selection: $assignedWeekdays, accentHex: colorHex) }
             }
             .navigationTitle(parentPillarID == nil ? "New anchor" : "New branch")
@@ -795,12 +836,15 @@ struct NewPillarView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
+                    Button("Create") { save() }
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .task {
                 if parentPillarID == nil, let anchor { parentPillarID = anchor.id }
+                guard !didApplyPaletteDefault, !paletteHexes.isEmpty else { return }
+                colorHex = paletteHexes[activePillars.count % paletteHexes.count]
+                didApplyPaletteDefault = true
             }
         }
         .agentKeyboardDismissal()
@@ -815,6 +859,7 @@ struct NewPillarView: View {
             colorHex: colorHex,
             assignedWeekdays: assignedWeekdays
         )
+        pillar.workspaceID = appModel.resolvedWorkspaceID(context: context)
         context.insert(pillar)
         try? context.save()
         onSave(pillar)
@@ -930,20 +975,28 @@ private struct WeekdayChooser: View {
 }
 
 private struct PillarColorChooser: View {
+    let paletteHexes: [String]
     @Binding var selectedHex: String
 
     var body: some View {
         HStack(spacing: AgentSpacing.x2) {
-            ForEach(PillarColorOption.allCases) { option in
-                Button { selectedHex = option.hex } label: {
+            ForEach(colors, id: \.self) { hex in
+                Button { selectedHex = hex } label: {
                     Circle()
-                        .fill(Color(agentHex: option.hex))
+                        .fill(Color(agentHex: hex))
                         .frame(width: 32, height: 32)
                         .padding(AgentSpacing.x1)
-                        .overlay { Circle().stroke(isSelected(option) ? Color.agentText : Color.clear, lineWidth: 2) }
+                        .overlay {
+                            Circle().stroke(Color.agentBorder, lineWidth: 0.75)
+                        }
+                        .overlay {
+                            Circle().stroke(isSelected(hex) ? Color.agentText : Color.clear, lineWidth: 2)
+                        }
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Pillar color")
+                .accessibilityValue(isSelected(hex) ? "Selected" : "Not selected")
             }
             ColorPicker("Custom color", selection: customColor, supportsOpacity: false)
                 .labelsHidden()
@@ -957,8 +1010,11 @@ private struct PillarColorChooser: View {
             set: { selectedHex = $0.agentHexString }
         )
     }
-    private func isSelected(_ option: PillarColorOption) -> Bool {
-        selectedHex.caseInsensitiveCompare(option.hex) == .orderedSame
+    private var colors: [String] {
+        paletteHexes.isEmpty ? CreatorVibePalette.fallbackPillarColorHexes : paletteHexes
+    }
+    private func isSelected(_ hex: String) -> Bool {
+        selectedHex.caseInsensitiveCompare(hex) == .orderedSame
     }
 }
 

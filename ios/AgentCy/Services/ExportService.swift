@@ -1,5 +1,7 @@
 import Foundation
 import SwiftData
+import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 protocol ExportServicing {
@@ -35,13 +37,16 @@ struct LocalExportService: ExportServicing {
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 11,
+            "schemaVersion": 12,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
                 "goal": $0.goal,
                 "platforms": $0.selectedPlatforms.map(\.rawValue),
-                "assistanceMode": $0.assistanceMode.rawValue
+                "assistanceMode": $0.assistanceMode.rawValue,
+                "showsHookInPostEditor": $0.showsHookInPostEditor,
+                "showsBrandDealsInPostEditor": $0.showsBrandDealsInPostEditor,
+                "showsMoodBoardsInPostEditor": $0.showsMoodBoardsInPostEditor
             ] },
             "voiceExamples": voiceExamples.map {
                 [
@@ -240,7 +245,7 @@ struct LocalExportService: ExportServicing {
         let markdown = makeMarkdown(briefs: briefs, outputs: outputs, tasks: tasks)
         var entries: [StoredZIP.Entry] = [
             .init(path: "agentcy-export.json", data: json),
-            .init(path: "briefs.md", data: Data(markdown.utf8))
+            .init(path: "posts.md", data: Data(markdown.utf8))
         ]
         for attachment in attachments {
             if let data = attachment.cloudData {
@@ -267,7 +272,7 @@ struct LocalExportService: ExportServicing {
     }
 
     private func makeMarkdown(briefs: [CreativeBrief], outputs: [PlatformOutput], tasks: [CreatorTask]) -> String {
-        var lines = ["# agent.cy brief export", "", "Exported \(Date().formatted(date: .long, time: .shortened))", ""]
+        var lines = ["# agent.cy post export", "", "Exported \(Date().formatted(date: .long, time: .shortened))", ""]
         for brief in briefs.sorted(by: { $0.createdAt > $1.createdAt }) {
             lines += [
                 "## \(brief.title)",
@@ -306,6 +311,339 @@ struct LocalExportService: ExportServicing {
         return lines.joined(separator: "\n")
     }
 
+}
+
+struct MarkdownFileDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.agentMarkdown] }
+
+    var text: String
+
+    init(text: String) {
+        self.text = text
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents,
+              let text = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.text = text
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Data(text.utf8))
+    }
+}
+
+extension UTType {
+    static var agentMarkdown: UTType {
+        UTType(filenameExtension: "md", conformingTo: .plainText) ?? .plainText
+    }
+}
+
+/// A single-post handoff designed to paste cleanly into Notion or an AI chat.
+/// It intentionally omits internal identifiers and empty sections.
+@MainActor
+enum PostMarkdownExporter {
+    static func makeDocument(
+        brief: CreativeBrief,
+        outputs: [PlatformOutput],
+        tasks: [CreatorTask],
+        pillar: Pillar?,
+        destinations: [PublishingDestination],
+        formats: [PublishingFormat],
+        socialAccounts: [CreatorSocialAccount],
+        attachments: [CreatorAttachment],
+        exportedAt: Date = Date()
+    ) -> MarkdownFileDocument {
+        MarkdownFileDocument(text: makeMarkdown(
+            brief: brief,
+            outputs: outputs,
+            tasks: tasks,
+            pillar: pillar,
+            destinations: destinations,
+            formats: formats,
+            socialAccounts: socialAccounts,
+            attachments: attachments,
+            exportedAt: exportedAt
+        ))
+    }
+
+    static func makeMarkdown(
+        brief: CreativeBrief,
+        outputs: [PlatformOutput],
+        tasks: [CreatorTask],
+        pillar: Pillar?,
+        destinations: [PublishingDestination],
+        formats: [PublishingFormat],
+        socialAccounts: [CreatorSocialAccount],
+        attachments: [CreatorAttachment],
+        exportedAt: Date = Date()
+    ) -> String {
+        let relatedOutputs = outputs
+            .filter { $0.briefID == brief.id }
+            .sorted { $0.createdAt < $1.createdAt }
+        let relatedTasks = tasks
+            .filter { $0.briefID == brief.id }
+            .sorted { lhs, rhs in
+                if lhs.parentTaskID == nil, rhs.parentTaskID != nil { return true }
+                if lhs.parentTaskID != nil, rhs.parentTaskID == nil { return false }
+                return lhs.sortOrder < rhs.sortOrder
+            }
+        let relatedAttachments = attachments.filter { $0.briefID == brief.id }
+        let title = clean(brief.title).isEmpty ? "Untitled post" : clean(brief.title)
+        let premise = clean(brief.premise)
+        let notes = clean(brief.notes)
+
+        var lines: [String] = ["# \(title)", ""]
+        if !premise.isEmpty {
+            lines += premise.split(separator: "\n", omittingEmptySubsequences: false).map { "> \($0)" }
+            lines.append("")
+        }
+
+        lines += ["## Overview", ""]
+        lines.append("- **Status:** \(overallStatus(brief: brief, outputs: relatedOutputs))")
+        if let pillar, !clean(pillar.name).isEmpty {
+            lines.append("- **Pillar:** \(clean(pillar.name))")
+        }
+        if brief.durationSeconds > 0 {
+            lines.append("- **Duration:** \(durationLabel(brief.durationSeconds))")
+        }
+        if !brief.audience.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("- **Audience:** \(clean(brief.audience))")
+        }
+        if !brief.creativeGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("- **Goal:** \(clean(brief.creativeGoal))")
+        }
+        if !brief.takeaway.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("- **Takeaway:** \(clean(brief.takeaway))")
+        }
+        lines.append("")
+
+        appendSection("Hook", text: brief.spokenHook, to: &lines)
+        appendSection("First-frame text", text: brief.firstFrameText, to: &lines)
+
+        let scriptBeats = brief.scriptBeats.map(clean).filter { !$0.isEmpty }
+        if !scriptBeats.isEmpty {
+            lines += ["## Script", ""]
+            for (index, beat) in scriptBeats.enumerated() {
+                lines.append("\(index + 1). \(beat)")
+            }
+            lines.append("")
+        }
+
+        appendSection("Ending", text: brief.close, to: &lines)
+        appendSection("Call to action", text: brief.ctaIntent, to: &lines)
+        appendSection("Notes", text: notes, to: &lines)
+
+        if !relatedOutputs.isEmpty {
+            lines += ["## Platform versions", ""]
+            for output in relatedOutputs {
+                let destination = destinations.first { $0.id == output.destinationID }
+                let format = formats.first { $0.id == output.formatID }
+                let account = socialAccounts.first { $0.id == output.socialAccountID }
+                let platformTitle = platformLabel(output: output, destination: destination, format: format)
+                lines += ["### \(platformTitle)", ""]
+                lines.append("- **Status:** \(outputStatusTitle(output.status))")
+                if let targetDate = output.targetDate {
+                    lines.append("- **Publish:** \(dateLabel(targetDate, includesTime: output.includesTargetTime))")
+                }
+                if output.durationSeconds > 0 {
+                    lines.append("- **Duration:** \(durationLabel(output.durationSeconds))")
+                }
+                if let account, !clean(account.label).isEmpty {
+                    lines.append("- **Account:** \(clean(account.label))")
+                }
+                if output.recurrence != .none {
+                    lines.append("- **Series:** \(seriesLabel(output))")
+                }
+                lines.append("")
+
+                appendSubsection("Platform title", text: output.titleOverride, to: &lines)
+                appendSubsection("Caption", text: output.caption, to: &lines)
+                appendSubsection("Opening adjustment", text: output.openingAdjustment, to: &lines)
+                appendSubsection("Platform CTA", text: output.cta, to: &lines)
+                appendSubsection("Edit notes", text: output.editChanges, to: &lines)
+                if !clean(output.publishedURLString).isEmpty {
+                    lines += ["#### Published link", "", clean(output.publishedURLString), ""]
+                }
+            }
+        }
+
+        let productionItems = [
+            ("Filming", brief.filmingGuidance),
+            ("Editing", brief.editingGuidance)
+        ].filter { !clean($0.1).isEmpty }
+        if !productionItems.isEmpty {
+            lines += ["## Production", ""]
+            for item in productionItems {
+                lines += ["### \(item.0)", "", clean(item.1), ""]
+            }
+        }
+
+        appendBrandCollaboration(brief: brief, attachments: relatedAttachments, to: &lines)
+        appendTasks(relatedTasks, to: &lines)
+        appendAttachments(relatedAttachments, to: &lines)
+
+        lines += [
+            "---",
+            "Exported from agent.cy on \(exportedAt.formatted(date: .long, time: .shortened)).",
+            ""
+        ]
+        return collapseBlankLines(lines).joined(separator: "\n")
+    }
+
+    static func defaultFileName(for brief: CreativeBrief) -> String {
+        let rawTitle = clean(brief.title).isEmpty ? "agentcy-post" : clean(brief.title)
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ "))
+        let sanitized = String(rawTitle.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: "-")
+            .lowercased()
+        let trimmed = sanitized.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return "\(String((trimmed.isEmpty ? "agentcy-post" : trimmed).prefix(80))).md"
+    }
+
+    private static func appendSection(_ title: String, text: String, to lines: inout [String]) {
+        let text = clean(text)
+        guard !text.isEmpty else { return }
+        lines += ["## \(title)", "", text, ""]
+    }
+
+    private static func appendSubsection(_ title: String, text: String, to lines: inout [String]) {
+        let text = clean(text)
+        guard !text.isEmpty else { return }
+        lines += ["#### \(title)", "", text, ""]
+    }
+
+    private static func appendTasks(_ tasks: [CreatorTask], to lines: inout [String]) {
+        let topLevel = tasks.filter { $0.parentTaskID == nil }
+        guard !topLevel.isEmpty else { return }
+        lines += ["## Tasks", ""]
+        for task in topLevel {
+            var metadata: [String] = [task.kind.title]
+            if task.priority.normalized != .none { metadata.append(task.priority.title) }
+            if let targetDate = task.targetDate {
+                metadata.append(dateLabel(targetDate, includesTime: task.includesTargetTime))
+            }
+            let suffix = metadata.isEmpty ? "" : " — \(metadata.joined(separator: " · "))"
+            lines.append("- [\(task.isCompleted ? "x" : " ")] \(clean(task.title))\(suffix)")
+            for child in tasks.filter({ $0.parentTaskID == task.id }) {
+                lines.append("  - [\(child.isCompleted ? "x" : " ")] \(clean(child.title))")
+            }
+        }
+        lines.append("")
+    }
+
+    private static func appendBrandCollaboration(
+        brief: CreativeBrief,
+        attachments: [CreatorAttachment],
+        to lines: inout [String]
+    ) {
+        guard brief.isBrandCollaboration else { return }
+        lines += ["## Brand collaboration", ""]
+        if !clean(brief.brandName).isEmpty { lines.append("- **Partner:** \(clean(brief.brandName))") }
+        lines.append("- **Compensation:** \(compensationLabel(brief))")
+        if brief.brandHasNetTerms { lines.append("- **Payment terms:** Net \(brief.brandNetTermsDays)") }
+        if !clean(brief.giftedProductDescription).isEmpty {
+            lines.append("- **Gifted product:** \(clean(brief.giftedProductDescription))")
+        }
+        if !clean(brief.promoCode).isEmpty { lines.append("- **Promo code:** \(clean(brief.promoCode))") }
+        if !clean(brief.promoLinkString).isEmpty { lines.append("- **Promo link:** \(clean(brief.promoLinkString))") }
+        let collaborationFiles = attachments.filter { $0.ownerKind == .collaborationFile }
+        if !collaborationFiles.isEmpty {
+            lines.append("- **Files:** \(collaborationFiles.map(\.fileName).joined(separator: ", "))")
+        }
+        lines.append("")
+    }
+
+    private static func appendAttachments(_ attachments: [CreatorAttachment], to lines: inout [String]) {
+        let visible = attachments.filter { $0.ownerKind != .collaborationFile }
+        guard !visible.isEmpty else { return }
+        lines += ["## Assets", ""]
+        for attachment in visible {
+            let label: String = switch attachment.ownerKind {
+            case .referenceFile: "Reference"
+            case .postMedia: "Post media"
+            case .moodBoardMedia: "Mood board"
+            case .collaborationFile: "Collaboration file"
+            }
+            lines.append("- **\(label):** \(attachment.fileName)")
+        }
+        lines.append("")
+    }
+
+    private static func compensationLabel(_ brief: CreativeBrief) -> String {
+        let paid: String = if let amount = brief.compensationAmount {
+            amount.formatted(.currency(code: brief.compensationCurrencyCode.isEmpty ? "USD" : brief.compensationCurrencyCode))
+        } else {
+            "Paid"
+        }
+        return switch brief.compensationType {
+        case .paid: paid
+        case .gifted: "Gifted"
+        case .both: "\(paid) + gifted"
+        }
+    }
+
+    private static func overallStatus(brief: CreativeBrief, outputs: [PlatformOutput]) -> String {
+        if !outputs.isEmpty {
+            if outputs.allSatisfy({ $0.status == .posted }) { return "Posted" }
+            if outputs.contains(where: { $0.status == .scheduled }) { return "Scheduled" }
+            if outputs.contains(where: { $0.status == .ready }) { return "Ready" }
+            return "Draft"
+        }
+        return brief.status == .scheduled ? "Scheduled" : brief.status.title
+    }
+
+    private static func outputStatusTitle(_ status: PlatformOutputStatus) -> String {
+        switch status {
+        case .draft: "Draft"
+        case .ready: "Ready"
+        case .scheduled: "Scheduled"
+        case .posted: "Posted"
+        }
+    }
+
+    private static func platformLabel(
+        output: PlatformOutput,
+        destination: PublishingDestination?,
+        format: PublishingFormat?
+    ) -> String {
+        switch (destination, format) {
+        case let (.some(destination), .some(format)): "\(destination.name) · \(format.name)"
+        case let (.some(destination), .none): destination.name
+        case let (.none, .some(format)): format.name
+        case (.none, .none): output.platform.title
+        }
+    }
+
+    private static func seriesLabel(_ output: PlatformOutput) -> String {
+        let name = clean(output.seriesName)
+        return name.isEmpty ? output.recurrence.title : "\(name) · \(output.recurrence.title)"
+    }
+
+    private static func durationLabel(_ seconds: Int) -> String {
+        seconds < 120 ? "\(seconds) seconds" : "\(seconds / 60) minutes"
+    }
+
+    private static func dateLabel(_ date: Date, includesTime: Bool) -> String {
+        if includesTime {
+            return date.formatted(.dateTime.weekday(.wide).month(.wide).day().year().hour().minute())
+        }
+        return date.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
+    }
+
+    private static func clean(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func collapseBlankLines(_ lines: [String]) -> [String] {
+        lines.reduce(into: [String]()) { result, line in
+            guard !(line.isEmpty && result.last?.isEmpty == true) else { return }
+            result.append(line)
+        }
+    }
 }
 
 private enum StoredZIP {

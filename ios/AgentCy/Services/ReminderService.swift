@@ -216,13 +216,32 @@ final class LocalReminderService: ReminderServicing {
 
     private func makePlanningInput(context: ModelContext, now: Date) throws -> NotificationPlanningInput {
         let settings = try context.fetch(FetchDescriptor<ReminderSettings>()).first ?? ReminderSettings()
-        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
-        let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
-        let templates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())
-        let overrides = try context.fetch(FetchDescriptor<DailyFocusOverride>())
-        let details = try context.fetch(FetchDescriptor<DailyFocusDayDetail>())
-        let accounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>()).filter { !$0.isArchived }
+        let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+        let activeID = WorkspaceScope.activeWorkspaceID(
+            preferredID: CreatorWorkspacePreferences.activeWorkspaceID,
+            workspaces: workspaces
+        )
+        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let templates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let overrides = try context.fetch(FetchDescriptor<DailyFocusOverride>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let details = try context.fetch(FetchDescriptor<DailyFocusDayDetail>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let accounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>()).filter {
+            !$0.isArchived && WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
         let destinations = try context.fetch(FetchDescriptor<PublishingDestination>()).filter { !$0.isArchived }
         let subscriptions = try context.fetch(FetchDescriptor<SubscriptionState>())
         let destinationByID = Dictionary(uniqueKeysWithValues: destinations.map { ($0.id, $0.name) })

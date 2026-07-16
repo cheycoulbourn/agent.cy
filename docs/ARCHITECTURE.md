@@ -25,7 +25,11 @@ There is no agent.cy account and no Supabase dependency.
 
 Social profiles are manual local references, not connected identities. Multiple creator-owned accounts can point at the same publishing destination, and `PlatformOutput.socialAccountID` records which account a specific post version targets. No social-platform OAuth token, platform cookie, profile scraping, or automatic publishing is introduced.
 
-Calendar integration uses EventKit on the creator's iPhone. The creator grants full Calendar access only when enabling the feature and chooses a writable calendar already configured on the device, including Google calendars connected through iOS. Calendar selection, sync toggles, and EventKit identifiers are device-local preferences rather than CloudKit records. agent.cy is the one-way source of truth: scheduled or posted platform outputs and dated top-level production tasks create or update calendar events, while calendar edits never silently mutate SwiftData.
+Creator content is partitioned by an additive `CreatorWorkspace` identifier. Posts, outputs, pillars, tasks, focus templates, ideas, Cy threads, widgets, reminders, shortcuts, and MCP snapshots resolve through the active workspace. Legacy records are assigned deterministically during bootstrap, and nil workspace identifiers remain visible only in the default workspace so delayed CloudKit records cannot leak into another account.
+
+Calendar integration uses EventKit on the creator's iPhone. The creator grants full Calendar access only when enabling the feature and chooses a writable calendar already configured on the device, including Google calendars connected through iOS. Calendar selection, sync toggles, and EventKit identifiers are device-local preferences rather than CloudKit records. agent.cy is the one-way source of truth: scheduled or posted platform outputs and dated top-level tasks create or update calendar events, while calendar edits never silently mutate SwiftData.
+
+The optional local MCP bridge uses a creator-selected Files folder rather than proxy persistence. The app writes a versioned content snapshot without attachment bytes or credentials. A local stdio MCP server may read the snapshot and queue narrowly scoped change requests. SwiftData changes occur only after the creator approves a request in the app; the bridge never exposes deletion, publishing, archive, erase, or raw database tools.
 
 ## Client modules
 

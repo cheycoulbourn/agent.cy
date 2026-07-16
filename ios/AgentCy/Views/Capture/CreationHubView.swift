@@ -85,7 +85,6 @@ struct CreationHubView: View {
         }
         .sheet(isPresented: $showQuickCapture) {
             QuickCaptureView()
-                .preferredColorScheme(appModel.appearancePreference.colorSchemeOverride)
         }
     }
 
@@ -132,9 +131,12 @@ struct CreationHubView: View {
     private func openCapture(_ destination: Destination) {
         appModel.quickCaptureTargetDate = nil
         appModel.quickCapturePillarID = nil
-        appModel.quickCaptureStartsWithTask = destination == .task
-        appModel.quickCaptureStartsWithPost = destination == .post
-        appModel.quickCaptureStartsWithIdeas = destination == .cyIdeas
+        switch destination {
+        case .idea: appModel.setQuickCaptureMode(.idea)
+        case .post: appModel.setQuickCaptureMode(.post)
+        case .task: appModel.setQuickCaptureMode(.task)
+        case .cyIdeas: appModel.setQuickCaptureMode(.cyIdeas)
+        }
         showQuickCapture = true
     }
 

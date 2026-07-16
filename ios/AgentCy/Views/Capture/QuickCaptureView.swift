@@ -13,6 +13,129 @@ enum CyIdeaRequestPhase: Equatable {
     }
 }
 
+struct CyProUpsellView: View {
+    let message: String
+    let primaryAction: () -> Void
+    let secondaryAction: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isRotating = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                Rectangle()
+                    .fill(Color.agentBorder)
+                    .frame(height: 1)
+
+                HStack(alignment: .firstTextBaseline) {
+                MetaLabel("agent.cy Pro")
+                        .foregroundStyle(Color.cyAccent)
+                    Spacer()
+                    MetaLabel("From spark to ready")
+                }
+            }
+
+            VStack(spacing: AgentSpacing.x6) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.cyAccent, Color.cyAccent.opacity(0.78)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay {
+                            Circle().stroke(Color.onCyAccent.opacity(0.28), lineWidth: 1)
+                        }
+                        .shadow(color: Color.cyAccent.opacity(0.34), radius: 28, y: 10)
+
+                    ZStack {
+                        CyAsterisk(color: .onCyAccent, size: 38, strokeWidth: 2.2)
+                        Circle()
+                            .fill(Color.onCyAccent.opacity(0.8))
+                            .frame(width: 5, height: 5)
+                            .offset(y: -36)
+                    }
+                    .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
+                    .animation(
+                        reduceMotion ? nil : .linear(duration: 7).repeatForever(autoreverses: false),
+                        value: isRotating
+                    )
+                }
+                .frame(width: 86, height: 86)
+
+                VStack(spacing: AgentSpacing.x2) {
+                    Text("Your content team, built in.")
+                        .font(.paperInter(size: 28, weight: .semibold, relativeTo: .title))
+                        .tracking(-0.56)
+                        .multilineTextAlignment(.center)
+
+                    Text("Plan, write, schedule, and manage your content with Cy, without spending hours coordinating or thousands building an agency team.")
+                        .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                        .foregroundStyle(Color.agentSecondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(2)
+                        .frame(maxWidth: 310)
+                }
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    MetaLabel("What agent.cy Pro adds")
+                        .foregroundStyle(Color.cyAccent)
+                    benefitRow("Strategy and ideas grounded in your goals, pillars, and work")
+                    benefitRow("Content calendars, tasks, and weekly planning")
+                    benefitRow("Hooks, captions, platform versions, and ongoing revisions")
+                }
+                .padding(AgentSpacing.x4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.cyAccent.opacity(0.055), in: .rect(cornerRadius: 16))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.cyAccent.opacity(0.16), lineWidth: 1)
+                }
+
+                VStack(spacing: AgentSpacing.x3) {
+                    Text("14 days free · then $8.99 a month")
+                        .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                        .tracking(0.5)
+                        .textCase(.uppercase)
+                        .foregroundStyle(Color.agentSecondary)
+
+                    Button("Start 14-day trial", action: primaryAction)
+                        .font(.paperInter(size: 16, weight: .semibold, relativeTo: .body))
+                        .foregroundStyle(Color.onCyAccent)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(Color.cyAccent, in: .capsule)
+                        .shadow(color: Color.cyAccent.opacity(0.26), radius: 14, y: 6)
+                        .buttonStyle(.plain)
+
+                    Button("Not now", action: secondaryAction)
+                        .font(.paperInter(size: 14, weight: .medium, relativeTo: .body))
+                        .foregroundStyle(Color.agentText)
+                        .frame(minHeight: 40)
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 520, alignment: .topLeading)
+        .padding(.horizontal, AgentSpacing.x2)
+        .padding(.top, AgentSpacing.x2)
+        .accessibilityLabel(message)
+        .onAppear { isRotating = true }
+    }
+
+    private func benefitRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: AgentSpacing.x3) {
+            CyAsterisk(color: .cyAccent, size: 12, strokeWidth: 1.2)
+                .frame(width: 16, height: 18)
+            Text(text)
+                .font(.paperInter(size: 14, weight: .medium, relativeTo: .body))
+                .foregroundStyle(Color.agentText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 @MainActor
 struct QuickCaptureView: View {
     private enum CaptureKind: String, CaseIterable, Identifiable {
@@ -25,11 +148,12 @@ struct QuickCaptureView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query private var profiles: [CreatorProfile]
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
-    @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var kind: CaptureKind = .spark
     @State private var ideaTitle = ""
     @State private var ideaNotes = ""
@@ -69,6 +193,17 @@ struct QuickCaptureView: View {
     @State private var showAccess = false
     @State private var selectedDetent: PresentationDetent = .large
     @FocusState private var focusedWritingField: WritingField?
+
+    private var pillars: [Pillar] {
+        allPillars.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+    private var socialAccounts: [CreatorSocialAccount] {
+        allSocialAccounts.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     private enum WritingField: Hashable {
         case ideaNotes
@@ -202,7 +337,6 @@ struct QuickCaptureView: View {
             }
             .sheet(isPresented: $showAccess) {
                 NavigationStack { AccessSettingsView() }
-                    .preferredColorScheme(appModel.appearancePreference.colorSchemeOverride)
                     .presentationDetents([.large])
             }
             .sheet(isPresented: $showTaskDueDatePicker) {
@@ -211,7 +345,6 @@ struct QuickCaptureView: View {
                     hasDueDate: $addTarget,
                     includesTime: $taskIncludesTime
                 )
-                .preferredColorScheme(appModel.appearancePreference.colorSchemeOverride)
                 .presentationDetents([.large])
             }
         }
@@ -248,7 +381,7 @@ struct QuickCaptureView: View {
                 suggestionsHeader(title: "Finding ideas.")
                 HStack(spacing: AgentSpacing.x3) {
                     CyThinkingMark(color: .cyAccent, size: 18)
-                    Text("Shaping directions from your goals, pillars, and work…")
+                    Text("Using your goals, pillars, and saved work.")
                         .font(.agentSubtext)
                         .foregroundStyle(Color.agentSecondary)
                 }
@@ -270,50 +403,16 @@ struct QuickCaptureView: View {
         EditorialHeader(
             kicker: "Cy ideas",
             title: title,
-            subtitle: "Save what fits. Unsaved suggestions disappear when you leave."
+            subtitle: "Save what fits. Unsaved ideas disappear when you leave."
         )
     }
 
     private func cyProUpsell(message: String) -> some View {
-        paperCyState(kicker: "Cy · free limit") {
-            VStack(spacing: AgentSpacing.x4) {
-                HStack(spacing: AgentSpacing.x2) {
-                    CyAsterisk(color: .agentSecondary, size: 12, strokeWidth: 1.2)
-                    Text("Included Cy ideas used")
-                        .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
-                        .textCase(.uppercase)
-                        .tracking(0.8)
-                }
-                .foregroundStyle(Color.agentSecondary)
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(minHeight: 36)
-                .background(Color.agentText.opacity(0.035), in: .capsule)
-                .overlay(Capsule().stroke(Color.agentText.opacity(0.08), lineWidth: 1))
-
-                Text("Keep creating with Cy")
-                    .font(.paperInter(size: 20, weight: .semibold, relativeTo: .title3))
-                    .tracking(-0.2)
-                    .multilineTextAlignment(.center)
-
-                VStack(spacing: AgentSpacing.x2) {
-                    Text("Cy Pro keeps personalized ideas, full briefs, and revisions available.")
-                    Text("14 days free, then $8.99 a month.")
-                }
-                .font(.paperInter(size: 14, weight: .regular, relativeTo: .body))
-                .foregroundStyle(Color.agentSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
-                .frame(maxWidth: 280)
-                .accessibilityLabel(message)
-
-                paperCyActions(
-                    primaryTitle: "Upgrade to Pro",
-                    primaryAction: { showAccess = true },
-                    secondaryTitle: "Not now",
-                    secondaryAction: closeCapture
-                )
-            }
-        }
+        CyProUpsellView(
+            message: message,
+            primaryAction: { showAccess = true },
+            secondaryAction: closeCapture
+        )
     }
 
     private func cyUnavailableNotice(message: String) -> some View {
@@ -403,7 +502,6 @@ struct QuickCaptureView: View {
     private var sparkComposer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
             HStack {
-                MetaLabel("New idea")
                 Spacer()
                 Button {
                     Task { await loadIdeas() }
@@ -424,7 +522,7 @@ struct QuickCaptureView: View {
                 .accessibilityHint("Asks Cy for three ideas")
             }
 
-            TextField("Your idea title…", text: $ideaTitle, axis: .vertical)
+            TextField("Idea title", text: $ideaTitle, axis: .vertical)
                 .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
                 .tracking(-0.56)
                 .lineLimit(1...3)
@@ -446,7 +544,7 @@ struct QuickCaptureView: View {
                 } label: {
                     IdeaCaptureSetupRow(
                         label: "Pillar",
-                        value: selectedIdeaPillar?.name ?? "Pick a pillar",
+                        value: selectedIdeaPillar?.name ?? "No pillar",
                         color: selectedIdeaPillar.map {
                             Color(agentHex: $0.resolvedColorHex(in: activePillars))
                         }
@@ -595,8 +693,6 @@ struct QuickCaptureView: View {
 
     private var taskComposer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-            MetaLabel("New task")
-
             TextField("What's the task?", text: $taskTitle, axis: .vertical)
                 .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
                 .tracking(-0.56)
@@ -632,7 +728,7 @@ struct QuickCaptureView: View {
                     } label: {
                         IdeaCaptureSetupRow(
                             label: "Pillar",
-                            value: selectedTaskPillar?.name ?? "Pick a pillar",
+                            value: selectedTaskPillar?.name ?? "No pillar",
                             color: selectedTaskPillar.map {
                                 Color(agentHex: $0.resolvedColorHex(in: activePillars))
                             }
@@ -706,7 +802,7 @@ struct QuickCaptureView: View {
                             .stroke(Color.agentText.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [3]))
                             .frame(width: 18, height: 18)
                         Text("Add subtask")
-                            .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                            .font(.agentAddAction)
                         Spacer()
                     }
                     .foregroundStyle(Color.agentText)
@@ -870,16 +966,17 @@ struct QuickCaptureView: View {
     }
 
     private var navigationTitle: String {
-        if quickPostDraft != nil { return "New Post" }
+        if case .upgradeRequired = ideaPhase, showingCySuggestions { return "Upgrade" }
+        if quickPostDraft != nil { return "New post" }
         return switch kind {
-        case .spark: "New Idea"
-        case .post: "New Post"
-        case .task: "New Task"
+        case .spark: "New idea"
+        case .post: "New post"
+        case .task: "New task"
         }
     }
 
     private var taskDueDateLabel: String {
-        guard addTarget else { return "Set a date" }
+        guard addTarget else { return "No due date" }
         if taskIncludesTime {
             return targetDate.formatted(
                 .dateTime
@@ -906,7 +1003,7 @@ struct QuickCaptureView: View {
         if savedBrief != nil, kind == .spark { return "It’s in your Idea Bank. Keep editing here if you want." }
         return switch kind {
         case .spark: "Name it, add a note, and choose where it belongs."
-        case .post: "Choose the essentials. Build the full brief when you need it."
+        case .post: "Choose the essentials. Build out the post when you need it."
         case .task: "Capture one clear next action."
         }
     }
@@ -925,6 +1022,7 @@ struct QuickCaptureView: View {
             selectedDetent = .large
         case .unavailable(let message, let requiresUpgrade):
             ideaPhase = .failure(message: message, requiresUpgrade: requiresUpgrade)
+            if requiresUpgrade { selectedDetent = .large }
         case .cancelled:
             ideaPhase = .idle
             isCySuggestionsMode = false
@@ -1255,14 +1353,14 @@ private struct CaptureTaskDueDateSheet: View {
                 .padding(.top, AgentSpacing.x6)
                 .padding(.bottom, AgentSpacing.x12)
             }
-            .navigationTitle("Due")
+            .navigationTitle("Due date")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                        Button("Use date") {
+                        Button("Set date") {
                         date = selectedIncludesTime
                             ? selectedDate
                             : Calendar.current.startOfDay(for: selectedDate)
@@ -1337,7 +1435,7 @@ private struct IdeaDirectionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack {
-                MetaLabel("Direction \(number)")
+                MetaLabel("Idea \(number)")
                 Spacer()
                 if let suggestedPillarName {
                     MetaLabel(suggestedPillarName)

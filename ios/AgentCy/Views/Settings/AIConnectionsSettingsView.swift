@@ -1,8 +1,6 @@
 import SwiftUI
 
 struct AIConnectionsSettingsView: View {
-    @AppStorage(AIConnectionMode.storageKey) private var selectedModeRaw = AIConnectionMode.cyIncluded.rawValue
-
     var body: some View {
         SettingsPageShell(
             kicker: "AI",
@@ -42,9 +40,6 @@ struct AIConnectionsSettingsView: View {
                 .font(.agentSubtext)
                 .foregroundStyle(Color.agentSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-        .onAppear {
-            selectedModeRaw = AIConnectionMode.cyIncluded.rawValue
         }
     }
 

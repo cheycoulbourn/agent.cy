@@ -75,7 +75,126 @@ enum StoreBootstrapService {
         try migrateOutputs(context: context)
         try migrateTasks(context: context)
         try migratePillars(context: context)
+        try migrateCreatorWorkspaces(context: context)
         try context.save()
+    }
+
+    private static func migrateCreatorWorkspaces(context: ModelContext) throws {
+        guard let profile = try context.fetch(FetchDescriptor<CreatorProfile>()).first else { return }
+        var workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+        let accounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>())
+            .filter { !$0.isArchived }
+            .sorted {
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                return $0.createdAt < $1.createdAt
+            }
+
+        if workspaces.isEmpty {
+            let preferredAccount = accounts.first(where: \.isPrimary) ?? accounts.first
+            let primaryAccountIDs = Set(Dictionary(grouping: accounts, by: \.destinationID).compactMap { _, candidates in
+                candidates.first(where: \.isPrimary)?.id ?? candidates.first?.id
+            })
+            let fallbackName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let defaultWorkspace = CreatorWorkspace(
+                profileID: profile.id,
+                name: preferredAccount?.label ?? (fallbackName.isEmpty ? "My account" : fallbackName),
+                primarySocialAccountID: preferredAccount?.id,
+                sortOrder: 0
+            )
+            context.insert(defaultWorkspace)
+            workspaces.append(defaultWorkspace)
+
+            for account in accounts where primaryAccountIDs.contains(account.id) {
+                account.workspaceID = defaultWorkspace.id
+            }
+            for (index, account) in accounts.filter({ !primaryAccountIDs.contains($0.id) }).enumerated() {
+                let workspace = CreatorWorkspace(
+                    profileID: profile.id,
+                    name: account.label,
+                    primarySocialAccountID: account.id,
+                    sortOrder: index + 1
+                )
+                context.insert(workspace)
+                workspaces.append(workspace)
+                account.workspaceID = workspace.id
+            }
+        }
+
+        guard let defaultWorkspace = WorkspaceScope.defaultWorkspace(in: workspaces) else { return }
+        let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+        var workspaceByID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+
+        for account in accounts where account.workspaceID == nil {
+            let workspace = CreatorWorkspace(
+                profileID: profile.id,
+                name: account.label,
+                primarySocialAccountID: account.id,
+                sortOrder: (workspaces.map(\.sortOrder).max() ?? -1) + 1
+            )
+            context.insert(workspace)
+            workspaces.append(workspace)
+            workspaceByID[workspace.id] = workspace
+            account.workspaceID = workspace.id
+        }
+
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
+        let outputsByBrief = Dictionary(grouping: outputs, by: \.briefID)
+        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+        for brief in briefs where brief.workspaceID == nil {
+            brief.workspaceID = outputsByBrief[brief.id]?
+                .compactMap { $0.socialAccountID.flatMap { accountByID[$0]?.workspaceID } }
+                .first ?? defaultWorkspace.id
+        }
+        let briefWorkspaceByID = briefs.reduce(into: [UUID: UUID]()) { result, brief in
+            if let workspaceID = brief.workspaceID { result[brief.id] = workspaceID }
+        }
+
+        for output in outputs where output.workspaceID == nil {
+            output.workspaceID = briefWorkspaceByID[output.briefID] ?? defaultWorkspace.id
+        }
+
+        let pillars = try context.fetch(FetchDescriptor<Pillar>())
+        for pillar in pillars where pillar.workspaceID == nil { pillar.workspaceID = defaultWorkspace.id }
+        let pillarWorkspaceByID = pillars.reduce(into: [UUID: UUID]()) { result, pillar in
+            if let workspaceID = pillar.workspaceID { result[pillar.id] = workspaceID }
+        }
+
+        for task in try context.fetch(FetchDescriptor<CreatorTask>()) where task.workspaceID == nil {
+            task.workspaceID = task.briefID.flatMap { briefWorkspaceByID[$0] }
+                ?? task.pillarID.flatMap { pillarWorkspaceByID[$0] }
+                ?? defaultWorkspace.id
+        }
+        for proposal in try context.fetch(FetchDescriptor<PendingBriefProposal>()) where proposal.workspaceID == nil {
+            proposal.workspaceID = briefWorkspaceByID[proposal.briefID] ?? defaultWorkspace.id
+        }
+        for attachment in try context.fetch(FetchDescriptor<CreatorAttachment>()) where attachment.workspaceID == nil {
+            attachment.workspaceID = briefWorkspaceByID[attachment.briefID] ?? defaultWorkspace.id
+        }
+        for entry in try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>()) where entry.workspaceID == nil {
+            entry.workspaceID = defaultWorkspace.id
+        }
+        for override in try context.fetch(FetchDescriptor<DailyFocusOverride>()) where override.workspaceID == nil {
+            override.workspaceID = defaultWorkspace.id
+        }
+        for detail in try context.fetch(FetchDescriptor<DailyFocusDayDetail>()) where detail.workspaceID == nil {
+            detail.workspaceID = defaultWorkspace.id
+        }
+        for proposal in try context.fetch(FetchDescriptor<PendingWeekProposal>()) where proposal.workspaceID == nil {
+            proposal.workspaceID = defaultWorkspace.id
+        }
+        for template in try context.fetch(FetchDescriptor<RhythmTemplate>()) where template.workspaceID == nil {
+            template.workspaceID = defaultWorkspace.id
+        }
+        for plan in try context.fetch(FetchDescriptor<WeekPlan>()) where plan.workspaceID == nil {
+            plan.workspaceID = defaultWorkspace.id
+        }
+        for thread in try context.fetch(FetchDescriptor<ConversationThread>()) where thread.workspaceID == nil {
+            thread.workspaceID = defaultWorkspace.id
+        }
+
+        if CreatorWorkspacePreferences.activeWorkspaceID.flatMap({ workspaceByID[$0] }) == nil {
+            CreatorWorkspacePreferences.activeWorkspaceID = defaultWorkspace.id
+        }
     }
 
     private static func deduplicateCatalog(destinations: [PublishingDestination], formats: [PublishingFormat], context: ModelContext) throws {
@@ -241,6 +360,8 @@ enum StoreBootstrapService {
         if destination.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { destination.name = source.name }
         if destination.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { destination.goal = source.goal }
         if destination.avatarImageData == nil { destination.avatarImageData = source.avatarImageData }
+        if destination.vibePalette == nil { destination.vibePalette = source.vibePalette }
+        if destination.appearance == .system, source.appearance != .system { destination.appearance = source.appearance }
         destination.selectedDestinationIDs = stableUnion(destination.selectedDestinationIDs, source.selectedDestinationIDs)
         destination.selectedPlatforms = stableUnion(destination.selectedPlatforms, source.selectedPlatforms)
         destination.adultConfirmed = destination.adultConfirmed || source.adultConfirmed

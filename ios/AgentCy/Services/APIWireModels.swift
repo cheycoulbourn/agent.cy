@@ -472,7 +472,7 @@ enum BriefRevisionFieldWire: String, CaseIterable, Codable, Identifiable, Sendab
         case .filmingGuidance: "Production guidance"
         case .proposedTasks: "Focus tasks"
         case .platformVariants: "Platform differences"
-        case .wholeBrief: "Whole brief"
+        case .wholeBrief: "Whole post"
         default: rawValue.capitalized
         }
     }

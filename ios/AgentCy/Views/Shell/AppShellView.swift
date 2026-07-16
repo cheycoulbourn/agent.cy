@@ -14,6 +14,13 @@ struct AppShellView: View {
     @State private var pillarsPath = NavigationPath()
     @State private var ideaBankPath = NavigationPath()
     @State private var cyPath = NavigationPath()
+    @State private var planRootID = UUID()
+    @State private var tasksRootID = UUID()
+    @State private var pillarsRootID = UUID()
+    @State private var ideaBankRootID = UUID()
+    @State private var cyRootID = UUID()
+    @State private var presentedMCPRequestIDs: Set<UUID> = []
+    @State private var hasPendingMCPReview = false
     private let bottomNavigationClearance: CGFloat = 76
 
     var body: some View {
@@ -22,29 +29,31 @@ struct AppShellView: View {
             ZStack(alignment: .bottom) {
                 ZStack {
                     NavigationStack(path: $planPath) { PlanView().taskNavigationDestinations() }
+                        .id(planRootID)
                         .appTabLayer(.today, selection: model.selectedTab)
                     NavigationStack(path: $tasksPath) { TasksView().taskNavigationDestinations() }
+                        .id(tasksRootID)
                         .appTabLayer(.tasks, selection: model.selectedTab)
                     NavigationStack(path: $pillarsPath) { PillarsView().taskNavigationDestinations() }
+                        .id(pillarsRootID)
                         .appTabLayer(.pillars, selection: model.selectedTab)
                     NavigationStack(path: $ideaBankPath) { IdeaBankView().taskNavigationDestinations() }
+                        .id(ideaBankRootID)
                         .appTabLayer(.ideaBank, selection: model.selectedTab)
                     NavigationStack(path: $cyPath) {
                         AskCyView(bottomClearance: isKeyboardVisible ? 0 : bottomNavigationClearance)
                             .taskNavigationDestinations()
                     }
+                        .id(cyRootID)
                         .appTabLayer(.cy, selection: model.selectedTab)
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
 
                 if !isKeyboardVisible {
-                    PaperBottomNavigation(selection: Binding(
-                        get: { model.selectedTab },
-                        set: { selectTab($0) }
-                    ), showCyPlanningCue: WeeklyPlanningCue.shouldPulse(
+                    PaperBottomNavigation(selection: model.selectedTab, onSelect: selectTab, showCyPlanningCue: WeeklyPlanningCue.shouldPulse(
                         on: cueDate,
                         lastOpenedWeekKey: cyPlanningWeekOpened
-                    )) {
+                    ), hasPendingCyReview: hasPendingMCPReview) {
                         appModel.presentedSheet = .creationHub
                     }
                     .padding(.horizontal, AgentLayout.pageMargin)
@@ -65,7 +74,6 @@ struct AppShellView: View {
                 case .settings: SettingsView()
                 }
             }
-            .preferredColorScheme(model.appearancePreference.colorSchemeOverride)
         }
         .alert("agent.cy", isPresented: Binding(
             get: { appModel.notice != nil },
@@ -87,8 +95,23 @@ struct AppShellView: View {
             await appModel.refreshReminderSchedule(context: modelContext)
             openRequestedTaskIfNeeded()
         }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            presentedMCPRequestIDs = []
+            while !Task.isCancelled {
+                presentMCPApprovalsIfNeeded()
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
         .onChange(of: appModel.requestedTaskID) { _, _ in
             openRequestedTaskIfNeeded()
+        }
+        .onChange(of: appModel.workspaceRevision) { _, _ in
+            planPath = NavigationPath()
+            tasksPath = NavigationPath()
+            pillarsPath = NavigationPath()
+            ideaBankPath = NavigationPath()
+            cyPath = NavigationPath()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
@@ -101,14 +124,19 @@ struct AppShellView: View {
         switch tab {
         case .today:
             planPath = NavigationPath()
+            planRootID = UUID()
         case .tasks:
             tasksPath = NavigationPath()
+            tasksRootID = UUID()
         case .pillars:
             pillarsPath = NavigationPath()
+            pillarsRootID = UUID()
         case .ideaBank:
             ideaBankPath = NavigationPath()
+            ideaBankRootID = UUID()
         case .cy:
             cyPath = NavigationPath()
+            cyRootID = UUID()
             cyPlanningWeekOpened = WeeklyPlanningCue.weekKey(for: Date())
         }
         appModel.selectedTab = tab
@@ -120,6 +148,30 @@ struct AppShellView: View {
         tasksPath = NavigationPath()
         tasksPath.append(TaskNavigationRoute(taskID: taskID))
         appModel.requestedTaskID = nil
+    }
+
+    private func presentMCPApprovalsIfNeeded() {
+        guard MCPBridgePreferences.isConnected else {
+            hasPendingMCPReview = false
+            presentedMCPRequestIDs = []
+            return
+        }
+        guard let requests = try? MCPBridgeService.pendingRequests() else {
+            return
+        }
+        let requestIDs = Set(requests.map(\.id))
+        hasPendingMCPReview = !requestIDs.isEmpty
+        guard !requestIDs.isEmpty else {
+            presentedMCPRequestIDs = []
+            return
+        }
+        guard !requestIDs.subtracting(presentedMCPRequestIDs).isEmpty else { return }
+        presentedMCPRequestIDs = requestIDs
+
+        appModel.presentedSheet = nil
+        appModel.requestedSettingsPage = nil
+        cyPath = NavigationPath()
+        appModel.selectedTab = .cy
     }
 
 }
@@ -137,8 +189,10 @@ private extension View {
 }
 
 private struct PaperBottomNavigation: View {
-    @Binding var selection: AppTab
+    let selection: AppTab
+    let onSelect: (AppTab) -> Void
     let showCyPlanningCue: Bool
+    let hasPendingCyReview: Bool
     let openCreationHub: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -157,10 +211,10 @@ private struct PaperBottomNavigation: View {
                         ForEach(AppTab.allCases) { tab in
                             Button {
                                 if reduceMotion {
-                                    selection = tab
+                                    onSelect(tab)
                                 } else {
                                     withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                                        selection = tab
+                                        onSelect(tab)
                                     }
                                 }
                             } label: {
@@ -168,7 +222,10 @@ private struct PaperBottomNavigation: View {
                                     .frame(width: 46, height: 46)
                                     .foregroundStyle(foreground(for: tab))
                                     .background {
-                                        if tab == .cy, showCyPlanningCue, selection != .cy {
+                                        if tab == .cy,
+                                           showCyPlanningCue,
+                                           !hasPendingCyReview,
+                                           selection != .cy {
                                             CyWeeklyPlanningPulse()
                                         }
                                         if selection == tab {
@@ -192,9 +249,7 @@ private struct PaperBottomNavigation: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel(tab.title)
                             .accessibilityHint(
-                                tab == .cy && showCyPlanningCue
-                                    ? "Cy is ready to help plan the new week"
-                                    : ""
+                                cyAccessibilityHint(for: tab)
                             )
                             .accessibilityAddTraits(selection == tab ? .isSelected : [])
                         }
@@ -251,12 +306,42 @@ private struct PaperBottomNavigation: View {
     @ViewBuilder
     private func tabIcon(for tab: AppTab) -> some View {
         if tab == .cy {
-            CyAsterisk(color: foreground(for: tab), size: 20, strokeWidth: 1.8)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            if hasPendingCyReview {
+                CyPendingReviewAsterisk(color: foreground(for: tab))
+            } else {
+                CyAsterisk(color: foreground(for: tab), size: 20, strokeWidth: 1.8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            }
         } else {
             Image(systemName: tab.symbol)
-                .font(.system(size: 19, weight: .medium))
+                .font(.system(size: 18, weight: .regular))
+                .symbolRenderingMode(.monochrome)
         }
+    }
+
+    private func cyAccessibilityHint(for tab: AppTab) -> String {
+        guard tab == .cy else { return "" }
+        if hasPendingCyReview { return "Cy has new changes waiting for review" }
+        if showCyPlanningCue { return "Cy is ready to help plan the new week" }
+        return ""
+    }
+}
+
+private struct CyPendingReviewAsterisk: View {
+    let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isRotating = false
+
+    var body: some View {
+        CyAsterisk(color: color, size: 20, strokeWidth: 1.8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
+            .animation(
+                reduceMotion ? nil : .linear(duration: 1.8).repeatForever(autoreverses: false),
+                value: isRotating
+            )
+            .onAppear { isRotating = true }
+            .accessibilityHidden(true)
     }
 }
 

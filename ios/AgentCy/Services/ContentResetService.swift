@@ -32,21 +32,35 @@ struct ContentResetService: ContentResetServicing {
 
     func reset(context: ModelContext) throws {
         do {
+            let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+            let activeID = WorkspaceScope.activeWorkspaceID(
+                preferredID: CreatorWorkspacePreferences.activeWorkspaceID,
+                workspaces: workspaces
+            )
+            func isActive<T: WorkspaceScopedRecord>(_ record: T) -> Bool {
+                WorkspaceScope.includes(
+                    record.workspaceID,
+                    activeWorkspaceID: activeID,
+                    workspaces: workspaces
+                )
+            }
             let resetThreads = try context.fetch(FetchDescriptor<ConversationThread>())
                 .filter { thread in
-                    thread.briefID != nil ||
-                        thread.contextKind == .brief ||
-                        thread.contextKind == .task ||
-                        thread.contextKind == .day
+                    isActive(thread) && (
+                        thread.briefID != nil ||
+                            thread.contextKind == .brief ||
+                            thread.contextKind == .task ||
+                            thread.contextKind == .day
+                    )
                 }
             let resetThreadIDs = Set(resetThreads.map(\.id))
             let messages = try context.fetch(FetchDescriptor<ConversationMessage>())
-            let pendingBriefProposals = try context.fetch(FetchDescriptor<PendingBriefProposal>())
-            let pendingWeekProposals = try context.fetch(FetchDescriptor<PendingWeekProposal>())
-            let attachments = try context.fetch(FetchDescriptor<CreatorAttachment>())
-            let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
-            let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
-            let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+            let pendingBriefProposals = try context.fetch(FetchDescriptor<PendingBriefProposal>()).filter(isActive)
+            let pendingWeekProposals = try context.fetch(FetchDescriptor<PendingWeekProposal>()).filter(isActive)
+            let attachments = try context.fetch(FetchDescriptor<CreatorAttachment>()).filter(isActive)
+            let outputs = try context.fetch(FetchDescriptor<PlatformOutput>()).filter(isActive)
+            let tasks = try context.fetch(FetchDescriptor<CreatorTask>()).filter(isActive)
+            let briefs = try context.fetch(FetchDescriptor<CreativeBrief>()).filter(isActive)
 
             messages.filter { resetThreadIDs.contains($0.threadID) }.forEach(context.delete)
             resetThreads.forEach(context.delete)

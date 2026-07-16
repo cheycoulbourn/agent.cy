@@ -8,16 +8,17 @@ struct AgendaView: View {
     let showsHeader: Bool
     let selectDay: (Date) -> Void
     @Environment(AppModel.self) private var appModel
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
-    @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
-    @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query private var destinations: [PublishingDestination]
     @Query private var formats: [PublishingFormat]
-    @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
     @Query private var profiles: [CreatorProfile]
-    @Query private var focusTemplates: [DailyFocusTemplateEntry]
-    @Query private var focusOverrides: [DailyFocusOverride]
+    @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
+    @Query private var allFocusOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @AppStorage("didPresentWeeklyFocusSetup") private var didPresentWeeklyFocusSetup = false
     @State private var headerHeight: CGFloat = 0
     @State private var schedulingPost: AgendaDaySelection?
@@ -26,6 +27,24 @@ struct AgendaView: View {
     @State private var showWeeklyFocusSetup = false
     @State private var deepLinkedBrief: CreativeBrief?
     @State private var deepLinkedBriefOpensEditor = false
+
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private var socialAccounts: [CreatorSocialAccount] { scoped(allSocialAccounts) }
+    private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
+    private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
+
+    private func scoped<T>(_ values: [T]) -> [T] where T: WorkspaceScopedRecord {
+        values.filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
 
     private var weekStart: Date {
         let calendar = Calendar.current
@@ -114,7 +133,7 @@ struct AgendaView: View {
             }) {
                 PostOutputDetailView(brief: brief, output: output)
             } else {
-                BriefDetailView(brief: brief)
+                IdeaPostDraftView(brief: brief)
             }
         }
         .task {
@@ -185,7 +204,7 @@ struct AgendaView: View {
             Text("Batch similar work.")
                 .font(.agentHeadline)
 
-            Text("Choose up to two recurring focuses for each day. Empty days become Rest.")
+            Text("Choose up to two focuses for each day. Unassigned days are Rest.")
                 .font(.agentSubtext)
                 .foregroundStyle(Color.agentSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -244,7 +263,7 @@ struct AgendaView: View {
     }
 
     private func calendarDay(_ day: Date) -> some View {
-        let isSelected = Calendar.current.isDate(day, inSameDayAs: selectedDay)
+        let isToday = Calendar.current.isDateInToday(day)
         let dotColor = pillarHex(on: day).map {
             Color(agentHex: AgendaPillarDotPresentation.displayedHex(storedHex: $0))
         }
@@ -260,7 +279,7 @@ struct AgendaView: View {
                     .textCase(.uppercase)
                     .foregroundStyle(Color.agentSecondary)
                 Text(day.formatted(.dateTime.day()))
-                    .font(.agentBody.weight(isSelected ? .semibold : .medium))
+                    .font(.agentBody.weight(isToday ? .semibold : .medium))
                 if let dotColor {
                     Circle()
                         .fill(dotColor)
@@ -283,7 +302,7 @@ struct AgendaView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(
-                        isSelected ? Color.agentFocusControl : Color.clear,
+                        isToday ? Color.agentFocusControl : Color.clear,
                         lineWidth: 1
                     )
             }
@@ -291,7 +310,7 @@ struct AgendaView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAddTraits(isToday ? .isSelected : [])
     }
 
     @ViewBuilder
@@ -487,34 +506,18 @@ struct AgendaView: View {
         let displayTime = firstTaskDate ?? (output.includesTargetTime ? output.targetDate : nil)
         let statusText = overdue ? "Missed" : nil
 
-        return VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            NavigationLink {
-                PostOutputDetailView(brief: brief, output: output)
-            } label: {
-                AgentPostCard(
-                    title: outputTitle(output, brief: brief),
-                    pillar: pillarName(for: brief),
-                    accent: accent,
-                    status: displayStatus,
-                    metadata: platformLabel(for: output),
-                    timeText: displayTime?.formatted(date: .omitted, time: .shortened),
-                    statusTextOverride: statusText
-                )
-            }
-            .buttonStyle(.plain)
-
-            if overdue {
-                Button("Reschedule →") {
-                    reschedulingOutput = output
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.agentText)
-                .underline(pattern: .solid, color: .agentText)
-                .buttonStyle(.plain)
-                .accessibilityHint("Choose a new posting date and time")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        return AgentPostCard(
+            title: outputTitle(output, brief: brief),
+            pillar: pillarName(for: brief),
+            accent: accent,
+            status: displayStatus,
+            metadata: platformLabel(for: output),
+            timeText: displayTime?.formatted(date: .omitted, time: .shortened),
+            statusTextOverride: statusText,
+            destination: AnyView(PostOutputDetailView(brief: brief, output: output)),
+            footerActionTitle: overdue ? "Reschedule" : nil,
+            footerAction: overdue ? { reschedulingOutput = output } : nil
+        )
     }
 
     private func dayHeaderDate(_ day: Date) -> String {
@@ -798,15 +801,16 @@ struct DayAgendaView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
-    @Query(sort: \CreatorTask.createdAt) private var tasks: [CreatorTask]
-    @Query private var pillars: [Pillar]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
+    @Query private var allPillars: [Pillar]
     @Query private var destinations: [PublishingDestination]
     @Query private var formats: [PublishingFormat]
-    @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
-    @Query private var focusTemplates: [DailyFocusTemplateEntry]
-    @Query private var focusOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
+    @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
+    @Query private var allFocusOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var planner: DayPlannerKind?
     @State private var isChoosingPost = false
     @State private var draftPillarID: UUID?
@@ -814,6 +818,24 @@ struct DayAgendaView: View {
     @State private var showPillarOverwriteConfirmation = false
     @State private var dismissAfterPillarSave = false
     @State private var baselineDaySignature: String?
+
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private var socialAccounts: [CreatorSocialAccount] { scoped(allSocialAccounts) }
+    private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
+    private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
+
+    private func scoped<T>(_ values: [T]) -> [T] where T: WorkspaceScopedRecord {
+        values.filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
 
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
@@ -864,7 +886,7 @@ struct DayAgendaView: View {
                 EditorialHeader(
                     kicker: day.formatted(.dateTime.month(.abbreviated).day().year()),
                     title: Calendar.current.isDateInToday(day) ? "Today." : day.formatted(.dateTime.weekday(.wide)),
-                    subtitle: "Posts and tasks stay separate."
+                    subtitle: "Everything planned for this day."
                 )
                 .padding(.horizontal, AgentLayout.pageMargin)
 
@@ -961,7 +983,7 @@ struct DayAgendaView: View {
             HStack(alignment: .firstTextBaseline) {
                 MetaLabel("Pillar")
                 Spacer()
-                MetaLabel("Repeats every \(weekday.title)")
+                MetaLabel("Assigned every \(weekday.title)")
             }
 
             Menu {
@@ -1083,9 +1105,9 @@ struct DayAgendaView: View {
         let dateLabel = day.formatted(.dateTime.month(.abbreviated).day())
 
         if let displayedPillar {
-            return "This replaces the pillar assigned to \(weekday.title) and moves \(postLabel) from \(dateLabel) to \(displayedPillar.name)."
+            return "\(displayedPillar.name) will replace the pillar assigned to \(weekday.title). The \(postLabel) on \(dateLabel) will also move to \(displayedPillar.name)."
         }
-        return "This removes the pillar assigned to \(weekday.title) and leaves \(postLabel) from \(dateLabel) unfiled."
+        return "\(weekday.title) will have no assigned pillar. The \(postLabel) on \(dateLabel) will become unfiled."
     }
 
     private func cancelPillarOverwrite() {
@@ -1116,7 +1138,7 @@ struct DayAgendaView: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionRuleHeader(title: "Posts", trailing: "\(dayOutputs.count)")
             if dayOutputs.isEmpty {
-                Text("No posts scheduled.").font(.agentSubtext).foregroundStyle(Color.agentSecondary).padding(.vertical, AgentSpacing.x4)
+                Text("No posts planned.").font(.agentSubtext).foregroundStyle(Color.agentSecondary).padding(.vertical, AgentSpacing.x4)
             } else {
                 ForEach(dayOutputs) { output in
                     if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
@@ -1147,13 +1169,13 @@ struct DayAgendaView: View {
             dayTaskCollection(
                 title: TaskCollection.postTasks.title,
                 tasks: postTasks,
-                emptyMessage: "No post tasks for this day."
+                emptyMessage: "No post tasks."
             )
 
             dayTaskCollection(
                 title: TaskCollection.myTasks.title,
                 tasks: myTasks,
-                emptyMessage: "No personal or focus tasks for this day."
+                emptyMessage: "No tasks planned."
             )
 
             AgentAddActionRow(title: "Add task") { planner = .task }
@@ -1378,14 +1400,32 @@ private struct DayPlannerSheet: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
-    @Query(sort: \CreatorTask.createdAt, order: .reverse) private var tasks: [CreatorTask]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
+    @Query(sort: \CreatorTask.createdAt, order: .reverse) private var allTasks: [CreatorTask]
     @Query private var destinations: [PublishingDestination]
     @Query private var formats: [PublishingFormat]
-    @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
-    @Query private var focusTemplates: [DailyFocusTemplateEntry]
-    @Query private var focusOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
+    @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
+    @Query private var allFocusOverrides: [DailyFocusOverride]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var socialAccounts: [CreatorSocialAccount] { scoped(allSocialAccounts) }
+    private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
+    private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
+
+    private func scoped<T>(_ values: [T]) -> [T] where T: WorkspaceScopedRecord {
+        values.filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -1461,8 +1501,7 @@ private struct DayPlannerSheet: View {
     private func createNew() {
         dismiss()
         appModel.quickCaptureTargetDate = plannedDate
-        appModel.quickCaptureStartsWithPost = kind == .post
-        appModel.quickCaptureStartsWithTask = kind == .task
+        appModel.setQuickCaptureMode(kind == .post ? .post : .task)
         if kind == .task {
             appModel.quickCaptureTaskLane = .production
             appModel.quickCaptureTaskFocus = resolvedFocus.map {

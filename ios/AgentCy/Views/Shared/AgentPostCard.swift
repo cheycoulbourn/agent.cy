@@ -9,8 +9,45 @@ struct AgentPostCard: View {
     let metadata: String
     let timeText: String?
     var statusTextOverride: String? = nil
+    var destination: AnyView? = nil
+    var footerActionTitle: String? = nil
+    var footerAction: (() -> Void)? = nil
 
     var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            if let destination {
+                NavigationLink {
+                    destination
+                } label: {
+                    cardContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                cardContent
+            }
+
+            if let footerActionTitle, let footerAction {
+                Button(footerActionTitle, action: footerAction)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isAlertStatus ? Color.agentDestructive : Color.agentText)
+                    .underline(pattern: .solid)
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 32, alignment: .leading)
+                    .accessibilityHint("Choose a new posting date and time")
+            }
+        }
+        .foregroundStyle(Color.agentText)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, AgentSpacing.x4)
+        .padding(.vertical, AgentSpacing.x4)
+        .background(cardBackground, in: .rect(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(cardBorder, lineWidth: 1)
+        )
+    }
+
+    private var cardContent: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             HStack(alignment: .top, spacing: AgentSpacing.x3) {
                 HStack(spacing: AgentSpacing.x2) {
@@ -29,11 +66,11 @@ struct AgentPostCard: View {
                     .tracking(0.6)
                     .padding(.horizontal, AgentSpacing.x2)
                     .frame(minHeight: 24)
-                    .background(status == .posted ? Color.actionAccent : Color.clear, in: .rect(cornerRadius: 6))
-                    .foregroundStyle(status == .posted ? Color.onAccent : Color.agentText)
+                    .background(statusBadgeBackground, in: .rect(cornerRadius: 6))
+                    .foregroundStyle(statusBadgeForeground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(status == .posted ? Color.clear : Color.agentText.opacity(0.20), lineWidth: 1)
+                            .stroke(statusBadgeBorder, lineWidth: 1)
                     )
             }
 
@@ -58,15 +95,8 @@ struct AgentPostCard: View {
                     .font(.system(size: 13, weight: .medium))
             }
         }
-        .foregroundStyle(Color.agentText)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, AgentSpacing.x4)
-        .padding(.vertical, AgentSpacing.x4)
-        .background(cardBackground, in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(cardBorder, lineWidth: 1)
-        )
+        .contentShape(Rectangle())
     }
 
     private var cardBackground: Color {
@@ -87,5 +117,24 @@ struct AgentPostCard: View {
         case .scheduled: "SCHEDULED"
         case .posted: "POSTED"
         }
+    }
+
+    private var isAlertStatus: Bool {
+        statusTextOverride?.caseInsensitiveCompare("Missed") == .orderedSame
+    }
+
+    private var statusBadgeBackground: Color {
+        if isAlertStatus { return .agentDestructive }
+        return status == .posted ? .actionAccent : .clear
+    }
+
+    private var statusBadgeForeground: Color {
+        if isAlertStatus { return .onCyAccent }
+        return status == .posted ? .onAccent : .agentText
+    }
+
+    private var statusBadgeBorder: Color {
+        if isAlertStatus || status == .posted { return .clear }
+        return Color.agentText.opacity(0.20)
     }
 }

@@ -57,6 +57,24 @@ extension AppearancePreference {
         case .dark: .dark
         }
     }
+
+    var userInterfaceStyle: UIUserInterfaceStyle {
+        switch self {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
+@MainActor
+enum AgentAppearanceController {
+    static func apply(_ preference: AppearancePreference) {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .forEach { $0.overrideUserInterfaceStyle = preference.userInterfaceStyle }
+    }
 }
 
 private extension UIColor {
@@ -111,6 +129,16 @@ extension Font {
             return .custom("InterVariable", size: 13, relativeTo: .subheadline)
         }
         return .system(size: 13, weight: .regular, design: .default)
+    }
+
+    /// Typography for every inline add action (Add task, Schedule post,
+    /// Capture an idea, and similar rows). Keep these actions quiet and
+    /// consistent; primary creation buttons use their dedicated button style.
+    static var agentAddAction: Font {
+        if UIFont(name: "InterVariable", size: 15) != nil {
+            return .custom("InterVariable", size: 15, relativeTo: .body).weight(.medium)
+        }
+        return .system(size: 15, weight: .medium, design: .default)
     }
 
     static var agentMono: Font {
@@ -193,7 +221,7 @@ struct AgentAddActionRow: View {
                 .frame(width: 18, height: 18)
 
                 Text(title)
-                    .font(.agentBody)
+                    .font(.agentAddAction)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .foregroundStyle(Color.agentText)

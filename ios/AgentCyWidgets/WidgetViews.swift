@@ -256,10 +256,11 @@ struct WeeklyRhythmWidgetView: View {
                 Spacer(minLength: 9)
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(todayFocus.uppercased()).widgetMeta()
-                        Text("Today’s batch")
+                        Text("TODAY’S FOCUS").widgetMeta()
+                        Text(todayFocus)
                             .font(.widgetInter(size: 13, weight: .semibold))
                             .foregroundStyle(WidgetPalette.ink)
+                            .lineLimit(1)
                     }
                     Spacer()
                     Link(destination: AgentCyDeepLink.agenda(day: nil).url) {

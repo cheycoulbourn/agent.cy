@@ -2,19 +2,49 @@ import SwiftData
 import SwiftUI
 import UIKit
 
+private struct CyPlateItem: Identifiable {
+    let id: String
+    let count: Int
+    let title: String
+}
+
 struct AskCyView: View {
     private let bottomClearance: CGFloat
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query(sort: \ConversationThread.updatedAt, order: .reverse) private var threads: [ConversationThread]
+    @Query(sort: \ConversationThread.updatedAt, order: .reverse) private var allThreads: [ConversationThread]
     @Query(sort: \ConversationMessage.createdAt) private var allMessages: [ConversationMessage]
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query private var allOutputs: [PlatformOutput]
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
+    @Query private var allPillars: [Pillar]
     @Query private var profiles: [CreatorProfile]
+    @Query private var subscriptions: [SubscriptionState]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var prompt = ""
     @State private var thread: ConversationThread?
     @State private var isSending = false
+    @State private var pendingReviews: [MCPBridgeChangeRequest] = []
+    @State private var reviewingRequest: MCPBridgeChangeRequest?
+    @State private var reviewError: String?
+    @State private var hasLoadedPendingReviews = false
+    @State private var showReviewCompletion = false
+    @State private var showConversationHistory = false
+    @State private var showProUpsell = false
+    @State private var showProAccessDetails = false
     @FocusState private var composerIsFocused: Bool
+
+    private var threads: [ConversationThread] { scoped(allThreads) }
+    private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var outputs: [PlatformOutput] { scoped(allOutputs) }
+    private var tasks: [CreatorTask] { scoped(allTasks) }
+    private var pillars: [Pillar] { scoped(allPillars) }
+    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
+        values.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
 
     init(bottomClearance: CGFloat = 0) {
         self.bottomClearance = bottomClearance
@@ -23,6 +53,15 @@ struct AskCyView: View {
     private var messages: [ConversationMessage] {
         guard let thread else { return [] }
         return allMessages.filter { $0.threadID == thread.id }
+    }
+
+    private var conversationThreads: [ConversationThread] {
+        threads.filter { $0.briefID == nil && $0.contextKind == .none }
+    }
+
+    private var hasProAccess: Bool {
+        guard let access = subscriptions.first?.access else { return false }
+        return access == .trial || access == .paid || access == .comped
     }
 
     private var currentDraft: CreativeBrief? {
@@ -34,52 +73,23 @@ struct AskCyView: View {
             topRail
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.top, AgentSpacing.x8)
-                .padding(.bottom, messages.isEmpty ? AgentSpacing.x4 : AgentSpacing.x1)
+                .padding(.bottom, showsConversation && !messages.isEmpty ? AgentSpacing.x1 : AgentSpacing.x4)
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                        if messages.isEmpty {
-                            opening
-                        } else {
-                            conversationDivider
-                            ForEach(Array(messages.enumerated()), id: \.element.id) { _, message in
-                                messageView(message)
-                                    .id(message.id)
-                            }
-                            if isSending { typingIndicator }
-                        }
-                        Color.clear
-                            .frame(height: 1)
-                            .id("ask-cy-bottom")
-                    }
-                    .padding(.horizontal, AgentLayout.pageMargin)
-                    .padding(.top, AgentSpacing.x4)
-                    .padding(.bottom, AgentSpacing.x4)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .onChange(of: messages.last?.id) { _, _ in
-                    revealLatestMessage(using: proxy)
-                }
-                .onChange(of: isSending) { _, sending in
-                    guard sending else { return }
-                    revealThinkingState(using: proxy)
-                }
-                .onChange(of: composerIsFocused) { _, isFocused in
-                    guard isFocused else { return }
-                    revealConversationEnd(using: proxy)
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                    revealConversationEnd(using: proxy)
-                }
+            if showReviewCompletion {
+                reviewCompletionContent
+            } else if pendingReviews.isEmpty {
+                conversationContent
+            } else {
+                pendingReviewContent
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            composer
+            if showsConversation { composer }
         }
         .toolbar(.hidden, for: .navigationBar)
         .task {
             loadThread()
+            reloadPendingReviews()
             if let pending = appModel.pendingCyPrompt {
                 prompt = pending
                 appModel.pendingCyPrompt = nil
@@ -87,14 +97,201 @@ struct AskCyView: View {
             }
             await appModel.refreshAccess(context: context)
         }
+        .task {
+            while !Task.isCancelled {
+                reloadPendingReviews()
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
         .onChange(of: appModel.pendingCyPrompt) { _, pending in
             guard let pending else { return }
             prompt = pending
             appModel.pendingCyPrompt = nil
             composerIsFocused = true
         }
+        .sheet(item: $reviewingRequest) { request in
+            NavigationStack {
+                MCPBridgeRequestReviewView(
+                    request: request,
+                    approve: { reviewedRequest in
+                        try MCPBridgeService.approve(reviewedRequest, context: context)
+                        reloadPendingReviews()
+                    },
+                    decline: {
+                        try MCPBridgeService.reject(request)
+                        reloadPendingReviews()
+                    }
+                )
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showConversationHistory) {
+            CyConversationHistoryView(
+                threads: conversationThreads,
+                messages: allMessages,
+                currentThreadID: thread?.id,
+                openThread: openThreadFromHistory,
+                deleteThread: deleteThreadFromHistory
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showProUpsell) {
+            NavigationStack {
+                ScrollView {
+                    CyProUpsellView(
+                        message: "Upgrade to agent.cy Pro to start auto prompts with Cy.",
+                        primaryAction: { showProAccessDetails = true },
+                        secondaryAction: { showProUpsell = false }
+                    )
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(.top, AgentSpacing.x4)
+                    .padding(.bottom, AgentSpacing.x8)
+                }
+                .navigationTitle("Upgrade")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", systemImage: "xmark") { showProUpsell = false }
+                            .labelStyle(.iconOnly)
+                    }
+                }
+                .navigationDestination(isPresented: $showProAccessDetails) {
+                    AccessSettingsView()
+                }
+                .agentScreen()
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .alert("agent.cy", isPresented: Binding(
+            get: { reviewError != nil },
+            set: { if !$0 { reviewError = nil } }
+        )) {
+            Button("Close", role: .cancel) { reviewError = nil }
+        } message: {
+            Text(reviewError ?? "")
+        }
         .agentScreen()
         .agentKeyboardDismissal()
+    }
+
+    private var conversationContent: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    if messages.isEmpty {
+                        opening
+                    } else {
+                        conversationDivider
+                        ForEach(Array(messages.enumerated()), id: \.element.id) { _, message in
+                            messageView(message)
+                                .id(message.id)
+                        }
+                        if isSending { typingIndicator }
+                    }
+                    Color.clear
+                        .frame(height: 1)
+                        .id("ask-cy-bottom")
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x4)
+                .padding(.bottom, AgentSpacing.x4)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: messages.last?.id) { _, _ in
+                revealLatestMessage(using: proxy)
+            }
+            .onChange(of: isSending) { _, sending in
+                guard sending else { return }
+                revealThinkingState(using: proxy)
+            }
+            .onChange(of: composerIsFocused) { _, isFocused in
+                guard isFocused else { return }
+                revealConversationEnd(using: proxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                revealConversationEnd(using: proxy)
+            }
+        }
+    }
+
+    private var pendingReviewContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                HStack(spacing: AgentSpacing.x2) {
+                    CyAsterisk(color: .cyAccent, size: 20, strokeWidth: 1.7)
+                    MetaLabel("CY · FOR REVIEW")
+                        .foregroundStyle(Color.cyAccent)
+                }
+                Text("I have something\nfor you.")
+                    .font(.agentDisplay)
+                    .tracking(-0.64)
+                Text("Review each post before it changes your calendar.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.bottom, AgentSpacing.x6)
+
+            SectionRuleHeader(
+                title: "Waiting for review",
+                trailing: "\(pendingReviews.count)"
+            )
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.bottom, AgentSpacing.x2)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                ForEach(pendingReviews) { request in
+                    Button {
+                        reviewingRequest = request
+                    } label: {
+                        reviewCard(for: request)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the complete proposed post for approval")
+                }
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.bottom, bottomClearance + AgentSpacing.x8)
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+
+    private var reviewCompletionContent: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                HStack(spacing: AgentSpacing.x2) {
+                    CyAsterisk(color: .cyAccent, size: 20, strokeWidth: 1.7)
+                    MetaLabel("CY · REVIEW COMPLETE")
+                        .foregroundStyle(Color.cyAccent)
+                }
+
+                Text("All done\nfor now.")
+                    .font(.agentDisplay)
+                    .tracking(-0.64)
+
+                Text("All done for now. Nothing else is waiting for review.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button("Back to Cy") {
+                showReviewCompletion = false
+            }
+            .buttonStyle(AgentCyPrimaryButtonStyle())
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x6)
+        .padding(.bottom, bottomClearance + AgentSpacing.x8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var topRail: some View {
@@ -105,7 +302,8 @@ struct AskCyView: View {
         ) {
             Menu {
                 Button("New conversation") { startNewThread() }
-                if thread != nil { Button("Archive conversation") { archiveThread() } }
+                Button("Conversation history") { showConversationHistory = true }
+                if thread != nil { Button("Move to history") { archiveThread() } }
             } label: {
                 Image(systemName: "ellipsis")
                     .frame(width: 44, height: 44)
@@ -120,37 +318,94 @@ struct AskCyView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Hey \(displayName),")
                     .font(.system(size: 32, weight: .regular))
-                Text("what are we building today?")
+                Text("what are we creating today?")
                     .font(.agentDisplay)
             }
             .tracking(-0.64)
 
-            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                MetaLabel("On your plate")
-                    .foregroundStyle(Color.cyAccent)
-                Text(onYourPlateCopy)
-                    .font(.agentSubtext)
-                    .foregroundStyle(Color.agentText)
-                    .fixedSize(horizontal: false, vertical: true)
+            Button(action: useOnYourPlatePrompt) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    MetaLabel("On your plate")
+                        .foregroundStyle(Color.cyAccent)
+
+                    if !onYourPlateItems.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(Array(onYourPlateItems.enumerated()), id: \.element.id) { index, item in
+                                HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                                    Text("\(item.count)")
+                                        .font(.agentMono)
+                                        .foregroundStyle(Color.cyAccent)
+                                        .frame(width: 24, alignment: .leading)
+                                    Text(item.title)
+                                        .font(.agentSubtext)
+                                        .foregroundStyle(Color.agentText)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.vertical, AgentSpacing.x2)
+                                .overlay(alignment: .top) {
+                                    if index > 0 {
+                                        Rectangle().fill(Color.cyAccent.opacity(0.12)).frame(height: 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                        Text(onYourPlateSuggestion.display)
+                            .font(.agentSubtext.weight(.medium))
+                            .foregroundStyle(Color.agentText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.cyAccent)
+                    }
+                }
+                .padding(.horizontal, AgentSpacing.x4)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.cyAccent.opacity(0.06), in: .rect(cornerRadius: 14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.cyAccent.opacity(0.18), lineWidth: 1)
+                }
+                .shadow(color: Color.cyAccent.opacity(0.08), radius: 18)
             }
-            .padding(.horizontal, AgentSpacing.x4)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.cyAccent.opacity(0.06), in: .rect(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.cyAccent.opacity(0.18), lineWidth: 1)
-            }
-            .shadow(color: Color.cyAccent.opacity(0.08), radius: 18)
+            .buttonStyle(.plain)
+            .accessibilityHint("Adds Cy's suggested continuation to the composer")
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 MetaLabel("Start with")
                     .padding(.bottom, AgentSpacing.x1)
-                starter(primaryStarter)
-                starter("Give me three ideas in my voice")
-                starter("Turn a rough note into a post")
+
+                ZStack {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                        starter(primaryStarter)
+                        starter("Give me three ideas in my style")
+                        starter("Turn a rough note into a post")
+                    }
+                    .blur(radius: hasProAccess ? 0 : 3.5)
+                    .opacity(hasProAccess ? 1 : 0.52)
+                    .allowsHitTesting(hasProAccess)
+
+                    if !hasProAccess {
+                        Button(action: openProAccess) {
+                            Text("Upgrade to Pro to create with Cy")
+                                .font(.agentSubtext.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(Color.onCyAccent)
+                                .padding(.horizontal, AgentSpacing.x4)
+                                .padding(.vertical, AgentSpacing.x3)
+                                .background(Color.cyAccent, in: .capsule)
+                                .shadow(color: Color.cyAccent.opacity(0.28), radius: 14, y: 5)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens plan and access settings")
+                    }
+                }
             }
-            .padding(.top, 82)
+            .padding(.top, AgentSpacing.x4)
         }
     }
 
@@ -321,11 +576,115 @@ struct AskCyView: View {
         return name.isEmpty ? "there" : name
     }
 
-    private var onYourPlateCopy: String {
-        guard let currentDraft else {
-            return "Bring me a rough idea. We’ll make the next move clear."
+    private var onYourPlateItems: [CyPlateItem] {
+        let now = Date()
+        let activeBriefs = briefs.filter { $0.status != .archived }
+        let activeBriefIDs = Set(activeBriefs.map(\.id))
+        let latePostCount = Set(outputs.compactMap { output -> UUID? in
+            guard activeBriefIDs.contains(output.briefID),
+                  output.status != .posted,
+                  isLate(output, now: now) else { return nil }
+            return output.briefID
+        }).count
+        let unfinishedTaskCount = tasks.filter { task in
+            guard !task.isCompleted, task.parentTaskID == nil else { return false }
+            return task.briefID.map(activeBriefIDs.contains) ?? true
+        }.count
+        let unscheduledIdeaCount = activeBriefs.filter { brief in
+            guard brief.status == .spark || brief.status == .developing else { return false }
+            return !outputs.contains { $0.briefID == brief.id && $0.targetDate != nil }
+        }.count
+
+        var items: [CyPlateItem] = []
+        if latePostCount > 0 {
+            items.append(CyPlateItem(
+                id: "late-posts",
+                count: latePostCount,
+                title: latePostCount == 1 ? "Post needs a new date" : "Posts need new dates"
+            ))
         }
-        return "\(currentDraft.title) is still a draft. Want to shape the next step together?"
+        if unfinishedTaskCount > 0 {
+            items.append(CyPlateItem(
+                id: "unfinished-tasks",
+                count: unfinishedTaskCount,
+                title: unfinishedTaskCount == 1 ? "Task is still open" : "Tasks are still open"
+            ))
+        }
+        if unscheduledIdeaCount > 0 {
+            items.append(CyPlateItem(
+                id: "unscheduled-ideas",
+                count: unscheduledIdeaCount,
+                title: unscheduledIdeaCount == 1 ? "Idea is waiting to be scheduled" : "Ideas are waiting to be scheduled"
+            ))
+        }
+        return items
+    }
+
+    private var onYourPlateSuggestion: (display: String, prompt: String) {
+        let now = Date()
+        let activeBriefs = briefs.filter { $0.status != .archived }
+        let activeBriefIDs = Set(activeBriefs.map(\.id))
+
+        let lateOutput = outputs
+            .filter {
+                activeBriefIDs.contains($0.briefID) &&
+                    $0.status != .posted &&
+                    isLate($0, now: now)
+            }
+            .sorted(by: {
+                ($0.targetDate ?? .distantPast) < ($1.targetDate ?? .distantPast)
+            })
+            .first
+        if let lateOutput,
+           let lateBrief = activeBriefs.first(where: { $0.id == lateOutput.briefID }) {
+            return (
+                "The date for \(lateBrief.title) has passed. Want to choose a new one together?",
+                "Help me reschedule \(lateBrief.title)."
+            )
+        }
+
+        let openTask = tasks
+            .filter {
+                !$0.isCompleted &&
+                    $0.parentTaskID == nil &&
+                    ($0.briefID.map(activeBriefIDs.contains) ?? true)
+            }
+            .sorted(by: {
+                ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture)
+            })
+            .first
+        if let openTask {
+            return (
+                "\(openTask.title) is still open. Want to decide the next step together?",
+                "Help me decide the next step for \(openTask.title)."
+            )
+        }
+
+        if let idea = activeBriefs.first(where: { brief in
+            (brief.status == .spark || brief.status == .developing) &&
+                !outputs.contains { $0.briefID == brief.id && $0.targetDate != nil }
+        }) {
+            return (
+                "Let’s expand on some of these ideas",
+                "Keep shaping \(idea.title)."
+            )
+        }
+
+        return (
+            "Nothing needs your attention right now. Want to create something new?",
+            "Help me choose what to make next."
+        )
+    }
+
+    private func useOnYourPlatePrompt() {
+        prompt = onYourPlateSuggestion.prompt
+        composerIsFocused = true
+    }
+
+    private func isLate(_ output: PlatformOutput, now: Date) -> Bool {
+        guard let targetDate = output.targetDate else { return false }
+        if output.includesTargetTime { return targetDate < now }
+        return Calendar.current.startOfDay(for: targetDate) < Calendar.current.startOfDay(for: now)
     }
 
     private var primaryStarter: String {
@@ -333,6 +692,92 @@ struct AskCyView: View {
     }
 
     private var composerPlaceholder: String { "Ask Cy anything" }
+
+    private func openProAccess() {
+        showProAccessDetails = false
+        showProUpsell = true
+    }
+
+    private func reviewCard(for request: MCPBridgeChangeRequest) -> some View {
+        let brief = linkedBrief(for: request)
+        let output = linkedOutput(for: request)
+        let pillar = linkedPillar(for: request, brief: brief)
+        let accent = pillar.map {
+            Color(agentHex: $0.resolvedColorHex(in: activePillars))
+        } ?? Color.agentSecondary
+        let platform = request.payload.platform
+            .flatMap(CreatorPlatform.init(rawValue:))?.shortTitle
+            ?? output?.platform.shortTitle
+            ?? "Post"
+        let date = request.payload.targetDate ?? output?.targetDate
+        let metadata = date.map {
+            "\(platform) · \($0.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))"
+        } ?? platform
+
+        return AgentPostCard(
+            title: nonempty(request.payload.title) ?? brief?.title ?? request.summary,
+            pillar: pillar?.name ?? "Unfiled",
+            accent: accent,
+            status: .ready,
+            metadata: metadata,
+            timeText: request.payload.includesTargetTime == false
+                ? nil
+                : date?.formatted(date: .omitted, time: .shortened),
+            statusTextOverride: "To review"
+        )
+    }
+
+    private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
+
+    private func linkedBrief(for request: MCPBridgeChangeRequest) -> CreativeBrief? {
+        request.payload.postId.flatMap { id in briefs.first { $0.id == id } }
+    }
+
+    private func linkedOutput(for request: MCPBridgeChangeRequest) -> PlatformOutput? {
+        if let outputID = request.payload.outputId,
+           let output = outputs.first(where: { $0.id == outputID }) {
+            return output
+        }
+        guard let postID = request.payload.postId else { return nil }
+        return outputs.first { $0.briefID == postID }
+    }
+
+    private func linkedPillar(
+        for request: MCPBridgeChangeRequest,
+        brief: CreativeBrief?
+    ) -> Pillar? {
+        let pillarID = request.payload.pillarId ?? brief?.pillarID
+        return pillarID.flatMap { id in activePillars.first { $0.id == id } }
+    }
+
+    private func nonempty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        return value
+    }
+
+    private func reloadPendingReviews() {
+        guard MCPBridgePreferences.isConnected else {
+            pendingReviews = []
+            showReviewCompletion = false
+            hasLoadedPendingReviews = true
+            return
+        }
+        guard let requests = try? MCPBridgeService.pendingRequests() else {
+            return
+        }
+        if hasLoadedPendingReviews, !pendingReviews.isEmpty, requests.isEmpty {
+            showReviewCompletion = true
+        } else if !requests.isEmpty {
+            showReviewCompletion = false
+        }
+        pendingReviews = requests
+        hasLoadedPendingReviews = true
+    }
+
+    private var showsConversation: Bool {
+        pendingReviews.isEmpty && !showReviewCompletion
+    }
 
     private var canSend: Bool {
         !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSending
@@ -378,6 +823,7 @@ struct AskCyView: View {
 
     private func startNewThread() {
         let newThread = ConversationThread(title: "Conversation")
+        newThread.workspaceID = appModel.resolvedWorkspaceID(context: context)
         context.insert(newThread)
         try? context.save()
         thread = newThread
@@ -390,6 +836,29 @@ struct AskCyView: View {
         startNewThread()
     }
 
+    private func openThreadFromHistory(_ selectedThread: ConversationThread) {
+        selectedThread.isArchived = false
+        selectedThread.updatedAt = Date()
+        thread = selectedThread
+        try? context.save()
+        showConversationHistory = false
+    }
+
+    private func deleteThreadFromHistory(_ selectedThread: ConversationThread) {
+        let deletesCurrentThread = thread?.id == selectedThread.id
+        if deletesCurrentThread {
+            thread = nil
+        }
+        try? ConversationDeletionService.delete(
+            selectedThread,
+            messages: allMessages,
+            context: context
+        )
+        if deletesCurrentThread {
+            startNewThread()
+        }
+    }
+
     private func send() {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let thread else { return }
@@ -398,6 +867,9 @@ struct AskCyView: View {
         composerIsFocused = false
         let creatorMessage = ConversationMessage(threadID: thread.id, role: .creator, text: text)
         context.insert(creatorMessage)
+        if thread.title == "Conversation" || thread.title == "Ask Cy" {
+            thread.title = ConversationTitleFormatter.title(from: text)
+        }
         thread.turnCount += 1
         thread.updatedAt = Date()
         try? context.save()
@@ -416,4 +888,369 @@ struct AskCyView: View {
         }
     }
 
+}
+
+private struct CyConversationHistoryView: View {
+    @Environment(\.dismiss) private var dismiss
+    let threads: [ConversationThread]
+    let messages: [ConversationMessage]
+    let currentThreadID: UUID?
+    let openThread: (ConversationThread) -> Void
+    let deleteThread: (ConversationThread) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    EditorialHeader(
+                        kicker: "Cy",
+                        title: "Conversation history",
+                        subtitle: "Your conversations stay with this account until you erase them."
+                    )
+
+                    if threads.isEmpty {
+                        Text("No conversations yet.")
+                            .font(.agentBody)
+                            .foregroundStyle(Color.agentSecondary)
+                            .frame(maxWidth: .infinity, minHeight: 180, alignment: .center)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(threads.enumerated()), id: \.element.id) { index, thread in
+                                let threadMessages = messages.filter { $0.threadID == thread.id }
+                                NavigationLink {
+                                    CyConversationTranscriptView(
+                                        title: displayTitle(for: thread, messages: threadMessages),
+                                        thread: thread,
+                                        messages: threadMessages,
+                                        isCurrent: currentThreadID == thread.id,
+                                        continueConversation: {
+                                            openThread(thread)
+                                            dismiss()
+                                        },
+                                        deleteConversation: { deleteThread(thread) }
+                                    )
+                                } label: {
+                                    conversationRow(thread)
+                                }
+                                .buttonStyle(.plain)
+                                .overlay(alignment: .top) {
+                                    if index > 0 {
+                                        Rectangle().fill(Color.agentHairline).frame(height: 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x8)
+                .padding(.bottom, AgentSpacing.x12)
+            }
+            .navigationTitle("History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                }
+            }
+            .agentScreen()
+        }
+    }
+
+    private func conversationRow(_ thread: ConversationThread) -> some View {
+        let threadMessages = messages.filter { $0.threadID == thread.id }
+        let preview = threadMessages.last?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? "No messages yet"
+        let title = displayTitle(for: thread, messages: threadMessages)
+        return VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                Text(title.protectingWordBoundaries)
+                    .font(.agentBody.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(2)
+                    .accessibilityLabel(title)
+                Spacer()
+                if currentThreadID == thread.id {
+                    MetaLabel("Current")
+                        .foregroundStyle(Color.cyAccent)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.agentSecondary)
+            }
+
+            Text(preview)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .lineLimit(2)
+
+            MetaLabel(thread.updatedAt.formatted(.dateTime.month(.abbreviated).day().year().hour().minute()))
+        }
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+        .contentShape(.rect)
+    }
+
+    private func displayTitle(
+        for thread: ConversationThread,
+        messages threadMessages: [ConversationMessage]
+    ) -> String {
+        ConversationTitleFormatter.resolvedTitle(
+            savedTitle: thread.title,
+            firstCreatorMessage: threadMessages.first(where: { $0.role == .creator })?.text
+        )
+    }
+}
+
+enum ConversationTitleFormatter {
+    static let defaultMaximumLength = 72
+
+    static func title(
+        from text: String,
+        maximumLength: Int = defaultMaximumLength
+    ) -> String {
+        let words = text
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+        guard let firstWord = words.first else { return "New conversation" }
+        guard maximumLength > 0 else { return firstWord }
+
+        var result = ""
+        for word in words {
+            let candidate = result.isEmpty ? word : "\(result) \(word)"
+            if candidate.count > maximumLength {
+                // A single long word remains intact instead of being split.
+                return result.isEmpty ? word : result
+            }
+            result = candidate
+        }
+        return result
+    }
+
+    static func resolvedTitle(
+        savedTitle: String,
+        firstCreatorMessage: String?
+    ) -> String {
+        let saved = savedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstCreatorMessage else {
+            return saved.isEmpty || saved == "Conversation" || saved == "Ask Cy"
+                ? "New conversation"
+                : saved
+        }
+
+        let normalizedMessage = firstCreatorMessage
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        let generated = title(from: normalizedMessage)
+        let savedIsPlaceholder = saved.isEmpty || saved == "Conversation" || saved == "Ask Cy"
+        let savedWasCharacterTruncated = !saved.isEmpty
+            && normalizedMessage.hasPrefix(saved)
+            && saved.count < normalizedMessage.count
+
+        return savedIsPlaceholder || savedWasCharacterTruncated ? generated : saved
+    }
+}
+
+@MainActor
+enum ConversationDeletionService {
+    static func delete(
+        _ thread: ConversationThread,
+        messages: [ConversationMessage],
+        context: ModelContext
+    ) throws {
+        messages
+            .filter { $0.threadID == thread.id }
+            .forEach { context.delete($0) }
+        context.delete(thread)
+        try context.save()
+    }
+}
+
+private struct CyConversationTranscriptView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmDelete = false
+    let title: String
+    let thread: ConversationThread
+    let messages: [ConversationMessage]
+    let isCurrent: Bool
+    let continueConversation: () -> Void
+    let deleteConversation: () -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    MetaLabel("Cy · Transcript")
+                    Text(title.protectingWordBoundaries)
+                        .font(.agentDisplay)
+                        .tracking(-0.64)
+                        .foregroundStyle(Color.agentText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(title)
+                    Text(transcriptMetadata)
+                        .font(.agentBody)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if messages.isEmpty {
+                    Text("No messages were saved in this conversation.")
+                        .font(.agentBody)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(maxWidth: .infinity, minHeight: 180, alignment: .center)
+                } else {
+                    transcriptDivider
+                    ForEach(messages) { message in
+                        transcriptMessage(message)
+                    }
+                }
+
+                Button(isCurrent ? "Return to conversation" : "Continue conversation") {
+                    continueConversation()
+                }
+                .buttonStyle(AgentCyPrimaryButtonStyle())
+                .padding(.top, AgentSpacing.x4)
+            }
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.top, AgentSpacing.x8)
+            .padding(.bottom, AgentSpacing.x12)
+        }
+        .scrollIndicators(.hidden)
+        .navigationTitle("Transcript")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("Delete conversation", systemImage: "trash", role: .destructive) {
+                        confirmDelete = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
+                .tint(Color.agentSurface)
+                .accessibilityLabel("Conversation options")
+            }
+        }
+        .confirmationDialog("Delete this conversation?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete conversation", role: .destructive) {
+                deleteConversation()
+                dismiss()
+            }
+        } message: {
+            Text("This permanently removes the conversation and its messages.")
+        }
+        .agentScreen()
+    }
+
+    private var transcriptMetadata: String {
+        let count = messages.count
+        let date = thread.updatedAt.formatted(.dateTime.month(.abbreviated).day().year())
+        return "\(date) · \(count) \(count == 1 ? "message" : "messages")"
+    }
+
+    private var transcriptDivider: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+            MetaLabel(thread.createdAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+                .fixedSize()
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
+        .padding(.bottom, AgentSpacing.x2)
+    }
+
+    @ViewBuilder
+    private func transcriptMessage(_ message: ConversationMessage) -> some View {
+        switch message.role {
+        case .creator:
+            VStack(alignment: .trailing, spacing: AgentSpacing.x2) {
+                MetaLabel("You")
+                Text(message.text)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentCanvas)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .padding(.vertical, AgentSpacing.x3)
+                    .background(Color.agentText)
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 16,
+                            bottomLeadingRadius: 16,
+                            bottomTrailingRadius: 4,
+                            topTrailingRadius: 16
+                        )
+                    )
+                    .frame(maxWidth: 280, alignment: .trailing)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        case .cy:
+            assistantTranscriptMessage(label: "Cy", text: message.text, showsAsterisk: true)
+        case .claude:
+            assistantTranscriptMessage(label: "Claude · Imported", text: message.text, showsAsterisk: false)
+        }
+    }
+
+    private func assistantTranscriptMessage(label: String, text: String, showsAsterisk: Bool) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            HStack(spacing: AgentSpacing.x2) {
+                if showsAsterisk {
+                    CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
+                }
+                MetaLabel(label)
+            }
+
+            Text(text)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentText)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, AgentSpacing.x4)
+                .padding(.vertical, 14)
+                .background(Color.agentSurface)
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 16,
+                        bottomLeadingRadius: 4,
+                        bottomTrailingRadius: 16,
+                        topTrailingRadius: 16
+                    )
+                )
+                .overlay {
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 16,
+                        bottomLeadingRadius: 4,
+                        bottomTrailingRadius: 16,
+                        topTrailingRadius: 16
+                    )
+                    .stroke(Color.agentBorder, lineWidth: 1)
+                }
+                .frame(maxWidth: 342, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private extension String {
+    /// Prevents SwiftUI from falling back to character wrapping inside ordinary
+    /// words while leaving whitespace available as the line-break opportunity.
+    var protectingWordBoundaries: String {
+        let characters = Array(self)
+        guard characters.count > 1 else { return self }
+
+        var protected = ""
+        for index in characters.indices {
+            protected.append(characters[index])
+            let nextIndex = characters.index(after: index)
+            guard nextIndex < characters.endIndex,
+                  !characters[index].isWhitespace,
+                  !characters[nextIndex].isWhitespace else { continue }
+            protected.append("\u{2060}")
+        }
+        return protected
+    }
 }

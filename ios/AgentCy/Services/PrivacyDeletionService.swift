@@ -133,6 +133,7 @@ protocol LocalCreatorDataErasing {
 @MainActor
 struct SwiftDataLocalCreatorDataEraser: LocalCreatorDataErasing {
     func eraseAll(context: ModelContext) async throws {
+        try deleteAll(CreatorWorkspace.self, context: context)
         try deleteAll(CreatorProfile.self, context: context)
         try deleteAll(VoiceExample.self, context: context)
         try deleteAll(VoiceProfile.self, context: context)
@@ -157,6 +158,7 @@ struct SwiftDataLocalCreatorDataEraser: LocalCreatorDataErasing {
         try deleteAll(ReminderSettings.self, context: context)
         try deleteAll(SubscriptionState.self, context: context)
         try context.save()
+        CreatorWorkspacePreferences.activeWorkspaceID = nil
     }
 
     private func deleteAll<T: PersistentModel>(_ type: T.Type, context: ModelContext) throws {

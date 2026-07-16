@@ -11,6 +11,8 @@ import {
   CreatorContextSchema,
   DurationSecondsSchema,
   IdeasResultSchema,
+  McpBridgeSnapshotSchema,
+  McpBridgeChangeRequestSchema,
   PlatformSchema,
   PrivacyDeleteRequestSchema,
   ReviseBriefRequestSchema,
@@ -104,6 +106,108 @@ describe("wire enums", () => {
   it("rejects renamed wire values", () => {
     expect(AssistanceModeSchema.safeParse("leadMe").success).toBe(false);
     expect(PlatformSchema.safeParse("instagram_reels").success).toBe(false);
+  });
+});
+
+describe("MCP bridge contracts", () => {
+  it("keeps captions and hooks in structured post-draft fields", () => {
+    const request = {
+      schemaVersion: 1,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: "2026-07-15T21:30:00Z",
+      source: "codex",
+      type: "createPostDraft",
+      payload: {
+        title: "A slower Asheville day",
+        hook: "Come spend a slow day in Asheville with me.",
+        caption: "Asheville, slowly.",
+        notes: "Use the arrival footage first.",
+      },
+    };
+
+    const parsed = McpBridgeChangeRequestSchema.parse(request);
+    if (parsed.type !== "createPostDraft") {
+      throw new Error("Expected a createPostDraft proposal");
+    }
+
+    expect(parsed.payload.hook).toBe(request.payload.hook);
+    expect(parsed.payload.caption).toBe(request.payload.caption);
+    expect(parsed.payload.notes).toBe("Use the arrival footage first.");
+  });
+
+  it("keeps format and call to action out of freeform post notes", () => {
+    const request = {
+      schemaVersion: 1,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: "2026-07-15T21:30:00Z",
+      source: "codex",
+      type: "updatePost",
+      payload: {
+        postId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        format: "Reel",
+        callToAction: "Save this for your next slow trip.",
+        notes: "STRUCTURE\n1. Open on the road.\n\nSTORIES\n1. Share the arrival.",
+      },
+    };
+
+    const parsed = McpBridgeChangeRequestSchema.parse(request);
+    if (parsed.type !== "updatePost") {
+      throw new Error("Expected an updatePost proposal");
+    }
+
+    expect(parsed.payload.format).toBe("Reel");
+    expect(parsed.payload.callToAction).toBe("Save this for your next slow trip.");
+    expect(parsed.payload.notes).not.toContain("CALL TO ACTION");
+    expect(parsed.payload.notes).not.toContain("FORMAT");
+  });
+
+  it("accepts nil Swift optionals that JSONEncoder omits", () => {
+    const snapshot = {
+      schemaVersion: 1,
+      generatedAt: "2026-07-15T21:30:00Z",
+      pillars: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Lifestyle",
+        colorHex: "FED3FF",
+        role: "anchor",
+        assignedWeekdays: [1],
+      }],
+      posts: [{
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        title: "An unfinished idea",
+        premise: "",
+        notes: "",
+        status: "spark",
+        durationSeconds: 45,
+        hook: "",
+        firstFrameText: "",
+        script: [],
+        ending: "",
+        callToAction: "",
+        createdAt: "2026-07-15T21:30:00Z",
+        updatedAt: "2026-07-15T21:30:00Z",
+        markdown: "# An unfinished idea",
+        outputs: [{
+          id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          platform: "instagramReels",
+          destination: "Instagram",
+          format: "Reel",
+          status: "draft",
+          includesTargetTime: false,
+          durationSeconds: 45,
+          title: "",
+          caption: "",
+          openingAdjustment: "",
+          callToAction: "",
+          editNotes: "",
+          publishedUrl: "",
+        }],
+        tasks: [],
+      }],
+      tasks: [],
+    };
+
+    expect(McpBridgeSnapshotSchema.safeParse(snapshot).success).toBe(true);
   });
 });
 

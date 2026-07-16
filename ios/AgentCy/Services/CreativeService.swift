@@ -40,7 +40,7 @@ enum CreativeServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingInput: "Add a little more detail so Cy has something useful to work with."
-        case .dialogueLimit: "You’ve reached eight turns. Build the brief now or edit the idea yourself."
+        case .dialogueLimit: "You’ve reached eight turns. Build the post now or edit the idea yourself."
         case .invalidCreatorContext(let detail): detail
         case .invalidLiveResponse(let detail): "Cy returned a response that did not match the app contract: \(detail)"
         case .unsupportedOperation(let operation): "\(operation) is not available in this build."
@@ -78,26 +78,28 @@ struct PreviewCreativeService: CreativeServicing {
     func findIdeas(context: CreatorContextWire, mode: AssistanceMode) async throws -> [IdeaDirection] {
         let goal = context.primaryGoal.isEmpty ? "help your audience make progress" : context.primaryGoal
         let anchor = context.pillars.first?.name ?? "your real process"
+        let suggestedPillarIDs = context.pillars.map(\.pillarId)
         return [
             IdeaDirection(
                 title: "The small shift",
                 premise: "Show one overlooked change that makes \(goal.lowercased()) easier.",
                 opening: "The thing that finally made this click wasn’t what I expected.",
                 assumption: "Your audience values a practical change they can try today.",
-                suggestedPillarID: context.pillars.first?.pillarId
+                suggestedPillarID: suggestedPillarIDs[safe: 0]
             ),
             IdeaDirection(
                 title: "Behind the decision",
                 premise: "Walk through a decision from \(anchor.lowercased()) and explain the tradeoff honestly.",
                 opening: "I almost chose the obvious option. Here’s why I didn’t.",
                 assumption: "Your audience learns from seeing your judgment, not just the finished result.",
-                suggestedPillarID: context.pillars.first?.pillarId
+                suggestedPillarID: suggestedPillarIDs[safe: 1]
             ),
             IdeaDirection(
                 title: "What I’d do first",
                 premise: "Give a grounded starting point for someone trying to \(goal.lowercased()).",
                 opening: "If I had to start again this week, I’d begin here.",
-                assumption: "Your audience needs a useful first move more than a complete system."
+                assumption: "Your audience needs a useful first move more than a complete system.",
+                suggestedPillarID: suggestedPillarIDs[safe: 2]
             )
         ]
     }
@@ -105,7 +107,7 @@ struct PreviewCreativeService: CreativeServicing {
     func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], postContext: String?) async throws -> String {
         guard turn < 8 else { throw CreativeServiceError.dialogueLimit }
         if mode == .drive {
-            return "Got it. Ask about one part, or build the brief when you are ready."
+            return "Got it. Ask about one part, or build the post when you are ready."
         }
         let questions = [
             "Who should feel like this was made specifically for them?",
@@ -158,10 +160,10 @@ struct PreviewCreativeService: CreativeServicing {
             draft: draft,
             variants: previewPlatformVariants(for: draft, platforms: context.selectedPlatforms),
             tasks: [
-                ProposedCreatorTask(title: "Read the brief aloud and tighten any line that is not yours", kind: .scripting, estimatedMinutes: 10),
+                ProposedCreatorTask(title: "Read the post aloud and tighten any line that is not yours", kind: .scripting, estimatedMinutes: 10),
                 ProposedCreatorTask(title: "Film the primary take", kind: .filming, estimatedMinutes: 30, isRecordingMilestone: true),
                 ProposedCreatorTask(title: "Assemble the clean first edit", kind: .editing, estimatedMinutes: 35),
-                ProposedCreatorTask(title: "Prepare the selected platform outputs", kind: .publishing, estimatedMinutes: 15)
+                ProposedCreatorTask(title: "Prepare the selected platforms", kind: .publishing, estimatedMinutes: 15)
             ]
         )
     }
@@ -222,7 +224,7 @@ struct PreviewCreativeService: CreativeServicing {
         case .proposedTasks:
             var tasks = revised.proposedTasks
             if tasks.isEmpty {
-                tasks = [ProposedTaskWire(title: "Read the revised brief aloud", kind: .scripting, notes: "Keep only lines that sound like you.", estimatedMinutes: 10, isRecordingMilestone: false, order: 0)]
+                tasks = [ProposedTaskWire(title: "Read the revised post aloud", kind: .scripting, notes: "Keep only lines that sound like you.", estimatedMinutes: 10, isRecordingMilestone: false, order: 0)]
             } else {
                 let first = tasks[0]
                 tasks[0] = ProposedTaskWire(title: first.title, kind: first.kind, notes: "Use the revision instruction: \(cleaned)", estimatedMinutes: first.estimatedMinutes, isRecordingMilestone: first.isRecordingMilestone, order: first.order)
@@ -303,7 +305,7 @@ struct PreviewCreativeService: CreativeServicing {
             return "For “\(brief.title),” I’d protect the core premise and simplify the next move: make the opening specific, use one real example, then end with one action your viewer can take. Nothing changes until you approve it."
         }
         let goal = context.primaryGoal.isEmpty ? "your creator goal" : context.primaryGoal
-        return "Given \(goal.lowercased()), choose the idea you can explain from lived experience today. I can help shape it into a brief, but I won’t save changes without your approval."
+        return "Given \(goal.lowercased()), choose the idea you can explain from lived experience today. I can help shape it into a post, but I won’t save changes without your approval."
     }
 
     private func conciseTitle(from text: String) -> String {
@@ -348,6 +350,12 @@ struct PreviewCreativeService: CreativeServicing {
             voiceConfidence: brief.voiceConfidence,
             platformVariants: platformVariants ?? brief.platformVariants
         )
+    }
+}
+
+private extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

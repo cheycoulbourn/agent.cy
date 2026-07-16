@@ -215,6 +215,28 @@ final class WeeklyFocusTests: XCTestCase {
         )
     }
 
+    func testFocusTemplateTaskDoesNotSpawnASecondRecurrenceChain() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let task = CreatorTask(
+            title: "Choose this week's posts",
+            targetDate: Date(),
+            focusTaskTemplateID: UUID(),
+            recurrence: .weekly
+        )
+        context.insert(task)
+        try context.save()
+
+        let next = try RecurringTaskMaterializer.createNextOccurrence(
+            after: task,
+            context: context,
+            calendar: testCalendar
+        )
+
+        XCTAssertNil(next)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorTask>()).count, 1)
+    }
+
     private var testCalendar: Calendar {
         Calendar.current
     }
