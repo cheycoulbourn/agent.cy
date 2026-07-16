@@ -2270,6 +2270,22 @@
             {
               "type": "number",
               "const": 900
+            },
+            {
+              "type": "number",
+              "const": 1200
+            },
+            {
+              "type": "number",
+              "const": 1800
+            },
+            {
+              "type": "number",
+              "const": 2700
+            },
+            {
+              "type": "number",
+              "const": 3600
             }
           ]
         },
@@ -2386,6 +2402,22 @@
                 {
                   "type": "number",
                   "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
                 }
               ]
             },
@@ -3134,6 +3166,22 @@
             {
               "type": "number",
               "const": 900
+            },
+            {
+              "type": "number",
+              "const": 1200
+            },
+            {
+              "type": "number",
+              "const": 1800
+            },
+            {
+              "type": "number",
+              "const": 2700
+            },
+            {
+              "type": "number",
+              "const": 3600
             }
           ]
         },
@@ -3295,6 +3343,22 @@
                 {
                   "type": "number",
                   "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
                 }
               ]
             },
@@ -3923,6 +3987,22 @@
                 {
                   "type": "number",
                   "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
                 }
               ]
             },
@@ -4307,6 +4387,22 @@
                 {
                   "type": "number",
                   "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
                 }
               ]
             },
@@ -4966,6 +5062,22 @@
                 {
                   "type": "number",
                   "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
                 }
               ]
             },
@@ -5352,6 +5464,22 @@
                 {
                   "type": "number",
                   "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
                 }
               ]
             },
@@ -6881,6 +7009,22 @@
                 {
                   "type": "number",
                   "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
                 }
               ]
             },
@@ -7931,6 +8075,22 @@
                                     {
                                       "type": "number",
                                       "const": 900
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 1200
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 1800
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 2700
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 3600
                                     }
                                   ]
                                 },
@@ -8289,6 +8449,22 @@
                                     {
                                       "type": "number",
                                       "const": 900
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 1200
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 1800
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 2700
+                                    },
+                                    {
+                                      "type": "number",
+                                      "const": 3600
                                     }
                                   ]
                                 },
@@ -9608,6 +9784,22 @@
                                 {
                                   "type": "number",
                                   "const": 900
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 1200
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 1800
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 2700
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 3600
                                 }
                               ]
                             },
@@ -9966,6 +10158,22 @@
                                 {
                                   "type": "number",
                                   "const": 900
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 1200
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 1800
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 2700
+                                },
+                                {
+                                  "type": "number",
+                                  "const": 3600
                                 }
                               ]
                             },

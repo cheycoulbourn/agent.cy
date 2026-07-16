@@ -417,11 +417,11 @@ struct AgentDurationPicker: View {
     }
 
     private func durationLabel(_ duration: Int) -> String {
-        duration < 120 ? "\(duration) SEC" : "\(duration / 60) MIN"
+        ContentDurationLabel.compact(duration)
     }
 
     private func accessibilityDurationLabel(_ duration: Int) -> String {
-        duration < 120 ? "\(duration) seconds" : "\(duration / 60) minutes"
+        ContentDurationLabel.full(duration)
     }
 }
 

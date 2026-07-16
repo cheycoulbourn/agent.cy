@@ -100,7 +100,8 @@ describe("wire enums", () => {
     expect(PlatformSchema.parse("tiktok")).toBe("tiktok");
     expect(PlatformSchema.parse("youtubeShorts")).toBe("youtubeShorts");
     expect(PlatformSchema.parse("youtubeVideo")).toBe("youtubeVideo");
-    expect(DurationSecondsSchema.parse(480)).toBe(480);
+    expect(DurationSecondsSchema.parse(3_600)).toBe(3_600);
+    expect(DurationSecondsSchema.parse(480)).toBe(480); // Existing saved work remains compatible.
   });
 
   it("rejects renamed wire values", () => {

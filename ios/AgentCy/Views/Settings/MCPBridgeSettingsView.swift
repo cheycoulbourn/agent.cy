@@ -768,7 +768,7 @@ struct MCPBridgeRequestReviewView: View {
     private var proposedDuration: String {
         let duration = linkedOutput?.durationSeconds ?? linkedBrief?.durationSeconds ?? 0
         guard duration > 0 else { return "Not set" }
-        return duration < 120 ? "\(duration) seconds" : "\(duration / 60) minutes"
+        return ContentDurationLabel.full(duration)
     }
 
     private var postTasks: [CreatorTask] {

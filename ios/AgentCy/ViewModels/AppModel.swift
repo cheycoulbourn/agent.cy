@@ -2539,9 +2539,8 @@ final class AppModel {
             notice = .info("\(platform.title) is already part of this post.")
             return nil
         }
-        let format: ContentFormat = existing.contains(where: { $0.platform == .youtubeVideo }) || brief.durationSeconds > 90
-            ? .longForm
-            : .shortForm
+        let format: ContentFormat = existing.first?.platform.format
+            ?? (brief.durationSeconds >= 300 ? .longForm : .shortForm)
         guard platform.format == format else {
             notice = .info("Choose a \(format.title.lowercased()) platform for this post.")
             return nil

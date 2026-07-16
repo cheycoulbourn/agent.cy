@@ -219,10 +219,11 @@ struct PreviewCreativeService: CreativeServicing {
         case .desiredTakeaway:
             revised = replacing(revised, desiredTakeaway: revised.desiredTakeaway + suffix)
         case .durationSeconds:
-            let durations = revised.durationSeconds >= 120
-                ? ContentFormat.longForm.durationOptions
-                : ContentFormat.shortForm.durationOptions
-            let next = durations[(durations.firstIndex(of: revised.durationSeconds).map { ($0 + 1) % durations.count }) ?? 2]
+            let format: ContentFormat = revised.durationSeconds >= 300 ? .longForm : .shortForm
+            let durations = format.durationOptions
+            let next = durations.firstIndex(of: revised.durationSeconds)
+                .map { durations[($0 + 1) % durations.count] }
+                ?? format.defaultDuration
             revised = replacing(revised, durationSeconds: next)
         case .spokenHook:
             revised = replacing(revised, spokenHook: "Try this sharper opening: \(revised.spokenHook)")

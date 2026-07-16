@@ -233,11 +233,13 @@ function reviseFixtureField(
       brief[scope] = revised(brief[scope]);
       return;
     case "durationSeconds": {
-      const durations = (brief.durationSeconds >= 120
-        ? [180, 300, 480, 600, 900]
-        : [15, 30, 45, 60, 90]) as Array<typeof brief.durationSeconds>;
+      const durations = (brief.durationSeconds >= 300
+        ? [600, 1_200, 1_800, 2_700, 3_600]
+        : [30, 60, 90, 180]) as Array<typeof brief.durationSeconds>;
       const index = durations.indexOf(brief.durationSeconds);
-      brief.durationSeconds = durations[(index + 1) % durations.length] ?? 45;
+      brief.durationSeconds = index >= 0
+        ? durations[(index + 1) % durations.length]!
+        : (brief.durationSeconds >= 300 ? 600 : 60);
       return;
     }
     case "scriptBeats":

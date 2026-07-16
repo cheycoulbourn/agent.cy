@@ -629,8 +629,7 @@ struct ScheduledPostDetailView: View {
         return output.platform.title
     }
     private var durationLabel: String {
-        let duration = output.durationSeconds
-        return duration < 120 ? "\(duration) seconds" : "\(duration / 60) minutes"
+        ContentDurationLabel.full(output.durationSeconds)
     }
     private var compensationSummary: String {
         switch brief.compensationType {

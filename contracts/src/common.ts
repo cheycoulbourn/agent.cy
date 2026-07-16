@@ -56,6 +56,7 @@ export const SubscriptionAccessSchema = z.enum([
   "expired",
 ]);
 export const DurationSecondsSchema = z.union([
+  // Legacy values remain decodable so existing creator work can be edited.
   z.literal(15),
   z.literal(30),
   z.literal(45),
@@ -66,6 +67,10 @@ export const DurationSecondsSchema = z.union([
   z.literal(480),
   z.literal(600),
   z.literal(900),
+  z.literal(1_200),
+  z.literal(1_800),
+  z.literal(2_700),
+  z.literal(3_600),
 ]);
 
 export const SelectedPlatformsSchema = z

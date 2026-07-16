@@ -68,7 +68,7 @@ The master content object across the full lifecycle. A new record begins as a Sp
 
 - Identity: `id`, `source`, `status`, optional `pillarID`.
 - Intent: `title`, `premise`, editable lightweight `notes`, `audience`, `creativeGoal`, `takeaway`.
-- Script: format-aware `durationSeconds`, `spokenHook`, `firstFrameText`, modular `scriptBeats`, `close`, `ctaIntent`. Short-form durations are 15–90 seconds; long-form YouTube durations are 3–15 minutes.
+- Script: format-aware `durationSeconds`, `spokenHook`, `firstFrameText`, modular `scriptBeats`, `close`, `ctaIntent`. Short-form choices are 30, 60, and 90 seconds or 3 minutes. Long-form YouTube choices are 10, 20, 30, 45, or 60 minutes.
 - Production: filming and editing guidance.
 - Trust: visible `assumptions` and `voiceConfidence` from 0 through 1.
 - `readyBriefPayloadJSON`: the last approved canonical `ReadyBrief` contract, overlaid with creator edits before later scoped revisions.

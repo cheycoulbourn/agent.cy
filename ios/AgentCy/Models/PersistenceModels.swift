@@ -229,7 +229,7 @@ final class CreativeBrief {
     var audience: String = ""
     var creativeGoal: String = ""
     var takeaway: String = ""
-    var durationSeconds: Int = 45
+    var durationSeconds: Int = 60
     var spokenHook: String = ""
     var firstFrameText: String = ""
     var scriptBeatsText: String = ""
@@ -393,7 +393,7 @@ final class PlatformOutput {
     var destinationID: UUID?
     var formatID: UUID?
     var socialAccountID: UUID?
-    var durationSeconds: Int = 45
+    var durationSeconds: Int = 60
     var caption: String = ""
     var openingAdjustment: String = ""
     var titleOverride: String = ""
@@ -412,7 +412,7 @@ final class PlatformOutput {
     var publishedURLString: String = ""
     var createdAt: Date = Date()
 
-    init(id: UUID = UUID(), briefID: UUID = UUID(), platform: CreatorPlatform = .instagramReels, destinationID: UUID? = nil, formatID: UUID? = nil, socialAccountID: UUID? = nil, durationSeconds: Int = 45, status: PlatformOutputStatus = .draft, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), briefID: UUID = UUID(), platform: CreatorPlatform = .instagramReels, destinationID: UUID? = nil, formatID: UUID? = nil, socialAccountID: UUID? = nil, durationSeconds: Int = 60, status: PlatformOutputStatus = .draft, createdAt: Date = Date()) {
         self.id = id
         self.briefID = briefID
         self.platformRaw = platform.rawValue

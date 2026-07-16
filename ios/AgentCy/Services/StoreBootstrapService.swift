@@ -234,7 +234,7 @@ enum StoreBootstrapService {
             let ids = PublishingCatalog.identifiers(for: output.platform)
             if output.destinationID == nil { output.destinationID = ids.destination }
             if output.formatID == nil { output.formatID = ids.format }
-            if output.durationSeconds <= 0 { output.durationSeconds = durationByBrief[output.briefID] ?? 45 }
+            if output.durationSeconds <= 0 { output.durationSeconds = durationByBrief[output.briefID] ?? ContentFormat.shortForm.defaultDuration }
         }
     }
 

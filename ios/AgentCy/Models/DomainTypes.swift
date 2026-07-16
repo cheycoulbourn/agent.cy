@@ -185,11 +185,30 @@ enum ContentFormat: String, CaseIterable, Codable, Identifiable, Sendable {
     var title: String { self == .shortForm ? "Short-form" : "Long-form" }
     var durationOptions: [Int] {
         switch self {
-        case .shortForm: [15, 30, 45, 60, 90]
-        case .longForm: [180, 300, 480, 600, 900]
+        case .shortForm: [30, 60, 90, 180]
+        case .longForm: [600, 1_200, 1_800, 2_700, 3_600]
         }
     }
-    var defaultDuration: Int { self == .shortForm ? 45 : 480 }
+    var defaultDuration: Int { self == .shortForm ? 60 : 600 }
+}
+
+enum ContentDurationLabel {
+    static func compact(_ seconds: Int) -> String {
+        if seconds <= 90 { return "\(seconds) SEC" }
+        if seconds == 3_600 { return "1 HR" }
+        if seconds.isMultiple(of: 60) { return "\(seconds / 60) MIN" }
+        return "\(seconds) SEC"
+    }
+
+    static func full(_ seconds: Int) -> String {
+        if seconds <= 90 { return "\(seconds) seconds" }
+        if seconds == 3_600 { return "1 hour" }
+        if seconds.isMultiple(of: 60) {
+            let minutes = seconds / 60
+            return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+        }
+        return "\(seconds) seconds"
+    }
 }
 
 enum PublishingFormatKind: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -214,8 +233,8 @@ enum PublishingFormatKind: String, CaseIterable, Codable, Identifiable, Sendable
     }
     var defaultDurationSeconds: Int? {
         switch self {
-        case .shortVideo: 45
-        case .longVideo: 480
+        case .shortVideo: 60
+        case .longVideo: 600
         case .nonVideo: nil
         }
     }

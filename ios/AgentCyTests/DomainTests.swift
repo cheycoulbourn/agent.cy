@@ -1354,15 +1354,42 @@ final class DomainTests: XCTestCase {
             notes: "Walk through the full process with examples.",
             pillarID: nil,
             platform: .youtubeVideo,
-            durationSeconds: 480,
+            durationSeconds: 600,
             targetDate: Date(),
             context: context
         ))
 
-        XCTAssertEqual(brief.durationSeconds, 480)
+        XCTAssertEqual(brief.durationSeconds, 600)
         XCTAssertEqual(model.outputs(for: brief, context: context).first?.platform, .youtubeVideo)
         XCTAssertEqual(CreatorPlatform.choices(for: .longForm), [.youtubeVideo])
-        XCTAssertEqual(ContentFormat.longForm.durationOptions, [180, 300, 480, 600, 900])
+        XCTAssertEqual(ContentFormat.shortForm.durationOptions, [30, 60, 90, 180])
+        XCTAssertEqual(ContentFormat.longForm.durationOptions, [600, 1_200, 1_800, 2_700, 3_600])
+        XCTAssertEqual(ContentFormat.shortForm.defaultDuration, 60)
+        XCTAssertEqual(ContentFormat.longForm.defaultDuration, 600)
+        XCTAssertEqual(ContentDurationLabel.compact(180), "3 MIN")
+        XCTAssertEqual(ContentDurationLabel.compact(3_600), "1 HR")
+        XCTAssertEqual(ContentDurationLabel.full(3_600), "1 hour")
+    }
+
+    func testShortFormPostKeepsThreeMinuteDuration() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let brief = try XCTUnwrap(model.createPost(
+            title: "A three-minute story",
+            notes: "Keep the full short-form story intact.",
+            pillarID: nil,
+            platform: .instagramReels,
+            durationSeconds: 180,
+            targetDate: Date(),
+            context: context
+        ))
+
+        XCTAssertEqual(brief.durationSeconds, 180)
+        XCTAssertEqual(model.outputs(for: brief, context: context).first?.durationSeconds, 180)
+        XCTAssertEqual(model.outputs(for: brief, context: context).first?.platform, .instagramReels)
     }
 
     func testEligiblePlatformsCanBeAddedOnceAndEditedIndependently() throws {
