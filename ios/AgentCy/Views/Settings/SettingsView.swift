@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [CreatorProfile]
     @Query private var subscriptions: [SubscriptionState]
@@ -15,6 +16,7 @@ struct SettingsView: View {
     @AppStorage(CalendarIntegrationPreferences.syncTasksKey) private var syncCalendarTasks = false
     @State private var showAddAccount = false
     @State private var showOnboardingPreview = false
+    @State private var reviewTestMessage: String?
 
     var body: some View {
         @Bindable var model = appModel
@@ -36,7 +38,10 @@ struct SettingsView: View {
                                 NavigationLink {
                                     CreatorProfileSettingsView(profile: profile)
                                 } label: {
-                                    SettingsIndexRow(title: "Creator profile", value: profile.name.isEmpty ? "Add name" : profile.name)
+                                    SettingsIndexRow(
+                                        title: "Creator profile",
+                                        value: activeIdentity.name.isEmpty ? "Add name" : activeIdentity.name
+                                    )
                                 }
                                 NavigationLink {
                                     CyAssistanceSettingsView(profile: profile)
@@ -117,10 +122,17 @@ struct SettingsView: View {
                             } label: {
                                 SettingsIndexRow(
                                     title: "Claude & Codex",
-                                    value: MCPBridgePreferences.isConnected ? "Connected" : "Set up",
+                                    value: MCPBridgePreferences.isConnected ? "Connected" : "Set up"
+                                )
+                            }
+                            Button(action: sendReviewPostTest) {
+                                SettingsIndexRow(
+                                    title: "Review post test",
+                                    value: "Send to Cy",
                                     isLast: true
                                 )
                             }
+                            .buttonStyle(.plain)
                         }
 
                         SettingsIndexSection(title: "Shortcuts & widgets") {
@@ -210,7 +222,7 @@ struct SettingsView: View {
         .agentKeyboardDismissal()
         .sheet(isPresented: $showAddAccount) {
             if let profile = profiles.first {
-                SocialAccountEditorView(profile: profile)
+                SocialAccountEditorView(profile: profile, initialIdentity: activeIdentity)
             }
         }
         .fullScreenCover(isPresented: $showOnboardingPreview) {
@@ -218,7 +230,7 @@ struct SettingsView: View {
                 OnboardingView(
                     previewOnly: true,
                     initialDraft: OnboardingDraft(
-                        name: profile.name,
+                        name: activeIdentity.name,
                         goal: profile.goal,
                         vibePalette: profile.vibePalette,
                         appearance: profile.appearance
@@ -226,10 +238,40 @@ struct SettingsView: View {
                 )
             }
         }
+        .alert("agent.cy", isPresented: Binding(
+            get: { reviewTestMessage != nil },
+            set: { if !$0 { reviewTestMessage = nil } }
+        )) {
+            Button("Close", role: .cancel) { reviewTestMessage = nil }
+        } message: {
+            Text(reviewTestMessage ?? "")
+        }
     }
 
     private var activeDestinationCount: Int {
         destinations.filter { !$0.isArchived }.count
+    }
+
+    private func sendReviewPostTest() {
+        do {
+            try MCPBridgeService.queueDemoDraft(context: context)
+            appModel.requestedSettingsPage = nil
+            appModel.presentedSheet = nil
+            appModel.selectedTab = .cy
+        } catch {
+            reviewTestMessage = CreatorFacingErrorMapper.presentation(
+                for: error,
+                action: "The review post test"
+            ).message
+        }
+    }
+
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
+        )
     }
 
     private func enabledPostSectionCount(for profile: CreatorProfile) -> Int {

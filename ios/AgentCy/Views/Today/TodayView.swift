@@ -3,7 +3,6 @@ import SwiftUI
 
 struct TodayView: View {
     let day: Date
-    @Binding var planMode: PlanMode
     let showsHeader: Bool
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
@@ -35,9 +34,8 @@ struct TodayView: View {
 
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
 
-    init(day: Date, planMode: Binding<PlanMode>, showsHeader: Bool = true) {
+    init(day: Date, showsHeader: Bool = true) {
         self.day = Calendar.current.startOfDay(for: day)
-        _planMode = planMode
         self.showsHeader = showsHeader
     }
 
@@ -153,10 +151,9 @@ struct TodayView: View {
 
     private var header: some View {
         PlanHeader(
-            mode: $planMode,
             breadcrumb: day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year()),
-            profile: profiles.first,
-            firstLine: "Hi \(displayName),",
+            identity: activeIdentity,
+            firstLine: "Hi \(activeIdentity.greetingName),",
             secondLine: dayTitle,
             openSettings: { appModel.presentedSheet = .settings }
         )
@@ -336,9 +333,12 @@ struct TodayView: View {
         }
     }
 
-    private var displayName: String {
-        let name = profiles.first?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty ? "there" : name
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
+        )
     }
 
     private var weekdayPosition: Int {

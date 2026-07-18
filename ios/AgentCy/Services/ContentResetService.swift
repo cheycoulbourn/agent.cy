@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 
 @MainActor
@@ -75,5 +76,53 @@ struct ContentResetService: ContentResetServicing {
             persistence.rollback(context: context)
             throw error
         }
+    }
+}
+
+@MainActor
+enum WorkspaceDeletionService {
+    static func delete(workspaceID: UUID, context: ModelContext) throws {
+        do {
+            let threads = try context.fetch(FetchDescriptor<ConversationThread>())
+                .filter { $0.workspaceID == workspaceID }
+            let threadIDs = Set(threads.map(\.id))
+
+            try context.fetch(FetchDescriptor<ConversationMessage>())
+                .filter { threadIDs.contains($0.threadID) }
+                .forEach(context.delete)
+            try deleteScoped(PendingBriefProposal.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(PendingWeekProposal.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(CreatorAttachment.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(CreatorTask.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(PlatformOutput.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(CreativeBrief.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(Pillar.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(DailyFocusTemplateEntry.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(DailyFocusOverride.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(DailyFocusDayDetail.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(RhythmTemplate.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(WeekPlan.self, workspaceID: workspaceID, context: context)
+            threads.forEach(context.delete)
+            try deleteScoped(CreatorSocialAccount.self, workspaceID: workspaceID, context: context)
+
+            if let workspace = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+                .first(where: { $0.id == workspaceID }) {
+                context.delete(workspace)
+            }
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    private static func deleteScoped<T: PersistentModel & WorkspaceScopedRecord>(
+        _ type: T.Type,
+        workspaceID: UUID,
+        context: ModelContext
+    ) throws {
+        try context.fetch(FetchDescriptor<T>())
+            .filter { $0.workspaceID == workspaceID }
+            .forEach(context.delete)
     }
 }

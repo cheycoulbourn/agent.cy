@@ -112,8 +112,8 @@ struct PillarsView: View {
     private var paperHeader: some View {
         VStack(alignment: .leading, spacing: 20) {
             AgentPageRail(
-                breadcrumb: "§ Pillars",
-                profile: profiles.first,
+                breadcrumb: "Pillars",
+                identity: activeIdentity,
                 openSettings: { appModel.presentedSheet = .settings }
             )
 
@@ -129,6 +129,14 @@ struct PillarsView: View {
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
         .padding(.bottom, 58)
+    }
+
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
+        )
     }
 
     private func anchorHero(_ anchor: Pillar) -> some View {

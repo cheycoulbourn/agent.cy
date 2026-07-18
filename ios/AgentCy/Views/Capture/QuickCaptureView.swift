@@ -1284,13 +1284,13 @@ private struct QuickPostDraft {
     let output: PlatformOutput
 }
 
-private struct DraftCaptureSubtask: Identifiable {
+struct DraftCaptureSubtask: Identifiable {
     let id = UUID()
     var title = ""
     var isCompleted = false
 }
 
-private struct DraftCaptureSubtaskRow: View {
+struct DraftCaptureSubtaskRow: View {
     @Binding var subtask: DraftCaptureSubtask
 
     var body: some View {
@@ -1326,7 +1326,7 @@ private struct DraftCaptureSubtaskRow: View {
     }
 }
 
-private struct CaptureTaskDueDateSheet: View {
+struct CaptureTaskDueDateSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding private var date: Date
     @Binding private var hasDueDate: Bool

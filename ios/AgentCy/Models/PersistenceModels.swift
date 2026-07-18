@@ -6,6 +6,9 @@ final class CreatorWorkspace {
     var id: UUID = UUID()
     var profileID: UUID = UUID()
     var name: String = ""
+    var creatorName: String = ""
+    var avatarImageData: Data?
+    var hasCustomIdentity: Bool = false
     var primarySocialAccountID: UUID?
     var isArchived: Bool = false
     var sortOrder: Int = 0
@@ -16,6 +19,9 @@ final class CreatorWorkspace {
         id: UUID = UUID(),
         profileID: UUID,
         name: String,
+        creatorName: String = "",
+        avatarImageData: Data? = nil,
+        hasCustomIdentity: Bool = false,
         primarySocialAccountID: UUID? = nil,
         sortOrder: Int = 0,
         createdAt: Date = Date()
@@ -23,6 +29,9 @@ final class CreatorWorkspace {
         self.id = id
         self.profileID = profileID
         self.name = name
+        self.creatorName = creatorName
+        self.avatarImageData = avatarImageData
+        self.hasCustomIdentity = hasCustomIdentity
         self.primarySocialAccountID = primarySocialAccountID
         self.sortOrder = sortOrder
         self.createdAt = createdAt

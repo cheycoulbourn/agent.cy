@@ -17,6 +17,42 @@ enum CreatorWorkspacePreferences {
     }
 }
 
+struct ActiveCreatorIdentity: Equatable, Sendable {
+    let name: String
+    let avatarImageData: Data?
+
+    var greetingName: String {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanName.isEmpty ? "there" : cleanName
+    }
+
+    static func resolve(
+        profile: CreatorProfile?,
+        workspaces: [CreatorWorkspace],
+        preferredWorkspaceID: UUID?
+    ) -> Self {
+        let activeID = WorkspaceScope.activeWorkspaceID(
+            preferredID: preferredWorkspaceID,
+            workspaces: workspaces
+        )
+        let workspace = activeID.flatMap { id in
+            workspaces.first(where: { $0.id == id && !$0.isArchived })
+        }
+
+        if let workspace, workspace.hasCustomIdentity {
+            return Self(
+                name: workspace.creatorName.trimmingCharacters(in: .whitespacesAndNewlines),
+                avatarImageData: workspace.avatarImageData
+            )
+        }
+
+        return Self(
+            name: profile?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            avatarImageData: profile?.avatarImageData
+        )
+    }
+}
+
 enum WorkspaceScope {
     static func defaultWorkspace(in workspaces: [CreatorWorkspace]) -> CreatorWorkspace? {
         workspaces
@@ -542,6 +578,27 @@ enum DailyFocusKind: String, CaseIterable, Codable, Identifiable, Sendable {
     var directive: String {
         switch self {
         case .planning:
+            "Brainstorm your next post and plan the week ahead."
+        case .scripting:
+            "Write the hook, script, caption, and call to action for what you’re making."
+        case .filming:
+            "Film the week’s posts that need more production or hands-on execution."
+        case .editing:
+            "Edit the week’s footage and get each post ready for its final review."
+        case .publishing, .posting:
+            "Give every post a final check, then schedule or publish it with confidence."
+        case .community:
+            "Reply to comments and messages, support your community, and build real connection."
+        case .businessAdmin, .admin:
+            "Handle partnerships, invoices, email, contracts, and the admin that supports your content."
+        case .custom:
+            "Use this day for the work that matters most."
+        }
+    }
+
+    var legacyDirective: String {
+        switch self {
+        case .planning:
             "Choose what to make and map the next steps."
         case .scripting:
             "Write hooks, beats, and calls to action."
@@ -573,8 +630,31 @@ enum DailyFocusKind: String, CaseIterable, Codable, Identifiable, Sendable {
         let unique = kinds.reduce(into: [DailyFocusKind]()) { values, kind in
             if !values.contains(kind) { values.append(kind) }
         }
+        guard let first = unique.first else {
+            return "No focus is assigned. Use the day however you need."
+        }
+        guard unique.count > 1 else { return first.directive }
+
+        let firstClause = sentenceClause(first.directive)
+        let secondClause = sentenceClause(unique[1].directive, lowercasingFirstCharacter: true)
+        return "\(firstClause), then \(secondClause)."
+    }
+
+    static func legacyCombinedDirective(_ kinds: [DailyFocusKind]) -> String {
+        let unique = kinds.reduce(into: [DailyFocusKind]()) { values, kind in
+            if !values.contains(kind) { values.append(kind) }
+        }
         guard !unique.isEmpty else { return "Recover, reset, or leave the day open." }
-        return unique.prefix(2).map(\.directive).joined(separator: " ")
+        return unique.prefix(2).map(\.legacyDirective).joined(separator: " ")
+    }
+
+    private static func sentenceClause(
+        _ sentence: String,
+        lowercasingFirstCharacter: Bool = false
+    ) -> String {
+        let clause = sentence.trimmingCharacters(in: CharacterSet(charactersIn: ".!?"))
+        guard lowercasingFirstCharacter, let first = clause.first else { return clause }
+        return String(first).lowercased() + String(clause.dropFirst())
     }
 }
 
@@ -634,6 +714,7 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
     case midnight
     case soho
     case tooCool
+    case scraper
 
     var id: String { rawValue }
     var title: String {
@@ -646,6 +727,7 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
         case .soho: "Soho"
         case .midnight: "Midnight"
         case .tooCool: "Too Cool"
+        case .scraper: "Scraper"
         }
     }
 
@@ -661,6 +743,7 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
         case .soho: "Editorial and earthy"
         case .midnight: "Smoky and grounded"
         case .tooCool: "Clean and cinematic"
+        case .scraper: "Industrial and electric"
         }
     }
 
@@ -674,6 +757,7 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
         case .soho: ["895A38", "6B5932", "C2CDD4", "D2C4A2", "E7E6CA", "4F1615"]
         case .midnight: ["0D0502", "4C2421", "B2A998", "CBCAC2", "998368"]
         case .tooCool: ["440607", "1B2345", "E3DFD4", "020202", "4F4439", "64646D"]
+        case .scraper: ["F15B3A", "101010", "2A2D2E", "E3E3E3", "E6E2A3", "FEFBFA"]
         }
     }
 
@@ -681,7 +765,13 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
         .grayscale, .pastel, .neutral, .colorful, .dark, .midnight
     ]
 
-    static let signaturePalettes: [CreatorVibePalette] = [.soho, .tooCool]
+    static let signaturePalettes: [CreatorVibePalette] = [.soho, .tooCool, .scraper]
+
+    /// A deliberately small starting set for onboarding. The full palette
+    /// library remains available from Settings after setup.
+    static let onboardingPalettes: [CreatorVibePalette] = [
+        .pastel, .neutral, .soho, .tooCool
+    ]
 }
 
 @MainActor
@@ -758,6 +848,7 @@ enum ConversationRole: String, Codable, Sendable {
 }
 
 enum AppTab: String, CaseIterable, Identifiable, Sendable {
+    case home
     case today
     case tasks
     case pillars
@@ -767,6 +858,7 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .home: "Home"
         case .today: "Plan"
         case .ideaBank: "Idea Bank"
         default: rawValue.capitalized
@@ -775,6 +867,7 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
 
     var symbol: String {
         switch self {
+        case .home: "house"
         case .today: "calendar"
         case .tasks: "checkmark"
         case .pillars: "rectangle.3.group"

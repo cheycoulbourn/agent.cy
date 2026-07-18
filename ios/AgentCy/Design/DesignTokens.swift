@@ -6,6 +6,7 @@ enum AgentSpacing {
     static let x2: CGFloat = 8
     static let x3: CGFloat = 12
     static let x4: CGFloat = 16
+    static let x5: CGFloat = 20
     static let x6: CGFloat = 24
     static let x8: CGFloat = 32
     static let x12: CGFloat = 48
@@ -17,6 +18,8 @@ enum AgentLayout {
     static let pageMargin: CGFloat = AgentSpacing.x6
     /// Outer gutter for the rounded dashboard surfaces used by Today, Agenda, and Pillars.
     static let dashboardGutter: CGFloat = AgentSpacing.x3
+    /// Standard vertical gap between a section's metadata heading and its primary content.
+    static let sectionHeadingSpacing: CGFloat = AgentSpacing.x2
 }
 
 enum AgentRadius {
@@ -594,6 +597,35 @@ struct CyAsterisk: View {
             Capsule().frame(width: strokeWidth, height: size).rotationEffect(.degrees(135))
         }
         .foregroundStyle(color)
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The primary animated Cy brand mark used on high-level Cy surfaces.
+/// Smaller inline references continue to use the static `CyAsterisk`.
+struct CyAnimatedLogo: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var color: Color = .cyAccent
+    var size: CGFloat = 31
+    var strokeWidth: CGFloat = 2.5
+    var duration: TimeInterval = 2.8
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+            let progress = timeline.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: duration) / duration
+            let pulse = 1 - (abs(progress - 0.5) * 2)
+
+            CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
+                .rotationEffect(.degrees(reduceMotion ? 0 : progress * 45))
+                .scaleEffect(reduceMotion ? 1 : 0.97 + (pulse * 0.06))
+                .shadow(
+                    color: color.opacity(reduceMotion ? 0.12 : 0.12 + (pulse * 0.12)),
+                    radius: reduceMotion ? 5 : 5 + (pulse * 4)
+                )
+        }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
     }

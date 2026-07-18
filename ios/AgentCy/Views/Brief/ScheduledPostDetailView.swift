@@ -146,6 +146,7 @@ struct ScheduledPostDetailView: View {
     @State private var showRescheduler = false
     @State private var confirmArchive = false
     @State private var confirmDelete = false
+    @State private var confirmMoveToIdeaBank = false
     @State private var selectedMoodBoardPreview: MoodBoardImagePreview?
     @State private var attachmentPreviewURL: URL?
     @State private var markdownDocument: MarkdownFileDocument?
@@ -211,6 +212,11 @@ struct ScheduledPostDetailView: View {
                 Menu {
                     Button("Edit post", systemImage: "pencil") {
                         showEditor = true
+                    }
+                    if canMoveToIdeaBank {
+                        Button("Move to Idea Bank", systemImage: "lightbulb") {
+                            confirmMoveToIdeaBank = true
+                        }
                     }
                     Button(
                         output.status == .posted ? "Mark not posted" : "Mark posted",
@@ -293,6 +299,12 @@ struct ScheduledPostDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("You can find it later under Archived in the Idea Bank.")
+        }
+        .confirmationDialog("Move this post to Idea Bank?", isPresented: $confirmMoveToIdeaBank, titleVisibility: .visible) {
+            Button("Move to Idea Bank", action: moveToIdeaBank)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its title, notes, and pillar stay with the idea. Its schedule and linked post tasks are removed.")
         }
         .confirmationDialog("Delete this post?", isPresented: $confirmDelete, titleVisibility: .visible) {
             if PostSeriesDeletionPolicy.isPartOfSeries(output) {
@@ -712,18 +724,27 @@ struct ScheduledPostDetailView: View {
             dismiss()
         }
     }
-    private var contentFields: [DisplayField] {
-        [
-            ("Hook", brief.spokenHook),
-            ("Caption", output.caption),
-            ("Script", brief.scriptBeatsText),
-            ("Ending", brief.close),
-            ("Call to action", output.cta.isEmpty ? brief.ctaIntent : output.cta),
-            ("Edit notes", output.editChanges)
-        ].compactMap { label, rawValue in
-            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : DisplayField(label: label, value: value)
+    private func moveToIdeaBank() {
+        if appModel.movePostToIdeaBank(brief: brief, output: output, context: context) {
+            dismiss()
         }
+    }
+    private var canMoveToIdeaBank: Bool {
+        brief.status != .posted &&
+            output.status != .posted &&
+            !outputs.contains(where: { $0.status == .posted })
+    }
+    private var contentFields: [DisplayField] {
+        var fields = CreatorPostCopyField.allCases.compactMap { field -> DisplayField? in
+            let value = field.value(brief: brief, output: output)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : DisplayField(label: field.title, value: value)
+        }
+        let editNotes = output.editChanges.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !editNotes.isEmpty {
+            fields.append(DisplayField(label: "Edit notes", value: editNotes))
+        }
+        return fields
     }
 }
 

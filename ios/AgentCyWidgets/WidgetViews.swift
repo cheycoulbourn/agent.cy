@@ -128,7 +128,7 @@ struct QuickCaptureWidgetView: View {
                             .foregroundStyle(WidgetPalette.ink)
                         Spacer()
                     }
-                    Text("Start with the kind of thing on your mind.")
+                    Text("Capture an idea, post, or task on the go. Never lose a moment.")
                         .font(.widgetInter(size: 13, weight: .regular))
                         .foregroundStyle(WidgetPalette.secondary)
                         .padding(.top, 7)
@@ -157,6 +157,10 @@ struct QuickCaptureWidgetView: View {
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 36)
             .background(WidgetPalette.canvas, in: .rect(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(WidgetPalette.border, lineWidth: 1)
+            }
         }
     }
 }

@@ -53,7 +53,7 @@ struct PostProposalReviewView: View {
                     BriefField(label: "Hook", text: $proposal.draft.spokenHook)
 
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        MetaLabel("Script")
+                        MetaLabel("Script (optional)")
                         ForEach(proposal.draft.scriptBeats.indices, id: \.self) { index in
                             AgentMultilineField(
                                 label: "Beat \(index + 1)",
@@ -63,7 +63,7 @@ struct PostProposalReviewView: View {
                             )
                         }
                     }
-                    BriefField(label: "Ending", text: $proposal.draft.close)
+                    BriefField(label: "Call to action", text: $proposal.draft.ctaIntent)
 
                     DisclosureGroup(isExpanded: $showDetails) {
                         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
@@ -72,7 +72,6 @@ struct PostProposalReviewView: View {
                             BriefField(label: "Goal", text: $proposal.draft.goal)
                             BriefField(label: "Takeaway", text: $proposal.draft.takeaway)
                             BriefField(label: "On-screen text", text: $proposal.draft.firstFrameText)
-                            BriefField(label: "Call to action", text: $proposal.draft.ctaIntent)
                             BriefField(label: "How to film", text: $proposal.draft.filmingGuidance)
                             BriefField(label: "How to edit", text: $proposal.draft.editingGuidance)
                         }

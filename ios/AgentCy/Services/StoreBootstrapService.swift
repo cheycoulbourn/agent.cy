@@ -76,7 +76,50 @@ enum StoreBootstrapService {
         try migrateTasks(context: context)
         try migratePillars(context: context)
         try migrateCreatorWorkspaces(context: context)
+        try migrateDailyFocusCopy(context: context)
         try context.save()
+    }
+
+    private static func migrateDailyFocusCopy(context: ModelContext) throws {
+        let now = Date()
+
+        for entry in try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>()) {
+            let kinds = DailyFocusResolver.normalizedKinds(
+                primary: entry.kind,
+                secondary: entry.secondaryKind,
+                storedTitle: entry.title
+            )
+            var changed = false
+
+            if entry.hasConfiguredFocusTasks,
+               let migrated = DailyFocusTaskDefaults.migratedLegacyDefaultsIfUntouched(
+                   entry.focusTaskTemplates,
+                   for: kinds
+               ) {
+                entry.focusTaskTemplates = migrated
+                changed = true
+            }
+
+            let note = entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !note.isEmpty, note == DailyFocusKind.legacyCombinedDirective(kinds) {
+                entry.note = ""
+                changed = true
+            }
+
+            if changed { entry.updatedAt = now }
+        }
+
+        for override in try context.fetch(FetchDescriptor<DailyFocusOverride>()) {
+            let kinds = DailyFocusResolver.normalizedKinds(
+                primary: override.kind,
+                secondary: override.secondaryKind,
+                storedTitle: override.title
+            )
+            let note = override.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !note.isEmpty, note == DailyFocusKind.legacyCombinedDirective(kinds) else { continue }
+            override.note = ""
+            override.updatedAt = now
+        }
     }
 
     private static func migrateCreatorWorkspaces(context: ModelContext) throws {
@@ -98,6 +141,9 @@ enum StoreBootstrapService {
             let defaultWorkspace = CreatorWorkspace(
                 profileID: profile.id,
                 name: preferredAccount?.label ?? (fallbackName.isEmpty ? "My account" : fallbackName),
+                creatorName: fallbackName,
+                avatarImageData: profile.avatarImageData,
+                hasCustomIdentity: true,
                 primarySocialAccountID: preferredAccount?.id,
                 sortOrder: 0
             )
@@ -111,6 +157,9 @@ enum StoreBootstrapService {
                 let workspace = CreatorWorkspace(
                     profileID: profile.id,
                     name: account.label,
+                    creatorName: fallbackName,
+                    avatarImageData: profile.avatarImageData,
+                    hasCustomIdentity: true,
                     primarySocialAccountID: account.id,
                     sortOrder: index + 1
                 )
@@ -121,6 +170,12 @@ enum StoreBootstrapService {
         }
 
         guard let defaultWorkspace = WorkspaceScope.defaultWorkspace(in: workspaces) else { return }
+        for workspace in workspaces where !workspace.hasCustomIdentity {
+            workspace.creatorName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            workspace.avatarImageData = profile.avatarImageData
+            workspace.hasCustomIdentity = true
+            workspace.updatedAt = Date()
+        }
         let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
         var workspaceByID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
 
@@ -128,6 +183,9 @@ enum StoreBootstrapService {
             let workspace = CreatorWorkspace(
                 profileID: profile.id,
                 name: account.label,
+                creatorName: profile.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                avatarImageData: profile.avatarImageData,
+                hasCustomIdentity: true,
                 primarySocialAccountID: account.id,
                 sortOrder: (workspaces.map(\.sortOrder).max() ?? -1) + 1
             )

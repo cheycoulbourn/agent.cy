@@ -786,12 +786,13 @@ struct MCPBridgeRequestReviewView: View {
     private var postFields: [MCPBridgeRequestReviewField] {
         var fields: [MCPBridgeRequestReviewField] = []
         append("Hook", payload.hook ?? linkedBrief?.spokenHook, to: &fields)
-        append("Caption", payload.caption ?? linkedOutput?.caption, to: &fields)
         append("Script", linkedBrief?.scriptBeatsText, to: &fields)
-        append("Ending", linkedBrief?.close, to: &fields)
+        append("Caption", payload.caption ?? linkedOutput?.caption, to: &fields)
         append(
             "Call to action",
-            payload.callToAction ?? linkedOutput?.cta ?? linkedBrief?.ctaIntent,
+            nonempty(payload.callToAction)
+                ?? nonempty(linkedOutput?.cta)
+                ?? nonempty(linkedBrief?.ctaIntent),
             to: &fields
         )
         append("Notes", payload.notes ?? linkedBrief?.notes, to: &fields)

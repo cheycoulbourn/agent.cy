@@ -176,7 +176,12 @@ enum WidgetSnapshotService {
                 .map(taskSnapshot)
         }
 
-        let name = profiles.first?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let identity = ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: activeID
+        )
+        let name = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return AgentCyWidgetSnapshot(
             generatedAt: now,
             creatorName: name.isEmpty ? "Creator" : name,

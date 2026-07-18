@@ -3,11 +3,11 @@ import SwiftData
 
 @MainActor
 enum PostTaskScheduleRepairService {
-    static let migrationKey = "agentcy.postTaskScheduleRepair.explicitOutput.v1"
+    static let migrationKey = "agentcy.postTaskScheduleRepair.allPostTasks.v2"
 
-    /// Repairs post tasks that were left on an old day by builds that moved the
-    /// post without moving its explicitly linked tasks. This deliberately runs
-    /// once so later creator edits are never overwritten during app launch.
+    /// Repairs post tasks that were left on an old day or without a due date.
+    /// This deliberately runs once so later creator edits are never overwritten
+    /// during app launch.
     @discardableResult
     static func reconcileOnce(
         context: ModelContext,
@@ -18,12 +18,18 @@ enum PostTaskScheduleRepairService {
 
         let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
         let outputByID = Dictionary(uniqueKeysWithValues: outputs.map { ($0.id, $0) })
+        let outputsByBriefID = Dictionary(grouping: outputs, by: \.briefID)
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
         var repairedCount = 0
 
         for task in tasks where !task.isCompleted {
-            guard let outputID = task.platformOutputID,
-                  let output = outputByID[outputID],
+            let output = task.platformOutputID.flatMap { outputByID[$0] }
+                ?? task.briefID.flatMap { briefID in
+                    outputsByBriefID[briefID]?
+                        .filter { $0.status == .scheduled && $0.targetDate != nil }
+                        .min { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
+                }
+            guard let output,
                   output.status != .posted,
                   let postDate = output.targetDate
             else { continue }

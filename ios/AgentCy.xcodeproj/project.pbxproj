@@ -23,6 +23,7 @@
 		2EB109CD453CA7B8E88422A4 /* CreatorFacingErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EE865F30D7045BDE25BCB03 /* CreatorFacingErrorMapper.swift */; };
 		2EDCD6B93E581A9AC46643CD /* PostOutputDetailPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A767BC4BC6D8425E932DC66 /* PostOutputDetailPolicyTests.swift */; };
 		32CEEAC2741F7D2CA0C56788 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED042483D5E974837FB79516 /* AppModel.swift */; };
+		335FDFC5DB4C4A0241E57A15 /* HomeDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C8ED939263980C183ADC0D /* HomeDashboardView.swift */; };
 		3591BAF10577C5D2BEDB897A /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */; };
 		3903D2A3E2CDD1CC34841450 /* PostEditorComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C22B6E8D45F1951E8331A963 /* PostEditorComponents.swift */; };
 		3BAE2F9A4E2906914291ABE6 /* ScheduledPostDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C26E202DB70629638DA317 /* ScheduledPostDetailView.swift */; };
@@ -207,6 +208,7 @@
 		A0E8458229483D88EB768BD4 /* TasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksView.swift; sourceTree = "<group>"; };
 		A1BB2176CFFC65324CBB8BD2 /* AgentCyWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCyWidgets.swift; sourceTree = "<group>"; };
 		A320D1AB470C9506D944E839 /* AgentCyLocalOnly.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AgentCyLocalOnly.entitlements; sourceTree = "<group>"; };
+		A6C8ED939263980C183ADC0D /* HomeDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeDashboardView.swift; sourceTree = "<group>"; };
 		A7F74AACF17B31F38FD54D90 /* AIOperationIDRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIOperationIDRegistry.swift; sourceTree = "<group>"; };
 		ABAB4909D9C767854BBEA979 /* AgentCy.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AgentCy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF3A1AF3AB9AB17B76B21B6D /* IBM-Plex-Mono-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "IBM-Plex-Mono-LICENSE.txt"; sourceTree = "<group>"; };
@@ -370,6 +372,14 @@
 				5F6D5B8F2772B45A4725B081 /* DesignTokens.swift */,
 			);
 			path = Design;
+			sourceTree = "<group>";
+		};
+		7B8F4E06E83C887DF2E38AB3 /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				A6C8ED939263980C183ADC0D /* HomeDashboardView.swift */,
+			);
+			path = Home;
 			sourceTree = "<group>";
 		};
 		9670586179D43C60A4877381 /* ViewModels */ = {
@@ -538,6 +548,7 @@
 				D28AD2684E236B949B54EFDB /* Brief */,
 				0C700BAC82C31D38F17E3F69 /* Capture */,
 				3F4076FAACD32CE6889173E2 /* Cy */,
+				7B8F4E06E83C887DF2E38AB3 /* Home */,
 				47114AFFADAB7ED1A1A0E4D4 /* Ideas */,
 				029556B636A51E023DD6C5ED /* Onboarding */,
 				4E1BAD7FD71760D0F3394FCC /* Pillars */,
@@ -745,6 +756,7 @@
 				EB3E230A4D36BC79C9EF2C06 /* ExportService.swift in Sources */,
 				4AC0901CD7A948E120F8F71E /* FocusPlanning.swift in Sources */,
 				80684ACBE237EFBC0707F8BD /* FocusTaskRecurrenceService.swift in Sources */,
+				335FDFC5DB4C4A0241E57A15 /* HomeDashboardView.swift in Sources */,
 				426BABC582AE5B46D08938BB /* IdeaBankView.swift in Sources */,
 				95F0DBDEF2121E8561046FDA /* IdeaPostDraftView.swift in Sources */,
 				D04FD631F458EB3BB8602133 /* LifecycleService.swift in Sources */,

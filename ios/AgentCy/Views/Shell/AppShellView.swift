@@ -9,16 +9,12 @@ struct AppShellView: View {
     @AppStorage(WeeklyPlanningCue.lastOpenedStorageKey) private var cyPlanningWeekOpened = ""
     @State private var isKeyboardVisible = false
     @State private var cueDate = Date()
+    @State private var homePath = NavigationPath()
     @State private var planPath = NavigationPath()
     @State private var tasksPath = NavigationPath()
     @State private var pillarsPath = NavigationPath()
     @State private var ideaBankPath = NavigationPath()
     @State private var cyPath = NavigationPath()
-    @State private var planRootID = UUID()
-    @State private var tasksRootID = UUID()
-    @State private var pillarsRootID = UUID()
-    @State private var ideaBankRootID = UUID()
-    @State private var cyRootID = UUID()
     @State private var presentedMCPRequestIDs: Set<UUID> = []
     @State private var hasPendingMCPReview = false
     private let bottomNavigationClearance: CGFloat = 76
@@ -28,23 +24,20 @@ struct AppShellView: View {
         GeometryReader { proxy in
             ZStack(alignment: .bottom) {
                 ZStack {
+                    NavigationStack(path: $homePath) { HomeDashboardView().taskNavigationDestinations() }
+                        .appTabLayer(.home, selection: model.selectedTab)
                     NavigationStack(path: $planPath) { PlanView().taskNavigationDestinations() }
-                        .id(planRootID)
                         .appTabLayer(.today, selection: model.selectedTab)
                     NavigationStack(path: $tasksPath) { TasksView().taskNavigationDestinations() }
-                        .id(tasksRootID)
                         .appTabLayer(.tasks, selection: model.selectedTab)
                     NavigationStack(path: $pillarsPath) { PillarsView().taskNavigationDestinations() }
-                        .id(pillarsRootID)
                         .appTabLayer(.pillars, selection: model.selectedTab)
                     NavigationStack(path: $ideaBankPath) { IdeaBankView().taskNavigationDestinations() }
-                        .id(ideaBankRootID)
                         .appTabLayer(.ideaBank, selection: model.selectedTab)
                     NavigationStack(path: $cyPath) {
                         AskCyView(bottomClearance: isKeyboardVisible ? 0 : bottomNavigationClearance)
                             .taskNavigationDestinations()
                     }
-                        .id(cyRootID)
                         .appTabLayer(.cy, selection: model.selectedTab)
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
@@ -66,11 +59,15 @@ struct AppShellView: View {
                     taskCompletionUndoToast(undo)
                         .padding(.horizontal, AgentLayout.pageMargin + AgentSpacing.x1)
                         .padding(.bottom, 88)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .opacity
+                        ))
                         .zIndex(5)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .animation(.easeOut(duration: 0.24), value: appModel.taskCompletionUndo)
         }
         .scrollDismissesKeyboard(.interactively)
         .sheet(item: $model.presentedSheet) { sheet in
@@ -115,6 +112,7 @@ struct AppShellView: View {
             openRequestedTaskIfNeeded()
         }
         .onChange(of: appModel.workspaceRevision) { _, _ in
+            homePath = NavigationPath()
             planPath = NavigationPath()
             tasksPath = NavigationPath()
             pillarsPath = NavigationPath()
@@ -151,27 +149,23 @@ struct AppShellView: View {
         .foregroundStyle(Color.agentCanvas)
         .background(Color.agentText, in: .capsule)
         .shadow(color: Color.black.opacity(0.14), radius: 14, y: 6)
-        .animation(.snappy(duration: 0.24), value: appModel.taskCompletionUndo)
     }
 
     private func selectTab(_ tab: AppTab) {
         appModel.presentedSheet = nil
         switch tab {
+        case .home:
+            homePath = NavigationPath()
         case .today:
             planPath = NavigationPath()
-            planRootID = UUID()
         case .tasks:
             tasksPath = NavigationPath()
-            tasksRootID = UUID()
         case .pillars:
             pillarsPath = NavigationPath()
-            pillarsRootID = UUID()
         case .ideaBank:
             ideaBankPath = NavigationPath()
-            ideaBankRootID = UUID()
         case .cy:
             cyPath = NavigationPath()
-            cyRootID = UUID()
             cyPlanningWeekOpened = WeeklyPlanningCue.weekKey(for: Date())
         }
         appModel.selectedTab = tab
@@ -245,13 +239,7 @@ private struct PaperBottomNavigation: View {
                     HStack(spacing: 0) {
                         ForEach(AppTab.allCases) { tab in
                             Button {
-                                if reduceMotion {
-                                    onSelect(tab)
-                                } else {
-                                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                                        onSelect(tab)
-                                    }
-                                }
+                                onSelect(tab)
                             } label: {
                                 tabIcon(for: tab)
                                     .frame(width: 46, height: 46)

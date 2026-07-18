@@ -2,11 +2,9 @@ import SwiftData
 import SwiftUI
 
 struct AgendaView: View {
-    @Binding var planMode: PlanMode
     @Binding var weekOffset: Int
     @Binding var selectedDay: Date
     let showsHeader: Bool
-    let selectDay: (Date) -> Void
     @Environment(AppModel.self) private var appModel
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
@@ -19,12 +17,10 @@ struct AgendaView: View {
     @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @Query private var allFocusOverrides: [DailyFocusOverride]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
-    @AppStorage("didPresentWeeklyFocusSetup") private var didPresentWeeklyFocusSetup = false
     @State private var headerHeight: CGFloat = 0
     @State private var schedulingPost: AgendaDaySelection?
     @State private var reschedulingOutput: PlatformOutput?
     @State private var focusedDay: AgendaDaySelection?
-    @State private var showWeeklyFocusSetup = false
     @State private var deepLinkedBrief: CreativeBrief?
     @State private var deepLinkedBriefOpensEditor = false
 
@@ -57,17 +53,13 @@ struct AgendaView: View {
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
 
     init(
-        planMode: Binding<PlanMode>,
         weekOffset: Binding<Int>,
         selectedDay: Binding<Date>,
-        showsHeader: Bool = true,
-        selectDay: @escaping (Date) -> Void
+        showsHeader: Bool = true
     ) {
-        _planMode = planMode
         _weekOffset = weekOffset
         _selectedDay = selectedDay
         self.showsHeader = showsHeader
-        self.selectDay = selectDay
     }
 
     var body: some View {
@@ -82,11 +74,6 @@ struct AgendaView: View {
                         minimumHeight: max(0, proxy.size.height - (showsHeader ? headerHeight : 0))
                     ) {
                         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                            if focusTemplates.isEmpty {
-                                weeklyFocusPrompt
-                            } else {
-                                weeklyFocusSummary
-                            }
                             calendarStrip
                             VStack(spacing: 0) {
                                 ForEach(weekDays, id: \.self) { day in
@@ -102,9 +89,6 @@ struct AgendaView: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $reschedulingOutput) { output in
             PostRescheduleSheet(output: output)
-        }
-        .sheet(isPresented: $showWeeklyFocusSetup) {
-            WeeklyFocusSetupView()
         }
         .navigationDestination(item: $focusedDay) { selection in
             DayAgendaView(day: selection.day)
@@ -136,12 +120,6 @@ struct AgendaView: View {
                 IdeaPostDraftView(brief: brief)
             }
         }
-        .task {
-            guard focusTemplates.isEmpty, !didPresentWeeklyFocusSetup else { return }
-            didPresentWeeklyFocusSetup = true
-            await Task.yield()
-            showWeeklyFocusSetup = true
-        }
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
         .onChange(of: appModel.widgetBriefID, initial: true) { _, id in
             guard let id, let brief = activeBriefs.first(where: { $0.id == id }) else { return }
@@ -150,14 +128,21 @@ struct AgendaView: View {
             appModel.widgetBriefOpensEditor = false
             appModel.widgetBriefID = nil
         }
+        .onChange(of: appModel.widgetAgendaDay, initial: true) { _, day in
+            guard let day else { return }
+            let normalizedDay = Calendar.current.startOfDay(for: day)
+            selectedDay = normalizedDay
+            weekOffset = targetWeekOffset(containing: normalizedDay)
+            focusedDay = AgendaDaySelection(day: normalizedDay)
+            appModel.widgetAgendaDay = nil
+        }
         .agentDashboardScreen()
     }
 
     private var header: some View {
         PlanHeader(
-            mode: $planMode,
             breadcrumb: weekSummary,
-            profile: profiles.first,
+            identity: activeIdentity,
             firstLine: "\(greeting),",
             secondLine: "here's your week.",
             openSettings: { appModel.presentedSheet = .settings }
@@ -169,11 +154,25 @@ struct AgendaView: View {
         }
     }
 
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
+        )
+    }
+
     private func weekButton(symbol: String, label: String, amount: Int) -> some View {
         Button { moveWeek(amount) } label: {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
                 .frame(width: 44, height: 44)
+                .background(Color.agentCanvas, in: .circle)
+                .overlay {
+                    Circle()
+                        .stroke(Color.agentBorder, lineWidth: 0.75)
+                }
+                .contentShape(.circle)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -181,85 +180,23 @@ struct AgendaView: View {
 
     private var calendarStrip: some View {
         HStack(spacing: AgentSpacing.x1) {
-            ForEach(weekDays, id: \.self) { day in
-                calendarDay(day)
+            weekButton(symbol: "chevron.left", label: "Previous week", amount: -1)
+
+            HStack(spacing: 0) {
+                ForEach(weekDays, id: \.self) { day in
+                    calendarDay(day)
+                }
             }
+            .frame(maxWidth: .infinity)
+            .layoutPriority(1)
+
+            weekButton(symbol: "chevron.right", label: "Next week", amount: 1)
         }
+        .padding(.horizontal, -AgentSpacing.x2)
         .padding(.bottom, AgentSpacing.x4)
         .overlay(alignment: .bottom) {
             Rectangle().fill(Color.agentHairline).frame(height: 1)
         }
-    }
-
-    private var weeklyFocusPrompt: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            HStack(alignment: .firstTextBaseline) {
-                MetaLabel("Weekly focus")
-                Spacer()
-                Text("Not set")
-                    .font(.agentMono)
-                    .foregroundStyle(Color.agentSecondary)
-            }
-
-            Text("Batch similar work.")
-                .font(.agentHeadline)
-
-            Text("Choose up to two focuses for each day. Unassigned days are Rest.")
-                .font(.agentSubtext)
-                .foregroundStyle(Color.agentSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                showWeeklyFocusSetup = true
-            } label: {
-                HStack(spacing: AgentSpacing.x3) {
-                    Text("Set weekly focus")
-                        .font(.agentBody.weight(.semibold))
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundStyle(Color.agentText)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.bottom, AgentSpacing.x2)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.agentHairline)
-                .frame(height: 1)
-        }
-    }
-
-    private var weeklyFocusSummary: some View {
-        Button { showWeeklyFocusSetup = true } label: {
-            HStack(spacing: AgentSpacing.x4) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                    MetaLabel("Weekly focus")
-                    Text(weeklyFocusSummaryText)
-                        .font(.agentBody.weight(.medium))
-                }
-                Spacer()
-                Text("Edit")
-                    .font(.agentSubtext.weight(.semibold))
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .foregroundStyle(Color.agentText)
-            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var weeklyFocusSummaryText: String {
-        let focusedDays = Set(focusTemplates.filter(\.isActive).map(\.weekdayRaw)).count
-        let restDays = max(0, 7 - focusedDays)
-        let focusLabel = focusedDays == 1 ? "focus day" : "focus days"
-        let restLabel = restDays == 1 ? "rest day" : "rest days"
-        return "\(focusedDays) \(focusLabel) · \(restDays) \(restLabel)"
     }
 
     private func calendarDay(_ day: Date) -> some View {
@@ -271,7 +208,7 @@ struct AgendaView: View {
             withAnimation(.snappy(duration: 0.24)) {
                 selectedDay = Calendar.current.startOfDay(for: day)
             }
-            selectDay(day)
+            focusedDay = AgendaDaySelection(day: day)
         } label: {
             VStack(spacing: 10) {
                 Text(day.formatted(.dateTime.weekday(.abbreviated)))
@@ -587,6 +524,15 @@ struct AgendaView: View {
             selectedDay = Calendar.current.date(byAdding: .weekOfYear, value: amount, to: selectedDay) ?? weekStart
         }
     }
+    private func targetWeekOffset(containing day: Date) -> Int {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let daysSinceMonday = (calendar.component(.weekday, from: today) + 5) % 7
+        let currentWeekStart = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today) ?? today
+        let targetDaysSinceMonday = (calendar.component(.weekday, from: day) + 5) % 7
+        let targetWeekStart = calendar.date(byAdding: .day, value: -targetDaysSinceMonday, to: day) ?? day
+        return calendar.dateComponents([.weekOfYear], from: currentWeekStart, to: targetWeekStart).weekOfYear ?? 0
+    }
     private func outputs(on day: Date) -> [PlatformOutput] {
         outputs.filter { output in output.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } == true && activeBriefs.contains { $0.id == output.briefID } }
             .sorted { lhs, rhs in
@@ -616,38 +562,19 @@ struct AgendaView: View {
         return Color(agentHex: pillar.resolvedColorHex(in: pillars))
     }
     private func pillarHex(on day: Date) -> String? {
-        if let brief = outputs(on: day).compactMap({ output in
-            activeBriefs.first(where: { $0.id == output.briefID && $0.pillarID != nil })
-        }).first,
-           let pillarID = brief.pillarID,
-           let pillar = pillars.first(where: { $0.id == pillarID && !$0.isArchived }) {
-            return pillar.resolvedColorHex(in: pillars)
-        }
-
         guard let weekday = PillarWeekday(rawValue: Calendar.current.component(.weekday, from: day)),
               let pillar = pillars.first(where: {
-                  !$0.isArchived && $0.assignedWeekdays.contains(weekday)
+                  !$0.isArchived && $0.resolvedWeekdays(in: pillars).contains(weekday)
               }) else { return nil }
         return pillar.resolvedColorHex(in: pillars)
     }
 
     private func compactPillarHexes(on day: Date) -> [String] {
-        let outputHexes = outputs(on: day).compactMap { output -> String? in
-            guard let brief = activeBriefs.first(where: { $0.id == output.briefID }),
-                  let pillarID = brief.pillarID,
-                  let pillar = pillars.first(where: { $0.id == pillarID && !$0.isArchived }) else {
-                return nil
-            }
-            return pillar.resolvedColorHex(in: pillars)
-        }
-        let uniqueOutputHexes = uniqueHexes(outputHexes)
-        if !uniqueOutputHexes.isEmpty { return Array(uniqueOutputHexes.prefix(3)) }
-
         guard let weekday = PillarWeekday(rawValue: Calendar.current.component(.weekday, from: day)) else {
             return []
         }
         let assignedHexes = pillars
-            .filter { !$0.isArchived && $0.assignedWeekdays.contains(weekday) }
+            .filter { !$0.isArchived && $0.resolvedWeekdays(in: pillars).contains(weekday) }
             .map { $0.resolvedColorHex(in: pillars) }
         return Array(uniqueHexes(assignedHexes).prefix(3))
     }

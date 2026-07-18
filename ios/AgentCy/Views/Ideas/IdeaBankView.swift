@@ -10,6 +10,7 @@ private enum IdeaBankFilter: Hashable {
 
 struct IdeaBankView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query private var profiles: [CreatorProfile]
@@ -19,6 +20,9 @@ struct IdeaBankView: View {
     @State private var selectedFilter: IdeaBankFilter = .all
     @State private var isFilterPresented = false
     @State private var selectedIdea: CreativeBrief?
+    @State private var isSelecting = false
+    @State private var selectedIdeaIDs: Set<UUID> = []
+    @State private var confirmsSelectionDeletion = false
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var pillars: [Pillar] { scoped(allPillars) }
@@ -57,8 +61,13 @@ struct IdeaBankView: View {
                     AgentDashboardSurface(minimumHeight: max(0, proxy.size.height - headerHeight + 72)) {
                         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                             searchField
+                            if isSelecting {
+                                selectionActions
+                            }
                             ideaList
-                            saveIdeaButton
+                            if !isSelecting {
+                                saveIdeaButton
+                            }
                         }
                     }
                     .padding(.horizontal, AgentLayout.dashboardGutter)
@@ -69,7 +78,20 @@ struct IdeaBankView: View {
         .navigationDestination(item: $selectedIdea) { brief in
             IdeaPostDraftView(brief: brief)
         }
+        .confirmationDialog(
+            deletionConfirmationTitle,
+            isPresented: $confirmsSelectionDeletion,
+            titleVisibility: .visible
+        ) {
+            Button(deletionActionTitle, role: .destructive, action: deleteSelectedIdeas)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cannot be undone.")
+        }
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
+        .onChange(of: Set(ideas.map(\.id))) { _, visibleIdeaIDs in
+            selectedIdeaIDs.formIntersection(visibleIdeaIDs)
+        }
         .agentDashboardScreen()
     }
 
@@ -77,10 +99,10 @@ struct IdeaBankView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             AgentPageRail(
                 breadcrumb: "Idea Bank",
-                profile: profiles.first,
+                identity: activeIdentity,
                 openSettings: { appModel.presentedSheet = .settings }
             ) {
-                filterMenu
+                headerActions
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
@@ -91,15 +113,39 @@ struct IdeaBankView: View {
                         .font(.agentDisplay)
                 }
                 .tracking(-0.64)
-                Text("Keep the thoughts worth returning to.")
-                    .font(.agentBody)
-                    .foregroundStyle(Color.agentSecondary)
             }
         }
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
         .padding(.bottom, AgentSpacing.x8)
+    }
+
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
+        )
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: AgentSpacing.x1) {
+            if isSelecting {
+                Button("Cancel", action: endSelection)
+                    .font(.agentSubtext.weight(.semibold))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .buttonStyle(.plain)
+            } else {
+                if !ideas.isEmpty, selectedFilter != .archived {
+                    Button("Select", action: beginSelection)
+                        .font(.agentSubtext.weight(.semibold))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .buttonStyle(.plain)
+                }
+                filterMenu
+            }
+        }
     }
 
     private var filterMenu: some View {
@@ -212,6 +258,41 @@ struct IdeaBankView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var selectionActions: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            Text("\(selectedIdeaIDs.count) SELECTED")
+                .font(.agentMono)
+                .foregroundStyle(Color.agentSecondary)
+
+            Spacer(minLength: AgentSpacing.x2)
+
+            Button(allVisibleIdeasAreSelected ? "Clear" : "Select all") {
+                if allVisibleIdeasAreSelected {
+                    selectedIdeaIDs.removeAll()
+                } else {
+                    selectedIdeaIDs = Set(ideas.map(\.id))
+                }
+            }
+            .font(.agentSubtext.weight(.semibold))
+            .buttonStyle(.plain)
+
+            Button("Delete", role: .destructive) {
+                confirmsSelectionDeletion = true
+            }
+            .font(.agentSubtext.weight(.semibold))
+            .buttonStyle(.plain)
+            .disabled(selectedIdeaIDs.isEmpty)
+        }
+        .frame(minHeight: 44)
+        .padding(.horizontal, AgentSpacing.x3)
+        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.control)
+                .stroke(Color.agentBorder, lineWidth: 0.75)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
     @ViewBuilder
     private var ideaList: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -225,19 +306,59 @@ struct IdeaBankView: View {
             } else {
                 ForEach(Array(ideas.enumerated()), id: \.element.id) { index, brief in
                     Button {
-                        selectedIdea = brief
+                        if isSelecting {
+                            toggleSelection(for: brief)
+                        } else {
+                            selectedIdea = brief
+                        }
                     } label: {
-                        IdeaBankRow(
-                            brief: brief,
-                            pillar: pillar(for: brief),
-                            showsDivider: index < ideas.count - 1
-                        )
+                        HStack(spacing: AgentSpacing.x3) {
+                            if isSelecting {
+                                selectionIndicator(isSelected: selectedIdeaIDs.contains(brief.id))
+                            }
+
+                            IdeaBankRow(
+                                brief: brief,
+                                pillar: pillar(for: brief),
+                                showsDivider: index < ideas.count - 1,
+                                showsDisclosure: !isSelecting
+                            )
+                        }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("Opens this idea where you left off")
+                    .accessibilityLabel(brief.title)
+                    .accessibilityValue(
+                        isSelecting
+                            ? (selectedIdeaIDs.contains(brief.id) ? "Selected" : "Not selected")
+                            : ""
+                    )
+                    .accessibilityHint(
+                        isSelecting
+                            ? "Toggles this idea's selection"
+                            : "Opens this idea where you left off"
+                    )
                 }
             }
         }
+    }
+
+    private func selectionIndicator(isSelected: Bool) -> some View {
+        Circle()
+            .fill(isSelected ? Color.agentText : Color.clear)
+            .overlay {
+                Circle()
+                    .stroke(isSelected ? Color.agentText : Color.agentBorder, lineWidth: 1.25)
+            }
+            .overlay {
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.agentSurface)
+                }
+            }
+            .frame(width: 20, height: 20)
+            .frame(width: 28, height: 44)
+            .accessibilityHidden(true)
     }
 
     private var saveIdeaButton: some View {
@@ -265,6 +386,53 @@ struct IdeaBankView: View {
         appModel.quickCapturePillarID = nil
         appModel.setQuickCaptureMode(.idea)
         appModel.presentedSheet = .quickCapture
+    }
+
+    private func beginSelection() {
+        selectedIdeaIDs.removeAll()
+        withAnimation(.snappy(duration: 0.2)) {
+            isSelecting = true
+        }
+    }
+
+    private func endSelection() {
+        withAnimation(.snappy(duration: 0.2)) {
+            isSelecting = false
+            selectedIdeaIDs.removeAll()
+        }
+    }
+
+    private func toggleSelection(for brief: CreativeBrief) {
+        if selectedIdeaIDs.contains(brief.id) {
+            selectedIdeaIDs.remove(brief.id)
+        } else {
+            selectedIdeaIDs.insert(brief.id)
+        }
+    }
+
+    private func deleteSelectedIdeas() {
+        let selectedIdeas = ideas.filter { selectedIdeaIDs.contains($0.id) }
+        if let selectedIdea, selectedIdeaIDs.contains(selectedIdea.id) {
+            self.selectedIdea = nil
+        }
+        withAnimation(.snappy(duration: 0.24)) {
+            selectedIdeas.forEach { _ = appModel.deleteDraft($0, context: context) }
+        }
+        endSelection()
+    }
+
+    private var allVisibleIdeasAreSelected: Bool {
+        !ideas.isEmpty && Set(ideas.map(\.id)).isSubset(of: selectedIdeaIDs)
+    }
+
+    private var deletionConfirmationTitle: String {
+        let count = selectedIdeaIDs.count
+        return count == 1 ? "Delete this idea?" : "Delete \(count) ideas?"
+    }
+
+    private var deletionActionTitle: String {
+        let count = selectedIdeaIDs.count
+        return count == 1 ? "Delete idea" : "Delete \(count) ideas"
     }
 
     private func pillar(for brief: CreativeBrief) -> Pillar? {
@@ -319,6 +487,7 @@ private struct IdeaBankRow: View {
     let brief: CreativeBrief
     let pillar: Pillar?
     let showsDivider: Bool
+    let showsDisclosure: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
@@ -347,9 +516,11 @@ private struct IdeaBankRow: View {
 
                 Spacer(minLength: AgentSpacing.x3)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.agentSecondary)
+                if showsDisclosure {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.agentSecondary)
+                }
             }
         }
         .foregroundStyle(Color.agentText)

@@ -24,12 +24,14 @@ struct DailyFocusTaskTemplateDefinition: Codable, Hashable, Identifiable, Sendab
 
 enum DailyFocusTaskDefaults {
     static func definitions(for kinds: [DailyFocusKind]) -> [DailyFocusTaskTemplateDefinition] {
-        kinds.flatMap { kind in
-            titles(for: kind).enumerated().map { index, title in
-                DailyFocusTaskTemplateDefinition(
+        var sortOrder = 0
+        return kinds.flatMap { kind in
+            titles(for: kind).map { title in
+                defer { sortOrder += 1 }
+                return DailyFocusTaskTemplateDefinition(
                     focusKind: kind,
                     title: title,
-                    sortOrder: index
+                    sortOrder: sortOrder
                 )
             }
         }
@@ -40,10 +42,89 @@ enum DailyFocusTaskDefaults {
         to definitions: [DailyFocusTaskTemplateDefinition]
     ) -> [DailyFocusTaskTemplateDefinition] {
         guard !definitions.contains(where: { $0.focusKind == kind }) else { return definitions }
-        return definitions + self.definitions(for: [kind])
+        let startingOrder = (definitions.map(\.sortOrder).max() ?? -1) + 1
+        let additions = self.definitions(for: [kind]).enumerated().map { index, definition in
+            var value = definition
+            value.sortOrder = startingOrder + index
+            return value
+        }
+        return definitions + additions
+    }
+
+    /// Returns revised defaults only when the complete stored set still matches
+    /// the previous built-ins. IDs are retained so open generated occurrences
+    /// can update in place during recurrence reconciliation.
+    static func migratedLegacyDefaultsIfUntouched(
+        _ definitions: [DailyFocusTaskTemplateDefinition],
+        for kinds: [DailyFocusKind]
+    ) -> [DailyFocusTaskTemplateDefinition]? {
+        let uniqueKinds = kinds.reduce(into: [DailyFocusKind]()) { values, kind in
+            if !values.contains(kind) { values.append(kind) }
+        }
+        let legacy = legacyDefinitions(for: uniqueKinds)
+        guard definitions.count == legacy.count,
+              zip(definitions, legacy).allSatisfy({ pair in
+                  pair.0.focusKind == pair.1.focusKind &&
+                      pair.0.title == pair.1.title &&
+                      pair.0.priority.normalized == .none
+              }) else {
+            return nil
+        }
+
+        var migrated: [DailyFocusTaskTemplateDefinition] = []
+        var sortOrder = 0
+        for kind in uniqueKinds {
+            let existingForKind = definitions.filter { $0.focusKind == kind }
+            for (index, title) in titles(for: kind).enumerated() {
+                migrated.append(DailyFocusTaskTemplateDefinition(
+                    id: existingForKind.indices.contains(index) ? existingForKind[index].id : UUID(),
+                    focusKind: kind,
+                    title: title,
+                    priority: .none,
+                    sortOrder: sortOrder
+                ))
+                sortOrder += 1
+            }
+        }
+        return migrated
     }
 
     private static func titles(for kind: DailyFocusKind) -> [String] {
+        switch kind {
+        case .planning:
+            ["Review your backlog", "Plan around this week’s pillars", "Structure and schedule your next post"]
+        case .scripting:
+            ["Draft the hook", "Write the script or outline", "Write the caption and call to action"]
+        case .filming:
+            ["Prep your setup and shot list", "Record the planned content and B-roll"]
+        case .editing:
+            ["Sort the footage", "Edit every planned post", "Export and organize the final files"]
+        case .publishing, .posting:
+            ["Review the final post", "Finish the caption, cover, and posting details", "Schedule or publish the post"]
+        case .community:
+            ["Reply to comments and messages", "Engage with your audience and creator community", "Save useful questions or feedback as ideas"]
+        case .businessAdmin, .admin:
+            ["Review email and partnerships", "Handle contracts, invoices, and payments", "Follow up on open opportunities"]
+        case .custom:
+            []
+        }
+    }
+
+    private static func legacyDefinitions(for kinds: [DailyFocusKind]) -> [DailyFocusTaskTemplateDefinition] {
+        var sortOrder = 0
+        return kinds.flatMap { kind in
+            legacyTitles(for: kind).map { title in
+                defer { sortOrder += 1 }
+                return DailyFocusTaskTemplateDefinition(
+                    focusKind: kind,
+                    title: title,
+                    sortOrder: sortOrder
+                )
+            }
+        }
+    }
+
+    private static func legacyTitles(for kind: DailyFocusKind) -> [String] {
         switch kind {
         case .planning:
             ["Review your idea bank", "Choose what to make next"]

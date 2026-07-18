@@ -1,7 +1,71 @@
+import LinkPresentation
 import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
+
+enum InstagramProfilePhotoLoader {
+    enum LoadError: Error {
+        case unsupportedURL
+        case imageUnavailable
+        case invalidImage
+    }
+
+    static func isSupportedProfileURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              host == "instagram.com" || host == "www.instagram.com" else { return false }
+        let path = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        guard let first = path.first?.lowercased(), path.count == 1 else { return false }
+        return !["p", "reel", "reels", "stories", "explore", "accounts", "direct"].contains(first)
+    }
+
+    @MainActor
+    static func load(from url: URL) async throws -> Data {
+        guard isSupportedProfileURL(url) else { throw LoadError.unsupportedURL }
+        let metadataProvider = LPMetadataProvider()
+        metadataProvider.timeout = 12
+        let metadata = try await metadataProvider.startFetchingMetadata(for: url)
+        guard let imageProvider = metadata.imageProvider else { throw LoadError.imageUnavailable }
+
+        let imageTypeIdentifier = imageProvider.registeredTypeIdentifiers.first {
+            UTType($0)?.conforms(to: .image) == true
+        } ?? UTType.image.identifier
+        let sourceData: Data = try await withCheckedThrowingContinuation { continuation in
+            imageProvider.loadDataRepresentation(forTypeIdentifier: imageTypeIdentifier) { data, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let data else {
+                    continuation.resume(throwing: LoadError.imageUnavailable)
+                    return
+                }
+                continuation.resume(returning: data)
+            }
+        }
+        guard let normalized = AvatarImageProcessor.normalizedJPEGData(from: sourceData) else {
+            throw LoadError.invalidImage
+        }
+        return normalized
+    }
+}
+
+@MainActor
+private enum AvatarImageProcessor {
+    static func normalizedJPEGData(from data: Data) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let side: CGFloat = 512
+        let scale = max(side / image.size.width, side / image.size.height)
+        let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let drawOrigin = CGPoint(x: (side - drawSize.width) / 2, y: (side - drawSize.height) / 2)
+        let rendered = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+            image.draw(in: CGRect(origin: drawOrigin, size: drawSize))
+        }
+        return rendered.jpegData(compressionQuality: 0.82)
+    }
+}
 
 struct SettingsIndexSection<Content: View>: View {
     let title: String
@@ -102,9 +166,11 @@ struct SettingsPageShell<Content: View>: View {
 }
 
 struct CreatorProfileSettingsView: View {
+    @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Bindable var profile: CreatorProfile
     @State private var showNewAccount = false
     @State private var editingAccount: CreatorSocialAccount?
@@ -117,7 +183,7 @@ struct CreatorProfileSettingsView: View {
             subtitle: "Keep the basics Cy uses to shape your work."
         ) {
             avatarEditor
-            SettingsTextField(label: "Name", placeholder: "Your name", text: $profile.name)
+            SettingsTextField(label: "Name", placeholder: "Your name", text: creatorNameBinding)
             SettingsTextField(
                 label: "Primary goal",
                 placeholder: "What do you want your content to do?",
@@ -169,7 +235,7 @@ struct CreatorProfileSettingsView: View {
         }
         .onDisappear { try? context.save() }
         .sheet(isPresented: $showNewAccount) {
-            SocialAccountEditorView(profile: profile)
+            SocialAccountEditorView(profile: profile, initialIdentity: activeIdentity)
         }
         .sheet(item: $editingAccount) { account in
             SocialAccountEditorView(profile: profile, account: account)
@@ -180,20 +246,20 @@ struct CreatorProfileSettingsView: View {
     }
 
     private var avatarEditor: some View {
-        let photoActionTitle = profile.avatarImageData == nil ? "Choose photo" : "Change photo"
+        let photoActionTitle = activeIdentity.avatarImageData == nil ? "Choose photo" : "Change photo"
         return VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             MetaLabel("Profile photo")
             HStack(spacing: AgentSpacing.x4) {
-                CreatorAvatar(profile: profile, size: 72)
+                CreatorAvatar(identity: activeIdentity, size: 72)
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                     PhotosPicker(selection: $selectedAvatarPhoto, matching: .images) {
                         Text(photoActionTitle)
                     }
                     .buttonStyle(AgentCompactSecondaryButtonStyle())
 
-                    if profile.avatarImageData != nil {
+                    if activeIdentity.avatarImageData != nil {
                         Button("Remove photo") {
-                            profile.avatarImageData = nil
+                            setAvatarImageData(nil)
                             try? context.save()
                         }
                         .font(.agentSubtext.weight(.medium))
@@ -209,21 +275,70 @@ struct CreatorProfileSettingsView: View {
         Task { @MainActor in
             defer { selectedAvatarPhoto = nil }
             guard let data = try? await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else { return }
-            let side: CGFloat = 512
-            let scale = max(side / image.size.width, side / image.size.height)
-            let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-            let drawOrigin = CGPoint(x: (side - drawSize.width) / 2, y: (side - drawSize.height) / 2)
-            let rendered = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
-                image.draw(in: CGRect(origin: drawOrigin, size: drawSize))
-            }
-            profile.avatarImageData = rendered.jpegData(compressionQuality: 0.82)
+                  let normalized = AvatarImageProcessor.normalizedJPEGData(from: data) else { return }
+            setAvatarImageData(normalized)
             try? context.save()
         }
     }
 
+    private var activeWorkspace: CreatorWorkspace? {
+        let workspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        )
+        return workspaceID.flatMap { id in workspaces.first(where: { $0.id == id && !$0.isArchived }) }
+    }
+
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profile,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
+        )
+    }
+
+    private var creatorNameBinding: Binding<String> {
+        Binding(
+            get: { activeIdentity.name },
+            set: { newValue in
+                if let workspace = activeWorkspace {
+                    initializeIdentityIfNeeded(workspace)
+                    workspace.creatorName = newValue
+                    workspace.updatedAt = Date()
+                } else {
+                    profile.name = newValue
+                }
+            }
+        )
+    }
+
+    private func setAvatarImageData(_ data: Data?) {
+        if let workspace = activeWorkspace {
+            initializeIdentityIfNeeded(workspace)
+            workspace.avatarImageData = data
+            workspace.updatedAt = Date()
+        } else {
+            profile.avatarImageData = data
+        }
+    }
+
+    private func initializeIdentityIfNeeded(_ workspace: CreatorWorkspace) {
+        guard !workspace.hasCustomIdentity else { return }
+        workspace.creatorName = profile.name
+        workspace.avatarImageData = profile.avatarImageData
+        workspace.hasCustomIdentity = true
+    }
+
     private var activeAccounts: [CreatorSocialAccount] {
-        socialAccounts.filter { $0.profileID == profile.id && !$0.isArchived }
+        socialAccounts.filter {
+            $0.profileID == profile.id &&
+                !$0.isArchived &&
+                WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: appModel.activeWorkspaceID,
+                    workspaces: workspaces
+                )
+        }
     }
 
     private func destinationName(for account: CreatorSocialAccount) -> String {
@@ -238,6 +353,8 @@ struct AccountSwitcherSettingsView: View {
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Bindable var profile: CreatorProfile
+    @State private var pendingDeletion: AccountDeletionTarget?
+    @State private var deletionErrorMessage: String?
 
     private var activeWorkspaces: [CreatorWorkspace] {
         workspaces.filter { $0.profileID == profile.id && !$0.isArchived }
@@ -256,40 +373,84 @@ struct AccountSwitcherSettingsView: View {
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(activeWorkspaces.enumerated()), id: \.element.id) { index, workspace in
-                        Button {
-                            appModel.switchWorkspace(to: workspace.id, context: context)
-                        } label: {
-                            HStack(spacing: AgentSpacing.x3) {
-                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                    Text(workspace.name)
-                                        .font(.agentBody.weight(.semibold))
-                                    if let account = socialAccount(for: workspace) {
-                                        MetaLabel(destinationName(for: account))
-                                    } else {
-                                        MetaLabel("CONTENT ACCOUNT")
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(spacing: 0) {
+                            HStack(spacing: AgentSpacing.x2) {
+                                Button {
+                                    appModel.switchWorkspace(to: workspace.id, context: context)
+                                } label: {
+                                    HStack(spacing: AgentSpacing.x3) {
+                                        CreatorAvatar(
+                                            identity: ActiveCreatorIdentity.resolve(
+                                                profile: profile,
+                                                workspaces: [workspace],
+                                                preferredWorkspaceID: workspace.id
+                                            ),
+                                            size: 48
+                                        )
+                                        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                            Text(workspace.name)
+                                                .font(.agentBody.weight(.semibold))
+                                            let creatorName = ActiveCreatorIdentity.resolve(
+                                                profile: profile,
+                                                workspaces: [workspace],
+                                                preferredWorkspaceID: workspace.id
+                                            ).name
+                                            if !creatorName.isEmpty {
+                                                Text(creatorName)
+                                                    .font(.agentSubtext)
+                                                    .foregroundStyle(Color.agentSecondary)
+                                            }
+                                            if let account = socialAccount(for: workspace) {
+                                                MetaLabel(destinationName(for: account))
+                                            } else {
+                                                MetaLabel("CONTENT ACCOUNT")
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                                if appModel.activeWorkspaceID == workspace.id {
-                                    Text("Active")
-                                        .font(.agentMono)
-                                        .foregroundStyle(Color.cyAccent)
+                                        if appModel.activeWorkspaceID == workspace.id {
+                                            Text("Active")
+                                                .font(.agentMono)
+                                                .foregroundStyle(Color.cyAccent)
+                                        }
+                                        Image(systemName: appModel.activeWorkspaceID == workspace.id ? "checkmark" : "circle")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .frame(width: 24, height: 24)
+                                    }
+                                    .foregroundStyle(Color.agentText)
+                                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                                    .contentShape(.rect)
                                 }
-                                Image(systemName: appModel.activeWorkspaceID == workspace.id ? "checkmark" : "circle")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .frame(width: 24, height: 24)
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Switch to \(workspace.name)")
+                                .accessibilityAddTraits(appModel.activeWorkspaceID == workspace.id ? .isSelected : [])
+
+                                if activeWorkspaces.count > 1 {
+                                    Menu {
+                                        Button("Delete account", systemImage: "trash", role: .destructive) {
+                                            pendingDeletion = AccountDeletionTarget(
+                                                id: workspace.id,
+                                                name: workspace.name
+                                            )
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundStyle(Color.agentText)
+                                            .frame(width: 44, height: 44)
+                                            .contentShape(.circle)
+                                    }
+                                    .accessibilityLabel("Account options for \(workspace.name)")
+                                }
                             }
-                            .foregroundStyle(Color.agentText)
-                            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-                            .contentShape(.rect)
-                            .overlay(alignment: .top) {
-                                if index > 0 { Rectangle().fill(Color.agentBorder).frame(height: 1) }
+                            .padding(.vertical, AgentSpacing.x2)
+
+                            if index < activeWorkspaces.count - 1 {
+                                Rectangle()
+                                    .fill(Color.agentBorder)
+                                    .frame(height: 1)
                             }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Switch to \(workspace.name)")
-                        .accessibilityAddTraits(appModel.activeWorkspaceID == workspace.id ? .isSelected : [])
                     }
                 }
             }
@@ -297,6 +458,32 @@ struct AccountSwitcherSettingsView: View {
             Text("Switching changes the complete creator workspace. Content from your other accounts stays saved and returns when you switch back.")
                 .font(.agentSubtext)
                 .foregroundStyle(Color.agentSecondary)
+        }
+        .confirmationDialog(
+            "Delete \(pendingDeletion?.name ?? "this account")?",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete account and content", role: .destructive) {
+                deletePendingAccount()
+            }
+            Button("Keep account", role: .cancel) { pendingDeletion = nil }
+        } message: {
+            Text("This permanently deletes its posts, pillars, ideas, tasks, weekly focus, and Cy conversations. This cannot be undone.")
+        }
+        .alert(
+            "Account couldn’t be deleted",
+            isPresented: Binding(
+                get: { deletionErrorMessage != nil },
+                set: { if !$0 { deletionErrorMessage = nil } }
+            )
+        ) {
+            Button("Close", role: .cancel) { deletionErrorMessage = nil }
+        } message: {
+            Text(deletionErrorMessage ?? "Your work is unchanged.")
         }
     }
 
@@ -312,6 +499,31 @@ struct AccountSwitcherSettingsView: View {
         destinations.first(where: { $0.id == account.destinationID })?.name ?? "Platform"
     }
 
+    private func deletePendingAccount() {
+        guard let target = pendingDeletion,
+              activeWorkspaces.count > 1,
+              let fallbackWorkspaceID = activeWorkspaces.first(where: { $0.id != target.id })?.id else {
+            pendingDeletion = nil
+            return
+        }
+        let wasActive = appModel.activeWorkspaceID == target.id
+        do {
+            try WorkspaceDeletionService.delete(workspaceID: target.id, context: context)
+            pendingDeletion = nil
+            if wasActive {
+                appModel.switchWorkspace(to: fallbackWorkspaceID, context: context)
+            }
+        } catch {
+            pendingDeletion = nil
+            deletionErrorMessage = "That account could not be deleted. Your work is unchanged."
+        }
+    }
+
+}
+
+private struct AccountDeletionTarget: Identifiable {
+    let id: UUID
+    let name: String
 }
 
 private struct SocialAccountRow: View {
@@ -376,6 +588,13 @@ struct SocialAccountEditorView: View {
 
     let profile: CreatorProfile
     let account: CreatorSocialAccount?
+    @State private var creatorName: String
+    @State private var avatarImageData: Data?
+    @State private var selectedAvatarPhoto: PhotosPickerItem?
+    @State private var didLoadWorkspaceIdentity = false
+    @State private var isLoadingInstagramPhoto = false
+    @State private var instagramPhotoMessage: String?
+    @State private var lastLoadedInstagramURLString: String?
     @State private var label: String
     @State private var profileURLString: String
     @State private var destinationID: UUID
@@ -383,9 +602,20 @@ struct SocialAccountEditorView: View {
     @State private var confirmRemove = false
     @State private var lastSuggestedURL: String?
 
-    init(profile: CreatorProfile, account: CreatorSocialAccount? = nil) {
+    init(
+        profile: CreatorProfile,
+        account: CreatorSocialAccount? = nil,
+        initialIdentity: ActiveCreatorIdentity? = nil
+    ) {
         self.profile = profile
         self.account = account
+        let identity = initialIdentity ?? ActiveCreatorIdentity(
+            name: profile.name,
+            avatarImageData: profile.avatarImageData
+        )
+        _creatorName = State(initialValue: identity.name)
+        _avatarImageData = State(initialValue: identity.avatarImageData)
+        _selectedAvatarPhoto = State(initialValue: nil)
         _label = State(initialValue: account?.label ?? "")
         _profileURLString = State(initialValue: account?.profileURLString ?? "")
         _destinationID = State(initialValue: account?.destinationID ?? PublishingCatalog.instagramID)
@@ -400,6 +630,8 @@ struct SocialAccountEditorView: View {
                 title: account == nil ? "Add account" : "Edit account",
                 subtitle: "Keep each profile distinct when you plan where a post will go."
             ) {
+                accountIdentityEditor
+                SettingsTextField(label: "Creator name", placeholder: "Your name", text: $creatorName)
                 SettingsTextField(label: "Account", placeholder: "@handle or account name", text: $label)
                 SettingsTextField(label: "Profile link", placeholder: "https://instagram.com/yourname", text: $profileURLString)
                     .textInputAutocapitalization(.never)
@@ -449,6 +681,7 @@ struct SocialAccountEditorView: View {
             }
         }
         .onAppear {
+            loadWorkspaceIdentityIfNeeded()
             if !activeDestinations.contains(where: { $0.id == destinationID }),
                let first = activeDestinations.first {
                 destinationID = first.id
@@ -463,6 +696,17 @@ struct SocialAccountEditorView: View {
             }
             updateSuggestedURL()
         }
+        .onChange(of: selectedAvatarPhoto) { _, item in
+            importAvatar(item)
+        }
+        .task(id: instagramPhotoLookupKey) {
+            guard avatarImageData == nil,
+                  let url = instagramProfileURL,
+                  lastLoadedInstagramURLString != url.absoluteString else { return }
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            await loadInstagramPhoto(from: url)
+        }
         .confirmationDialog("Remove this account?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove account", role: .destructive) { remove() }
             Button("Keep account", role: .cancel) {}
@@ -475,7 +719,73 @@ struct SocialAccountEditorView: View {
         destinations.filter { !$0.isArchived }
     }
 
+    private var accountIdentityEditor: some View {
+        let photoActionTitle = avatarImageData == nil ? "Choose photo" : "Change photo"
+        return VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            MetaLabel("Profile photo")
+            HStack(spacing: AgentSpacing.x4) {
+                CreatorAvatar(
+                    identity: ActiveCreatorIdentity(name: creatorName, avatarImageData: avatarImageData),
+                    size: 72
+                )
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    PhotosPicker(selection: $selectedAvatarPhoto, matching: .images) {
+                        Text(photoActionTitle)
+                    }
+                    .buttonStyle(AgentCompactSecondaryButtonStyle())
+
+                    if avatarImageData != nil {
+                        Button("Remove photo") { avatarImageData = nil }
+                            .font(.agentSubtext.weight(.medium))
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                }
+            }
+
+            if let url = instagramProfileURL {
+                Button {
+                    Task { await loadInstagramPhoto(from: url, force: true) }
+                } label: {
+                    HStack(spacing: AgentSpacing.x2) {
+                        if isLoadingInstagramPhoto {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(isLoadingInstagramPhoto ? "Checking Instagram…" : "Use Instagram photo")
+                    }
+                }
+                .buttonStyle(AgentCompactSecondaryButtonStyle())
+                .disabled(isLoadingInstagramPhoto)
+
+                Text("Your Instagram profile must be public for agent.cy to find its photo.")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let instagramPhotoMessage {
+                Text(instagramPhotoMessage)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var instagramPhotoLookupKey: String {
+        instagramProfileURL?.absoluteString ?? ""
+    }
+
+    private var instagramProfileURL: URL? {
+        guard activeDestinations.first(where: { $0.id == destinationID })?.builtInKind == .instagram,
+              let urlString = resolvedProfileURLString,
+              let url = URL(string: urlString),
+              InstagramProfilePhotoLoader.isSupportedProfileURL(url) else { return nil }
+        return url
+    }
+
     private var validationMessage: String? {
+        if creatorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Add the name Cy should use for this account." }
         if label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Add an account name or handle." }
         if resolvedProfileURLString == nil { return "Add a handle or use a valid HTTPS profile link." }
         return nil
@@ -502,6 +812,46 @@ struct SocialAccountEditorView: View {
         lastSuggestedURL = suggestion
     }
 
+    private func loadWorkspaceIdentityIfNeeded() {
+        guard !didLoadWorkspaceIdentity else { return }
+        defer { didLoadWorkspaceIdentity = true }
+        guard let workspaceID = account?.workspaceID,
+              let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        let identity = ActiveCreatorIdentity.resolve(
+            profile: profile,
+            workspaces: [workspace],
+            preferredWorkspaceID: workspace.id
+        )
+        creatorName = identity.name
+        avatarImageData = identity.avatarImageData
+    }
+
+    private func importAvatar(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        Task { @MainActor in
+            defer { selectedAvatarPhoto = nil }
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let normalized = AvatarImageProcessor.normalizedJPEGData(from: data) else { return }
+            avatarImageData = normalized
+        }
+    }
+
+    @MainActor
+    private func loadInstagramPhoto(from url: URL, force: Bool = false) async {
+        guard force || lastLoadedInstagramURLString != url.absoluteString else { return }
+        isLoadingInstagramPhoto = true
+        instagramPhotoMessage = nil
+        defer { isLoadingInstagramPhoto = false }
+        do {
+            avatarImageData = try await InstagramProfilePhotoLoader.load(from: url)
+            lastLoadedInstagramURLString = url.absoluteString
+            instagramPhotoMessage = "Instagram photo ready. Review it before saving."
+        } catch {
+            lastLoadedInstagramURLString = url.absoluteString
+            instagramPhotoMessage = "We couldn’t find a public profile photo. Make sure the account is public, or choose a photo instead."
+        }
+    }
+
     private func accounts(for destinationID: UUID, excluding excludedID: UUID? = nil) -> [CreatorSocialAccount] {
         socialAccounts.filter {
             $0.profileID == profile.id &&
@@ -516,6 +866,7 @@ struct SocialAccountEditorView: View {
         guard validationMessage == nil,
               let normalizedURL = resolvedProfileURLString else { return }
         let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanCreatorName = creatorName.trimmingCharacters(in: .whitespacesAndNewlines)
         let peers = accounts(for: destinationID, excluding: account?.id)
         let shouldBePrimary = account == nil || isPrimary || !peers.contains(where: \.isPrimary)
         let savedAccount: CreatorSocialAccount
@@ -531,6 +882,9 @@ struct SocialAccountEditorView: View {
 
             if let workspace = workspaces.first(where: { $0.id == account.workspaceID }) {
                 workspace.name = cleanLabel
+                workspace.creatorName = cleanCreatorName
+                workspace.avatarImageData = avatarImageData
+                workspace.hasCustomIdentity = true
                 workspace.primarySocialAccountID = account.id
                 workspace.updatedAt = Date()
             }
@@ -554,6 +908,9 @@ struct SocialAccountEditorView: View {
             let workspace = CreatorWorkspace(
                 profileID: profile.id,
                 name: cleanLabel,
+                creatorName: cleanCreatorName,
+                avatarImageData: avatarImageData,
+                hasCustomIdentity: true,
                 primarySocialAccountID: newAccount.id,
                 sortOrder: (workspaces.map(\.sortOrder).max() ?? -1) + 1
             )

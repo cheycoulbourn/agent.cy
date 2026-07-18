@@ -2,8 +2,23 @@ import SwiftUI
 import UIKit
 
 struct CreatorAvatar: View {
-    let profile: CreatorProfile?
+    let identity: ActiveCreatorIdentity
     var size: CGFloat = 44
+
+    init(identity: ActiveCreatorIdentity, size: CGFloat = 44) {
+        self.identity = identity
+        self.size = size
+    }
+
+    init(profile: CreatorProfile?, size: CGFloat = 44) {
+        self.init(
+            identity: ActiveCreatorIdentity(
+                name: profile?.name ?? "",
+                avatarImageData: profile?.avatarImageData
+            ),
+            size: size
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -30,13 +45,12 @@ struct CreatorAvatar: View {
     }
 
     private var image: UIImage? {
-        guard let data = profile?.avatarImageData else { return nil }
+        guard let data = identity.avatarImageData else { return nil }
         return UIImage(data: data)
     }
 
     private var initials: String {
-        guard let profile else { return "" }
-        return profile.name
+        identity.name
             .split(whereSeparator: \.isWhitespace)
             .prefix(2)
             .compactMap(\.first)
@@ -47,12 +61,12 @@ struct CreatorAvatar: View {
 }
 
 struct ProfileSettingsButton: View {
-    let profile: CreatorProfile?
+    let identity: ActiveCreatorIdentity
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            CreatorAvatar(profile: profile)
+            CreatorAvatar(identity: identity)
                 .frame(width: 44, height: 44)
                 .contentShape(.circle)
         }
@@ -64,18 +78,18 @@ struct ProfileSettingsButton: View {
 
 struct AgentPageRail<Actions: View>: View {
     let breadcrumb: String
-    let profile: CreatorProfile?
+    let identity: ActiveCreatorIdentity
     let openSettings: () -> Void
     @ViewBuilder let actions: Actions
 
     init(
         breadcrumb: String,
-        profile: CreatorProfile?,
+        identity: ActiveCreatorIdentity,
         openSettings: @escaping () -> Void,
         @ViewBuilder actions: () -> Actions
     ) {
         self.breadcrumb = breadcrumb
-        self.profile = profile
+        self.identity = identity
         self.openSettings = openSettings
         self.actions = actions()
     }
@@ -85,7 +99,7 @@ struct AgentPageRail<Actions: View>: View {
             MetaLabel(breadcrumb)
                 .frame(maxWidth: .infinity, alignment: .leading)
             actions
-            ProfileSettingsButton(profile: profile, action: openSettings)
+            ProfileSettingsButton(identity: identity, action: openSettings)
         }
         .frame(height: 44)
     }
@@ -94,12 +108,12 @@ struct AgentPageRail<Actions: View>: View {
 extension AgentPageRail where Actions == EmptyView {
     init(
         breadcrumb: String,
-        profile: CreatorProfile?,
+        identity: ActiveCreatorIdentity,
         openSettings: @escaping () -> Void
     ) {
         self.init(
             breadcrumb: breadcrumb,
-            profile: profile,
+            identity: identity,
             openSettings: openSettings,
             actions: { EmptyView() }
         )

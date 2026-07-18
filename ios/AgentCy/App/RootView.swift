@@ -114,11 +114,11 @@ struct RootView: View {
 
         switch destination {
         case .today:
-            appModel.selectedTab = .today
+            appModel.selectedTab = .home
         case .agenda(let day):
             appModel.selectedTab = .today
             appModel.widgetAgendaDay = day
-            appModel.requestedPlanMode = day == nil ? .week : .day
+            appModel.requestedPlanMode = .week
         case .tasks:
             appModel.selectedTab = .tasks
         case .ideaBank:
@@ -144,7 +144,7 @@ struct RootView: View {
         case .day:
             appModel.selectedTab = .today
             appModel.widgetAgendaDay = route.date
-            appModel.requestedPlanMode = .day
+            appModel.requestedPlanMode = .week
         case .week:
             appModel.selectedTab = .today
             appModel.widgetAgendaDay = route.date

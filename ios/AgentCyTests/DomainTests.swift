@@ -4,6 +4,15 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testCreatorFacingPostCopyFieldsStayCanonical() {
+        XCTAssertEqual(
+            CreatorPostCopyField.allCases.map(\.title),
+            ["Hook", "Script", "Caption", "Call to action"]
+        )
+        XCTAssertEqual(CreatorPostCopyField.script.editorTitle, "Script (optional)")
+        XCTAssertFalse(CreatorPostCopyField.allCases.map(\.title).contains("Ending"))
+    }
+
     func testPaletteSelectionRecolorsFiveOrFewerPillarsInOrder() {
         let pillars = (0..<5).map { index in
             Pillar(name: "Pillar \(index + 1)", colorHex: "000000")
@@ -11,6 +20,14 @@ final class DomainTests: XCTestCase {
 
         XCTAssertEqual(PillarPaletteAssignment.apply(.pastel, to: pillars), 5)
         XCTAssertEqual(pillars.map(\.colorHex), CreatorVibePalette.pastel.pillarColorHexes)
+    }
+
+    func testOnboardingOffersFourCuratedColorways() {
+        XCTAssertEqual(
+            CreatorVibePalette.onboardingPalettes,
+            [.pastel, .neutral, .soho, .tooCool]
+        )
+        XCTAssertEqual(CreatorVibePalette.onboardingPalettes.count, 4)
     }
 
     func testPaletteSelectionLeavesMoreThanFivePillarsUnchanged() {
@@ -126,6 +143,85 @@ final class DomainTests: XCTestCase {
         )
     }
 
+    func testPostActionRemovesDuplicateSendToPostSuggestion() {
+        let suggestions = [
+            ChatSuggestionWire(label: "Send to post", prompt: "Send this to a post"),
+            ChatSuggestionWire(label: "Make the hook shorter", prompt: "Shorten the hook")
+        ]
+
+        let visible = CyChatActionPolicy.visibleSuggestions(
+            suggestions,
+            hasPostAction: true
+        )
+
+        XCTAssertEqual(visible.map(\.label), ["Make the hook shorter"])
+    }
+
+    func testPostActionKeepsSuggestionsWhenThereIsNoPostAction() {
+        let suggestions = [
+            ChatSuggestionWire(label: "Send to post", prompt: "Send this to a post")
+        ]
+
+        XCTAssertEqual(
+            CyChatActionPolicy.visibleSuggestions(
+                suggestions,
+                hasPostAction: false
+            ).map(\.label),
+            ["Send to post"]
+        )
+    }
+
+    func testSuggestedPostDateUsesTheNextAssignedPillarDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let thursday = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 16,
+            hour: 17
+        )))
+
+        let result = try XCTUnwrap(CyPostSchedulingPolicy.nextSuggestedDate(
+            assignedWeekdays: [.monday, .wednesday],
+            from: thursday,
+            calendar: calendar
+        ))
+
+        XCTAssertEqual(
+            calendar.dateComponents([.year, .month, .day], from: result),
+            DateComponents(year: 2026, month: 7, day: 20)
+        )
+    }
+
+    func testCyResponseCreatesOneUnscheduledPostDraft() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let pillar = Pillar(
+            name: "Lifestyle",
+            colorHex: "55705B",
+            assignedWeekdays: [.monday]
+        )
+        context.insert(pillar)
+        let model = AppModel(reminderService: PreviewReminderService())
+        let response = "A realistic morning routine that makes the day feel easier."
+
+        let result = try XCTUnwrap(model.createPostDraftFromCyResponse(
+            response,
+            pillarID: pillar.id,
+            context: context
+        ))
+
+        XCTAssertEqual(result.brief.pillarID, pillar.id)
+        XCTAssertEqual(result.brief.premise, "")
+        XCTAssertEqual(result.brief.notes, response)
+        XCTAssertEqual(result.output.status, .draft)
+        XCTAssertNil(result.brief.agendaDate)
+        XCTAssertNil(result.output.targetDate)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PlatformOutput>()).count, 1)
+    }
+
     func testDeletingConversationRemovesOnlyItsMessages() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -178,8 +274,10 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(CreatorVibePalette.soho.title, "Soho")
         XCTAssertEqual(CreatorVibePalette.midnight.pillarColorHexes, ["0D0502", "4C2421", "B2A998", "CBCAC2", "998368"])
         XCTAssertEqual(CreatorVibePalette.tooCool.pillarColorHexes, ["440607", "1B2345", "E3DFD4", "020202", "4F4439", "64646D"])
-        XCTAssertEqual(CreatorVibePalette.allCases.suffix(2), [.soho, .tooCool])
-        XCTAssertEqual(CreatorVibePalette.signaturePalettes, [.soho, .tooCool])
+        XCTAssertEqual(CreatorVibePalette.scraper.title, "Scraper")
+        XCTAssertEqual(CreatorVibePalette.scraper.pillarColorHexes, ["F15B3A", "101010", "2A2D2E", "E3E3E3", "E6E2A3", "FEFBFA"])
+        XCTAssertEqual(CreatorVibePalette.allCases.suffix(3), [.soho, .tooCool, .scraper])
+        XCTAssertEqual(CreatorVibePalette.signaturePalettes, [.soho, .tooCool, .scraper])
     }
 
     func testCreatorProfileStoresTwoCompleteCustomCyQuickPrompts() {
@@ -603,6 +701,48 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(draft.output.recurrence, .none)
         XCTAssertEqual(draft.brief.title, "A useful unfinished idea")
         XCTAssertEqual(draft.brief.notes, "Keep this creative direction.")
+    }
+
+    func testScheduledPostCanMoveBackToIdeaBankAndClearItsPostWork() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let model = AppModel(reminderService: PreviewReminderService())
+        let date = Date(timeIntervalSince1970: 1_752_475_600)
+        let brief = CreativeBrief(title: "A post to reconsider", premise: "", status: .scheduled)
+        brief.notes = "Keep this direction as an idea."
+        brief.agendaDate = date
+        let reel = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
+        reel.targetDate = date
+        reel.includesTargetTime = true
+        reel.recurrence = .weekly
+        reel.recurrenceWeekdays = [.monday]
+        let short = PlatformOutput(briefID: brief.id, platform: .youtubeShorts, status: .scheduled)
+        short.targetDate = date
+        let task = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: reel.id,
+            title: "Edit the post",
+            kind: .editing,
+            targetDate: date
+        )
+        context.insert(brief)
+        context.insert(reel)
+        context.insert(short)
+        context.insert(task)
+        try context.save()
+
+        XCTAssertTrue(model.movePostToIdeaBank(brief: brief, output: reel, context: context))
+        XCTAssertEqual(brief.status, .spark)
+        XCTAssertNil(brief.agendaDate)
+        XCTAssertEqual(brief.notes, "Keep this direction as an idea.")
+        XCTAssertEqual(reel.status, .draft)
+        XCTAssertNil(reel.targetDate)
+        XCTAssertEqual(reel.recurrence, .none)
+        XCTAssertEqual(short.status, .draft)
+        XCTAssertNil(short.targetDate)
+        XCTAssertEqual(short.recurrence, .none)
+        XCTAssertFalse(reel.includesTargetTime)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
     }
 
     @MainActor
@@ -1792,7 +1932,79 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(unrelatedTask.targetDate, taskDate)
     }
 
-    func testPostTaskScheduleRepairRunsOnceForExplicitOpenOutputTasks() throws {
+    func testFirstSchedulingAssignsOpenPostTasksToPostDay() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let scheduledDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 17, hour: 14
+        )))
+        let staleTaskDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 16, hour: 10
+        )))
+
+        let brief = CreativeBrief(title: "Post", premise: "Test", status: .ready)
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .ready)
+        let datedTask = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Edit post",
+            targetDate: staleTaskDate,
+            includesTargetTime: true
+        )
+        let undatedTask = CreatorTask(
+            briefID: brief.id,
+            title: "Write caption"
+        )
+        context.insert(brief)
+        context.insert(output)
+        context.insert(datedTask)
+        context.insert(undatedTask)
+
+        AppModel(reminderService: PreviewReminderService()).schedule(
+            output: output,
+            date: scheduledDate,
+            context: context
+        )
+
+        XCTAssertTrue(calendar.isDate(try XCTUnwrap(datedTask.targetDate), inSameDayAs: scheduledDate))
+        XCTAssertTrue(calendar.isDate(try XCTUnwrap(undatedTask.targetDate), inSameDayAs: scheduledDate))
+    }
+
+    func testTaskAddedToScheduledPostInheritsPostingDay() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let scheduledDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 17, hour: 14
+        )))
+        let brief = CreativeBrief(title: "Post", premise: "Test", status: .scheduled)
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
+        output.targetDate = scheduledDate
+        context.insert(brief)
+        context.insert(output)
+
+        let task = try XCTUnwrap(AppModel(reminderService: PreviewReminderService()).createTask(
+            title: "Write caption",
+            kind: .scripting,
+            lane: .production,
+            targetDate: nil,
+            briefID: brief.id,
+            platformOutputID: output.id,
+            context: context
+        ))
+
+        XCTAssertTrue(calendar.isDate(try XCTUnwrap(task.targetDate), inSameDayAs: scheduledDate))
+        XCTAssertFalse(task.includesTargetTime)
+    }
+
+    func testPostTaskScheduleRepairRunsOnceForOpenPostTasks() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         let suiteName = "PostTaskScheduleRepairTests.\(UUID())"
@@ -1818,23 +2030,29 @@ final class DomainTests: XCTestCase {
             targetDate: staleTaskDate,
             includesTargetTime: true
         )
-        let unrelatedTask = CreatorTask(
+        let briefTask = CreatorTask(
             briefID: brief.id,
             title: "General post task",
+            targetDate: staleTaskDate
+        )
+        let personalTask = CreatorTask(
+            title: "Personal task",
             targetDate: staleTaskDate
         )
         context.insert(brief)
         context.insert(output)
         context.insert(linkedTask)
-        context.insert(unrelatedTask)
+        context.insert(briefTask)
+        context.insert(personalTask)
 
         XCTAssertEqual(try PostTaskScheduleRepairService.reconcileOnce(
             context: context,
             defaults: defaults,
             calendar: calendar
-        ), 1)
+        ), 2)
         XCTAssertTrue(calendar.isDate(try XCTUnwrap(linkedTask.targetDate), inSameDayAs: postDate))
-        XCTAssertEqual(unrelatedTask.targetDate, staleTaskDate)
+        XCTAssertTrue(calendar.isDate(try XCTUnwrap(briefTask.targetDate), inSameDayAs: postDate))
+        XCTAssertEqual(personalTask.targetDate, staleTaskDate)
 
         linkedTask.targetDate = staleTaskDate
         XCTAssertEqual(try PostTaskScheduleRepairService.reconcileOnce(
@@ -2333,6 +2551,151 @@ final class DomainTests: XCTestCase {
         XCTAssertFalse(WorkspaceScope.includes(nil, activeWorkspaceID: second.id, workspaces: [first, second]))
         XCTAssertTrue(WorkspaceScope.includes(second.id, activeWorkspaceID: second.id, workspaces: [first, second]))
         XCTAssertFalse(WorkspaceScope.includes(first.id, activeWorkspaceID: second.id, workspaces: [first, second]))
+    }
+
+    func testActiveCreatorIdentityChangesWithWorkspace() {
+        let profile = CreatorProfile(name: "Chey", avatarImageData: Data([0x01]))
+        let first = CreatorWorkspace(
+            profileID: profile.id,
+            name: "@fromcheywithlove",
+            creatorName: "Chey",
+            avatarImageData: Data([0x02]),
+            hasCustomIdentity: true,
+            sortOrder: 0
+        )
+        let second = CreatorWorkspace(
+            profileID: profile.id,
+            name: "@secondaccount",
+            creatorName: "Cheyenne",
+            avatarImageData: Data([0x03]),
+            hasCustomIdentity: true,
+            sortOrder: 1
+        )
+
+        XCTAssertEqual(
+            ActiveCreatorIdentity.resolve(
+                profile: profile,
+                workspaces: [first, second],
+                preferredWorkspaceID: first.id
+            ),
+            ActiveCreatorIdentity(name: "Chey", avatarImageData: Data([0x02]))
+        )
+        XCTAssertEqual(
+            ActiveCreatorIdentity.resolve(
+                profile: profile,
+                workspaces: [first, second],
+                preferredWorkspaceID: second.id
+            ),
+            ActiveCreatorIdentity(name: "Cheyenne", avatarImageData: Data([0x03]))
+        )
+    }
+
+    func testActiveCreatorIdentityFallsBackForLegacyWorkspace() {
+        let profile = CreatorProfile(name: "Chey", avatarImageData: Data([0x01]))
+        let workspace = CreatorWorkspace(
+            profileID: profile.id,
+            name: "@legacy",
+            creatorName: "@legacy",
+            avatarImageData: Data([0x02]),
+            hasCustomIdentity: false
+        )
+
+        XCTAssertEqual(
+            ActiveCreatorIdentity.resolve(
+                profile: profile,
+                workspaces: [workspace],
+                preferredWorkspaceID: workspace.id
+            ),
+            ActiveCreatorIdentity(name: "Chey", avatarImageData: Data([0x01]))
+        )
+    }
+
+    func testInstagramProfilePhotoLoaderAcceptsProfileLinks() throws {
+        let links = [
+            "https://www.instagram.com/fromcheywithlove/",
+            "https://instagram.com/fromcheywithlove",
+        ]
+
+        for link in links {
+            let url = try XCTUnwrap(URL(string: link))
+            XCTAssertTrue(InstagramProfilePhotoLoader.isSupportedProfileURL(url), link)
+        }
+    }
+
+    func testInstagramProfilePhotoLoaderRejectsNonProfileLinks() throws {
+        let links = [
+            "http://instagram.com/fromcheywithlove",
+            "https://example.com/fromcheywithlove",
+            "https://instagram.com/p/example",
+            "https://instagram.com/reel/example",
+            "https://instagram.com/fromcheywithlove/tagged",
+        ]
+
+        for link in links {
+            let url = try XCTUnwrap(URL(string: link))
+            XCTAssertFalse(InstagramProfilePhotoLoader.isSupportedProfileURL(url), link)
+        }
+    }
+
+    func testWorkspaceDeletionRemovesOnlySelectedAccountContent() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey", onboardingCompleted: true)
+        let deletedWorkspace = CreatorWorkspace(profileID: profile.id, name: "@delete", sortOrder: 0)
+        let keptWorkspace = CreatorWorkspace(profileID: profile.id, name: "@keep", sortOrder: 1)
+        let deletedAccount = CreatorSocialAccount(
+            profileID: profile.id,
+            destinationID: PublishingCatalog.instagramID,
+            label: "@delete",
+            profileURLString: "https://instagram.com/delete"
+        )
+        deletedAccount.workspaceID = deletedWorkspace.id
+        let keptAccount = CreatorSocialAccount(
+            profileID: profile.id,
+            destinationID: PublishingCatalog.instagramID,
+            label: "@keep",
+            profileURLString: "https://instagram.com/keep"
+        )
+        keptAccount.workspaceID = keptWorkspace.id
+
+        let deletedBrief = CreativeBrief(title: "Delete me")
+        deletedBrief.workspaceID = deletedWorkspace.id
+        let keptBrief = CreativeBrief(title: "Keep me")
+        keptBrief.workspaceID = keptWorkspace.id
+        let deletedTask = CreatorTask(briefID: deletedBrief.id, title: "Delete task")
+        deletedTask.workspaceID = deletedWorkspace.id
+        let keptTask = CreatorTask(briefID: keptBrief.id, title: "Keep task")
+        keptTask.workspaceID = keptWorkspace.id
+        let deletedThread = ConversationThread(title: "Delete chat")
+        deletedThread.workspaceID = deletedWorkspace.id
+        let keptThread = ConversationThread(title: "Keep chat")
+        keptThread.workspaceID = keptWorkspace.id
+        let deletedMessage = ConversationMessage(threadID: deletedThread.id, text: "Delete message")
+        let keptMessage = ConversationMessage(threadID: keptThread.id, text: "Keep message")
+
+        context.insert(profile)
+        context.insert(deletedWorkspace)
+        context.insert(keptWorkspace)
+        context.insert(deletedAccount)
+        context.insert(keptAccount)
+        context.insert(deletedBrief)
+        context.insert(keptBrief)
+        context.insert(deletedTask)
+        context.insert(keptTask)
+        context.insert(deletedThread)
+        context.insert(keptThread)
+        context.insert(deletedMessage)
+        context.insert(keptMessage)
+        try context.save()
+
+        try WorkspaceDeletionService.delete(workspaceID: deletedWorkspace.id, context: context)
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorWorkspace>()).map(\.id), [keptWorkspace.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorSocialAccount>()).map(\.id), [keptAccount.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).map(\.id), [keptBrief.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorTask>()).map(\.id), [keptTask.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ConversationThread>()).map(\.id), [keptThread.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ConversationMessage>()).map(\.id), [keptMessage.id])
     }
 
     func testWorkspaceMigrationPartitionsExistingAccountsAndTheirPosts() throws {

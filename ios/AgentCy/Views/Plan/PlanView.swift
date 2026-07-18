@@ -1,185 +1,105 @@
 import SwiftData
 import SwiftUI
 
-enum PlanMode: String, CaseIterable, Identifiable, Sendable {
-    case day
+enum PlanMode: Sendable {
     case week
-
-    var id: String { rawValue }
-    var title: String { rawValue.capitalized }
 }
 
 struct PlanView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var profiles: [CreatorProfile]
-    @State private var mode: PlanMode = .day
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
     @State private var weekOffset = 0
+    @State private var isSearchingPosts = false
 
     var body: some View {
-        GeometryReader { proxy in
-            VStack(spacing: 0) {
-                header
+        VStack(spacing: 0) {
+            header
 
-                ZStack {
-                    TodayView(
-                        day: selectedDay,
-                        planMode: animatedMode,
-                        showsHeader: false
-                    )
-                    .offset(x: mode == .day ? 0 : -proxy.size.width)
-                    .allowsHitTesting(mode == .day)
-                    .accessibilityHidden(mode != .day)
-
-                    AgendaView(
-                        planMode: animatedMode,
-                        weekOffset: $weekOffset,
-                        selectedDay: $selectedDay,
-                        showsHeader: false
-                    ) { day in
-                        selectedDay = Calendar.current.startOfDay(for: day)
-                        setMode(.day)
-                    }
-                    .offset(x: mode == .week ? 0 : proxy.size.width)
-                    .allowsHitTesting(mode == .week)
-                    .accessibilityHidden(mode != .week)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(.rect)
-                .simultaneousGesture(planSwipeGesture)
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.32), value: mode)
+            AgendaView(
+                weekOffset: $weekOffset,
+                selectedDay: $selectedDay,
+                showsHeader: false
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.agentCanvas.ignoresSafeArea())
         .onChange(of: appModel.requestedPlanMode, initial: true) { _, requestedMode in
             guard let requestedMode else { return }
-            setMode(requestedMode)
+            if requestedMode == .week, appModel.widgetAgendaDay == nil {
+                returnToCurrentWeek()
+            }
             appModel.requestedPlanMode = nil
         }
-        .onChange(of: appModel.widgetAgendaDay, initial: true) { _, day in
-            guard let day else { return }
-            selectedDay = Calendar.current.startOfDay(for: day)
-            setMode(.day)
-            appModel.widgetAgendaDay = nil
+        .sheet(isPresented: $isSearchingPosts) {
+            AgendaPostSearchView()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
     }
 
     private var header: some View {
-        PlanHeader(
-            mode: animatedMode,
-            breadcrumb: headerDateSummary,
-            profile: profiles.first,
-            firstLine: "Hi \(displayName),",
-            secondLine: "what are we creating this week?",
-            openSettings: { appModel.presentedSheet = .settings }
-        ) {
-            HStack(spacing: AgentSpacing.x1) {
-                navigationButton(symbol: "chevron.left", amount: -1)
-                todayButton
-                navigationButton(symbol: "chevron.right", amount: 1)
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            HStack(alignment: .center, spacing: AgentSpacing.x1) {
+                MetaLabel("Weekly agenda")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    isSearchingPosts = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Search posts")
+
+                ProfileSettingsButton(
+                    identity: activeIdentity,
+                    action: { appModel.presentedSheet = .settings }
+                )
             }
+
+            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x2) {
+                Button {
+                    returnToCurrentWeek()
+                } label: {
+                    Text("Today")
+                        .font(.system(size: 32, weight: .semibold, design: .default))
+                        .foregroundStyle(Color.cyAccent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Return to this week")
+                .accessibilityHint("Shows the week containing today")
+
+                Text("is \(todayTitleDate).")
+                    .font(.system(size: 32, weight: .regular, design: .default))
+                    .foregroundStyle(Color.agentText)
+            }
+            .tracking(-0.64)
+            .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x8)
+        .padding(.bottom, AgentSpacing.x8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var animatedMode: Binding<PlanMode> {
-        Binding(
-            get: { mode },
-            set: { newMode in
-                setMode(newMode)
-            }
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
         )
     }
 
-    private var planSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height),
-                      abs(value.translation.width) > 52 else { return }
-                if value.translation.width < 0, mode == .day {
-                    setMode(.week)
-                } else if value.translation.width > 0, mode == .week {
-                    setMode(.day)
-                }
-            }
+    private var todayTitleDate: String {
+        Date().formatted(.dateTime.month(.wide).day().year())
     }
 
-    private func setMode(_ newMode: PlanMode) {
-        guard newMode != mode else { return }
-        if reduceMotion {
-            mode = newMode
-        } else {
-            withAnimation(.snappy(duration: 0.32)) {
-                mode = newMode
-            }
-        }
-    }
-
-    private func navigationButton(symbol: String, amount: Int) -> some View {
-        Button { movePlan(amount) } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(navigationLabel(amount: amount))
-    }
-
-    private var todayButton: some View {
-        Button(action: returnToToday) {
-            Text("TODAY")
-                .font(.agentMono)
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(mode == .day ? "Return to today" : "Return to current week")
-    }
-
-    private var displayName: String {
-        let name = profiles.first?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty ? "there" : name
-    }
-
-    private var headerDateSummary: String {
-        let date = mode == .day ? selectedDay : weekStart
-        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
-    }
-
-    private var weekStart: Date {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let daysSinceMonday = (calendar.component(.weekday, from: today) + 5) % 7
-        let current = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today) ?? today
-        return calendar.date(byAdding: .weekOfYear, value: weekOffset, to: current) ?? current
-    }
-
-    private func movePlan(_ amount: Int) {
-        let update = {
-            if mode == .day {
-                selectedDay = Calendar.current.date(
-                    byAdding: .day,
-                    value: amount,
-                    to: selectedDay
-                ) ?? selectedDay
-            } else {
-                weekOffset += amount
-                selectedDay = Calendar.current.date(
-                    byAdding: .weekOfYear,
-                    value: amount,
-                    to: selectedDay
-                ) ?? weekStart
-            }
-        }
-        if reduceMotion {
-            update()
-        } else {
-            withAnimation(.snappy(duration: 0.28), update)
-        }
-    }
-
-    private func returnToToday() {
+    private func returnToCurrentWeek() {
         let update = {
             selectedDay = Calendar.current.startOfDay(for: Date())
             weekOffset = 0
@@ -191,47 +111,239 @@ struct PlanView: View {
         }
     }
 
-    private func navigationLabel(amount: Int) -> String {
-        let direction = amount < 0 ? "Previous" : "Next"
-        return "\(direction) \(mode == .day ? "day" : "week")"
+}
+
+private struct AgendaPostSearchView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.dismiss) private var dismiss
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var allOutputs: [PlatformOutput]
+    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
+    @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+    @State private var query = ""
+
+    private var briefs: [CreativeBrief] {
+        allBriefs.filter {
+            $0.status != .archived && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
+
+    private var pillars: [Pillar] {
+        allPillars.filter {
+            !$0.isArchived && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
+
+    private var outputs: [PlatformOutput] {
+        let briefIDs = Set(briefs.map(\.id))
+        return allOutputs.filter {
+            briefIDs.contains($0.briefID) && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
+
+    private var results: [(PlatformOutput, CreativeBrief)] {
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return outputs.compactMap { output in
+            guard let brief = brief(for: output) else { return nil }
+            if !cleanQuery.isEmpty, !searchText(for: output, brief: brief).localizedStandardContains(cleanQuery) {
+                return nil
+            }
+            return (output, brief)
+        }
+        .sorted { lhs, rhs in
+            let left = lhs.0.targetDate ?? lhs.1.updatedAt
+            let right = rhs.0.targetDate ?? rhs.1.updatedAt
+            return left > right
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    searchField
+
+                    SectionRuleHeader(
+                        title: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "All posts"
+                            : "Results",
+                        trailing: "\(results.count)"
+                    )
+
+                    if results.isEmpty {
+                        ContentUnavailableView(
+                            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? "No posts yet"
+                                : "No posts found",
+                            systemImage: "magnifyingglass",
+                            description: Text(
+                                query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    ? "Posts you create will appear here."
+                                    : "Try another title, pillar, platform, or phrase."
+                            )
+                        )
+                        .frame(minHeight: 300)
+                    } else {
+                        ForEach(results, id: \.0.id) { output, brief in
+                            resultCard(output: output, brief: brief)
+                        }
+                    }
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x4)
+                .padding(.bottom, AgentSpacing.x12)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Search posts")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                }
+            }
+            .agentScreen()
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.agentSecondary)
+            TextField("Search posts", text: $query)
+                .font(.agentBody)
+                .submitLabel(.search)
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, AgentSpacing.x4)
+        .frame(minHeight: 48)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.control)
+                .stroke(Color.agentBorder, lineWidth: 0.75)
+        }
+    }
+
+    private func resultCard(output: PlatformOutput, brief: CreativeBrief) -> some View {
+        let pillar = pillar(for: brief)
+        let missed = FinalizedPostPresentation.isMissed(
+            outputStatus: output.status,
+            targetDate: output.targetDate
+        )
+        return AgentPostCard(
+            title: postTitle(output: output, brief: brief),
+            pillar: pillar?.name ?? "Unfiled",
+            accent: pillar.map { Color(agentHex: $0.resolvedColorHex(in: pillars)) } ?? .agentSecondary,
+            status: output.status,
+            metadata: platformLabel(for: output),
+            timeText: output.targetDate?.formatted(.dateTime.month(.abbreviated).day().hour().minute()),
+            statusTextOverride: missed ? "Missed" : nil,
+            destination: AnyView(PostOutputDetailView(brief: brief, output: output))
+        )
+    }
+
+    private func brief(for output: PlatformOutput) -> CreativeBrief? {
+        briefs.first { $0.id == output.briefID }
+    }
+
+    private func pillar(for brief: CreativeBrief) -> Pillar? {
+        brief.pillarID.flatMap { id in pillars.first { $0.id == id } }
+    }
+
+    private func platformLabel(for output: PlatformOutput) -> String {
+        if let id = output.destinationID, let destination = destinations.first(where: { $0.id == id }) {
+            return destination.name
+        }
+        if let id = output.formatID, let format = formats.first(where: { $0.id == id }) {
+            return format.name
+        }
+        return output.platform.title
+    }
+
+    private func postTitle(output: PlatformOutput, brief: CreativeBrief) -> String {
+        let override = output.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        return override.isEmpty ? brief.title : override
+    }
+
+    private func searchText(for output: PlatformOutput, brief: CreativeBrief) -> String {
+        [
+            output.titleOverride,
+            brief.title,
+            brief.notes,
+            brief.spokenHook,
+            brief.scriptBeatsText,
+            brief.ctaIntent,
+            output.caption,
+            output.cta,
+            platformLabel(for: output),
+            pillar(for: brief)?.name ?? ""
+        ].joined(separator: " ")
     }
 }
 
 struct PlanHeader<Actions: View>: View {
-    @Binding var mode: PlanMode
     let breadcrumb: String
-    let profile: CreatorProfile?
+    let identity: ActiveCreatorIdentity
     let firstLine: String
     let secondLine: String
     let openSettings: () -> Void
+    let showsBreadcrumb: Bool
     @ViewBuilder let actions: Actions
 
     init(
-        mode: Binding<PlanMode>,
         breadcrumb: String,
-        profile: CreatorProfile?,
+        identity: ActiveCreatorIdentity,
         firstLine: String,
         secondLine: String,
         openSettings: @escaping () -> Void,
+        showsBreadcrumb: Bool = false,
         @ViewBuilder actions: () -> Actions
     ) {
-        _mode = mode
         self.breadcrumb = breadcrumb
-        self.profile = profile
+        self.identity = identity
         self.firstLine = firstLine
         self.secondLine = secondLine
         self.openSettings = openSettings
+        self.showsBreadcrumb = showsBreadcrumb
         self.actions = actions()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            AgentPageRail(
-                breadcrumb: breadcrumb,
-                profile: profile,
-                openSettings: openSettings,
-                actions: { actions }
-            )
+            HStack(alignment: .center, spacing: AgentSpacing.x1) {
+                if showsBreadcrumb {
+                    MetaLabel(breadcrumb)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                actions
+                ProfileSettingsButton(identity: identity, action: openSettings)
+            }
+            .frame(height: 44)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(firstLine)
@@ -243,14 +355,6 @@ struct PlanHeader<Actions: View>: View {
             .foregroundStyle(Color.agentText)
             .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
 
-            Picker("Plan view", selection: $mode) {
-                ForEach(PlanMode.allCases) { planMode in
-                    Text(planMode.title).tag(planMode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityHint("Switch between one day and the full week")
-            .padding(.top, AgentSpacing.x2)
         }
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
@@ -261,20 +365,19 @@ struct PlanHeader<Actions: View>: View {
 
 extension PlanHeader where Actions == EmptyView {
     init(
-        mode: Binding<PlanMode>,
         breadcrumb: String,
-        profile: CreatorProfile?,
+        identity: ActiveCreatorIdentity,
         firstLine: String,
         secondLine: String,
         openSettings: @escaping () -> Void
     ) {
         self.init(
-            mode: mode,
             breadcrumb: breadcrumb,
-            profile: profile,
+            identity: identity,
             firstLine: firstLine,
             secondLine: secondLine,
             openSettings: openSettings,
+            showsBreadcrumb: true,
             actions: { EmptyView() }
         )
     }

@@ -3,6 +3,22 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum PostDraftSetupPicker: String, Identifiable {
+    case pillar
+    case platform
+    case format
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .pillar: "Choose a pillar"
+        case .platform: "Choose a platform"
+        case .format: "Choose a format"
+        }
+    }
+}
+
 struct ResumablePostEditorView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
@@ -29,17 +45,19 @@ struct ResumablePostEditorView: View {
     @State private var scheduleAfterDatePicker = false
     @State private var didChooseDate = false
     @State private var showTaskComposer = false
-    @State private var showPostCopy = false
+    @State private var showMorePostDetails = false
     @State private var selectedMedia: [PhotosPickerItem] = []
     @State private var selectedMoodBoardMedia: [PhotosPickerItem] = []
     @State private var isImportingMedia = false
     @State private var isImportingMoodBoardMedia = false
     @State private var showCollaborationFileImporter = false
     @State private var confirmDeleteDraft = false
+    @State private var confirmMoveToIdeaBank = false
     @State private var isDeletingDraft = false
     @State private var markdownDocument: MarkdownFileDocument?
     @State private var showMarkdownExporter = false
     @State private var pendingProposal: BriefProposal?
+    @State private var activeSetupPicker: PostDraftSetupPicker?
     @FocusState private var notesAreFocused: Bool
 
     private var pillars: [Pillar] {
@@ -83,7 +101,7 @@ struct ResumablePostEditorView: View {
         _targetDate = State(initialValue: existingTargetDate ?? suggestedTargetDate ?? Date())
         _hasTargetDate = State(initialValue: existingTargetDate != nil || suggestedTargetDate != nil)
         _shouldPersistTargetDate = State(initialValue: existingTargetDate != nil)
-        _showPostCopy = State(initialValue: Self.hasPostCopy(output))
+        _showMorePostDetails = State(initialValue: Self.hasMorePostDetails(output))
     }
 
     var body: some View {
@@ -115,57 +133,7 @@ struct ResumablePostEditorView: View {
                 .tracking(-0.56)
                 .lineLimit(1...3)
 
-            VStack(spacing: 0) {
-                Menu {
-                    Button("No pillar") { brief.pillarID = nil }
-                    ForEach(activePillars) { pillar in
-                        Button {
-                            brief.pillarID = pillar.id
-                        } label: {
-                            PillarMenuChoiceLabel(
-                                title: pillar.name,
-                                colorHex: pillar.resolvedColorHex(in: activePillars),
-                                isSelected: brief.pillarID == pillar.id
-                            )
-                        }
-                    }
-                } label: {
-                    PostDraftSetupRow(
-                        label: "Pillar",
-                        value: selectedPillar?.name ?? "No pillar",
-                        color: selectedPillar.map { Color(agentHex: $0.resolvedColorHex(in: activePillars)) }
-                    )
-                }
-
-                Menu {
-                    ForEach(activeDestinations) { destination in
-                        Button(destination.name) { select(destination) }
-                    }
-                } label: {
-                    PostDraftSetupRow(label: "Platform", value: selectedDestination?.name ?? output.platform.title)
-                }
-
-                Menu {
-                    ForEach(activeFormats) { format in
-                        Button(format.name) {
-                            output.formatID = format.id
-                            normalizeDuration(for: format)
-                            syncLegacyPlatform()
-                        }
-                    }
-                } label: {
-                    PostDraftSetupRow(label: "Format", value: selectedFormat?.name ?? "Choose a format")
-                }
-
-                Button { editDueDate() } label: {
-                    PostDraftSetupRow(
-                        label: "Due",
-                        value: targetDateLabel
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-            .overlay(alignment: .top) { Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1) }
+            postSetupSection
 
             if let contentFormat = selectedFormat?.kind.contentFormat {
                 AgentDurationPicker(seconds: $output.durationSeconds, format: contentFormat)
@@ -183,67 +151,14 @@ struct ResumablePostEditorView: View {
                 moodBoardSection
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                AgentInputHeader(title: "Notes", isEditing: notesAreFocused) {
-                    notesAreFocused = false
-                }
-                TextEditor(text: $brief.notes)
-                    .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 160)
-                    .padding(16)
-                    .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
-                    )
-                    .focused($notesAreFocused)
-            }
+            notesSection
 
             mediaSection
 
-            if showPostCopy || Self.hasPostCopy(output) {
-                DisclosureGroup(isExpanded: $showPostCopy) {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                        BriefField(label: "Opening", text: $output.openingAdjustment)
-                        if selectedDestination?.builtInKind == .youtube {
-                            BriefField(label: "Platform title", text: $output.titleOverride)
-                        }
-                        BriefField(label: "Call to action", text: $output.cta)
-                        BriefField(label: "Edit notes", text: $output.editChanges)
-                    }
-                    .padding(.top, AgentSpacing.x4)
-                } label: {
-                    BriefDisclosureLabel(title: "More post details", detail: "Opening, CTA, edit notes")
-                }
-            }
-
-            if output.status == .posted {
-                PostEditorTextField(
-                    label: "Post link",
-                    text: $output.publishedURLString,
-                    axis: .horizontal,
-                    keyboardType: .URL,
-                    textContentType: .URL
-                )
-            }
-
-            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                SectionRuleHeader(title: "Tasks", trailing: "\(topLevelTasks.count)")
-                ForEach(topLevelTasks) { task in
-                    TaskRow(task: task, allTasks: tasks)
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
-                        }
-                }
-                AgentAddActionRow(title: "Add task") { showTaskComposer = true }
-            }
-
-            if !isEditingFinalizedPost && !isReviewEditing {
-                Button("Schedule post", action: requestSchedule)
-                    .buttonStyle(AgentPrimaryButtonStyle())
-                    .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+            moreDetailsSection
+            postedLinkSection
+            tasksSection
+            scheduleButton
         }
         .sheet(isPresented: $showDatePicker, onDismiss: finishDateSelection) {
             PostDraftDatePicker(
@@ -264,6 +179,12 @@ struct ResumablePostEditorView: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $activeSetupPicker) { picker in
+            postSetupPickerSheet(picker)
+                .presentationDetents([.height(postSetupPickerHeight(for: picker))])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Color.agentCanvas)
         }
         .sheet(isPresented: $showTaskComposer) {
             PostDraftTaskComposer(brief: brief, output: output, defaultDate: targetDate)
@@ -297,8 +218,8 @@ struct ResumablePostEditorView: View {
                         .accessibilityLabel("Delete empty draft")
                     } else {
                         Menu {
-                            Button("Make an idea", systemImage: "lightbulb") {
-                                makeIdea()
+                            Button("Move to Idea Bank", systemImage: "lightbulb") {
+                                confirmMoveToIdeaBank = true
                             }
                             Button("Save draft", systemImage: "square.and.arrow.down") {
                                 saveDraft()
@@ -330,6 +251,12 @@ struct ResumablePostEditorView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This permanently deletes the draft and its linked tasks.")
+        }
+        .confirmationDialog("Move this post to Idea Bank?", isPresented: $confirmMoveToIdeaBank, titleVisibility: .visible) {
+            Button("Move to Idea Bank", action: makeIdea)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its title, notes, and pillar stay with the idea. Its schedule and linked post tasks are removed.")
         }
         .onDisappear {
             if !isDeletingDraft { persistChanges() }
@@ -364,6 +291,274 @@ struct ResumablePostEditorView: View {
     }
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
+
+    private var postSetupSection: some View {
+        VStack(spacing: 0) {
+            pillarMenu
+
+            Button {
+                presentSetupPicker(.platform)
+            } label: {
+                PostDraftSetupRow(label: "Platform", value: selectedDestination?.name ?? output.platform.title)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                presentSetupPicker(.format)
+            } label: {
+                PostDraftSetupRow(label: "Format", value: selectedFormat?.name ?? "Choose a format")
+            }
+            .buttonStyle(.plain)
+            .disabled(output.destinationID == nil)
+            .opacity(output.destinationID == nil ? 0.55 : 1)
+
+            Button { editDueDate() } label: {
+                PostDraftSetupRow(label: "Due", value: targetDateLabel)
+            }
+            .buttonStyle(.plain)
+        }
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
+        }
+    }
+
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AgentInputHeader(title: "Notes", isEditing: notesAreFocused) {
+                notesAreFocused = false
+            }
+            TextEditor(text: $brief.notes)
+                .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 160)
+                .padding(16)
+                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                )
+                .focused($notesAreFocused)
+        }
+    }
+
+    @ViewBuilder
+    private var moreDetailsSection: some View {
+        if showMorePostDetails || Self.hasMorePostDetails(output) {
+            DisclosureGroup(isExpanded: $showMorePostDetails) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    BriefField(label: "Opening", text: $output.openingAdjustment)
+                    if selectedDestination?.builtInKind == .youtube {
+                        BriefField(label: "Platform title", text: $output.titleOverride)
+                    }
+                    BriefField(label: "Edit notes", text: $output.editChanges)
+                }
+                .padding(.top, AgentSpacing.x4)
+            } label: {
+                BriefDisclosureLabel(title: "More post details", detail: "Opening, edit notes")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var postedLinkSection: some View {
+        if output.status == .posted {
+            PostEditorTextField(
+                label: "Post link",
+                text: $output.publishedURLString,
+                axis: .horizontal,
+                keyboardType: .URL,
+                textContentType: .URL
+            )
+        }
+    }
+
+    private var tasksSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            SectionRuleHeader(title: "Tasks", trailing: "\(topLevelTasks.count)")
+            ForEach(topLevelTasks) { task in
+                TaskRow(task: task, allTasks: tasks)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
+                    }
+            }
+            AgentAddActionRow(title: "Add task") { showTaskComposer = true }
+        }
+    }
+
+    @ViewBuilder
+    private var scheduleButton: some View {
+        if !isEditingFinalizedPost && !isReviewEditing {
+            Button("Schedule post", action: requestSchedule)
+                .buttonStyle(AgentPrimaryButtonStyle())
+                .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private var pillarMenu: some View {
+        Button {
+            presentSetupPicker(.pillar)
+        } label: {
+            PostDraftSetupRow(
+                label: "Pillar",
+                value: selectedPillar?.name ?? "No pillar",
+                color: selectedPillar.map { pillar in
+                    Color(agentHex: pillar.resolvedColorHex(in: activePillars))
+                }
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func performStableSetupSelection(_ update: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, update)
+    }
+
+    private func presentSetupPicker(_ picker: PostDraftSetupPicker) {
+        AgentKeyboard.dismiss()
+        activeSetupPicker = picker
+    }
+
+    private func chooseSetupOption(_ update: () -> Void) {
+        performStableSetupSelection(update)
+        activeSetupPicker = nil
+    }
+
+    @ViewBuilder
+    private func postSetupPickerSheet(_ picker: PostDraftSetupPicker) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            HStack(alignment: .center) {
+                Text(picker.title)
+                    .font(.agentTitle)
+                    .foregroundStyle(Color.agentText)
+
+                Spacer()
+
+                Button("Close") {
+                    activeSetupPicker = nil
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                .buttonStyle(.plain)
+            }
+
+            VStack(spacing: 0) {
+                switch picker {
+                case .pillar:
+                    setupPickerChoice(title: "No pillar", isSelected: brief.pillarID == nil) {
+                        brief.pillarID = nil
+                    }
+
+                    ForEach(Array(activePillars.enumerated()), id: \.element.id) { index, pillar in
+                        setupPickerDivider()
+                        setupPickerChoice(
+                            title: pillar.name,
+                            color: Color(agentHex: pillar.resolvedColorHex(in: activePillars)),
+                            isSelected: brief.pillarID == pillar.id
+                        ) {
+                            brief.pillarID = pillar.id
+                        }
+                    }
+
+                case .platform:
+                    if activeDestinations.isEmpty {
+                        setupPickerEmptyState("No platforms are available.")
+                    } else {
+                        ForEach(Array(activeDestinations.enumerated()), id: \.element.id) { index, destination in
+                            if index > 0 { setupPickerDivider() }
+                            setupPickerChoice(
+                                title: destination.name,
+                                isSelected: output.destinationID == destination.id
+                            ) {
+                                select(destination)
+                            }
+                        }
+                    }
+
+                case .format:
+                    if activeFormats.isEmpty {
+                        setupPickerEmptyState("No formats are available for this platform.")
+                    } else {
+                        ForEach(Array(activeFormats.enumerated()), id: \.element.id) { index, format in
+                            if index > 0 { setupPickerDivider() }
+                            setupPickerChoice(
+                                title: format.name,
+                                isSelected: output.formatID == format.id
+                            ) {
+                                output.formatID = format.id
+                                normalizeDuration(for: format)
+                                syncLegacyPlatform()
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+        }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x4)
+        .padding(.bottom, AgentSpacing.x6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func setupPickerChoice(
+        title: String,
+        color: Color? = nil,
+        isSelected: Bool,
+        update: @escaping () -> Void
+    ) -> some View {
+        Button {
+            chooseSetupOption(update)
+        } label: {
+            HStack(spacing: AgentSpacing.x3) {
+                if let color {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 10, height: 10)
+                }
+
+                Text(title)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.agentText)
+                }
+            }
+            .frame(minHeight: 54)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func setupPickerDivider() -> some View {
+        Rectangle()
+            .fill(Color.agentHairline)
+            .frame(height: 1)
+    }
+
+    private func setupPickerEmptyState(_ message: String) -> some View {
+        Text(message)
+            .font(.agentBody)
+            .foregroundStyle(Color.agentSecondary)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+    }
+
+    private func postSetupPickerHeight(for picker: PostDraftSetupPicker) -> CGFloat {
+        let optionCount: Int
+        switch picker {
+        case .pillar: optionCount = activePillars.count + 1
+        case .platform: optionCount = max(activeDestinations.count, 1)
+        case .format: optionCount = max(activeFormats.count, 1)
+        }
+        return min(560, max(220, CGFloat(optionCount * 55) + 112))
+    }
     private var isEditingFinalizedPost: Bool {
         !PostDraftResumePolicy.shouldResume(
             briefStatus: brief.status,
@@ -413,10 +608,34 @@ struct ResumablePostEditorView: View {
     private var postCopySection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             SectionRuleHeader(title: "Post copy")
-            if showsHookSection {
-                PostEditorTextField(label: "Hook", text: $brief.spokenHook)
+            ForEach(CreatorPostCopyField.allCases) { field in
+                if field != .hook || showsHookSection {
+                    PostEditorTextField(
+                        label: field.editorTitle,
+                        text: postCopyBinding(for: field),
+                        minimumHeight: field.minimumEditorHeight
+                    )
+                }
             }
-            PostEditorTextField(label: "Caption", text: $output.caption, minimumHeight: 112)
+        }
+    }
+
+    private func postCopyBinding(for field: CreatorPostCopyField) -> Binding<String> {
+        switch field {
+        case .hook:
+            $brief.spokenHook
+        case .script:
+            $brief.scriptBeatsText
+        case .caption:
+            $output.caption
+        case .callToAction:
+            Binding(
+                get: { output.cta.isEmpty ? brief.ctaIntent : output.cta },
+                set: { value in
+                    output.cta = value
+                    brief.ctaIntent = value
+                }
+            )
         }
     }
 
@@ -968,7 +1187,7 @@ struct ResumablePostEditorView: View {
 
     private func makeIdea() {
         persistChanges()
-        guard appModel.movePostDraftToIdeaBank(brief: brief, output: output, context: context) else { return }
+        guard appModel.movePostToIdeaBank(brief: brief, output: output, context: context) else { return }
         dismiss()
     }
 
@@ -1109,8 +1328,8 @@ struct ResumablePostEditorView: View {
         }
     }
 
-    private static func hasPostCopy(_ output: PlatformOutput) -> Bool {
-        [output.caption, output.openingAdjustment, output.titleOverride, output.cta, output.editChanges]
+    private static func hasMorePostDetails(_ output: PlatformOutput) -> Bool {
+        [output.openingAdjustment, output.titleOverride, output.editChanges]
             .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }
@@ -1665,6 +1884,16 @@ struct PostDraftTaskComposer: View {
     }
 
     private func addTask() {
+        let requestedDate = includeDate
+            ? (includesTime ? date : Calendar.current.startOfDay(for: date))
+            : nil
+        let resolvedDate = PostTaskReschedulePolicy.resolvedDueDate(
+            requestedDate: requestedDate,
+            includesTime: includeDate && includesTime,
+            briefID: brief.id,
+            outputID: output.id,
+            outputs: [output]
+        )
         let task = CreatorTask(
             briefID: brief.id,
             pillarID: brief.pillarID,
@@ -1673,9 +1902,7 @@ struct PostDraftTaskComposer: View {
             kind: .planning,
             lane: .production,
             priority: priority,
-            targetDate: includeDate
-                ? (includesTime ? date : Calendar.current.startOfDay(for: date))
-                : nil,
+            targetDate: resolvedDate,
             includesTargetTime: includeDate && includesTime
         )
         task.workspaceID = brief.workspaceID ?? appModel.resolvedWorkspaceID(context: context)

@@ -75,9 +75,17 @@ struct OnboardingView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
-        .preferredColorScheme(draft.appearance?.colorSchemeOverride)
         .agentScreen()
+        .preferredColorScheme(draft.appearance?.colorSchemeOverride)
         .agentKeyboardDismissal()
+        .onChange(of: draft.appearance, initial: true) { _, appearance in
+            AgentAppearanceController.apply(appearance ?? .system)
+        }
+        .onDisappear {
+            if previewOnly {
+                AgentAppearanceController.apply(appModel.appearancePreference)
+            }
+        }
         .task { await appModel.refreshReminderSchedule(context: context) }
     }
 
@@ -223,7 +231,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
             PaperOnboardingPrompt(
                 title: "What’s your vibe?",
-                subtitle: "Choose a starting palette for your pillars and the app appearance you prefer."
+                subtitle: "Choose one starting palette and the appearance that feels right."
             )
 
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
@@ -235,22 +243,7 @@ struct OnboardingView: View {
                     ],
                     spacing: AgentSpacing.x3
                 ) {
-                    ForEach(CreatorVibePalette.standardPalettes) { palette in
-                        vibePaletteButton(palette)
-                    }
-                }
-
-                PaperFieldLabel("Signature")
-                    .padding(.top, AgentSpacing.x2)
-
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: AgentSpacing.x3),
-                        GridItem(.flexible(), spacing: AgentSpacing.x3)
-                    ],
-                    spacing: AgentSpacing.x3
-                ) {
-                    ForEach(CreatorVibePalette.signaturePalettes) { palette in
+                    ForEach(CreatorVibePalette.onboardingPalettes) { palette in
                         vibePaletteButton(palette)
                     }
                 }
@@ -265,7 +258,7 @@ struct OnboardingView: View {
                 }
             }
 
-            Text("This is only a starting point. You can choose custom pillar colors and change your appearance later.")
+            Text("This is only a starting point. You can change your palette and appearance later in Settings.")
                 .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
                 .foregroundStyle(Color.agentSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -322,24 +315,23 @@ struct OnboardingView: View {
         return Button {
             draft.appearance = appearance
         } label: {
-            HStack(spacing: AgentSpacing.x3) {
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(appearance == .dark ? Color(agentHex: "141414") : Color(agentHex: "FDFDFB"))
-                    .frame(width: 34, height: 34)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(appearance == .dark ? Color.white.opacity(0.24) : Color.black.opacity(0.12), lineWidth: 1)
-                    }
+            VStack(spacing: AgentSpacing.x2) {
+                vibeAppearanceSwatch(appearance)
                 Text(appearance.title)
-                    .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
-                Spacer()
+                    .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(height: 12)
+                } else {
+                    Color.clear.frame(height: 12)
                 }
             }
-            .padding(.horizontal, AgentSpacing.x4)
-            .frame(maxWidth: .infinity, minHeight: 58)
+            .padding(.horizontal, AgentSpacing.x2)
+            .padding(.vertical, AgentSpacing.x3)
+            .frame(maxWidth: .infinity, minHeight: 102)
             .background(Color.agentSurface, in: .rect(cornerRadius: 14))
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
@@ -347,7 +339,32 @@ struct OnboardingView: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(appearance.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private func vibeAppearanceSwatch(_ appearance: AppearancePreference) -> some View {
+        Group {
+            switch appearance {
+            case .system:
+                LinearGradient(
+                    colors: [Color(agentHex: "FDFDFB"), Color(agentHex: "141414")],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            case .light:
+                Color(agentHex: "FDFDFB")
+            case .dark:
+                Color(agentHex: "141414")
+            }
+        }
+        .frame(width: 38, height: 38)
+        .clipShape(.rect(cornerRadius: 9))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(Color(agentHex: appearance == .dark ? "5A5A5A" : "D7D8D3"), lineWidth: 1)
+        }
     }
 
     private var pillarsStep: some View {

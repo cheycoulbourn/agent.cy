@@ -574,8 +574,13 @@ enum MCPBridgeService {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
         }
 
+        let identity = ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: activeID
+        )
         let profile = profiles.first.map {
-            MCPBridgeProfileSnapshot(id: $0.id, name: $0.name, goal: $0.goal)
+            MCPBridgeProfileSnapshot(id: $0.id, name: identity.name, goal: $0.goal)
         }
         let pillarSnapshots = pillars.map {
             MCPBridgePillarSnapshot(
@@ -752,6 +757,12 @@ enum MCPBridgeService {
             output.includesTargetTime = request.payload.includesTargetTime ?? true
             brief.agendaDate = targetDate
             BriefLifecycle.synchronize(brief, outputs: outputs)
+            let postTasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            _ = PostTaskReschedulePolicy.alignOpenTasks(
+                postTasks,
+                to: output,
+                on: targetDate
+            )
         case "addTask":
             let title = try requiredTitle(request.payload.title)
             let postID = request.payload.postId
@@ -769,6 +780,14 @@ enum MCPBridgeService {
                }) {
                 throw MCPBridgeError.missingRecord("The linked platform version no longer exists.")
             }
+            let taskIncludesTime = request.payload.includesTargetTime ?? false
+            let taskTargetDate = PostTaskReschedulePolicy.resolvedDueDate(
+                requestedDate: request.payload.targetDate,
+                includesTime: taskIncludesTime,
+                briefID: postID,
+                outputID: request.payload.outputId,
+                outputs: try context.fetch(FetchDescriptor<PlatformOutput>())
+            )
             let task = CreatorTask(
                 briefID: postID,
                 pillarID: pillarID,
@@ -778,8 +797,8 @@ enum MCPBridgeService {
                 lane: request.payload.lane.flatMap(TaskLane.init(rawValue:)) ?? .production,
                 priority: request.payload.priority.flatMap(TaskPriority.init(rawValue:)) ?? .none,
                 notes: request.payload.notes ?? "",
-                targetDate: request.payload.targetDate,
-                includesTargetTime: request.payload.includesTargetTime ?? false
+                targetDate: taskTargetDate,
+                includesTargetTime: taskIncludesTime
             )
             task.workspaceID = postID.flatMap { id in
                 try? fetchBrief(id, context: context, workspaceID: workspaceID, workspaces: workspaces)?.workspaceID

@@ -30,4 +30,75 @@ enum PostTaskReschedulePolicy {
             of: postDate
         ) ?? postDate
     }
+
+    static func scheduledPostDate(
+        briefID: UUID?,
+        outputID: UUID?,
+        outputs: [PlatformOutput]
+    ) -> Date? {
+        if let outputID,
+           let output = outputs.first(where: {
+               $0.id == outputID && $0.status == .scheduled && $0.targetDate != nil
+           }) {
+            return output.targetDate
+        }
+
+        guard let briefID else { return nil }
+        return outputs
+            .filter { $0.briefID == briefID && $0.status == .scheduled && $0.targetDate != nil }
+            .compactMap(\.targetDate)
+            .min()
+    }
+
+    static func resolvedDueDate(
+        requestedDate: Date?,
+        includesTime: Bool,
+        briefID: UUID?,
+        outputID: UUID?,
+        outputs: [PlatformOutput],
+        calendar: Calendar = .current
+    ) -> Date? {
+        guard let postDate = scheduledPostDate(
+            briefID: briefID,
+            outputID: outputID,
+            outputs: outputs
+        ) else { return requestedDate }
+
+        return alignedDate(
+            requestedDate,
+            to: postDate,
+            includesTime: includesTime,
+            calendar: calendar
+        )
+    }
+
+    @discardableResult
+    static func alignOpenTasks(
+        _ tasks: [CreatorTask],
+        to output: PlatformOutput,
+        on postDate: Date,
+        calendar: Calendar = .current
+    ) -> Int {
+        var movedCount = 0
+        for task in tasks where !task.isCompleted {
+            guard isLinked(
+                taskBriefID: task.briefID,
+                taskOutputID: task.platformOutputID,
+                toOutputID: output.id,
+                briefID: output.briefID
+            ) else { continue }
+
+            task.targetDate = alignedDate(
+                task.targetDate,
+                to: postDate,
+                includesTime: task.includesTargetTime,
+                calendar: calendar
+            )
+            if task.dailyFocusDate != nil {
+                task.dailyFocusDate = calendar.startOfDay(for: postDate)
+            }
+            movedCount += 1
+        }
+        return movedCount
+    }
 }

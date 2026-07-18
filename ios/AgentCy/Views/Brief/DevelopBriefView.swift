@@ -285,7 +285,7 @@ struct DevelopBriefView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            HStack(alignment: .bottom, spacing: AgentSpacing.x2) {
+            ZStack(alignment: .bottomTrailing) {
                 TextField(text: $answer, axis: .vertical) {
                     Text("Ask about this post")
                         .foregroundStyle(Color.agentSecondary)
@@ -294,8 +294,10 @@ struct DevelopBriefView: View {
                 .foregroundStyle(Color.agentText)
                 .lineLimit(1...4)
                 .focused($answerIsFocused)
-                .padding(.leading, AgentSpacing.x3)
-                .padding(.vertical, AgentSpacing.x3)
+                .padding(.leading, AgentSpacing.x4)
+                .padding(.trailing, AgentSpacing.x12 + AgentSpacing.x3)
+                .padding(.vertical, AgentSpacing.x4)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button { send() } label: {
                     Image(systemName: "arrow.up")
@@ -312,12 +314,12 @@ struct DevelopBriefView: View {
                 .buttonStyle(.plain)
                 .disabled(!canSend)
                 .accessibilityLabel("Send to Cy")
+                .padding(6)
             }
-            .padding(6)
             .frame(minHeight: 56)
-            .glassEffect(.clear, in: .capsule)
+            .glassEffect(.clear, in: .rect(cornerRadius: AgentRadius.floating))
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: AgentRadius.floating)
                     .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
                     .allowsHitTesting(false)
             }

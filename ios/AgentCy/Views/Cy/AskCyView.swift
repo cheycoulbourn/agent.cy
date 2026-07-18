@@ -8,6 +8,51 @@ private struct CyPlateItem: Identifiable {
     let title: String
 }
 
+enum CyChatActionPolicy {
+    static func visibleSuggestions(
+        _ suggestions: [ChatSuggestionWire],
+        hasPostAction: Bool
+    ) -> [ChatSuggestionWire] {
+        guard hasPostAction else { return suggestions }
+        return suggestions.filter { suggestion in
+            !duplicatesPostAction(suggestion)
+        }
+    }
+
+    private static func duplicatesPostAction(_ suggestion: ChatSuggestionWire) -> Bool {
+        let text = "\(suggestion.label) \(suggestion.prompt)"
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        return text.contains("send to post") || text.contains("add to post")
+    }
+}
+
+enum CyPostSchedulingPolicy {
+    static func nextSuggestedDate(
+        assignedWeekdays: Set<PillarWeekday>,
+        from date: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Date? {
+        guard !assignedWeekdays.isEmpty else { return nil }
+        let start = calendar.startOfDay(for: date)
+        for offset in 0...7 {
+            guard let candidate = calendar.date(byAdding: .day, value: offset, to: start),
+                  let weekday = PillarWeekday(rawValue: calendar.component(.weekday, from: candidate)),
+                  assignedWeekdays.contains(weekday) else { continue }
+            return candidate
+        }
+        return nil
+    }
+}
+
+private struct CyPostDraftRoute: Identifiable {
+    let brief: CreativeBrief
+    let output: PlatformOutput
+    let suggestedTargetDate: Date?
+
+    var id: UUID { brief.id }
+}
+
 enum CyTaskAttentionPolicy {
     static func visibleOpenTasks(
         tasks: [CreatorTask],
@@ -288,6 +333,7 @@ struct AskCyView: View {
     @State private var sendTask: Task<Void, Never>?
     @State private var activeSendID: UUID?
     @State private var sentToPostMessageIDs: Set<UUID> = []
+    @State private var postDraftToOpen: CyPostDraftRoute?
     @FocusState private var composerIsFocused: Bool
 
     private var threads: [ConversationThread] { scoped(allThreads) }
@@ -397,6 +443,36 @@ struct AskCyView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(item: $postDraftToOpen) { route in
+            NavigationStack {
+                ScrollView {
+                    ResumablePostEditorView(
+                        brief: route.brief,
+                        output: route.output,
+                        suggestedTargetDate: route.suggestedTargetDate,
+                        contextLabel: "New post",
+                        onSpark: {}
+                    )
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(.top, AgentSpacing.x4)
+                    .padding(.bottom, 120)
+                }
+                .navigationTitle("New post")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", systemImage: "xmark") {
+                            postDraftToOpen = nil
+                        }
+                        .labelStyle(.iconOnly)
+                    }
+                }
+                .agentScreen()
+                .agentKeyboardDismissal()
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $showProUpsell) {
             NavigationStack {
                 ScrollView {
@@ -481,7 +557,7 @@ struct AskCyView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 HStack(spacing: AgentSpacing.x2) {
-                    CyAsterisk(color: .cyAccent, size: 20, strokeWidth: 1.7)
+                    CyAnimatedLogo(size: 20, strokeWidth: 1.7)
                     MetaLabel("CY · FOR REVIEW")
                         .foregroundStyle(Color.cyAccent)
                 }
@@ -526,7 +602,7 @@ struct AskCyView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                 HStack(spacing: AgentSpacing.x2) {
-                    CyAsterisk(color: .cyAccent, size: 20, strokeWidth: 1.7)
+                    CyAnimatedLogo(size: 20, strokeWidth: 1.7)
                     MetaLabel("CY · REVIEW COMPLETE")
                         .foregroundStyle(Color.cyAccent)
                 }
@@ -557,7 +633,7 @@ struct AskCyView: View {
     private var topRail: some View {
         AgentPageRail(
             breadcrumb: "Agent (Cy)",
-            profile: profiles.first,
+            identity: activeIdentity,
             openSettings: { appModel.presentedSheet = .settings }
         ) {
             Menu {
@@ -583,6 +659,17 @@ struct AskCyView: View {
                 .foregroundStyle(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
         }
         .frame(minHeight: 24)
+        .padding(.vertical, AgentSpacing.x2)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.agentBorder)
+                .frame(height: 0.75)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.agentBorder)
+                .frame(height: 0.75)
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Remote status, \(remoteIsConnected ? "connected" : "unavailable")")
     }
@@ -598,10 +685,11 @@ struct AskCyView: View {
 
     private var opening: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            CyAsterisk(color: .cyAccent, size: 36, strokeWidth: 2)
+            CyAnimatedLogo()
+                .frame(width: 44, height: 44, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Hey \(displayName),")
+                Text("Hey \(activeIdentity.greetingName),")
                     .font(.system(size: 32, weight: .regular))
                 Text("what are we creating today?")
                     .font(.agentDisplay)
@@ -767,7 +855,12 @@ struct AskCyView: View {
         label: String,
         showsAsterisk: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+        let hasPostAction = canSendResponseToPost(message)
+        let visibleSuggestions = CyChatActionPolicy.visibleSuggestions(
+            message.chatSuggestions,
+            hasPostAction: hasPostAction
+        )
+        return VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             HStack(spacing: AgentSpacing.x2) {
                 if showsAsterisk {
                     CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
@@ -785,14 +878,14 @@ struct AskCyView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if !message.chatSuggestions.isEmpty {
+            if !visibleSuggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     MetaLabel("Continue with")
                         .foregroundStyle(Color.agentSecondary)
                         .padding(.horizontal, AgentSpacing.x3)
                         .padding(.vertical, AgentSpacing.x2)
 
-                    ForEach(Array(message.chatSuggestions.enumerated()), id: \.offset) { index, suggestion in
+                    ForEach(Array(visibleSuggestions.enumerated()), id: \.offset) { index, suggestion in
                         Button {
                             prompt = suggestion.prompt
                             composerIsFocused = true
@@ -866,13 +959,13 @@ struct AskCyView: View {
                 .accessibilityHint("Adds Cy's proposed task to your task list")
             }
 
-            if canSendResponseToPost(message) {
+            if hasPostAction {
                 Button {
                     sendResponseToPost(message)
                 } label: {
                     HStack(spacing: AgentSpacing.x2) {
                         CyAsterisk(color: .cyAccent, size: 13, strokeWidth: 1.4)
-                        Text(sentToPostMessageIDs.contains(message.id) ? "Sent to post" : "Send to post")
+                        Text(sentToPostMessageIDs.contains(message.id) ? "Post created" : "Send to post")
                             .font(.agentSubtext.weight(.semibold))
                         Spacer(minLength: AgentSpacing.x2)
                         Image(systemName: sentToPostMessageIDs.contains(message.id) ? "checkmark" : "arrow.right")
@@ -887,7 +980,7 @@ struct AskCyView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(sentToPostMessageIDs.contains(message.id))
-                .accessibilityHint("Adds Cy's response to the referenced post notes and opens the post")
+                .accessibilityHint("Creates a new post from Cy's response and opens its editor")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -915,25 +1008,27 @@ struct AskCyView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            HStack(alignment: .bottom, spacing: AgentSpacing.x2) {
+            ZStack(alignment: .bottomTrailing) {
                 TextField(text: $prompt, axis: .vertical) {
                     Text(composerPlaceholder)
                         .foregroundStyle(Color.agentSecondary)
                 }
-                    .font(.agentBody)
-                    .foregroundStyle(Color.agentText)
-                    .lineLimit(1...4)
-                    .focused($composerIsFocused)
-                    .padding(.leading, AgentSpacing.x3)
-                    .padding(.vertical, AgentSpacing.x3)
+                .font(.agentBody)
+                .foregroundStyle(Color.agentText)
+                .lineLimit(1...4)
+                .focused($composerIsFocused)
+                .padding(.leading, AgentSpacing.x4)
+                .padding(.trailing, AgentSpacing.x12 + AgentSpacing.x3)
+                .padding(.vertical, AgentSpacing.x4)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 composerActionButton
+                    .padding(6)
             }
-            .padding(6)
             .frame(minHeight: 56)
-            .glassEffect(.clear, in: .capsule)
+            .glassEffect(.clear, in: .rect(cornerRadius: AgentRadius.floating))
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: AgentRadius.floating)
                     .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
                     .allowsHitTesting(false)
             }
@@ -973,9 +1068,12 @@ struct AskCyView: View {
         .accessibilityLabel(isSending ? "Stop Cy" : "Send")
     }
 
-    private var displayName: String {
-        let name = profiles.first?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty ? "there" : name
+    private var activeIdentity: ActiveCreatorIdentity {
+        ActiveCreatorIdentity.resolve(
+            profile: profiles.first,
+            workspaces: workspaces,
+            preferredWorkspaceID: appModel.activeWorkspaceID
+        )
     }
 
     private var onYourPlateItems: [CyPlateItem] {
@@ -998,7 +1096,6 @@ struct AskCyView: View {
         let pastDueTaskCount = visibleOpenTasks.filter {
             CyTaskAttentionPolicy.isPastDue($0, now: now)
         }.count
-        let openTaskCount = visibleOpenTasks.count - pastDueTaskCount
         let unscheduledIdeaCount = activeBriefs.filter { brief in
             guard brief.status == .spark || brief.status == .developing else { return false }
             return !outputs.contains { $0.briefID == brief.id && $0.targetDate != nil }
@@ -1017,13 +1114,6 @@ struct AskCyView: View {
                 id: "past-due-tasks",
                 count: pastDueTaskCount,
                 title: pastDueTaskCount == 1 ? "Task is past due" : "Tasks are past due"
-            ))
-        }
-        if openTaskCount > 0 {
-            items.append(CyPlateItem(
-                id: "unfinished-tasks",
-                count: openTaskCount,
-                title: openTaskCount == 1 ? "Task is open" : "Tasks are open"
             ))
         }
         if unscheduledIdeaCount > 0 {
@@ -1066,23 +1156,15 @@ struct AskCyView: View {
             briefs: activeBriefs,
             now: now
         )
+            .filter { CyTaskAttentionPolicy.isPastDue($0, now: now) }
             .sorted(by: {
-                let leftPastDue = CyTaskAttentionPolicy.isPastDue($0, now: now)
-                let rightPastDue = CyTaskAttentionPolicy.isPastDue($1, now: now)
-                if leftPastDue != rightPastDue { return leftPastDue }
                 return ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture)
             })
             .first
         if let openTask {
-            if CyTaskAttentionPolicy.isPastDue(openTask, now: now) {
-                return (
-                    "\(openTask.title) is past due. Want to decide what to do with it?",
-                    "Help me complete, move, or skip \(openTask.title)."
-                )
-            }
             return (
-                "\(openTask.title) is still open. Want to decide the next step together?",
-                "Help me decide the next step for \(openTask.title)."
+                "\(openTask.title) is past due. Want to decide what to do with it?",
+                "Help me complete, move, or skip \(openTask.title)."
             )
         }
 
@@ -1419,32 +1501,36 @@ struct AskCyView: View {
     }
 
     private func sendResponseToPost(_ message: ConversationMessage) {
-        guard let briefID = message.referencedBriefID,
-              let brief = briefs.first(where: { $0.id == briefID }) else {
-            appModel.notice = .error("That post could not be found.")
+        guard let sourceBriefID = message.referencedBriefID,
+              let sourceBrief = briefs.first(where: { $0.id == sourceBriefID }) else {
+            appModel.notice = .error("The source post could not be found.")
             return
         }
 
         let cleanResponse = plainText(from: message.text)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanResponse.isEmpty else { return }
-        if brief.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            brief.notes = cleanResponse
-        } else if !brief.notes.contains(cleanResponse) {
-            brief.notes += "\n\n" + cleanResponse
-        }
-        brief.updatedAt = Date()
-        do {
-            try context.save()
-            sentToPostMessageIDs.insert(message.id)
-            appModel.notice = .info("Added to \(brief.title).")
-            appModel.widgetBriefOpensEditor = true
-            appModel.widgetBriefID = brief.id
-            appModel.requestedPlanMode = .week
-            appModel.selectedTab = .today
-        } catch {
-            appModel.notice = .error("That response could not be added to the post.")
-        }
+        let pillarID = sourceBrief.pillarID
+        guard let draft = appModel.createPostDraftFromCyResponse(
+            cleanResponse,
+            pillarID: pillarID,
+            context: context
+        ) else { return }
+
+        let assignedWeekdays = pillarID
+            .flatMap { id in activePillars.first(where: { $0.id == id }) }
+            .map { $0.resolvedWeekdays(in: activePillars) }
+            ?? []
+        let suggestedTargetDate = CyPostSchedulingPolicy.nextSuggestedDate(
+            assignedWeekdays: assignedWeekdays
+        )
+
+        sentToPostMessageIDs.insert(message.id)
+        postDraftToOpen = CyPostDraftRoute(
+            brief: draft.brief,
+            output: draft.output,
+            suggestedTargetDate: suggestedTargetDate
+        )
     }
 
 }

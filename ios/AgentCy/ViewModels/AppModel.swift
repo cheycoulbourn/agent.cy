@@ -54,7 +54,7 @@ struct TaskCompletionUndoState: Identifiable, Equatable {
 @MainActor
 @Observable
 final class AppModel {
-    var selectedTab: AppTab = .today
+    var selectedTab: AppTab = .home
     var appearancePreference: AppearancePreference = .system
     var activeWorkspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
     var workspaceRevision = 0
@@ -493,7 +493,10 @@ final class AppModel {
         } ?? name
         let workspace = CreatorWorkspace(
             profileID: profile.id,
-            name: workspaceName.isEmpty ? "My account" : workspaceName
+            name: workspaceName.isEmpty ? "My account" : workspaceName,
+            creatorName: name,
+            avatarImageData: profile.avatarImageData,
+            hasCustomIdentity: true
         )
         context.insert(workspace)
         activeWorkspaceID = workspace.id
@@ -778,6 +781,43 @@ final class AppModel {
     }
 
     @discardableResult
+    func createPostDraftFromCyResponse(
+        _ response: String,
+        pillarID: UUID?,
+        context: ModelContext
+    ) -> (brief: CreativeBrief, output: PlatformOutput)? {
+        let cleanResponse = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanResponse.isEmpty,
+              let brief = createSpark(
+                text: cleanResponse,
+                source: .cyDirection,
+                notes: cleanResponse,
+                pillarID: pillarID,
+                context: context
+              ) else { return nil }
+
+        // Cy's response belongs in the editable Notes field. Keeping premise empty
+        // avoids showing the same content twice when the draft is reopened.
+        brief.premise = ""
+        guard let output = ensurePostDraft(for: brief, context: context) else {
+            context.delete(brief)
+            try? context.save()
+            return nil
+        }
+
+        do {
+            try context.save()
+            return (brief, output)
+        } catch {
+            context.delete(output)
+            context.delete(brief)
+            try? context.save()
+            notice = .error("That post draft could not be created.")
+            return nil
+        }
+    }
+
+    @discardableResult
     func beginPostDraft(
         pillarID: UUID?,
         platform: CreatorPlatform,
@@ -984,38 +1024,65 @@ final class AppModel {
     }
 
     @discardableResult
+    func movePostToIdeaBank(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        context: ModelContext
+    ) -> Bool {
+        guard brief.status != .archived, output.briefID == brief.id else { return false }
+
+        let briefID = brief.id
+        let linkedOutputs = (try? context.fetch(FetchDescriptor<PlatformOutput>(
+            predicate: #Predicate { $0.briefID == briefID }
+        ))) ?? [output]
+
+        guard brief.status != .posted,
+              !linkedOutputs.contains(where: { $0.status == .posted }) else {
+            notice = .info("Posted work stays in your post history.")
+            return false
+        }
+
+        let linkedTasks = (try? context.fetch(FetchDescriptor<CreatorTask>(
+            predicate: #Predicate { $0.briefID == briefID }
+        ))) ?? []
+        let now = Date()
+        brief.status = .spark
+        brief.agendaDate = nil
+        brief.archivedAt = nil
+        brief.updatedAt = now
+        brief.appendLifecycleStatus(.spark, at: now)
+
+        for linkedOutput in linkedOutputs {
+            linkedOutput.status = .draft
+            linkedOutput.targetDate = nil
+            linkedOutput.includesTargetTime = false
+            linkedOutput.recurrence = .none
+            linkedOutput.recurrenceWeekdays = []
+            linkedOutput.recurrenceMonthDay = nil
+            linkedOutput.recurrenceEndDate = nil
+            linkedOutput.postedAt = nil
+        }
+        linkedTasks.forEach(context.delete)
+
+        do {
+            try context.save()
+            notice = .info("Moved to your Idea Bank.")
+            queueCalendarSync(context: context)
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That post could not be moved to your Idea Bank.")
+            return false
+        }
+    }
+
+    @discardableResult
     func movePostDraftToIdeaBank(
         brief: CreativeBrief,
         output: PlatformOutput,
         context: ModelContext
     ) -> Bool {
-        guard PostDraftResumePolicy.shouldResume(
-            briefStatus: brief.status,
-            outputStatus: output.status
-        ) else {
-            notice = .info("Only drafts can be moved to the Idea Bank.")
-            return false
-        }
-
-        brief.status = .spark
-        brief.agendaDate = nil
-        brief.updatedAt = Date()
-        output.status = .draft
-        output.targetDate = nil
-        output.recurrence = .none
-        output.recurrenceWeekdays = []
-        output.recurrenceMonthDay = nil
-        output.recurrenceEndDate = nil
-
-        do {
-            try context.save()
-            notice = .info("Saved to your Idea Bank.")
-            queueCalendarSync(context: context)
-            return true
-        } catch {
-            notice = .error("That post could not be moved to your Idea Bank.")
-            return false
-        }
+        movePostToIdeaBank(brief: brief, output: output, context: context)
     }
 
     @discardableResult
@@ -1106,6 +1173,13 @@ final class AppModel {
             notice = .error("Give the task a clear next action.")
             return nil
         }
+        let resolvedTargetDate = PostTaskReschedulePolicy.resolvedDueDate(
+            requestedDate: targetDate,
+            includesTime: includesTargetTime,
+            briefID: briefID,
+            outputID: platformOutputID,
+            outputs: (try? context.fetch(FetchDescriptor<PlatformOutput>())) ?? []
+        )
         let task = CreatorTask(
             briefID: briefID,
             pillarID: pillarID,
@@ -1115,7 +1189,7 @@ final class AppModel {
             kind: focusAssignment?.taskKind ?? kind,
             lane: focusAssignment == nil ? lane : .production,
             priority: priority.normalized,
-            targetDate: targetDate,
+            targetDate: resolvedTargetDate,
             includesTargetTime: includesTargetTime,
             dailyFocusDate: focusAssignment?.date,
             dailyFocusTitle: focusAssignment?.title,
@@ -1849,7 +1923,7 @@ final class AppModel {
         )
         taskCompletionUndo = undo
         taskCompletionUndoDismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(7))
+            try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled, self?.taskCompletionUndo == undo else { return }
             self?.taskCompletionUndo = nil
         }
@@ -2185,31 +2259,14 @@ final class AppModel {
         to newDate: Date?,
         context: ModelContext
     ) -> Int {
-        guard let previousDate, let newDate,
-              !Calendar.current.isDate(previousDate, inSameDayAs: newDate)
-        else { return 0 }
+        guard let newDate else { return 0 }
 
         let allTasks = (try? context.fetch(FetchDescriptor<CreatorTask>())) ?? []
-        var movedCount = 0
-        for task in allTasks where !task.isCompleted {
-            guard PostTaskReschedulePolicy.isLinked(
-                taskBriefID: task.briefID,
-                taskOutputID: task.platformOutputID,
-                toOutputID: output.id,
-                briefID: output.briefID
-            ) else { continue }
-
-            task.targetDate = PostTaskReschedulePolicy.alignedDate(
-                task.targetDate,
-                to: newDate,
-                includesTime: task.includesTargetTime
-            )
-            if task.dailyFocusDate != nil {
-                task.dailyFocusDate = Calendar.current.startOfDay(for: newDate)
-            }
-            movedCount += 1
-        }
-        return movedCount
+        return PostTaskReschedulePolicy.alignOpenTasks(
+            allTasks,
+            to: output,
+            on: newDate
+        )
     }
 
     func createRepurposedSpark(from brief: CreativeBrief, context: ModelContext) -> CreativeBrief? {
@@ -2999,12 +3056,17 @@ final class AppModel {
         context: ModelContext,
         includeDormantVoiceData: Bool = false
     ) -> CreatorContextWire? {
-        let name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspaces = (try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
+        let workspaceID = resolvedWorkspaceID(context: context)
+        let identity = ActiveCreatorIdentity.resolve(
+            profile: profile,
+            workspaces: workspaces,
+            preferredWorkspaceID: workspaceID
+        )
+        let name = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let goal = profile.goal.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedPlatforms = Array(Set(profile.selectedPlatforms)).sorted { $0.rawValue < $1.rawValue }
         guard !name.isEmpty, !goal.isEmpty, !selectedPlatforms.isEmpty else { return nil }
-        let workspaces = (try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
-        let workspaceID = resolvedWorkspaceID(context: context)
 
         // Voice personalization is intentionally dormant in this release.
         // Only the retained, non-UI voice contract tests and future migration path
