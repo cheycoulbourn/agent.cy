@@ -53,6 +53,7 @@ export class AgentCyWorkspace {
   readonly localCyProcessingDirectory: string;
   readonly localCyStatusPath: string;
   readonly localCyConnectionPath: string;
+  readonly bridgeStatusPath: string;
   readonly snapshotPath: string;
 
   constructor(directory = defaultWorkspaceDirectory) {
@@ -64,6 +65,7 @@ export class AgentCyWorkspace {
     this.localCyProcessingDirectory = join(this.directory, "cy-processing");
     this.localCyStatusPath = join(this.directory, "cy-runtime.json");
     this.localCyConnectionPath = join(this.directory, "cy-connection.json");
+    this.bridgeStatusPath = join(this.directory, "bridge-status.json");
     this.snapshotPath = join(this.directory, "snapshot.json");
   }
 
@@ -117,6 +119,30 @@ export class AgentCyWorkspace {
       .map((name) => name.slice(0, -5))
       .sort();
   }
+
+  recordBridgeConnection(clients: Array<"claude" | "codex">, message: string): void {
+    const existingClients = this.readBridgeClients();
+    writeJsonAtomically(this.bridgeStatusPath, {
+      schemaVersion: 1,
+      status: "connected",
+      updatedAt: new Date().toISOString(),
+      clients: [...new Set([...existingClients, ...clients])].sort(),
+      message,
+    });
+  }
+
+  private readBridgeClients(): Array<"claude" | "codex"> {
+    if (!existsSync(this.bridgeStatusPath)) return [];
+    try {
+      const parsed = JSON.parse(readFileSync(this.bridgeStatusPath, "utf8")) as { clients?: unknown };
+      if (!Array.isArray(parsed.clients)) return [];
+      return parsed.clients.filter((client): client is "claude" | "codex" => (
+        client === "claude" || client === "codex"
+      ));
+    } catch {
+      return [];
+    }
+  }
 }
 
 export function writeJsonAtomically(path: string, value: unknown): void {
@@ -129,7 +155,7 @@ export function writeJsonAtomically(path: string, value: unknown): void {
   renameSync(temporaryPath, path);
 }
 
-function clientSource(): "claude" | "codex" | "mcp-client" {
+export function clientSource(): "claude" | "codex" | "mcp-client" {
   const raw = process.env.AGENTCY_MCP_CLIENT?.toLowerCase();
   if (raw === "claude" || raw === "codex") return raw;
   return "mcp-client";

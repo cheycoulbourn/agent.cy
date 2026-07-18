@@ -8,7 +8,7 @@ import { createInterface } from "node:readline/promises";
 import { isSea } from "node:sea";
 import { stdin, stdout } from "node:process";
 
-import { resolveDefaultWorkspaceDirectory } from "./workspace.js";
+import { AgentCyWorkspace, resolveDefaultWorkspaceDirectory } from "./workspace.js";
 
 type Client = "claude" | "codex";
 
@@ -52,6 +52,12 @@ async function main(): Promise<void> {
   }
 
   const status = checkBridge();
+  if (status.startsWith("Connected")) {
+    new AgentCyWorkspace(workspace).recordBridgeConnection(
+      clients,
+      "The agent.cy installer registered the local bridge.",
+    );
+  }
   stdout.write([
     "",
     "agent.cy is ready for Claude & Codex.",

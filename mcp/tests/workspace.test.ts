@@ -41,6 +41,23 @@ describe("AgentCyWorkspace", () => {
     expect(workspace.readSnapshot().profile?.name).toBe("Chey");
   });
 
+  it("records the Claude and Codex clients the iPhone can detect", () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
+    const workspace = new AgentCyWorkspace(directory);
+
+    workspace.recordBridgeConnection(["claude"], "Installer verified.");
+    workspace.recordBridgeConnection(["codex"], "bridge_status verified.");
+
+    const stored = JSON.parse(readFileSync(workspace.bridgeStatusPath, "utf8")) as {
+      status: string;
+      clients: string[];
+      message: string;
+    };
+    expect(stored.status).toBe("connected");
+    expect(stored.clients).toEqual(["claude", "codex"]);
+    expect(stored.message).toBe("bridge_status verified.");
+  });
+
   it("queues a strict versioned request and waits for an app receipt", () => {
     const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
     const workspace = new AgentCyWorkspace(directory);

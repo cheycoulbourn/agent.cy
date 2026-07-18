@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { agendaResult, postSearchResult, taskResult, workspaceSummary } from "./format.js";
-import { AgentCyWorkspace } from "./workspace.js";
+import { AgentCyWorkspace, clientSource } from "./workspace.js";
 
 const statusValues = ["spark", "developing", "ready", "scheduled", "posted", "archived"] as const;
 const platformValues = ["instagramReels", "tiktok", "youtubeShorts", "youtubeVideo"] as const;
@@ -21,6 +21,11 @@ export function createAgentCyMcpServer(workspace = new AgentCyWorkspace()): McpS
     },
     async () => {
       try {
+        const source = clientSource();
+        workspace.recordBridgeConnection(
+          source === "mcp-client" ? [] : [source],
+          "bridge_status was verified from Claude or Codex.",
+        );
         const snapshot = workspace.readSnapshot();
         return textResult(`${workspaceSummary(snapshot)}\nPending app approvals: ${workspace.listPendingRequestIds().length}`);
       } catch (error) {
