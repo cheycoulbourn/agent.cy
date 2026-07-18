@@ -64,47 +64,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  windows:
-    runs-on: windows-2025
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.9.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.18.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Build shared contracts
-        run: pnpm --filter @agent-cy/contracts build
-      - name: Build Windows wizard
-        run: pnpm mcp:package
-      - name: Import and apply Windows signature
-        shell: pwsh
-        env:
-          CERTIFICATE_PFX: ${{ secrets.AGENTCY_WINDOWS_CERTIFICATE_PFX }}
-          CERTIFICATE_PASSWORD: ${{ secrets.AGENTCY_WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_PFX)) { throw "Windows signing certificate is required" }
-          $pfx = Join-Path $env:RUNNER_TEMP "agentcy.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERTIFICATE_PFX))
-          $secure = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
-          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure
-          Get-ChildItem mcp\artifacts\win32-x64\*.exe | ForEach-Object {
-            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /sha1 $cert.Thumbprint $_.FullName
-            if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
-          }
-          Compress-Archive -Path mcp\artifacts\win32-x64\* -DestinationPath agentcy-windows.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agentcy-windows
-          path: agentcy-windows.zip
-          if-no-files-found: error
-          retention-days: 7
-
   release:
-    needs: [macos, windows]
+    needs: macos
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -113,7 +74,7 @@ jobs:
           merge-multiple: true
       - name: Create checksums
         working-directory: release-artifacts
-        run: sha256sum agentcy-macos.zip agentcy-windows.zip > SHA256SUMS.txt
+        run: sha256sum agentcy-macos.zip > SHA256SUMS.txt
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -126,5 +87,4 @@ jobs:
             --generate-notes \
             --latest \
             release-artifacts/agentcy-macos.zip \
-            release-artifacts/agentcy-windows.zip \
             release-artifacts/SHA256SUMS.txt
