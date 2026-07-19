@@ -29,8 +29,9 @@ struct PlanView: View {
         .onChange(of: appModel.requestedPlanMode, initial: true) { _, requestedMode in
             guard let requestedMode else { return }
             if requestedMode == .week, appModel.widgetAgendaDay == nil {
-                returnToCurrentWeek()
+                moveToRequestedWeek(appModel.requestedPlanWeekOffset ?? 0)
             }
+            appModel.requestedPlanWeekOffset = nil
             appModel.requestedPlanMode = nil
         }
         .sheet(isPresented: $isSearchingPosts) {
@@ -48,8 +49,7 @@ struct PlanView: View {
                 Button {
                     isSearchingPosts = true
                 } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .medium))
+                    AgentIconView(.search, size: 16)
                         .frame(width: 44, height: 44)
                         .contentShape(.rect)
                 }
@@ -62,20 +62,26 @@ struct PlanView: View {
                 )
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x2) {
-                Button {
-                    returnToCurrentWeek()
-                } label: {
-                    Text("Today")
-                        .font(.system(size: 32, weight: .semibold, design: .default))
-                        .foregroundStyle(Color.cyAccent)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Return to this week")
-                .accessibilityHint("Shows the week containing today")
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Button {
+                        returnToCurrentWeek()
+                    } label: {
+                        Text("Today")
+                            .font(.agentDisplayLead)
+                            .foregroundStyle(Color.cyAccent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Return to this week")
+                    .accessibilityHint("Shows the week containing today")
 
-                Text("is \(todayTitleDate).")
-                    .font(.system(size: 32, weight: .regular, design: .default))
+                    Text(" is")
+                        .font(.agentDisplayLead)
+                        .foregroundStyle(Color.agentText)
+                }
+
+                Text(todayTitleDate)
+                    .font(.agentDisplay)
                     .foregroundStyle(Color.agentText)
             }
             .tracking(-0.64)
@@ -83,7 +89,7 @@ struct PlanView: View {
         }
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
-        .padding(.bottom, AgentSpacing.x8)
+        .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -100,9 +106,13 @@ struct PlanView: View {
     }
 
     private func returnToCurrentWeek() {
+        moveToRequestedWeek(0)
+    }
+
+    private func moveToRequestedWeek(_ offset: Int) {
         let update = {
             selectedDay = Calendar.current.startOfDay(for: Date())
-            weekOffset = 0
+            weekOffset = offset
         }
         if reduceMotion {
             update()
@@ -185,16 +195,14 @@ private struct AgendaPostSearchView: View {
                     )
 
                     if results.isEmpty {
-                        ContentUnavailableView(
-                            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        AgentEmptyState(
+                            title: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 ? "No posts yet"
                                 : "No posts found",
-                            systemImage: "magnifyingglass",
-                            description: Text(
-                                query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    ? "Posts you create will appear here."
-                                    : "Try another title, pillar, platform, or phrase."
-                            )
+                            message: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? "Posts you create will appear here."
+                                : "Try another title, pillar, platform, or phrase.",
+                            icon: .search
                         )
                         .frame(minHeight: 300)
                     } else {
@@ -212,9 +220,9 @@ private struct AgendaPostSearchView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
             .agentScreen()
         }
@@ -222,8 +230,7 @@ private struct AgendaPostSearchView: View {
 
     private var searchField: some View {
         HStack(spacing: AgentSpacing.x3) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
+            AgentIconView(.search, size: 15)
                 .foregroundStyle(Color.agentSecondary)
             TextField("Search posts", text: $query)
                 .font(.agentBody)
@@ -232,7 +239,7 @@ private struct AgendaPostSearchView: View {
                 Button {
                     query = ""
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    AgentIconView(.close)
                         .foregroundStyle(Color.agentSecondary)
                         .frame(width: 32, height: 32)
                 }
@@ -358,7 +365,7 @@ struct PlanHeader<Actions: View>: View {
         }
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
-        .padding(.bottom, AgentSpacing.x8)
+        .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

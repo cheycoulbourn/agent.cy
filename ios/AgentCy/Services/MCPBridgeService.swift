@@ -81,6 +81,30 @@ struct MCPBridgeProfileSnapshot: Codable {
     let goal: String
 }
 
+struct MCPBridgeConnectionStatus: Codable, Equatable {
+    let schemaVersion: Int
+    let status: String
+    let updatedAt: Date
+    let clients: [String]
+    let message: String
+
+    var isRecentlyConnected: Bool {
+        status == "connected" && Date().timeIntervalSince(updatedAt) < 10 * 60
+    }
+
+    var clientSummary: String {
+        let names = clients.compactMap { client -> String? in
+            switch client.lowercased() {
+            case "claude": "Claude Code"
+            case "codex": "Codex"
+            default: nil
+            }
+        }
+        guard !names.isEmpty else { return "Claude or Codex" }
+        return ListFormatter.localizedString(byJoining: names)
+    }
+}
+
 struct MCPBridgePillarSnapshot: Codable {
     let id: UUID
     let parentPillarId: UUID?
@@ -317,7 +341,7 @@ struct MCPBridgeChangeRequest: Codable, Identifiable {
     var title: String {
         switch type {
         case "createIdea": "Save an idea"
-        case "createPostDraft": "Create a post draft"
+        case "createPostDraft": payload.targetDate == nil ? "Create a post draft" : "Create and schedule a post"
         case "updatePost": "Update a post"
         case "schedulePost": "Schedule a post"
         case "addTask": "Add a task"
@@ -353,6 +377,17 @@ private struct MCPBridgeReceipt: Codable {
 
 @MainActor
 enum MCPBridgeService {
+    static func connectionStatus() throws -> MCPBridgeConnectionStatus? {
+        guard MCPBridgePreferences.isConnected else { return nil }
+        return try MCPBridgePreferences.withDirectory { directory in
+            let url = directory.appending(path: "bridge-status.json")
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(MCPBridgeConnectionStatus.self, from: Data(contentsOf: url))
+        }
+    }
+
     static let schemaVersion = 1
 
     static func sync(context: ModelContext, workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID) throws {
@@ -497,12 +532,16 @@ enum MCPBridgeService {
 
     static func approve(_ request: MCPBridgeChangeRequest, context: ModelContext) throws {
         do {
+            // Establish a clean rollback boundary so an invalid proposal cannot
+            // leave partially mutated or inserted models in the live context.
+            try context.save()
             try apply(request, context: context)
             try context.save()
             try finish(request, status: "approved", message: "Applied in agent.cy.")
             try sync(context: context)
             WidgetSnapshotService.refresh(context: context)
         } catch {
+            context.rollback()
             try? finish(request, status: "failed", message: error.localizedDescription)
             throw error
         }
@@ -658,7 +697,7 @@ enum MCPBridgeService {
         )
     }
 
-    private static func apply(_ request: MCPBridgeChangeRequest, context: ModelContext) throws {
+    static func apply(_ request: MCPBridgeChangeRequest, context: ModelContext) throws {
         guard request.schemaVersion == schemaVersion else {
             throw MCPBridgeError.invalidRequest("Unsupported schema version.")
         }
@@ -694,7 +733,6 @@ enum MCPBridgeService {
             brief.pillarID = pillarID
             brief.spokenHook = request.payload.hook ?? ""
             brief.ctaIntent = request.payload.callToAction ?? ""
-            context.insert(brief)
             let platform = request.payload.platform.flatMap(CreatorPlatform.init(rawValue:)) ?? .instagramReels
             let identifiers = PublishingCatalog.identifiers(for: platform)
             let output = PlatformOutput(
@@ -708,6 +746,20 @@ enum MCPBridgeService {
             output.caption = request.payload.caption ?? ""
             output.cta = request.payload.callToAction ?? ""
             try applyRequestedFormat(request.payload.format, to: output, context: context)
+
+            if let targetDate = request.payload.targetDate {
+                try prepareForApprovedScheduling(brief)
+                guard BriefLifecycle.schedule(output, for: targetDate, brief: brief) else {
+                    throw MCPBridgeError.actionNotAllowed("This post could not be scheduled.")
+                }
+                output.includesTargetTime = request.payload.includesTargetTime ?? false
+                brief.agendaDate = targetDate
+                BriefLifecycle.synchronize(brief, outputs: [output])
+            }
+
+            // Insert only after every requested field and lifecycle transition
+            // has validated so approval is atomic from the creator's perspective.
+            context.insert(brief)
             context.insert(output)
         case "updatePost":
             guard let postID = request.payload.postId,

@@ -11,7 +11,7 @@ enum MCPBridgeStarterPrompt {
 
     First learn the creator: goals, audience, platforms and account, pillars, current ideas, creative capacity, posting rhythm, constraints, and what success means. Read relevant agent.cy context and project files. Confirm uncertain assumptions. Then present a specific content plan with reasoning and wait for explicit approval.
 
-    Only after approval, queue changes through the agent.cy MCP write tools. Every queued post, idea, schedule, and task must remain reviewable in Cy before it changes the app. Never assume a queued request was approved.
+    Only after approval, queue changes through the agent.cy MCP write tools. For a new post with an approved date, call create_post_draft once with targetDate and includesTargetTime so creation and scheduling share one review. Use only the exact catalog format values shown by agent.cy, such as Reel, Story, Carousel, Feed post, Short video, Long video, Short, or Video. Never hide a posting date in notes and never queue a second schedule_post request for the same new post. Every queued post, idea, schedule, and task must remain reviewable in Cy before it changes the app. Never assume a queued request was approved.
 
     Keep learning over time. When I reveal a durable preference or correct you, summarize what you learned and propose the exact update for this project's AGENTS.md, CLAUDE.md, creator instructions, or a reusable skill. Explain the value, ask permission, and only write or update instructions after explicit approval. Adapt future questions and plans to approved creator knowledge instead of restarting discovery each time.
     """
@@ -175,9 +175,9 @@ struct MCPBridgeSettingsView: View {
                 UIPasteboard.general.string = projectPrompt
                 copiedProjectPrompt = true
             } label: {
-                Label(
-                    copiedProjectPrompt ? "Prompt copied" : "Copy starter prompt",
-                    systemImage: "doc.on.doc"
+                AgentIconLabel(
+                    title: copiedProjectPrompt ? "Prompt copied" : "Copy starter prompt",
+                    icon: copiedProjectPrompt ? .check : .copy
                 )
                 .frame(maxWidth: .infinity)
             }
@@ -221,8 +221,7 @@ struct MCPBridgeSettingsView: View {
                     Circle()
                         .fill(MCPBridgePreferences.isConnected ? Color.cyAccent : Color.agentCanvas)
                         .frame(width: 48, height: 48)
-                    Image(systemName: "terminal")
-                        .font(.system(size: 18, weight: .medium))
+                    AgentIconView(.terminal, size: 18)
                         .foregroundStyle(MCPBridgePreferences.isConnected ? Color.onCyAccent : Color.agentText)
                 }
                 VStack(alignment: .leading, spacing: AgentSpacing.x1) {
@@ -235,8 +234,7 @@ struct MCPBridgeSettingsView: View {
                 }
                 Spacer()
                 if MCPBridgePreferences.isConnected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 15, weight: .semibold))
+                    AgentIconView(.check, size: 15)
                         .foregroundStyle(Color.agentSuccess)
                 }
             }
@@ -255,7 +253,7 @@ struct MCPBridgeSettingsView: View {
             Button {
                 chooseFolder = true
             } label: {
-                Label("Choose MCP folder", systemImage: "folder")
+                AgentIconLabel(title: "Choose MCP folder", icon: .folder)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(AgentPrimaryButtonStyle())
@@ -265,7 +263,10 @@ struct MCPBridgeSettingsView: View {
                     UIPasteboard.general.string = "pnpm mcp:setup"
                     copiedSetup = true
                 } label: {
-                    Label(copiedSetup ? "Setup command copied" : "Copy source setup command", systemImage: "doc.on.doc")
+                    AgentIconLabel(
+                        title: copiedSetup ? "Setup command copied" : "Copy source setup command",
+                        icon: copiedSetup ? .check : .copy
+                    )
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(AgentSecondaryButtonStyle())
@@ -330,7 +331,7 @@ struct MCPBridgeSettingsView: View {
                     show(error, action: "Workspace sync")
                 }
             } label: {
-                Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
+                AgentIconLabel(title: "Sync now", icon: .refresh)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(AgentPrimaryButtonStyle())
@@ -374,8 +375,12 @@ struct MCPBridgeSettingsView: View {
                     show(error, action: "The test proposal")
                 }
             } label: {
-                Label("Send demo draft to Cy", systemImage: "asterisk")
-                    .frame(maxWidth: .infinity)
+                Label {
+                    Text("Send demo draft to Cy")
+                } icon: {
+                    CyAsterisk(color: .onCyAccent, size: 16)
+                }
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(AgentCyPrimaryButtonStyle())
         }
@@ -435,7 +440,18 @@ enum MCPReviewEditPolicy {
     }
 }
 
+enum MCPReviewPillarPresentation {
+    static func label(type: String, pillarName: String) -> String {
+        pillarName
+    }
+
+    static func metadata(type: String, fallback: String) -> String {
+        type == "createIdea" ? "Idea" : fallback
+    }
+}
+
 struct MCPBridgeRequestReviewView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Environment(AppModel.self) private var appModel
@@ -488,9 +504,9 @@ struct MCPBridgeRequestReviewView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Close", systemImage: "xmark") { dismiss() }
-                    .labelStyle(.iconOnly)
+                AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
             }
+            .sharedBackgroundVisibility(.hidden)
             if canEditReview {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Edit") { showEditor = true }
@@ -507,26 +523,22 @@ struct MCPBridgeRequestReviewView: View {
                 }
             } else if let editableBrief, let editableOutput {
                 NavigationStack {
-                    ScrollView {
-                        ResumablePostEditorView(
-                            brief: editableBrief,
-                            output: editableOutput,
-                            contextLabel: "Edit before approval",
-                            isReviewEditing: true,
-                            onSpark: {}
-                        )
-                        .taskNavigationDestinations()
-                        .padding(.horizontal, AgentLayout.pageMargin)
-                        .padding(.top, AgentSpacing.x4)
-                        .padding(.bottom, 80)
-                    }
+                    ResumablePostEditorView(
+                        brief: editableBrief,
+                        output: editableOutput,
+                        contextLabel: "Edit before approval",
+                        isReviewEditing: true,
+                        bottomActionClearance: AgentSpacing.x3,
+                        onSpark: {}
+                    )
+                    .taskNavigationDestinations()
                     .navigationTitle("Edit post")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Close", systemImage: "xmark") { showEditor = false }
-                                .labelStyle(.iconOnly)
+                            AgentToolbarIconButton(title: "Close", icon: .close) { showEditor = false }
                         }
+                        .sharedBackgroundVisibility(.hidden)
                     }
                     .agentScreen()
                     .agentKeyboardDismissal()
@@ -552,10 +564,8 @@ struct MCPBridgeRequestReviewView: View {
     private var postHeader: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(spacing: AgentSpacing.x2) {
-                Circle()
-                    .fill(pillarColor)
-                    .frame(width: 7, height: 7)
-                Text(pillarName.uppercased())
+                PillarColorMark(color: pillarColor, diameter: 7)
+                Text(reviewPillarLabel.uppercased())
                     .font(.agentMono)
                     .tracking(0.7)
                     .lineLimit(1)
@@ -599,7 +609,10 @@ struct MCPBridgeRequestReviewView: View {
         .background(pillarColor.opacity(0.10), in: .rect(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .stroke(pillarColor, lineWidth: 1)
+                .stroke(
+                    PillarVisualContrast.cardBorderColor(for: pillarColor, colorScheme: colorScheme),
+                    lineWidth: 1
+                )
         }
     }
 
@@ -645,11 +658,6 @@ struct MCPBridgeRequestReviewView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, AgentSpacing.x3)
-                    .overlay(alignment: .bottom) {
-                        if task.id != postTasks.last?.id {
-                            Rectangle().fill(Color.agentHairline).frame(height: 1)
-                        }
-                    }
                 }
             }
         }
@@ -671,11 +679,49 @@ struct MCPBridgeRequestReviewView: View {
     }
 
     private var reviewActions: some View {
-        VStack(spacing: AgentSpacing.x3) {
-            Button("Approve") { perform { try approve(approvalRequest) } }
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            Text(approvalExplanation)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(approvalActionTitle) { perform { try approve(approvalRequest) } }
                 .buttonStyle(AgentCyPrimaryButtonStyle())
+                .accessibilityHint(approvalExplanation)
             Button("Deny") { perform(decline) }
                 .buttonStyle(AgentSecondaryButtonStyle())
+        }
+    }
+
+    private var approvalActionTitle: String {
+        switch request.type {
+        case "createPostDraft":
+            return payload.targetDate == nil ? "Approve draft" : "Approve & schedule"
+        case "updatePost":
+            return "Approve changes"
+        case "schedulePost":
+            return "Approve date"
+        case "createIdea":
+            return "Approve idea"
+        case "addTask":
+            return "Approve task"
+        case "completeTask":
+            return "Approve completion"
+        default:
+            return "Approve"
+        }
+    }
+
+    private var approvalExplanation: String {
+        switch request.type {
+        case "createPostDraft" where payload.targetDate != nil:
+            return "One approval creates the post and adds it to your calendar."
+        case "createPostDraft":
+            return "One approval saves this as a resumable draft."
+        case "schedulePost":
+            return "This changes the date of an existing post."
+        default:
+            return "Nothing changes until you approve it."
         }
     }
 
@@ -734,6 +780,10 @@ struct MCPBridgeRequestReviewView: View {
     }
 
     private var pillarName: String { selectedPillar?.name ?? "Unfiled" }
+
+    private var reviewPillarLabel: String {
+        MCPReviewPillarPresentation.label(type: request.type, pillarName: pillarName)
+    }
 
     private var pillarColor: Color {
         selectedPillar.map {
@@ -943,6 +993,22 @@ private struct MCPCreatePostDraftReviewEditor: View {
         payload.platform.flatMap(CreatorPlatform.init(rawValue:)) ?? .instagramReels
     }
 
+    private var formatChoices: [String] {
+        switch selectedPlatform {
+        case .instagramReels: ["Reel", "Carousel", "Feed post", "Story"]
+        case .tiktok: ["Short video", "Long video"]
+        case .youtubeShorts: ["Short"]
+        case .youtubeVideo: ["Video"]
+        }
+    }
+
+    private var selectedFormat: String {
+        guard let format = payload.format, formatChoices.contains(format) else {
+            return formatChoices[0]
+        }
+        return format
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x8) {
@@ -979,22 +1045,54 @@ private struct MCPCreatePostDraftReviewEditor: View {
 
                     Menu {
                         ForEach(CreatorPlatform.allCases) { platform in
-                            Button(platform.title) { payload.platform = platform.rawValue }
+                            Button(platform.title) {
+                                payload.platform = platform.rawValue
+                                payload.format = defaultFormat(for: platform)
+                            }
                         }
                     } label: {
                         editorRow(label: "Platform", value: selectedPlatform.title)
                     }
 
-                    HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x4) {
-                        MetaLabel("FORMAT")
-                            .frame(width: 78, alignment: .leading)
-                        TextField("", text: textBinding(\.format))
-                            .font(.agentBody)
-                            .multilineTextAlignment(.trailing)
-                            .accessibilityLabel("Format")
+                    Menu {
+                        ForEach(formatChoices, id: \.self) { format in
+                            Button(format) { payload.format = format }
+                        }
+                    } label: {
+                        editorRow(label: "Format", value: selectedFormat)
                     }
-                    .padding(.horizontal, AgentSpacing.x4)
-                    .frame(minHeight: 54)
+                }
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.control)
+                        .stroke(Color.agentBorder, lineWidth: 1)
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Toggle("Schedule this post", isOn: scheduledBinding)
+                        .font(.agentBody.weight(.semibold))
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 54)
+
+                    if payload.targetDate != nil {
+                        Divider().padding(.horizontal, AgentSpacing.x4)
+                        DatePicker("Date", selection: targetDateBinding, displayedComponents: .date)
+                            .font(.agentBody)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 54)
+
+                        Toggle("Include a time", isOn: includesTargetTimeBinding)
+                            .font(.agentBody)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 54)
+
+                        if payload.includesTargetTime == true {
+                            DatePicker("Time", selection: targetDateBinding, displayedComponents: .hourAndMinute)
+                                .font(.agentBody)
+                                .padding(.horizontal, AgentSpacing.x4)
+                                .frame(minHeight: 54)
+                        }
+                    }
                 }
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
                 .overlay {
@@ -1017,9 +1115,9 @@ private struct MCPCreatePostDraftReviewEditor: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Close", systemImage: "xmark") { dismiss() }
-                    .labelStyle(.iconOnly)
+                AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
             }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { onSave() }
                     .disabled(textBinding(\.title).wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1039,7 +1137,7 @@ private struct MCPCreatePostDraftReviewEditor: View {
             Text(value)
                 .font(.agentBody)
                 .foregroundStyle(Color.agentText)
-            Image(systemName: "chevron.right")
+            AgentIconView(.forward)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Color.agentSecondary)
         }
@@ -1076,5 +1174,38 @@ private struct MCPCreatePostDraftReviewEditor: View {
             get: { payload[keyPath: keyPath] ?? "" },
             set: { payload[keyPath: keyPath] = $0 }
         )
+    }
+
+    private var scheduledBinding: Binding<Bool> {
+        Binding(
+            get: { payload.targetDate != nil },
+            set: { isScheduled in
+                payload.targetDate = isScheduled ? (payload.targetDate ?? Date()) : nil
+                if !isScheduled { payload.includesTargetTime = false }
+            }
+        )
+    }
+
+    private var targetDateBinding: Binding<Date> {
+        Binding(
+            get: { payload.targetDate ?? Date() },
+            set: { payload.targetDate = $0 }
+        )
+    }
+
+    private var includesTargetTimeBinding: Binding<Bool> {
+        Binding(
+            get: { payload.includesTargetTime ?? false },
+            set: { payload.includesTargetTime = $0 }
+        )
+    }
+
+    private func defaultFormat(for platform: CreatorPlatform) -> String {
+        switch platform {
+        case .instagramReels: "Reel"
+        case .tiktok: "Short video"
+        case .youtubeShorts: "Short"
+        case .youtubeVideo: "Video"
+        }
     }
 }

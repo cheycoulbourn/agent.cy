@@ -67,3 +67,23 @@ Publishing uses destination + format rather than a fixed platform enum. Built-in
 There is exactly one active anchor pillar. Supporting pillars retain their own color and preferred weekdays. Pillar controls stay inline: circle-only color choices, a custom color picker, and one-letter days.
 
 The Settings page and its Paper subpage artboards are canonical for account, assistance mode, appearance, publishing destinations, voice examples, access, export, and destructive erase. Notifications is a first-class Settings destination; Daily focus and Weekly reset live together in its Reminders section.
+
+## Onboarding
+
+Onboarding uses eight focused steps: Welcome, About you, Your vibe, Your content, Where you post, Your AI, Notifications, and Ready. The Welcome screen explicitly introduces Claude and Codex as optional ways to power the creator workflow.
+
+Your AI offers two equal, explicit choices:
+
+- **Agent Cy AI** works natively in the iPhone app without a computer or API key.
+- **Claude or Codex** uses the creator's own CLI subscription through the local MCP bridge on a Mac or Windows computer.
+
+The Claude/Codex walkthrough uses numbered plain-language steps and copyable mono code blocks. It shows Not connected, Folder connected, Bridge found, or Connected based on the shared-folder bookmark and the bridge heartbeat. The screen never implies that the iPhone directly authenticates a Claude or Codex account. Setup can be finished later under Settings > AI > Claude & Codex.
+
+## Cy proposal review
+
+- Keep the Cy review intro and count fixed above a vertically scrolling list of proposal cards.
+- Proposal cards reuse the calendar post card, including pillar color, post title, platform, date, and the `TO REVIEW` status.
+- Opening a proposal shows one polished post review with the complete post, posting details, linked tasks, and an Edit action in the top-right position.
+- The creator has exactly one approval decision. A dated new post uses `Approve & schedule`; an undated post uses `Approve draft`. Deny remains secondary.
+- A dated new post is created and scheduled atomically. Never show a second scheduling review for the same proposal.
+- Direct work completed inside agent.cy does not require Cy review. The review gate applies only to Claude, Codex, and other MCP proposals.

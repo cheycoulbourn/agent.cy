@@ -98,4 +98,40 @@ describe("AgentCyWorkspace", () => {
     expect(request.payload.caption).toBe("Asheville, slowly.");
     expect(request.payload.notes).toBe("Use the arrival footage first.");
   });
+
+  it("queues one review request for a newly scheduled post", () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
+    const workspace = new AgentCyWorkspace(directory);
+    const request = workspace.queueRequest({
+      type: "createPostDraft",
+      payload: {
+        title: "A soft weekend in Charlotte",
+        platform: "instagramReels",
+        format: "Reel",
+        targetDate: "2026-07-20T04:00:00.000Z",
+        includesTargetTime: false,
+      },
+    }, "codex");
+
+    if (request.type !== "createPostDraft") {
+      throw new Error("Expected a post-draft request");
+    }
+    expect(request.payload.targetDate).toBe("2026-07-20T04:00:00.000Z");
+    expect(request.payload.includesTargetTime).toBe(false);
+    expect(workspace.listPendingRequestIds()).toEqual([request.id]);
+  });
+
+  it("does not queue a post when a posting date exists only in notes", () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
+    const workspace = new AgentCyWorkspace(directory);
+
+    expect(() => workspace.queueRequest({
+      type: "createPostDraft",
+      payload: {
+        title: "A soft weekend in Charlotte",
+        notes: "Intended publish date: Monday, July 20.",
+      },
+    }, "codex")).toThrow(/targetDate/);
+    expect(workspace.listPendingRequestIds()).toEqual([]);
+  });
 });

@@ -27,6 +27,31 @@ enum CyChatActionPolicy {
     }
 }
 
+enum CyReferencedTitleCopy {
+    static func quoted(_ rawTitle: String) -> String {
+        var title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty {
+            title = "Untitled"
+        }
+
+        let quotePairs: [(opening: Character, closing: Character)] = [
+            ("\"", "\""),
+            ("“", "”"),
+            ("‘", "’")
+        ]
+        if let first = title.first,
+           let last = title.last,
+           quotePairs.contains(where: { $0.opening == first && $0.closing == last }),
+           title.count >= 2 {
+            title.removeFirst()
+            title.removeLast()
+            title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return "“\(title)”"
+    }
+}
+
 enum CyPostSchedulingPolicy {
     static func nextSuggestedDate(
         assignedWeekdays: Set<PillarWeekday>,
@@ -304,6 +329,13 @@ private struct CyMarkdownResponseView: View {
     }
 }
 
+private enum BatchReviewDecision: String, Identifiable {
+    case approveAll
+    case deny
+
+    var id: String { rawValue }
+}
+
 struct AskCyView: View {
     private let bottomClearance: CGFloat
     @Environment(AppModel.self) private var appModel
@@ -323,6 +355,10 @@ struct AskCyView: View {
     @State private var isSending = false
     @State private var pendingReviews: [MCPBridgeChangeRequest] = []
     @State private var reviewingRequest: MCPBridgeChangeRequest?
+    @State private var isSelectingReviews = false
+    @State private var selectedReviewIDs: Set<UUID> = []
+    @State private var isBatchReviewing = false
+    @State private var batchDecisionToConfirm: BatchReviewDecision?
     @State private var reviewError: String?
     @State private var hasLoadedPendingReviews = false
     @State private var showReviewCompletion = false
@@ -374,11 +410,7 @@ struct AskCyView: View {
             topRail
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.top, AgentSpacing.x8)
-                .padding(.bottom, AgentSpacing.x2)
-
-            remoteStatusRow
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.bottom, showsConversation && !messages.isEmpty ? AgentSpacing.x1 : AgentSpacing.x4)
+                .padding(.bottom, AgentSpacing.x4)
 
             if showReviewCompletion {
                 reviewCompletionContent
@@ -445,27 +477,23 @@ struct AskCyView: View {
         }
         .sheet(item: $postDraftToOpen) { route in
             NavigationStack {
-                ScrollView {
-                    ResumablePostEditorView(
-                        brief: route.brief,
-                        output: route.output,
-                        suggestedTargetDate: route.suggestedTargetDate,
-                        contextLabel: "New post",
-                        onSpark: {}
-                    )
-                    .padding(.horizontal, AgentLayout.pageMargin)
-                    .padding(.top, AgentSpacing.x4)
-                    .padding(.bottom, 120)
-                }
+                ResumablePostEditorView(
+                    brief: route.brief,
+                    output: route.output,
+                    suggestedTargetDate: route.suggestedTargetDate,
+                    contextLabel: "New post",
+                    bottomActionClearance: AgentSpacing.x3,
+                    onSpark: {}
+                )
                 .navigationTitle("New post")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Close", systemImage: "xmark") {
+                        AgentToolbarIconButton(title: "Close", icon: .close) {
                             postDraftToOpen = nil
                         }
-                        .labelStyle(.iconOnly)
                     }
+                    .sharedBackgroundVisibility(.hidden)
                 }
                 .agentScreen()
                 .agentKeyboardDismissal()
@@ -489,9 +517,9 @@ struct AskCyView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Close", systemImage: "xmark") { showProUpsell = false }
-                            .labelStyle(.iconOnly)
+                        AgentToolbarIconButton(title: "Close", icon: .close) { showProUpsell = false }
                     }
+                    .sharedBackgroundVisibility(.hidden)
                 }
                 .navigationDestination(isPresented: $showProAccessDetails) {
                     AccessSettingsView()
@@ -508,6 +536,24 @@ struct AskCyView: View {
             Button("Close", role: .cancel) { reviewError = nil }
         } message: {
             Text(reviewError ?? "")
+        }
+        .alert(item: $batchDecisionToConfirm) { decision in
+            switch decision {
+            case .approveAll:
+                Alert(
+                    title: Text(batchApproveConfirmationTitle),
+                    message: Text("Every selected proposal will be added to your app."),
+                    primaryButton: .default(Text("Approve all"), action: approveSelectedReviews),
+                    secondaryButton: .cancel(Text("Cancel"))
+                )
+            case .deny:
+                Alert(
+                    title: Text(batchDenyConfirmationTitle),
+                    message: Text("Denied proposals are removed without changing your app."),
+                    primaryButton: .destructive(Text(batchDenyActionTitle), action: denySelectedReviews),
+                    secondaryButton: .cancel(Text("Cancel"))
+                )
+            }
         }
         .agentScreen()
         .agentKeyboardDismissal()
@@ -564,7 +610,7 @@ struct AskCyView: View {
                 Text("I have something\nfor you.")
                     .font(.agentDisplay)
                     .tracking(-0.64)
-                Text("Review each post before it changes your calendar.")
+                Text("Review, edit, approve, or deny each proposal. A dated post is created and scheduled with one approval.")
                     .font(.agentBody)
                     .foregroundStyle(Color.agentSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -572,30 +618,116 @@ struct AskCyView: View {
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.bottom, AgentSpacing.x6)
 
-            SectionRuleHeader(
-                title: "Waiting for review",
-                trailing: "\(pendingReviews.count)"
-            )
+            pendingReviewHeader
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.bottom, AgentSpacing.x2)
 
+            if isSelectingReviews {
+                batchReviewActions
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(.bottom, AgentSpacing.x3)
+            }
+
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                ForEach(pendingReviews) { request in
-                    Button {
-                        reviewingRequest = request
-                    } label: {
-                        reviewCard(for: request)
+                    ForEach(pendingReviews) { request in
+                        HStack(alignment: .top, spacing: AgentSpacing.x2) {
+                            if isSelectingReviews {
+                                Button {
+                                    toggleReviewSelection(request.id)
+                                } label: {
+                                    AgentIconView(selectedReviewIDs.contains(request.id)
+                                        ? .checkCircle
+                                        : .radioEmpty)
+                                        .font(.system(size: 20, weight: .medium))
+                                        .foregroundStyle(selectedReviewIDs.contains(request.id)
+                                            ? Color.cyAccent
+                                            : Color.agentSecondary)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(.rect)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(
+                                    selectedReviewIDs.contains(request.id)
+                                        ? "Deselect \(request.summary)"
+                                        : "Select \(request.summary)"
+                                )
+                            }
+
+                            Button {
+                                reviewingRequest = request
+                            } label: {
+                                reviewCard(for: request)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens the complete proposal for approval")
+                            .disabled(isBatchReviewing)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Opens the complete proposed post for approval")
-                }
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.bottom, bottomClearance + AgentSpacing.x8)
             }
             .scrollIndicators(.hidden)
         }
+    }
+
+    private var pendingReviewHeader: some View {
+        HStack(alignment: .center, spacing: AgentSpacing.x2) {
+            MetaLabel("Waiting for review")
+            Spacer()
+            if pendingReviews.count > 1 {
+                Button(action: toggleReviewSelectionMode) {
+                    HStack(spacing: AgentSpacing.x2) {
+                        Text(isSelectingReviews ? "DONE" : "SELECT")
+                            .font(.paperInter(size: 11, weight: .bold, relativeTo: .caption))
+                            .tracking(0.35)
+                        Rectangle()
+                            .fill(Color.agentBorder)
+                            .frame(width: 1, height: 12)
+                        Text("\(pendingReviews.count)")
+                            .font(.agentMono)
+                    }
+                    .foregroundStyle(isSelectingReviews ? Color.cyAccent : Color.agentSecondary)
+                    .frame(minHeight: 44)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isSelectingReviews ? "Finish selecting proposals" : "Select proposals")
+            } else {
+                Text("\(pendingReviews.count)")
+                    .font(.agentMono)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentBorder).frame(height: 1)
+        }
+    }
+
+    private var batchReviewActions: some View {
+        HStack(spacing: AgentSpacing.x2) {
+            Button(allReviewsSelected ? "Clear all" : "Select all", action: toggleAllReviewSelections)
+                .buttonStyle(ReviewBatchButtonStyle())
+                .disabled(isBatchReviewing)
+
+            Button("Approve") {
+                if allReviewsSelected {
+                    batchDecisionToConfirm = .approveAll
+                } else {
+                    approveSelectedReviews()
+                }
+            }
+            .buttonStyle(ReviewBatchButtonStyle(foreground: .cyAccent))
+            .disabled(isBatchReviewing || selectedReviewIDs.isEmpty)
+
+            Button("Deny", role: .destructive) {
+                batchDecisionToConfirm = .deny
+            }
+            .buttonStyle(ReviewBatchButtonStyle(foreground: .agentDestructive))
+            .disabled(isBatchReviewing || selectedReviewIDs.isEmpty)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var reviewCompletionContent: some View {
@@ -631,47 +763,45 @@ struct AskCyView: View {
     }
 
     private var topRail: some View {
-        AgentPageRail(
-            breadcrumb: "Agent (Cy)",
-            identity: activeIdentity,
-            openSettings: { appModel.presentedSheet = .settings }
-        ) {
+        HStack(alignment: .center, spacing: AgentSpacing.x1) {
+            HStack(spacing: AgentSpacing.x2) {
+                MetaLabel("Agent (Cy)")
+
+                Text("|")
+                    .font(.agentMono)
+                    .foregroundStyle(Color.agentBorder)
+                    .accessibilityHidden(true)
+
+                Circle()
+                    .fill(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+
+                Text(remoteIsConnected ? "Connected" : "Disconnected")
+                    .font(.agentMono)
+                    .foregroundStyle(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Agent Cy, \(remoteIsConnected ? "connected" : "disconnected")")
+
             Menu {
                 Button("New conversation") { startNewThread() }
                 Button("Conversation history") { showConversationHistory = true }
                 if thread != nil { Button("Move to history") { archiveThread() } }
             } label: {
-                Image(systemName: "ellipsis")
+                AgentIconView(.more)
+                    .foregroundStyle(Color.agentText)
                     .frame(width: 44, height: 44)
             }
-        }
-    }
 
-    private var remoteStatusRow: some View {
-        return HStack(spacing: AgentSpacing.x2) {
-            Circle()
-                .fill(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
-                .frame(width: 7, height: 7)
-            MetaLabel("Remote status")
-            Spacer(minLength: AgentSpacing.x2)
-            Text(remoteIsConnected ? "Connected" : "Unavailable")
-                .font(.agentMono)
-                .foregroundStyle(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
+            ProfileSettingsButton(
+                identity: activeIdentity,
+                action: { appModel.presentedSheet = .settings }
+            )
         }
-        .frame(minHeight: 24)
-        .padding(.vertical, AgentSpacing.x2)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.agentBorder)
-                .frame(height: 0.75)
-        }
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.agentBorder)
-                .frame(height: 0.75)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Remote status, \(remoteIsConnected ? "connected" : "unavailable")")
+        .frame(height: 44)
     }
 
     @MainActor
@@ -730,8 +860,7 @@ struct AskCyView: View {
                             .foregroundStyle(Color.agentText)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
+                        AgentIconView(.forward, size: 11)
                             .foregroundStyle(Color.cyAccent)
                     }
                 }
@@ -793,8 +922,7 @@ struct AskCyView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                AgentIconView(.forward, size: 11)
             }
             .foregroundStyle(Color.agentText)
             .padding(.horizontal, AgentSpacing.x4)
@@ -894,8 +1022,7 @@ struct AskCyView: View {
                                 Text(suggestion.label)
                                     .font(.agentBody.weight(.medium))
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                Image(systemName: "arrow.up.right")
-                                    .font(.system(size: 11, weight: .semibold))
+                                AgentIconView(.external, size: 11)
                             }
                             .foregroundStyle(Color.agentText)
                             .padding(.horizontal, AgentSpacing.x3)
@@ -939,7 +1066,7 @@ struct AskCyView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Image(systemName: wasAdded ? "checkmark" : "plus")
+                        AgentIconView(wasAdded ? .check : .add)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(Color.onCyAccent)
                             .frame(width: 36, height: 36)
@@ -968,7 +1095,7 @@ struct AskCyView: View {
                         Text(sentToPostMessageIDs.contains(message.id) ? "Post created" : "Send to post")
                             .font(.agentSubtext.weight(.semibold))
                         Spacer(minLength: AgentSpacing.x2)
-                        Image(systemName: sentToPostMessageIDs.contains(message.id) ? "checkmark" : "arrow.right")
+                        AgentIconView(sentToPostMessageIDs.contains(message.id) ? .check : .arrowRight)
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundStyle(Color.cyAccent)
@@ -1029,7 +1156,7 @@ struct AskCyView: View {
             .glassEffect(.clear, in: .rect(cornerRadius: AgentRadius.floating))
             .overlay {
                 RoundedRectangle(cornerRadius: AgentRadius.floating)
-                    .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
+                    .stroke(Color.agentPureWhite.opacity(0.14), lineWidth: 0.5)
                     .allowsHitTesting(false)
             }
             .shadow(color: Color(white: 0).opacity(0.12), radius: 14, y: 4)
@@ -1037,6 +1164,7 @@ struct AskCyView: View {
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.vertical, AgentSpacing.x2)
         .padding(.bottom, bottomClearance)
+        .appWalkthroughTarget(.cyComposer)
     }
 
     private var composerActionButton: some View {
@@ -1051,7 +1179,7 @@ struct AskCyView: View {
                 send()
             }
         } label: {
-            Image(systemName: isSending ? "stop.fill" : "arrow.up")
+            AgentIconView(isSending ? .stop : .arrowUp)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(foreground)
                 .frame(width: 44, height: 44)
@@ -1143,9 +1271,10 @@ struct AskCyView: View {
             .first
         if let lateOutput,
            let lateBrief = activeBriefs.first(where: { $0.id == lateOutput.briefID }) {
+            let referencedTitle = CyReferencedTitleCopy.quoted(lateBrief.title)
             return (
-                "The date for \(quotedPostTitle(lateBrief.title)) has passed. Want to choose a new one together?",
-                "Help me reschedule \(quotedPostTitle(lateBrief.title))."
+                "The date for \(referencedTitle) has passed. Want to choose a new one together?",
+                "Help me reschedule \(referencedTitle)."
             )
         }
 
@@ -1162,9 +1291,10 @@ struct AskCyView: View {
             })
             .first
         if let openTask {
+            let referencedTitle = CyReferencedTitleCopy.quoted(openTask.title)
             return (
-                "\(openTask.title) is past due. Want to decide what to do with it?",
-                "Help me complete, move, or skip \(openTask.title)."
+                "\(referencedTitle) is past due. Want to decide what to do with it?",
+                "Help me complete, move, or skip \(referencedTitle)."
             )
         }
 
@@ -1174,7 +1304,7 @@ struct AskCyView: View {
         }) {
             return (
                 "Let’s expand on some of these ideas",
-                "Keep shaping \(quotedPostTitle(idea.title))."
+                "Keep shaping \(CyReferencedTitleCopy.quoted(idea.title))."
             )
         }
 
@@ -1196,7 +1326,7 @@ struct AskCyView: View {
     }
 
     private var primaryStarter: String {
-        currentDraft.map { "Keep shaping \(quotedPostTitle($0.title))" } ?? CreatorProfile.defaultCyQuickPrompts[0]
+        currentDraft.map { "Keep shaping \(CyReferencedTitleCopy.quoted($0.title))" } ?? CreatorProfile.defaultCyQuickPrompts[0]
     }
 
     private var starterPrompts: [String] {
@@ -1204,10 +1334,6 @@ struct AskCyView: View {
             primaryStarter,
             CreatorProfile.defaultCyQuickPrompts[1]
         ]
-    }
-
-    private func quotedPostTitle(_ title: String) -> String {
-        "“\(title.trimmingCharacters(in: .whitespacesAndNewlines))”"
     }
 
     private var composerPlaceholder: String { "Ask Cy anything" }
@@ -1224,10 +1350,14 @@ struct AskCyView: View {
         let accent = pillar.map {
             Color(agentHex: $0.resolvedColorHex(in: activePillars))
         } ?? Color.agentSecondary
-        let platform = request.payload.platform
+        let platformFallback = request.payload.platform
             .flatMap(CreatorPlatform.init(rawValue:))?.shortTitle
             ?? output?.platform.shortTitle
             ?? "Post"
+        let platform = MCPReviewPillarPresentation.metadata(
+            type: request.type,
+            fallback: platformFallback
+        )
         let date = request.payload.targetDate ?? output?.targetDate
         let metadata = date.map {
             "\(platform) · \($0.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))"
@@ -1235,7 +1365,10 @@ struct AskCyView: View {
 
         return AgentPostCard(
             title: nonempty(request.payload.title) ?? brief?.title ?? request.summary,
-            pillar: pillar?.name ?? "Unfiled",
+            pillar: MCPReviewPillarPresentation.label(
+                type: request.type,
+                pillarName: pillar?.name ?? "Unfiled"
+            ),
             accent: accent,
             status: .ready,
             metadata: metadata,
@@ -1275,9 +1408,101 @@ struct AskCyView: View {
         return value
     }
 
+    private var selectedReviews: [MCPBridgeChangeRequest] {
+        pendingReviews.filter { selectedReviewIDs.contains($0.id) }
+    }
+
+    private var allReviewsSelected: Bool {
+        pendingReviews.count > 1 && selectedReviewIDs == Set(pendingReviews.map(\.id))
+    }
+
+    private var batchApproveConfirmationTitle: String {
+        "Approve all \(selectedReviews.count) submissions?"
+    }
+
+    private var batchDenyActionTitle: String {
+        allReviewsSelected ? "Deny all" : "Deny selected"
+    }
+
+    private var batchDenyConfirmationTitle: String {
+        let count = selectedReviews.count
+        return allReviewsSelected
+            ? "Deny all \(count) submissions?"
+            : "Deny \(count) submission\(count == 1 ? "" : "s")?"
+    }
+
+    private func toggleReviewSelectionMode() {
+        isSelectingReviews.toggle()
+        if !isSelectingReviews {
+            selectedReviewIDs.removeAll()
+        }
+    }
+
+    private func toggleAllReviewSelections() {
+        if allReviewsSelected {
+            selectedReviewIDs.removeAll()
+        } else {
+            selectedReviewIDs = Set(pendingReviews.map(\.id))
+        }
+    }
+
+    private func toggleReviewSelection(_ id: UUID) {
+        if selectedReviewIDs.contains(id) {
+            selectedReviewIDs.remove(id)
+        } else {
+            selectedReviewIDs.insert(id)
+        }
+    }
+
+    private func approveSelectedReviews() {
+        let requests = selectedReviews
+        guard !requests.isEmpty else { return }
+        isBatchReviewing = true
+        defer {
+            isBatchReviewing = false
+            reloadPendingReviews()
+        }
+
+        do {
+            for request in requests {
+                try MCPBridgeService.approve(request, context: context)
+                selectedReviewIDs.remove(request.id)
+            }
+        } catch {
+            reviewError = CreatorFacingErrorMapper.presentation(
+                for: error,
+                action: "The selected proposals"
+            ).message
+        }
+    }
+
+    private func denySelectedReviews() {
+        let requests = selectedReviews
+        guard !requests.isEmpty else { return }
+        isBatchReviewing = true
+        defer {
+            isBatchReviewing = false
+            reloadPendingReviews()
+        }
+
+        do {
+            for request in requests {
+                try MCPBridgeService.reject(request)
+                selectedReviewIDs.remove(request.id)
+            }
+        } catch {
+            reviewError = CreatorFacingErrorMapper.presentation(
+                for: error,
+                action: "The selected proposals"
+            ).message
+        }
+    }
+
     private func reloadPendingReviews() {
         guard MCPBridgePreferences.isConnected else {
             pendingReviews = []
+            isSelectingReviews = false
+            selectedReviewIDs.removeAll()
             showReviewCompletion = false
             hasLoadedPendingReviews = true
             return
@@ -1291,6 +1516,11 @@ struct AskCyView: View {
             showReviewCompletion = false
         }
         pendingReviews = requests
+        selectedReviewIDs.formIntersection(Set(requests.map(\.id)))
+        if requests.count <= 1 {
+            isSelectingReviews = false
+            selectedReviewIDs.removeAll()
+        }
         hasLoadedPendingReviews = true
     }
 
@@ -1535,6 +1765,28 @@ struct AskCyView: View {
 
 }
 
+private struct ReviewBatchButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    var foreground: Color = .agentText
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.agentSubtext.weight(.semibold))
+            .foregroundStyle(foreground)
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(Color.agentCanvas, in: .rect(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.agentBorder, lineWidth: 1)
+            }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.38)
+            .frame(minHeight: 44)
+            .contentShape(.rect)
+    }
+}
+
 private struct CyConversationHistoryView: View {
     @Environment(\.dismiss) private var dismiss
     let threads: [ConversationThread]
@@ -1595,9 +1847,9 @@ private struct CyConversationHistoryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
             .agentScreen()
         }
@@ -1619,8 +1871,7 @@ private struct CyConversationHistoryView: View {
                     MetaLabel("Current")
                         .foregroundStyle(Color.cyAccent)
                 }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                AgentIconView(.forward, size: 11)
                     .foregroundStyle(Color.agentSecondary)
             }
 
@@ -1765,12 +2016,13 @@ private struct CyConversationTranscriptView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Delete conversation", systemImage: "trash", role: .destructive) {
+                    Button(role: .destructive) {
                         confirmDelete = true
+                    } label: {
+                        AgentIconLabel(title: "Delete conversation", icon: .trash)
                     }
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .semibold))
+                    AgentIconView(.more, size: 14)
                         .foregroundStyle(Color.agentText)
                         .frame(width: 18, height: 18)
                 }

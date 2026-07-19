@@ -66,8 +66,7 @@ struct WeeklyFocusSetupView: View {
                                         }
 
                                         Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 14, weight: .medium))
+                                        AgentIconView(.forward, size: 14)
                                     }
                                     .foregroundStyle(Color.agentText)
                                     .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
@@ -93,21 +92,20 @@ struct WeeklyFocusSetupView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
                 if hasChanges {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(action: saveAndDismiss) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.black)
+                            AgentIconView(.check, size: 15)
+                                .foregroundStyle(Color.agentPureBlack)
                                 .frame(width: 18, height: 18)
                         }
                         .buttonStyle(.borderedProminent)
                         .buttonBorderShape(.circle)
                         .controlSize(.large)
-                        .tint(Color.white)
+                        .tint(Color.agentPureWhite)
                         .accessibilityLabel("Save weekly focus")
                         .accessibilityHint("Saves your weekly focuses and recurring tasks")
                     }
@@ -250,7 +248,7 @@ private struct WeeklyFocusDaySelectionView: View {
                                 finishDay: { dismiss() }
                             )
                         } label: {
-                            Label("Next: recurring tasks", systemImage: "arrow.right")
+                            AgentIconLabel(title: "Next: recurring tasks", icon: .arrowRight)
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(AgentPrimaryButtonStyle())
@@ -285,8 +283,7 @@ private struct WeeklyFocusDaySelectionView: View {
                 }
                 Spacer()
                 if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .semibold))
+                    AgentIconView(.check, size: 14)
                         .frame(width: 24, height: 24)
                         .padding(.trailing, AgentSpacing.x1)
                 }
@@ -420,17 +417,14 @@ private struct WeeklyFocusTaskTemplateEditor: View {
                     taskTemplates.removeAll { $0.id == definition.wrappedValue.id }
                 }
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
+                AgentIconView(.more, size: 14)
                     .foregroundStyle(Color.agentText)
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Task options")
         }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.agentHairline).frame(height: 1)
-        }
+        .padding(.vertical, AgentSpacing.x1)
     }
 
     private func addTask(for kind: DailyFocusKind) {
@@ -445,7 +439,7 @@ private struct WeeklyFocusTaskTemplateEditor: View {
     private func priorityColor(_ priority: TaskPriority) -> Color {
         switch priority.normalized {
         case .urgent: Color.agentDestructive
-        case .high: Color.orange
+        case .high: Color.agentPriorityHigh
         default: Color.agentBorder
         }
     }
@@ -683,11 +677,6 @@ struct DailyFocusDetailView: View {
                 allTasks: tasks,
                 linkedPostTitle: linkedPostTitle(for: task)
             )
-            .overlay(alignment: .bottom) {
-                if task.id != collectionTasks.last?.id {
-                    Rectangle().fill(Color.agentHairline).frame(height: 1)
-                }
-            }
         }
     }
 
@@ -935,21 +924,20 @@ struct DailyFocusEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
                 if hasChanges {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(action: save) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.black)
+                            AgentIconView(.check, size: 15)
+                                .foregroundStyle(Color.agentPureBlack)
                                 .frame(width: 18, height: 18)
                         }
                         .buttonStyle(.borderedProminent)
                         .buttonBorderShape(.circle)
                         .controlSize(.large)
-                        .tint(Color.white)
+                        .tint(Color.agentPureWhite)
                         .accessibilityLabel("Save focus")
                     }
                 }
@@ -985,8 +973,7 @@ struct DailyFocusEditorView: View {
                 }
                 Spacer()
                 if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .semibold))
+                    AgentIconView(.check, size: 14)
                         .frame(width: 24, height: 24)
                         .padding(.trailing, AgentSpacing.x1)
                 }

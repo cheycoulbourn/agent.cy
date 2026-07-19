@@ -135,7 +135,7 @@ struct PostProposalReviewView: View {
                         }
                     }
 
-                    Button(revisionProposal == nil ? "Use this post" : "Use these changes", systemImage: "checkmark") {
+                    Button {
                         if var revisionProposal {
                             revisionProposal.edited = proposal
                             appModel.acceptRevision(revisionProposal, for: brief, context: context)
@@ -143,6 +143,11 @@ struct PostProposalReviewView: View {
                             appModel.acceptProposal(proposal, for: brief, context: context)
                         }
                         dismiss()
+                    } label: {
+                        AgentIconLabel(
+                            title: revisionProposal == nil ? "Use this post" : "Use these changes",
+                            icon: .check
+                        )
                     }
                     .buttonStyle(AgentPrimaryButtonStyle())
 
@@ -157,10 +162,11 @@ struct PostProposalReviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
-            .confirmationDialog("Discard this post?", isPresented: $confirmDiscard) {
+            .alert("Discard this post?", isPresented: $confirmDiscard) {
                 if revisionProposal == nil {
                     Button("Discard post", role: .destructive) {
                         appModel.discardProposal(for: brief, context: context)
@@ -172,6 +178,7 @@ struct PostProposalReviewView: View {
                         dismiss()
                     }
                 }
+                Button("Cancel", role: .cancel) {}
             }
             .agentScreen()
         }

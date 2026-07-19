@@ -131,6 +131,7 @@ struct ScheduledPostDetailView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var brief: CreativeBrief
     @Bindable var output: PlatformOutput
     @Query private var outputs: [PlatformOutput]
@@ -151,6 +152,7 @@ struct ScheduledPostDetailView: View {
     @State private var attachmentPreviewURL: URL?
     @State private var markdownDocument: MarkdownFileDocument?
     @State private var showMarkdownExporter = false
+    @State private var isKeyboardVisible = false
 
     private var pillars: [Pillar] {
         allPillars.filter {
@@ -198,68 +200,79 @@ struct ScheduledPostDetailView: View {
                 publishedLink
                 notesSection
                 taskSection
-                postingAction
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
-            .padding(.bottom, 140)
+            .padding(.bottom, AgentSpacing.x6)
         }
         .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !isKeyboardVisible {
+                floatingPostingAction
+            }
+        }
         .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Edit post", systemImage: "pencil") {
+                    Button {
                         showEditor = true
+                    } label: {
+                        AgentIconLabel(title: "Edit post", icon: .pencil)
                     }
                     if canMoveToIdeaBank {
-                        Button("Move to Idea Bank", systemImage: "lightbulb") {
+                        Button {
                             confirmMoveToIdeaBank = true
+                        } label: {
+                            AgentIconLabel(title: "Move to Idea Bank", icon: .idea)
                         }
                     }
-                    Button(
-                        output.status == .posted ? "Mark not posted" : "Mark posted",
-                        systemImage: output.status == .posted ? "arrow.uturn.backward" : "checkmark"
-                    ) {
-                        appModel.togglePosted(output: output, context: context)
-                    }
                     Divider()
-                    Button("Copy Markdown", systemImage: "doc.on.doc") {
+                    Button {
                         copyMarkdown()
+                    } label: {
+                        AgentIconLabel(title: "Copy Markdown", icon: .copy)
                     }
-                    Button("Export Markdown", systemImage: "square.and.arrow.up") {
+                    Button {
                         exportMarkdown()
+                    } label: {
+                        AgentIconLabel(title: "Export Markdown", icon: .upload)
                     }
                     Divider()
-                    Button("Archive", systemImage: "archivebox", role: .destructive) {
+                    Button(role: .destructive) {
                         confirmArchive = true
+                    } label: {
+                        AgentIconLabel(title: "Archive", icon: .archive)
                     }
-                    Button("Delete post", systemImage: "trash", role: .destructive) {
+                    Button(role: .destructive) {
                         confirmDelete = true
+                    } label: {
+                        AgentIconLabel(title: "Delete post", icon: .trash)
                     }
                 } label: {
-                    Image(systemName: "ellipsis")
+                    AgentIconView(.more)
+                        .foregroundStyle(Color.agentText)
                 }
                 .accessibilityLabel("Post options")
             }
         }
         .sheet(isPresented: $showEditor) {
             NavigationStack {
-                ScrollView {
-                    ResumablePostEditorView(brief: brief, output: output, onSpark: {})
-                        .taskNavigationDestinations()
-                        .padding(.horizontal, AgentLayout.pageMargin)
-                        .padding(.top, AgentSpacing.x4)
-                        .padding(.bottom, 80)
-                }
+                ResumablePostEditorView(
+                    brief: brief,
+                    output: output,
+                    bottomActionClearance: AgentSpacing.x3,
+                    onSpark: {}
+                )
+                .taskNavigationDestinations()
                 .navigationTitle("Edit post")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Close", systemImage: "xmark") { showEditor = false }
-                            .labelStyle(.iconOnly)
+                        AgentToolbarIconButton(title: "Close", icon: .close) { showEditor = false }
                     }
+                    .sharedBackgroundVisibility(.hidden)
                 }
                 .agentScreen()
                 .agentKeyboardDismissal()
@@ -291,7 +304,13 @@ struct ScheduledPostDetailView: View {
             guard newValue == nil, let oldValue else { return }
             try? FileManager.default.removeItem(at: oldValue)
         }
-        .confirmationDialog("Archive this post?", isPresented: $confirmArchive, titleVisibility: .visible) {
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
+        }
+        .alert("Archive this post?", isPresented: $confirmArchive) {
             Button("Archive", role: .destructive) {
                 appModel.archive(brief, context: context)
                 dismiss()
@@ -300,13 +319,13 @@ struct ScheduledPostDetailView: View {
         } message: {
             Text("You can find it later under Archived in the Idea Bank.")
         }
-        .confirmationDialog("Move this post to Idea Bank?", isPresented: $confirmMoveToIdeaBank, titleVisibility: .visible) {
+        .alert("Move this post to Idea Bank?", isPresented: $confirmMoveToIdeaBank) {
             Button("Move to Idea Bank", action: moveToIdeaBank)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Its title, notes, and pillar stay with the idea. Its schedule and linked post tasks are removed.")
         }
-        .confirmationDialog("Delete this post?", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .alert("Delete this post?", isPresented: $confirmDelete) {
             if PostSeriesDeletionPolicy.isPartOfSeries(output) {
                 Button("Delete this post", role: .destructive) {
                     deletePost(scope: .thisPost)
@@ -334,9 +353,7 @@ struct ScheduledPostDetailView: View {
     private var postHeader: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(spacing: AgentSpacing.x2) {
-                Circle()
-                    .fill(pillarColor)
-                    .frame(width: 7, height: 7)
+                PillarColorMark(color: pillarColor, diameter: 7)
                 Text(pillarName.uppercased())
                     .font(.agentMono)
                     .tracking(0.7)
@@ -379,7 +396,10 @@ struct ScheduledPostDetailView: View {
         .background(pillarColor.opacity(0.10), in: .rect(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .stroke(pillarColor, lineWidth: 1)
+                .stroke(
+                    PillarVisualContrast.cardBorderColor(for: pillarColor, colorScheme: colorScheme),
+                    lineWidth: 1
+                )
         }
     }
 
@@ -434,8 +454,7 @@ struct ScheduledPostDetailView: View {
                             Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
                                 .font(.agentMono)
                                 .foregroundStyle(Color.agentSecondary)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
+                            AgentIconView(.forward, size: 13)
                                 .foregroundStyle(Color.agentSecondary)
                         }
                         .frame(minHeight: 44)
@@ -535,13 +554,13 @@ struct ScheduledPostDetailView: View {
                 trailing: "\(completedTaskCount) of \(topLevelTasks.count) complete"
             )
             ForEach(topLevelTasks) { task in
-                TaskRow(task: task, allTasks: tasks)
-                    .padding(.vertical, AgentSpacing.x2)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(Color.agentHairline).frame(height: 1)
-                    }
+                TaskRow(
+                    task: task,
+                    allTasks: tasks,
+                    verticalInset: AgentSpacing.x2
+                )
             }
-            AgentAddActionRow(title: "Add task") {
+            AgentBlockAddActionButton(title: "Add task") {
                 showTaskComposer = true
             }
             .padding(.top, topLevelTasks.isEmpty ? AgentSpacing.x2 : AgentSpacing.x3)
@@ -549,18 +568,20 @@ struct ScheduledPostDetailView: View {
     }
 
     @ViewBuilder
-    private var postingAction: some View {
-        if output.status == .posted {
-            Button("Mark not posted") {
-                appModel.togglePosted(output: output, context: context)
-            }
-            .buttonStyle(AgentSecondaryButtonStyle())
-        } else {
-            Button("Mark posted") {
-                appModel.togglePosted(output: output, context: context)
-            }
-            .buttonStyle(AgentPrimaryButtonStyle())
+    private var floatingPostingAction: some View {
+        Button(output.status == .posted ? "Mark not posted" : "Mark as posted") {
+            appModel.togglePosted(output: output, context: context)
         }
+        .buttonStyle(AgentPrimaryButtonStyle())
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x2)
+        .padding(.bottom, 88)
+        .shadow(color: Color.agentPureBlack.opacity(0.14), radius: 16, y: 7)
+        .accessibilityHint(
+            output.status == .posted
+                ? "Returns this post to its scheduled status"
+                : "Marks this scheduled post as posted"
+        )
     }
 
     private func detailRow(label: String, value: String) -> some View {
@@ -730,7 +751,7 @@ struct ScheduledPostDetailView: View {
         }
     }
     private var canMoveToIdeaBank: Bool {
-        brief.status != .posted &&
+        ![.spark, .developing, .posted, .archived].contains(brief.status) &&
             output.status != .posted &&
             !outputs.contains(where: { $0.status == .posted })
     }
@@ -760,7 +781,7 @@ private struct MoodBoardImageViewer: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
+            Color.agentPureBlack.ignoresSafeArea()
 
             if let image = UIImage(data: preview.data) {
                 Image(uiImage: image)
@@ -773,9 +794,8 @@ private struct MoodBoardImageViewer: View {
             Button {
                 dismiss()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.white)
+                AgentIconView(.close, size: 16)
+                    .foregroundStyle(Color.agentPureWhite)
                     .frame(width: 44, height: 44)
                     .background(.ultraThinMaterial, in: .circle)
             }

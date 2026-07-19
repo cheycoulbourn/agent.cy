@@ -3,13 +3,13 @@ import UIKit
 import WidgetKit
 
 private enum WidgetPalette {
-    static let canvas = Color.widgetAdaptive(light: 0xF5F6F3, dark: 0x1A1A1A)
-    static let surface = Color.widgetAdaptive(light: 0xFDFDFB, dark: 0x141414)
-    static let ink = Color.widgetAdaptive(light: 0x141414, dark: 0xF5F6F3)
-    static let secondary = Color.widgetAdaptive(light: 0x514D47, dark: 0xCFCBC3)
-    static let border = Color.widgetAdaptive(light: 0xD7D8D3, dark: 0x383838)
-    static let hairline = Color.widgetAdaptive(light: 0xE6E7E2, dark: 0x2D2D2D)
-    static let cy = Color(hex: "9B3A2E")
+    static let canvas = Color.widgetAdaptive(light: AgentColorPalette.canvasLight, dark: AgentColorPalette.canvasDark)
+    static let surface = Color.widgetAdaptive(light: AgentColorPalette.surfaceLight, dark: AgentColorPalette.surfaceDark)
+    static let ink = Color.widgetAdaptive(light: AgentColorPalette.inkLight, dark: AgentColorPalette.inkDark)
+    static let secondary = Color.widgetAdaptive(light: AgentColorPalette.secondaryLight, dark: AgentColorPalette.secondaryDark)
+    static let border = Color.widgetAdaptive(light: AgentColorPalette.borderLight, dark: AgentColorPalette.borderDark)
+    static let hairline = Color.widgetAdaptive(light: AgentColorPalette.hairlineLight, dark: AgentColorPalette.hairlineDark)
+    static let cy = Color(uiColor: AgentColorPalette.cy.uiColor)
 }
 
 private struct WidgetSurface<Content: View>: View {
@@ -94,25 +94,25 @@ struct QuickCaptureWidgetView: View {
 
     var body: some View {
         if family == .systemSmall {
-            WidgetSurface(background: Color(hex: "141414")) {
+            WidgetSurface(background: Color(uiColor: AgentColorPalette.surfaceDark.uiColor)) {
                 VStack(alignment: .leading, spacing: 0) {
                     CyAsteriskBadge(size: 30)
                     Spacer(minLength: 12)
                     Text("Capture\nan idea.")
                         .font(.widgetInter(size: 23, weight: .bold))
-                        .foregroundStyle(Color(hex: "F5F6F3"))
+                        .foregroundStyle(Color(uiColor: AgentColorPalette.inkDark.uiColor))
                         .lineSpacing(0)
                     Text("Before it leaves.")
                         .font(.widgetInter(size: 12, weight: .regular))
-                        .foregroundStyle(Color(hex: "CFCBC3"))
+                        .foregroundStyle(Color(uiColor: AgentColorPalette.secondaryDark.uiColor))
                         .padding(.top, 5)
                     Spacer(minLength: 8)
                     HStack {
-                        Text("NEW IDEA").widgetMeta(color: Color(hex: "F5F6F3"))
+                        Text("NEW IDEA").widgetMeta(color: Color(uiColor: AgentColorPalette.inkDark.uiColor))
                         Spacer()
                         Text("+")
                             .font(.widgetInter(size: 20, weight: .regular))
-                            .foregroundStyle(Color(hex: "F5F6F3"))
+                            .foregroundStyle(Color(uiColor: AgentColorPalette.inkDark.uiColor))
                     }
                 }
                 .padding(18)
@@ -616,7 +616,7 @@ private struct CyAsteriskBadge: View {
             Circle().fill(WidgetPalette.cy)
             ForEach([0.0, 45.0, 90.0, 135.0], id: \.self) { angle in
                 Capsule()
-                    .fill(Color(hex: "F5F6F3"))
+                    .fill(Color(uiColor: AgentColorPalette.inkDark.uiColor))
                     .frame(width: size * 0.53, height: max(1.5, size * 0.06))
                     .rotationEffect(.degrees(angle))
             }
@@ -641,32 +641,19 @@ private extension Font {
     }
 
     static func widgetMono(size: CGFloat) -> Font {
-        .custom("IBMPlexMono-Medm", size: size)
+        .custom("InterVariable", size: size).weight(.medium)
     }
 }
 
 private extension Color {
     init(hex: String) {
-        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        let value = UInt64(cleaned, radix: 16) ?? 0x514D47
-        self.init(
-            .sRGB,
-            red: Double((value >> 16) & 0xFF) / 255,
-            green: Double((value >> 8) & 0xFF) / 255,
-            blue: Double(value & 0xFF) / 255,
-            opacity: 1
-        )
+        let oklch = AgentOKLCH(hex: hex) ?? AgentColorPalette.secondaryLight
+        self.init(uiColor: oklch.uiColor)
     }
 
-    static func widgetAdaptive(light: UInt32, dark: UInt32) -> Color {
+    static func widgetAdaptive(light: AgentOKLCH, dark: AgentOKLCH) -> Color {
         Color(uiColor: UIColor { traits in
-            let value = traits.userInterfaceStyle == .dark ? dark : light
-            return UIColor(
-                red: CGFloat((value >> 16) & 0xFF) / 255,
-                green: CGFloat((value >> 8) & 0xFF) / 255,
-                blue: CGFloat(value & 0xFF) / 255,
-                alpha: 1
-            )
+            traits.userInterfaceStyle == .dark ? dark.uiColor : light.uiColor
         })
     }
 }

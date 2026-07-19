@@ -171,8 +171,7 @@ struct TodayView: View {
                             Text(focus.title).font(.agentTitle)
                             Text("DAY \(weekdayPosition) OF 7").font(.agentMono)
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .medium))
+                            AgentIconView(.forward, size: 13)
                         }
                         if !focus.note.isEmpty {
                             Text(focus.note).font(.agentBody)
@@ -189,8 +188,7 @@ struct TodayView: View {
                         HStack(alignment: .firstTextBaseline) {
                             Text("Rest").font(.agentTitle)
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .medium))
+                            AgentIconView(.forward, size: 13)
                         }
                         Text("Nothing is planned.")
                             .font(.agentBody)
@@ -283,7 +281,7 @@ struct TodayView: View {
                 HStack {
                     Text("See all tasks").font(.agentSubtext.weight(.medium))
                     Spacer()
-                    Image(systemName: "arrow.right")
+                    AgentIconView(.arrowRight)
                 }
                 .foregroundStyle(Color.agentText)
                 .padding(.top, AgentSpacing.x3)
@@ -308,15 +306,8 @@ struct TodayView: View {
                     .font(.agentBody)
                     .foregroundStyle(Color.agentSecondary)
             } else {
-                ForEach(Array(collectionTasks.prefix(4).enumerated()), id: \.element.id) { index, task in
+                ForEach(Array(collectionTasks.prefix(4))) { task in
                     TaskRow(task: task, allTasks: tasks)
-                        .overlay(alignment: .bottom) {
-                            if index < min(collectionTasks.count, 4) - 1 {
-                                Rectangle()
-                                    .fill(Color.agentHairline)
-                                    .frame(height: 1)
-                            }
-                        }
                 }
             }
 

@@ -85,6 +85,13 @@ struct DevelopBriefView: View {
                         guard working else { return }
                         revealThinkingState(using: proxy)
                     }
+                    .onChange(of: answerIsFocused) { _, isFocused in
+                        guard isFocused else { return }
+                        revealConversationEnd(using: proxy)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                        revealConversationEnd(using: proxy)
+                    }
                 }
 
                 composer
@@ -106,8 +113,7 @@ struct DevelopBriefView: View {
     private var topRail: some View {
         HStack(spacing: AgentSpacing.x2) {
             Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .medium))
+                AgentIconView(.close, size: 16)
                     .frame(width: 44, height: 44)
                     .background(Color.agentSurface, in: .circle)
             }
@@ -182,8 +188,7 @@ struct DevelopBriefView: View {
                             .font(.agentSubtext.weight(.medium))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .multilineTextAlignment(.leading)
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 11, weight: .semibold))
+                        AgentIconView(.external, size: 11)
                     }
                     .foregroundStyle(Color.agentText)
                     .padding(.horizontal, AgentSpacing.x4)
@@ -288,20 +293,20 @@ struct DevelopBriefView: View {
             ZStack(alignment: .bottomTrailing) {
                 TextField(text: $answer, axis: .vertical) {
                     Text("Ask about this post")
-                        .foregroundStyle(Color.agentSecondary)
+                        .font(.agentBody)
+                        .foregroundStyle(Color.agentSecondary.opacity(0.62))
                 }
-                .font(.agentSubtext)
+                .font(.agentBody)
                 .foregroundStyle(Color.agentText)
                 .lineLimit(1...4)
                 .focused($answerIsFocused)
                 .padding(.leading, AgentSpacing.x4)
                 .padding(.trailing, AgentSpacing.x12 + AgentSpacing.x3)
-                .padding(.vertical, AgentSpacing.x4)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, AgentSpacing.x3)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
 
                 Button { send() } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
+                    AgentIconView(.arrowUp, size: 16)
                         .foregroundStyle(canSend ? Color.onCyAccent : Color.agentSecondary)
                         .frame(width: 44, height: 44)
                         .background(canSend ? Color.cyAccent : Color.agentSurface, in: .circle)
@@ -320,7 +325,7 @@ struct DevelopBriefView: View {
             .glassEffect(.clear, in: .rect(cornerRadius: AgentRadius.floating))
             .overlay {
                 RoundedRectangle(cornerRadius: AgentRadius.floating)
-                    .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
+                    .stroke(Color.agentPureWhite.opacity(0.14), lineWidth: 0.5)
                     .allowsHitTesting(false)
             }
 
@@ -333,7 +338,7 @@ struct DevelopBriefView: View {
                     .disabled(appModel.isWorking)
                 if answerIsFocused {
                     Button { answerIsFocused = false } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
+                        AgentIconView(.keyboardDown)
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
@@ -402,6 +407,10 @@ struct DevelopBriefView: View {
     }
 
     private func revealThinkingState(using proxy: ScrollViewProxy) {
+        revealConversationEnd(using: proxy)
+    }
+
+    private func revealConversationEnd(using proxy: ScrollViewProxy) {
         if reduceMotion {
             proxy.scrollTo("post-spark-bottom", anchor: .bottom)
         } else {

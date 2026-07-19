@@ -6,6 +6,7 @@ import { AgentCyWorkspace, clientSource } from "./workspace.js";
 
 const statusValues = ["spark", "developing", "ready", "scheduled", "posted", "archived"] as const;
 const platformValues = ["instagramReels", "tiktok", "youtubeShorts", "youtubeVideo"] as const;
+const formatValues = ["Reel", "Carousel", "Feed post", "Story", "Short video", "Long video", "Short", "Video"] as const;
 const kindValues = ["planning", "scripting", "filming", "editing", "publishing", "creatorBusiness"] as const;
 const priorityValues = ["none", "low", "medium", "high", "urgent"] as const;
 
@@ -200,18 +201,20 @@ export function createAgentCyMcpServer(workspace = new AgentCyWorkspace()): McpS
   server.registerTool(
     "create_post_draft",
     {
-      title: "Queue a post draft",
-      description: "Queue a resumable post draft for approval in agent.cy. Put the social caption in caption, never in notes. Notes are only for production context.",
+      title: "Queue a post draft or scheduled post",
+      description: "Queue one reviewable post proposal in agent.cy. Include targetDate to create and schedule it atomically after one approval; omit targetDate for a resumable draft. Put the social caption in caption, never in notes. Notes are only for production context and must not be used as the only place for a posting date.",
       inputSchema: {
         title: z.string().trim().min(1).max(500),
         premise: z.string().max(20_000).optional(),
         notes: z.string().max(20_000).optional(),
         pillarId: z.string().uuid().nullable().optional(),
         platform: z.enum(platformValues).optional(),
-        format: z.string().trim().max(160).optional(),
+        format: z.enum(formatValues).optional(),
         hook: z.string().max(10_000).optional(),
         caption: z.string().max(20_000).optional(),
         callToAction: z.string().max(5_000).optional(),
+        targetDate: z.string().datetime({ offset: true }).optional(),
+        includesTargetTime: z.boolean().default(false),
       },
     },
     async (payload) => queuedResult(workspace, { type: "createPostDraft", payload }),
@@ -230,7 +233,7 @@ export function createAgentCyMcpServer(workspace = new AgentCyWorkspace()): McpS
         pillarId: z.string().uuid().nullable().optional(),
         hook: z.string().max(10_000).optional(),
         caption: z.string().max(20_000).optional(),
-        format: z.string().trim().max(160).optional(),
+        format: z.enum(formatValues).optional(),
         callToAction: z.string().max(5_000).optional(),
       },
     },

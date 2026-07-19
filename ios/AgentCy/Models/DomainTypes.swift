@@ -448,11 +448,11 @@ enum TaskLane: String, CaseIterable, Codable, Identifiable, Sendable {
 }
 
 enum TaskCollection: String, CaseIterable, Identifiable, Sendable {
-    case postTasks
     case myTasks
+    case postTasks
 
     var id: String { rawValue }
-    var title: String { self == .postTasks ? "Post tasks" : "My tasks" }
+    var title: String { self == .postTasks ? "Post tasks" : "Focus tasks" }
 }
 
 enum TaskCollectionPolicy {
@@ -463,7 +463,7 @@ enum TaskCollectionPolicy {
 
 enum TaskListVisibilityPolicy {
     /// Post Tasks are scoped to the calendar week shown by the Tasks page.
-    /// Recurring My Tasks keep the existing short rolling horizon so their
+    /// Recurring Focus Tasks keep the existing short rolling horizon so their
     /// materialized future occurrences do not flood the list.
     static func includes(
         collection: TaskCollection,
@@ -663,7 +663,7 @@ enum PillarRole: String, CaseIterable, Codable, Identifiable, Sendable {
     case supporting
 
     var id: String { rawValue }
-    var title: String { self == .anchor ? "Anchor pillar" : "Supporting pillar" }
+    var title: String { self == .anchor ? "Anchor pillar" : "Secondary pillar" }
 }
 
 enum CompensationType: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -776,20 +776,27 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
 
 @MainActor
 enum PillarPaletteAssignment {
-    /// Applies one distinct palette color per active pillar. More than five
-    /// pillars are left unchanged rather than repeating colors unexpectedly.
+    /// Applies one distinct palette color per active pillar. A collection larger
+    /// than the selected palette is left unchanged rather than repeating colors.
     @discardableResult
     static func apply(_ palette: CreatorVibePalette, to pillars: [Pillar]) -> Int {
         let activePillars = pillars.filter { !$0.isArchived }
         let colors = palette.pillarColorHexes
         guard !activePillars.isEmpty,
-              activePillars.count <= 5,
               activePillars.count <= colors.count
         else { return 0 }
         for (index, pillar) in activePillars.enumerated() {
             pillar.colorHex = colors[index]
         }
         return activePillars.count
+    }
+}
+
+enum PillarCollectionPolicy {
+    static let maximumActiveCount = 6
+
+    static func canCreate(activeCount: Int) -> Bool {
+        activeCount < maximumActiveCount
     }
 }
 
@@ -865,14 +872,14 @@ enum AppTab: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var symbol: String {
+    var icon: AgentIcon {
         switch self {
-        case .home: "house"
-        case .today: "calendar"
-        case .tasks: "checkmark"
-        case .pillars: "rectangle.3.group"
-        case .ideaBank: "tray"
-        case .cy: "sparkles"
+        case .home: .home
+        case .today: .calendar
+        case .tasks: .tasks
+        case .pillars: .pillars
+        case .ideaBank: .ideas
+        case .cy: .idea
         }
     }
 }
@@ -1138,6 +1145,18 @@ struct OnboardingPillarDraft: Identifiable, Equatable, Sendable {
     var assignedWeekdays: Set<PillarWeekday> = []
 }
 
+enum OnboardingAIProvider: String, CaseIterable, Codable, Sendable {
+    case agentCy
+    case claudeOrCodex
+
+    var title: String {
+        switch self {
+        case .agentCy: "Agent Cy AI"
+        case .claudeOrCodex: "Claude or Codex"
+        }
+    }
+}
+
 struct OnboardingDraft: Equatable, Sendable {
     var adultConfirmed = false
     var telemetryConsent = false
@@ -1156,6 +1175,7 @@ struct OnboardingDraft: Equatable, Sendable {
     var voiceAvoid = ""
     var voiceProfilePayloadJSON = ""
     var accountHandles: [BuiltInDestinationKind: String] = [:]
+    var aiProvider: OnboardingAIProvider = .agentCy
     var dailyReminderEnabled = true
     var dailyReminderHour = 9
     var dailyReminderMinute = 0

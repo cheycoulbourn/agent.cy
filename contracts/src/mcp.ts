@@ -15,6 +15,22 @@ const optionalText = (maximum: number) => z.string().trim().max(maximum).optiona
 // Accept both representations so snapshots remain compatible across clients.
 const NullableUuidSchema = z.uuid().nullish();
 
+export const McpPublishingFormatSchema = z.enum([
+  "Reel",
+  "Carousel",
+  "Feed post",
+  "Story",
+  "Short video",
+  "Long video",
+  "Short",
+  "Video",
+]);
+
+const dateOnlyInNotesPattern = new RegExp(
+  String.raw`\b(?:intended\s+publish\s+date|publish(?:ing)?\s+date|scheduled?\s+(?:for|on)|post\s+on)\b[\s\S]{0,100}\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{4}-\d{2}-\d{2})\b`,
+  "i",
+);
+
 export const McpBridgePillarSchema = z
   .object({
     id: z.uuid(),
@@ -140,12 +156,23 @@ export const McpCreatePostDraftRequestSchema = z
         notes: optionalText(20_000),
         pillarId: NullableUuidSchema.optional(),
         platform: PlatformSchema.optional(),
-        format: optionalText(160),
+        format: McpPublishingFormatSchema.optional(),
         hook: optionalText(10_000),
         caption: optionalText(20_000),
         callToAction: optionalText(5_000),
+        targetDate: IsoDateTimeSchema.optional(),
+        includesTargetTime: z.boolean().default(false),
       })
-      .strict(),
+      .strict()
+      .superRefine((payload, context) => {
+        if (!payload.targetDate && payload.notes && dateOnlyInNotesPattern.test(payload.notes)) {
+          context.addIssue({
+            code: "custom",
+            path: ["targetDate"],
+            message: "Use targetDate and includesTargetTime for scheduling. Do not put the posting date only in notes.",
+          });
+        }
+      }),
   })
   .strict();
 
@@ -162,7 +189,7 @@ export const McpUpdatePostRequestSchema = z
         pillarId: NullableUuidSchema.optional(),
         hook: optionalText(10_000),
         caption: optionalText(20_000),
-        format: optionalText(160),
+        format: McpPublishingFormatSchema.optional(),
         callToAction: optionalText(5_000),
       })
       .strict()

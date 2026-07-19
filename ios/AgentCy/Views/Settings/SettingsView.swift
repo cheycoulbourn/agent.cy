@@ -30,7 +30,7 @@ struct SettingsView: View {
                     )
                     .padding(.horizontal, AgentLayout.pageMargin)
                     .padding(.top, AgentSpacing.x8)
-                    .padding(.bottom, AgentSpacing.x6)
+                    .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
 
                     VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                         if let profile = profiles.first {
@@ -154,6 +154,13 @@ struct SettingsView: View {
                                 SettingsIndexRow(title: "Preview onboarding", value: "Review")
                             }
                             .buttonStyle(.plain)
+                            Button {
+                                appModel.startWalkthrough()
+                                dismiss()
+                            } label: {
+                                SettingsIndexRow(title: "Replay walkthrough", value: "5 steps")
+                            }
+                            .buttonStyle(.plain)
                             NavigationLink {
                                 AccessSettingsView()
                             } label: {
@@ -208,8 +215,9 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
         .navigationDestination(item: $model.requestedSettingsPage) { page in
@@ -233,7 +241,8 @@ struct SettingsView: View {
                         name: activeIdentity.name,
                         goal: profile.goal,
                         vibePalette: profile.vibePalette,
-                        appearance: profile.appearance
+                        appearance: profile.appearance,
+                        aiProvider: LocalCyPreferences.isEnabled ? .claudeOrCodex : .agentCy
                     )
                 )
             }

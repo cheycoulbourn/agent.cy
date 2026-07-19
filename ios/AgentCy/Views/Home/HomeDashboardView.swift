@@ -15,7 +15,7 @@ struct HomeDashboardView: View {
     @Query private var formats: [PublishingFormat]
     @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @Query private var allFocusOverrides: [DailyFocusOverride]
-    @State private var showsAllTodayTasks = false
+    @Query(sort: \CreatorAttachment.createdAt) private var allAttachments: [CreatorAttachment]
     @State private var showsWeeklyFocusEditor = false
     @State private var dashboardCards = HomeDashboardCard.defaultOrder
     @State private var hiddenDashboardCards = Set<HomeDashboardCard>()
@@ -26,8 +26,11 @@ struct HomeDashboardView: View {
     @State private var isArrangingDashboard = false
     @State private var arrangeFeedback = 0
     @State private var quickCyPrompt = ""
+    @State private var studioMode: HomeStudioMode = .write
+    @Namespace private var dashboardRailNamespace
     @AppStorage("agentcy.homeDashboardCardOrderByWorkspace") private var storedDashboardCardOrders = ""
     @AppStorage("agentcy.homeDashboardHiddenCardsByWorkspace") private var storedHiddenDashboardCards = ""
+    @AppStorage("agentcy.homeStudioModeByWorkspace") private var storedStudioModes = ""
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
@@ -35,13 +38,15 @@ struct HomeDashboardView: View {
     private var pillars: [Pillar] { scoped(allPillars) }
     private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
     private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
+    private var attachments: [CreatorAttachment] { scoped(allAttachments) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                 header
+                    .appWalkthroughTarget(.dashboardOverview)
 
-                ForEach(dashboardCards) { card in
+                ForEach(renderableDashboardCards) { card in
                     reorderableDashboardCard(card)
                 }
 
@@ -61,16 +66,20 @@ struct HomeDashboardView: View {
         .sheet(isPresented: $showsWeeklyFocusEditor) {
             WeeklyFocusSetupView()
         }
-        .onAppear(perform: restoreDashboardCardOrder)
+        .onAppear {
+            restoreDashboardCardOrder()
+            restoreDashboardPreferences()
+        }
         .onChange(of: appModel.activeWorkspaceID) { _, _ in
             finishArrangingDashboard()
             restoreDashboardCardOrder()
+            restoreDashboardPreferences()
         }
         .sensoryFeedback(.selection, trigger: arrangeFeedback)
     }
 
     private var dashboardCustomizationFooter: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             if isArrangingDashboard {
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x1) {
@@ -144,6 +153,30 @@ struct HomeDashboardView: View {
         .frame(minHeight: 54)
     }
 
+    private var renderableDashboardCards: [HomeDashboardCard] {
+        dashboardCards.filter(dashboardCardIsRenderable)
+    }
+
+    private func dashboardCardIsRenderable(_ card: HomeDashboardCard) -> Bool {
+        switch card {
+        case .theThread:
+            creativeThread != nil
+        case .seriesDesk:
+            activeSeriesItem != nil
+        case .collabDesk:
+            activeCollaboration != nil
+        default:
+            true
+        }
+    }
+
+    private func mergingRenderableOrder(_ reorderedCards: [HomeDashboardCard]) -> [HomeDashboardCard] {
+        var iterator = reorderedCards.makeIterator()
+        return dashboardCards.map { card in
+            dashboardCardIsRenderable(card) ? (iterator.next() ?? card) : card
+        }
+    }
+
     @ViewBuilder
     private func dashboardCard(_ card: HomeDashboardCard) -> some View {
         switch card {
@@ -153,6 +186,8 @@ struct HomeDashboardView: View {
             todayTasksSection
         case .weekAhead:
             weekAhead
+        case .nextWeek:
+            nextWeekAhead
         case .weeklyFocus:
             weeklyFocusSection
         case .quickCy:
@@ -161,6 +196,14 @@ struct HomeDashboardView: View {
             pastDuePostsSection
         case .recentIdeas:
             recentIdeasSection
+        case .studioBoard:
+            studioBoardSection
+        case .theThread:
+            theThreadSection
+        case .seriesDesk:
+            seriesDeskSection
+        case .collabDesk:
+            collabDeskSection
         }
     }
 
@@ -221,7 +264,7 @@ struct HomeDashboardView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(greeting), \(activeIdentity.greetingName).")
-                    .font(.system(size: 32, weight: .regular, design: .default))
+                    .font(.agentDisplayLead)
                     .foregroundStyle(Color.agentText)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -247,12 +290,21 @@ struct HomeDashboardView: View {
     private var scheduledTodaySection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
-                MetaLabel("Scheduled today")
+                Text("Up next")
+                    .font(.agentTitle)
                 Spacer()
-                Text("\(scheduledTodayOutputs.count)")
-                    .font(.agentMono)
-                    .foregroundStyle(Color.agentSecondary)
+                Button("View the day") {
+                    appModel.widgetAgendaDay = today
+                    appModel.selectedTab = .today
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens today's agenda")
             }
+
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
 
             if scheduledTodayOutputs.isEmpty {
                 Text("Nothing is scheduled today.")
@@ -271,66 +323,49 @@ struct HomeDashboardView: View {
         }
         .padding(AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
-        .shadow(color: Color.black.opacity(0.045), radius: 18, y: 8)
     }
 
     private var todayTasksSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("All tasks")
+                    .font(.agentTitle)
+                Spacer()
+                viewAllTasksButton
+            }
+
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+
             if todayTasks.isEmpty {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Nothing is planned.")
-                        .font(.agentBody)
-                        .foregroundStyle(Color.agentSecondary)
-                    Spacer()
-                    viewAllTasksButton
-                }
+                Text("Nothing is planned.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
                 .padding(.vertical, AgentSpacing.x2)
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x2) {
-                    Text(firstTodayTaskGroupTitle.uppercased())
-                    Text("\(firstTodayTaskGroupCount)")
-                        .foregroundStyle(Color.agentSecondary)
-                    Spacer()
-                    viewAllTasksButton
-                }
-                .font(.agentMono)
-
                 VStack(alignment: .leading, spacing: 0) {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                         homeTaskGroup(
-                            title: "My tasks",
-                            tasks: displayedTodayMyTasks,
+                            title: "Focus tasks",
+                            tasks: todayMyTasks,
                             totalCount: todayMyTasks.count,
-                            showsHeader: false
+                            showsHeader: true
                         )
                         homeTaskGroup(
                             title: "Post tasks",
-                            tasks: displayedTodayPostTasks,
+                            tasks: todayPostTasks,
                             totalCount: todayPostTasks.count,
-                            showsHeader: !displayedTodayMyTasks.isEmpty
+                            showsHeader: true
                         )
-                    }
-
-                    if hiddenTodayTaskCount > 0 {
-                        Button {
-                            showsAllTodayTasks = true
-                        } label: {
-                            Text("+\(hiddenTodayTaskCount) more")
-                                .font(.agentSubtext.weight(.semibold))
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                .contentShape(.rect)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.leading, AgentSpacing.x2)
-                        .padding(.top, AgentSpacing.x1)
-                        .accessibilityHint("Shows every task planned for today")
                     }
                 }
             }
         }
-        .padding(AgentSpacing.x4)
+        .padding(.horizontal, AgentSpacing.x4)
+        .padding(.top, AgentSpacing.x4)
+        .padding(.bottom, AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
-        .shadow(color: Color.black.opacity(0.045), radius: 18, y: 8)
     }
 
     private var viewAllTasksButton: some View {
@@ -339,14 +374,6 @@ struct HomeDashboardView: View {
         }
         .font(.agentSubtext.weight(.semibold))
         .buttonStyle(.plain)
-    }
-
-    private var firstTodayTaskGroupTitle: String {
-        displayedTodayMyTasks.isEmpty ? "Post tasks" : "My tasks"
-    }
-
-    private var firstTodayTaskGroupCount: Int {
-        displayedTodayMyTasks.isEmpty ? todayPostTasks.count : todayMyTasks.count
     }
 
     private func homePostCard(output: PlatformOutput, brief: CreativeBrief) -> some View {
@@ -383,15 +410,8 @@ struct HomeDashboardView: View {
                     .padding(.bottom, AgentSpacing.x1)
                 }
 
-                ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
+                ForEach(tasks) { task in
                     homeTaskRow(task)
-                        .overlay(alignment: .bottom) {
-                            if index < tasks.count - 1 {
-                                Rectangle()
-                                    .fill(Color.agentHairline)
-                                    .frame(height: 1)
-                            }
-                        }
                 }
             }
         }
@@ -399,38 +419,31 @@ struct HomeDashboardView: View {
 
     private func homeTaskRow(_ task: CreatorTask) -> some View {
         HStack(spacing: AgentSpacing.x2) {
-            Button {
+            AgentTaskCheckbox(
+                isCompleted: task.isCompleted,
+                color: taskCheckboxColor(task),
+                accessibilityLabel: task.isCompleted
+                    ? "Mark \(task.title) open"
+                    : "Complete \(task.title)"
+            ) {
                 appModel.toggleTask(task, context: context)
-            } label: {
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(taskCheckboxColor(task), lineWidth: 1.25)
-                    .frame(width: 19, height: 19)
-                    .frame(width: 36, height: 44)
-                    .contentShape(.rect)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Complete \(task.title)")
 
             NavigationLink(value: TaskNavigationRoute(taskID: task.id)) {
-                HStack(spacing: AgentSpacing.x2) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(task.title)
-                            .font(.agentBody.weight(.semibold))
-                            .lineLimit(2)
-                        if let metadata = taskMetadata(task) {
-                            Text(metadata)
-                                .font(.agentMono)
-                                .foregroundStyle(Color.agentSecondary)
-                                .lineLimit(1)
-                        }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.agentBody.weight(.semibold))
+                        .lineLimit(2)
+                    if let metadata = taskMetadata(task) {
+                        Text(metadata)
+                            .font(.agentMono)
+                            .foregroundStyle(Color.agentSecondary)
+                            .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .medium))
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(Color.agentText)
-                .frame(minHeight: 52)
+                .frame(minHeight: 44)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -440,15 +453,11 @@ struct HomeDashboardView: View {
     private var weekAhead: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                    Text("This week")
-                        .font(.agentTitle)
-                    Text("A few things to look forward to.")
-                        .font(.agentSubtext)
-                        .foregroundStyle(Color.agentSecondary)
-                }
+                Text("This week")
+                    .font(.agentTitle)
                 Spacer()
-                Button("Open Plan") {
+                Button("Open agenda") {
+                    appModel.requestedPlanWeekOffset = 0
                     appModel.requestedPlanMode = .week
                     appModel.selectedTab = .today
                 }
@@ -467,11 +476,11 @@ struct HomeDashboardView: View {
                     .padding(.vertical, AgentSpacing.x4)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(weekItems.prefix(5).enumerated()), id: \.element.id) { index, item in
+                    ForEach(Array(weekItems.enumerated()), id: \.element.id) { index, item in
                         weekItemRow(item)
                             .padding(.vertical, AgentSpacing.x4)
                             .overlay(alignment: .bottom) {
-                                if index < min(weekItems.count, 5) - 1 {
+                                if index < weekItems.count - 1 {
                                     Rectangle().fill(Color.agentHairline).frame(height: 1)
                                 }
                             }
@@ -479,7 +488,49 @@ struct HomeDashboardView: View {
                 }
             }
         }
-        .padding(AgentSpacing.x6)
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+    }
+
+    private var nextWeekAhead: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Next week")
+                    .font(.agentTitle)
+                Spacer()
+                Button("Open agenda") {
+                    appModel.requestedPlanWeekOffset = 1
+                    appModel.requestedPlanMode = .week
+                    appModel.selectedTab = .today
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .buttonStyle(.plain)
+            }
+
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+
+            if nextWeekItems.isEmpty {
+                Text("Next week is open.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .padding(.vertical, AgentSpacing.x4)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(nextWeekItems.enumerated()), id: \.element.id) { index, item in
+                        weekItemRow(item)
+                            .padding(.vertical, AgentSpacing.x4)
+                            .overlay(alignment: .bottom) {
+                                if index < nextWeekItems.count - 1 {
+                                    Rectangle().fill(Color.agentHairline).frame(height: 1)
+                                }
+                            }
+                    }
+                }
+            }
+        }
+        .padding(AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
     }
 
@@ -501,8 +552,7 @@ struct HomeDashboardView: View {
                     .font(.agentSubtext.weight(.semibold))
                     .foregroundStyle(Color.agentText)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .medium))
+                AgentIconView(.forward, size: 13)
                     .foregroundStyle(Color.agentSecondary)
             }
             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
@@ -548,8 +598,7 @@ struct HomeDashboardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button(action: sendQuickCyPrompt) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
+                    AgentIconView(.arrowUp, size: 16)
                         .foregroundStyle(canSend ? Color.onCyAccent : Color.agentSecondary)
                         .frame(width: 44, height: 44)
                         .background(canSend ? Color.cyAccent : Color.agentSurface, in: .circle)
@@ -577,18 +626,19 @@ struct HomeDashboardView: View {
         }
         .padding(AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
-        .shadow(color: Color.black.opacity(0.045), radius: 18, y: 8)
     }
 
     private var pastDuePostsSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
-                MetaLabel("Needs a new date")
+                Text("Needs a new date")
+                    .font(.agentTitle)
                 Spacer()
-                Text("\(pastDueOutputs.count)")
-                    .font(.agentMono)
-                    .foregroundStyle(Color.agentSecondary)
             }
+
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
 
             if pastDueOutputs.isEmpty {
                 Text("No missed posts.")
@@ -622,8 +672,7 @@ struct HomeDashboardView: View {
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .medium))
+                                    AgentIconView(.forward, size: 12)
                                 }
                                 .foregroundStyle(Color.agentText)
                                 .frame(minHeight: 58)
@@ -645,20 +694,24 @@ struct HomeDashboardView: View {
         }
         .padding(AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
-        .shadow(color: Color.black.opacity(0.045), radius: 18, y: 8)
     }
 
     private var recentIdeasSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
-                MetaLabel("Recent ideas")
+                Text("Recent ideas")
+                    .font(.agentTitle)
                 Spacer()
-                Button("Open Idea Bank") {
+                Button("View all") {
                     appModel.selectedTab = .ideaBank
                 }
                 .font(.agentSubtext.weight(.semibold))
                 .buttonStyle(.plain)
             }
+
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
 
             if recentIdeas.isEmpty {
                 Text("No saved ideas yet.")
@@ -671,30 +724,41 @@ struct HomeDashboardView: View {
                         NavigationLink {
                             IdeaPostDraftView(brief: idea)
                         } label: {
-                            HStack(spacing: AgentSpacing.x3) {
-                                Circle()
-                                    .fill(pillarAccent(for: idea))
-                                    .frame(width: 7, height: 7)
+                            HStack(alignment: .center, spacing: AgentSpacing.x3) {
+                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                    HStack(spacing: AgentSpacing.x3) {
+                                        PillarColorMark(
+                                            color: pillarAccent(for: idea),
+                                            diameter: AgentSpacing.x2
+                                        )
 
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(idea.title)
-                                        .font(.agentBody.weight(.semibold))
-                                        .lineLimit(2)
+                                        Text(idea.title)
+                                            .font(.agentBody.weight(.semibold))
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                            .layoutPriority(1)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
                                     Text((pillar(for: idea)?.name ?? "No pillar").uppercased())
                                         .font(.agentMono)
                                         .foregroundStyle(Color.agentSecondary)
                                         .lineLimit(1)
+                                        .padding(.leading, AgentSpacing.x5)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .medium))
+                                AgentIconView(.forward, size: 12)
+                                    .foregroundStyle(Color.agentSecondary)
+                                    .frame(width: 20, alignment: .trailing)
                             }
                             .foregroundStyle(Color.agentText)
-                            .frame(minHeight: 58)
+                            .frame(minHeight: AgentSpacing.x12 + AgentSpacing.x2)
                             .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(idea.title)
+                        .accessibilityValue(pillar(for: idea)?.name ?? "No pillar")
                         .overlay(alignment: .bottom) {
                             if index < min(recentIdeas.count, 3) - 1 {
                                 Rectangle()
@@ -708,7 +772,6 @@ struct HomeDashboardView: View {
         }
         .padding(AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
-        .shadow(color: Color.black.opacity(0.045), radius: 18, y: 8)
     }
 
     private func sendQuickCyPrompt() {
@@ -726,32 +789,18 @@ struct HomeDashboardView: View {
 
     @ViewBuilder
     private func weekItemRow(_ item: HomeWeekItem) -> some View {
-        switch item {
-        case .post(let output, let brief):
-            NavigationLink {
-                PostOutputDetailView(brief: brief, output: output)
-            } label: {
-                weekRow(
-                    date: output.targetDate,
-                    marker: pillarColor(for: brief),
-                    eyebrow: "Post",
-                    title: outputTitle(output, brief: brief),
-                    detail: platformLabel(for: output)
-                )
-            }
-            .buttonStyle(.plain)
-        case .task(let task):
-            NavigationLink(value: TaskNavigationRoute(taskID: task.id)) {
-                weekRow(
-                    date: task.targetDate ?? task.dailyFocusDate,
-                    marker: .agentSecondary,
-                    eyebrow: "Task",
-                    title: task.title,
-                    detail: task.targetDate?.formatted(date: .omitted, time: task.includesTargetTime ? .shortened : .omitted) ?? "Planned"
-                )
-            }
-            .buttonStyle(.plain)
+        NavigationLink {
+            PostOutputDetailView(brief: item.brief, output: item.output)
+        } label: {
+            weekRow(
+                date: item.output.targetDate,
+                marker: pillarColor(for: item.brief),
+                eyebrow: "Post",
+                title: outputTitle(item.output, brief: item.brief),
+                detail: platformLabel(for: item.output)
+            )
         }
+        .buttonStyle(.plain)
     }
 
     private func weekRow(
@@ -770,9 +819,11 @@ struct HomeDashboardView: View {
             }
             .frame(width: 42)
 
-            Circle()
-                .fill(marker)
-                .frame(width: 7, height: 7)
+            PillarColorMark(
+                color: marker,
+                diameter: 8,
+                lineWidth: 1
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(eyebrow.uppercased())
@@ -790,8 +841,7 @@ struct HomeDashboardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .medium))
+            AgentIconView(.forward, size: 13)
         }
         .foregroundStyle(Color.agentText)
         .contentShape(.rect)
@@ -852,24 +902,15 @@ struct HomeDashboardView: View {
         todayTasks.filter { $0.briefID != nil }
     }
 
-    private var displayedTodayMyTasks: [CreatorTask] {
-        showsAllTodayTasks ? todayMyTasks : Array(todayMyTasks.prefix(2))
-    }
-
-    private var displayedTodayPostTasks: [CreatorTask] {
-        showsAllTodayTasks ? todayPostTasks : Array(todayPostTasks.prefix(2))
-    }
-
-    private var hiddenTodayTaskCount: Int {
-        guard !showsAllTodayTasks else { return 0 }
-        return todayTasks.count - displayedTodayMyTasks.count - displayedTodayPostTasks.count
-    }
-
     private var scheduledTodayOutputs: [PlatformOutput] {
         outputs.filter { output in
-            output.status == .scheduled &&
-                output.targetDate.map(Calendar.current.isDateInToday) == true &&
-                brief(for: output)?.status != .archived
+            HomeTodayPostPolicy.includes(
+                outputStatus: output.status,
+                targetDate: output.targetDate,
+                briefStatus: brief(for: output)?.status,
+                today: today,
+                calendar: .current
+            )
         }
         .sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
     }
@@ -895,34 +936,36 @@ struct HomeDashboardView: View {
 
     private var weekItems: [HomeWeekItem] {
         let calendar = Calendar.current
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
-        let daysSinceMonday = (calendar.component(.weekday, from: today) + 5) % 7
-        let monday = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today) ?? today
-        let endOfWeek = calendar.date(byAdding: .day, value: 7, to: monday) ?? today
-
         let postItems: [HomeWeekItem] = outputs.compactMap { output in
-            guard output.status != .posted,
-                  let date = output.targetDate,
-                  date >= tomorrow,
-                  date < endOfWeek,
-                  let brief = brief(for: output),
-                  brief.status != .archived
+            guard let brief = brief(for: output),
+                  HomeWeekAgendaPolicy.includes(
+                    targetDate: output.targetDate,
+                    briefStatus: brief.status,
+                    today: today,
+                    calendar: calendar
+                  )
             else { return nil }
-            return .post(output, brief)
+            return HomeWeekItem(output: output, brief: brief)
         }
 
-        let taskItems: [HomeWeekItem] = tasks.compactMap { task in
-            guard !task.isCompleted,
-                  !task.isSkipped,
-                  task.parentTaskID == nil,
-                  let date = task.targetDate ?? task.dailyFocusDate,
-                  date >= tomorrow,
-                  date < endOfWeek
+        return postItems.sorted { $0.date < $1.date }
+    }
+
+    private var nextWeekItems: [HomeWeekItem] {
+        let calendar = Calendar.current
+        let postItems: [HomeWeekItem] = outputs.compactMap { output in
+            guard let brief = brief(for: output),
+                  HomeNextWeekAgendaPolicy.includes(
+                    targetDate: output.targetDate,
+                    briefStatus: brief.status,
+                    today: today,
+                    calendar: calendar
+                  )
             else { return nil }
-            return .task(task)
+            return HomeWeekItem(output: output, brief: brief)
         }
 
-        return (postItems + taskItems).sorted { $0.date < $1.date }
+        return postItems.sorted { $0.date < $1.date }
     }
 
     private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
@@ -1020,7 +1063,8 @@ struct HomeDashboardView: View {
         else { return }
 
         let finalMidY = originFrame.midY + translation.height
-        let remainingCards = dashboardCards.filter { $0 != card }
+        let currentCards = renderableDashboardCards
+        let remainingCards = currentCards.filter { $0 != card }
         let insertionIndex = remainingCards.firstIndex { candidate in
             guard let frame = dashboardCardFrames[candidate] else { return false }
             return finalMidY < frame.midY
@@ -1028,13 +1072,13 @@ struct HomeDashboardView: View {
 
         var reorderedCards = remainingCards
         reorderedCards.insert(card, at: insertionIndex)
-        guard reorderedCards != dashboardCards else { return }
+        guard reorderedCards != currentCards else { return }
 
         let destinationMinY = dashboardCardMinY(for: card, in: reorderedCards)
         let compensation = destinationMinY.map { originFrame.minY - $0 } ?? dashboardDragCompensationY
 
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0.04)) {
-            dashboardCards = reorderedCards
+            dashboardCards = mergingRenderableOrder(reorderedCards)
             dashboardDragCompensationY = compensation
         }
         arrangeFeedback += 1
@@ -1100,16 +1144,18 @@ struct HomeDashboardView: View {
     }
 
     private func moveDashboardCard(_ card: HomeDashboardCard, offset: Int) {
-        guard let sourceIndex = dashboardCards.firstIndex(of: card) else { return }
-        let destinationIndex = min(max(sourceIndex + offset, 0), dashboardCards.count - 1)
+        var cards = renderableDashboardCards
+        guard let sourceIndex = cards.firstIndex(of: card) else { return }
+        let destinationIndex = min(max(sourceIndex + offset, 0), cards.count - 1)
         guard sourceIndex != destinationIndex else { return }
 
         beginArrangingDashboard()
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
-            dashboardCards.move(
+            cards.move(
                 fromOffsets: IndexSet(integer: sourceIndex),
                 toOffset: destinationIndex > sourceIndex ? destinationIndex + 1 : destinationIndex
             )
+            dashboardCards = mergingRenderableOrder(cards)
         }
         dashboardCardDidMove()
     }
@@ -1167,26 +1213,390 @@ struct HomeDashboardView: View {
 
 }
 
+private extension HomeDashboardView {
+    var studioBoardSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            dashboardSectionHeader("Studio board", trailing: studioMode.title)
+            dashboardChoiceRail(
+                choices: HomeStudioMode.allCases,
+                selection: studioMode,
+                namespacePrefix: "studio"
+            ) { mode in
+                studioMode = mode
+                persistDashboardPreferences()
+            }
+
+            if studioTasks.isEmpty {
+                Text("Nothing is waiting in \(studioMode.title.lowercased()) mode.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .padding(.vertical, AgentSpacing.x2)
+            } else {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    ForEach(studioTasks.prefix(3)) { task in
+                        homeTaskRow(task)
+                    }
+                }
+            }
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+    }
+
+    var theThreadSection: some View {
+        Group {
+            if let thread = creativeThread {
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    dashboardSectionHeader("The thread", trailing: thread.pillar.name)
+
+                    NavigationLink {
+                        PostOutputDetailView(brief: thread.post, output: thread.output)
+                    } label: {
+                        dashboardLinkRow(
+                            eyebrow: "Posted",
+                            title: outputTitle(thread.output, brief: thread.post),
+                            color: pillarAccent(for: thread.post)
+                        )
+                    }
+
+                    HStack(spacing: AgentSpacing.x3) {
+                        Rectangle()
+                            .fill(Color.cyAccent.opacity(0.7))
+                            .frame(width: 28, height: 1)
+                        CyAsterisk(color: .cyAccent, size: 18, strokeWidth: 1.6)
+                        Text("keeps becoming")
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                        Rectangle()
+                            .fill(Color.cyAccent.opacity(0.7))
+                            .frame(maxWidth: .infinity, maxHeight: 1)
+                    }
+                    .accessibilityHidden(true)
+
+                    NavigationLink {
+                        IdeaPostDraftView(brief: thread.idea)
+                    } label: {
+                        dashboardLinkRow(
+                            eyebrow: "Next idea",
+                            title: thread.idea.title,
+                            color: pillarAccent(for: thread.idea)
+                        )
+                    }
+                }
+                .padding(AgentSpacing.x4)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+            }
+        }
+    }
+
+    var seriesDeskSection: some View {
+        Group {
+            if let item = activeSeriesItem {
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    dashboardSectionHeader("Series desk", trailing: item.progressLabel)
+
+                    NavigationLink {
+                        dashboardPostDestination(brief: item.brief, output: item.output)
+                    } label: {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                                Text(item.name)
+                                    .font(.agentTitle)
+                                    .foregroundStyle(Color.agentText)
+                                    .lineLimit(1)
+                                Spacer()
+                                AgentIconView(.forward, size: 12)
+                                    .foregroundStyle(Color.agentSecondary)
+                            }
+                            Text(item.nextStep)
+                                .font(.agentBody)
+                                .foregroundStyle(Color.agentSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(AgentSpacing.x4)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+            }
+        }
+    }
+
+    var collabDeskSection: some View {
+        Group {
+            if let collab = activeCollaboration {
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    dashboardSectionHeader("Collab desk", trailing: collab.compensation)
+
+                    NavigationLink {
+                        dashboardPostDestination(brief: collab.brief, output: collab.output)
+                    } label: {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                            HStack(spacing: AgentSpacing.x3) {
+                                PillarColorMark(color: pillarAccent(for: collab.brief), diameter: 10)
+                                Text(collab.brand)
+                                    .font(.agentTitle)
+                                    .foregroundStyle(Color.agentText)
+                                    .lineLimit(1)
+                                Spacer()
+                                AgentIconView(.forward, size: 12)
+                                    .foregroundStyle(Color.agentSecondary)
+                            }
+                            Text(collab.brief.title)
+                                .font(.agentBody.weight(.semibold))
+                                .foregroundStyle(Color.agentText)
+                                .lineLimit(2)
+                            HStack(spacing: AgentSpacing.x3) {
+                                Text(collab.dateLabel)
+                                if collab.fileCount > 0 {
+                                    Text("\(collab.fileCount) \(collab.fileCount == 1 ? "file" : "files")")
+                                }
+                            }
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(AgentSpacing.x4)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+            }
+        }
+    }
+
+    @ViewBuilder
+    func dashboardPostDestination(brief: CreativeBrief, output: PlatformOutput) -> some View {
+        if output.status == .scheduled || output.status == .posted || brief.status == .scheduled || brief.status == .posted {
+            PostOutputDetailView(brief: brief, output: output)
+        } else {
+            IdeaPostDraftView(brief: brief, output: output)
+        }
+    }
+
+    func dashboardSectionHeader(_ title: String, trailing: String? = nil) -> some View {
+        VStack(spacing: AgentSpacing.x3) {
+            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                Text(title)
+                    .font(.agentTitle)
+                    .foregroundStyle(Color.agentText)
+                Spacer()
+                if let trailing {
+                    Text(trailing)
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(Color.agentSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+        }
+    }
+
+    func dashboardChoiceRail<Option: HomeDashboardRailOption>(
+        choices: [Option],
+        selection: Option,
+        namespacePrefix: String,
+        onSelect: @escaping (Option) -> Void
+    ) -> some View {
+        HStack(spacing: 0) {
+            ForEach(choices) { choice in
+                Button {
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.24, extraBounce: 0.03)) {
+                        onSelect(choice)
+                    }
+                } label: {
+                    Text(choice.title)
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(selection == choice ? Color.agentText : Color.agentSecondary)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background {
+                            if selection == choice {
+                                Capsule()
+                                    .fill(Color.agentSurface)
+                                    .matchedGeometryEffect(
+                                        id: "\(namespacePrefix)-selection",
+                                        in: dashboardRailNamespace
+                                    )
+                            }
+                        }
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == choice ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(Color.agentCanvas, in: .capsule)
+        .overlay { Capsule().stroke(Color.agentBorder, lineWidth: 0.75) }
+    }
+
+    func dashboardLinkRow(eyebrow: String, title: String, color: Color) -> some View {
+        HStack(spacing: AgentSpacing.x3) {
+            PillarColorMark(color: color, diameter: 9)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(eyebrow.uppercased())
+                    .font(.agentMono)
+                    .foregroundStyle(Color.agentSecondary)
+                Text(title)
+                    .font(.agentBody.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer()
+            AgentIconView(.forward, size: 12)
+                .foregroundStyle(Color.agentSecondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .contentShape(.rect)
+    }
+
+    var studioTasks: [CreatorTask] {
+        openTopLevelTasks
+            .filter { studioMode.taskKinds.contains($0.kind) }
+            .sorted(by: dashboardTaskSort)
+    }
+
+    var openTopLevelTasks: [CreatorTask] {
+        tasks.filter { !$0.isCompleted && !$0.isSkipped && $0.parentTaskID == nil }
+    }
+
+    func dashboardTaskSort(_ lhs: CreatorTask, _ rhs: CreatorTask) -> Bool {
+        let lhsDate = lhs.targetDate ?? lhs.dailyFocusDate ?? .distantFuture
+        let rhsDate = rhs.targetDate ?? rhs.dailyFocusDate ?? .distantFuture
+        if lhsDate != rhsDate { return lhsDate < rhsDate }
+        return lhs.createdAt < rhs.createdAt
+    }
+
+    var creativeThread: HomeCreativeThread? {
+        let posted = outputs
+            .filter { $0.status == .posted }
+            .sorted { ($0.postedAt ?? $0.targetDate ?? .distantPast) > ($1.postedAt ?? $1.targetDate ?? .distantPast) }
+        for output in posted {
+            guard let post = brief(for: output), let pillar = pillar(for: post) else { continue }
+            if let idea = recentIdeas.first(where: { $0.pillarID == pillar.id && $0.id != post.id }) {
+                return HomeCreativeThread(output: output, post: post, idea: idea, pillar: pillar)
+            }
+        }
+        return nil
+    }
+
+    var activeSeriesItem: HomeSeriesItem? {
+        let seriesOutputs = outputs.filter {
+            !$0.seriesName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                $0.seriesRootOutputID != nil || $0.recurrence != .none
+        }
+        guard !seriesOutputs.isEmpty else { return nil }
+        let grouped = Dictionary(grouping: seriesOutputs) { output in
+            let trimmed = output.seriesName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? (output.seriesRootOutputID ?? output.id).uuidString : trimmed.lowercased()
+        }
+        let bestGroup = grouped.values.max { lhs, rhs in
+            let leftDate = lhs.compactMap(\.targetDate).max() ?? .distantPast
+            let rightDate = rhs.compactMap(\.targetDate).max() ?? .distantPast
+            return leftDate < rightDate
+        }
+        guard let group = bestGroup,
+              let output = group.sorted(by: { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }).first(where: { $0.status != .posted }) ?? group.first,
+              let brief = brief(for: output)
+        else { return nil }
+        let name = output.seriesName.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? brief.title
+        let nextStep = output.targetDate.map { "Next: \($0.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))" } ?? "Add the next occurrence when you are ready."
+        let completed = group.filter { $0.status == .posted }.count
+        return HomeSeriesItem(name: name, output: output, brief: brief, progressLabel: "\(completed) of \(group.count) posted", nextStep: nextStep)
+    }
+
+    var activeCollaboration: HomeCollaborationItem? {
+        let collabs = briefs.filter { $0.isBrandCollaboration && $0.status != .archived }
+        let selected = collabs.sorted { lhs, rhs in
+            let leftDate = outputs.first(where: { $0.briefID == lhs.id })?.targetDate ?? .distantFuture
+            let rightDate = outputs.first(where: { $0.briefID == rhs.id })?.targetDate ?? .distantFuture
+            return leftDate < rightDate
+        }.first
+        guard let brief = selected,
+              let output = outputs.first(where: { $0.briefID == brief.id })
+        else { return nil }
+        let brand = brief.brandName.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? "Brand collaboration"
+        let fileCount = attachments.filter { $0.briefID == brief.id && $0.ownerKind == .collaborationFile }.count
+        let dateLabel = output.targetDate?.formatted(.dateTime.month(.abbreviated).day()) ?? "No date set"
+        return HomeCollaborationItem(
+            brief: brief,
+            output: output,
+            brand: brand,
+            compensation: brief.compensationType.title,
+            dateLabel: dateLabel,
+            fileCount: fileCount
+        )
+    }
+
+    func restoreDashboardPreferences() {
+        let key = dashboardOrderStorageKey
+        let studioRaw = decodedStringMap(storedStudioModes)[key]
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            studioMode = studioRaw.flatMap(HomeStudioMode.init(rawValue:)) ?? .write
+        }
+    }
+
+    func persistDashboardPreferences() {
+        let key = dashboardOrderStorageKey
+        storedStudioModes = encodedStringMap(storedStudioModes, key: key, value: studioMode.rawValue)
+    }
+
+    func decodedStringMap(_ source: String) -> [String: String] {
+        guard let data = source.data(using: .utf8),
+              let map = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        return map
+    }
+
+    func encodedStringMap(_ source: String, key: String, value: String?) -> String {
+        var map = decodedStringMap(source)
+        map[key] = value
+        guard let data = try? JSONEncoder().encode(map),
+              let result = String(data: data, encoding: .utf8)
+        else { return source }
+        return result
+    }
+}
+
 private enum HomeDashboardCard: String, CaseIterable, Identifiable {
     case scheduledToday
     case tasks
     case weekAhead
+    case nextWeek
     case weeklyFocus
     case quickCy
     case pastDuePosts
     case recentIdeas
+    case studioBoard
+    case theThread
+    case seriesDesk
+    case collabDesk
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .scheduledToday: "Scheduled today"
-        case .tasks: "Tasks"
+        case .scheduledToday: "Up next"
+        case .tasks: "All tasks"
         case .weekAhead: "This week"
+        case .nextWeek: "Next week"
         case .weeklyFocus: "Weekly focus"
         case .quickCy: "Quick Cy"
         case .pastDuePosts: "Past-due posts"
         case .recentIdeas: "Recent ideas"
+        case .studioBoard: "Studio board"
+        case .theThread: "The thread"
+        case .seriesDesk: "Series desk"
+        case .collabDesk: "Collab desk"
         }
     }
 
@@ -1197,8 +1607,59 @@ private enum HomeDashboardCard: String, CaseIterable, Identifiable {
         .pastDuePosts,
         .recentIdeas,
         .weekAhead,
-        .weeklyFocus
+        .nextWeek,
+        .weeklyFocus,
+        .studioBoard,
+        .theThread,
+        .seriesDesk,
+        .collabDesk
     ]
+}
+
+private protocol HomeDashboardRailOption: Identifiable, Equatable {
+    var title: String { get }
+}
+
+private enum HomeStudioMode: String, CaseIterable, HomeDashboardRailOption {
+    case write
+    case film
+    case edit
+    case publish
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var taskKinds: Set<CreatorTaskKind> {
+        switch self {
+        case .write: [.planning, .scripting]
+        case .film: [.filming]
+        case .edit: [.editing]
+        case .publish: [.publishing]
+        }
+    }
+}
+
+private struct HomeCreativeThread {
+    let output: PlatformOutput
+    let post: CreativeBrief
+    let idea: CreativeBrief
+    let pillar: Pillar
+}
+
+private struct HomeSeriesItem {
+    let name: String
+    let output: PlatformOutput
+    let brief: CreativeBrief
+    let progressLabel: String
+    let nextStep: String
+}
+
+private struct HomeCollaborationItem {
+    let brief: CreativeBrief
+    let output: PlatformOutput
+    let brand: String
+    let compensation: String
+    let dateLabel: String
+    let fileCount: Int
 }
 
 private struct DashboardReorderableCard<Content: View>: View {
@@ -1255,7 +1716,7 @@ private struct DashboardReorderableCard<Content: View>: View {
         .offset(y: isDragging ? dragTranslation.height + dragCompensationY : 0)
         .scaleEffect(isDragging ? 1.01 : 1)
         .shadow(
-            color: isDragging ? Color.black.opacity(0.14) : .clear,
+            color: isDragging ? Color.agentPureBlack.opacity(0.14) : .clear,
             radius: isDragging ? 18 : 0,
             y: isDragging ? 9 : 0
         )
@@ -1263,8 +1724,7 @@ private struct DashboardReorderableCard<Content: View>: View {
     }
 
     private var dragHandle: some View {
-        Image(systemName: "line.3.horizontal")
-            .font(.system(size: 14, weight: .semibold))
+        AgentIconView(.menu, size: 14)
             .foregroundStyle(Color.agentSecondary)
             .frame(width: 52, height: 30)
             .contentShape(.capsule)
@@ -1275,7 +1735,7 @@ private struct DashboardReorderableCard<Content: View>: View {
                     .allowsHitTesting(false)
             }
             .shadow(
-                color: Color.black.opacity(0.08),
+                color: Color.agentPureBlack.opacity(0.08),
                 radius: 8,
                 y: 3
             )
@@ -1324,23 +1784,66 @@ private struct HomeDashboardCardFramePreferenceKey: PreferenceKey {
     }
 }
 
-private enum HomeWeekItem: Identifiable {
-    case post(PlatformOutput, CreativeBrief)
-    case task(CreatorTask)
-
-    var id: String {
-        switch self {
-        case .post(let output, _): "post-\(output.id.uuidString)"
-        case .task(let task): "task-\(task.id.uuidString)"
-        }
+enum HomeWeekAgendaPolicy {
+    static func includes(
+        targetDate: Date?,
+        briefStatus: BriefStatus?,
+        today: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard briefStatus != .archived, let targetDate else { return false }
+        let startOfToday = calendar.startOfDay(for: today)
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday) else { return false }
+        let daysSinceMonday = (calendar.component(.weekday, from: startOfToday) + 5) % 7
+        let monday = calendar.date(byAdding: .day, value: -daysSinceMonday, to: startOfToday) ?? startOfToday
+        let endOfWeek = calendar.date(byAdding: .day, value: 7, to: monday) ?? startOfToday
+        let targetDay = calendar.startOfDay(for: targetDate)
+        return targetDay >= tomorrow && targetDay < endOfWeek
     }
+}
 
-    var date: Date {
-        switch self {
-        case .post(let output, _): output.targetDate ?? .distantFuture
-        case .task(let task): task.targetDate ?? task.dailyFocusDate ?? .distantFuture
-        }
+enum HomeNextWeekAgendaPolicy {
+    static func includes(
+        targetDate: Date?,
+        briefStatus: BriefStatus?,
+        today: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard briefStatus != .archived, let targetDate else { return false }
+        let startOfToday = calendar.startOfDay(for: today)
+        let daysSinceMonday = (calendar.component(.weekday, from: startOfToday) + 5) % 7
+        let currentMonday = calendar.date(byAdding: .day, value: -daysSinceMonday, to: startOfToday) ?? startOfToday
+        guard let nextMonday = calendar.date(byAdding: .day, value: 7, to: currentMonday),
+              let followingMonday = calendar.date(byAdding: .day, value: 14, to: currentMonday)
+        else { return false }
+        let targetDay = calendar.startOfDay(for: targetDate)
+        return targetDay >= nextMonday && targetDay < followingMonday
     }
+}
+
+enum HomeTodayPostPolicy {
+    static func includes(
+        outputStatus: PlatformOutputStatus,
+        targetDate: Date?,
+        briefStatus: BriefStatus?,
+        today: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard briefStatus != .archived,
+              let targetDate,
+              calendar.isDate(targetDate, inSameDayAs: today)
+        else { return false }
+
+        return outputStatus == .scheduled || outputStatus == .posted
+    }
+}
+
+private struct HomeWeekItem: Identifiable {
+    let output: PlatformOutput
+    let brief: CreativeBrief
+
+    var id: UUID { output.id }
+    var date: Date { output.targetDate ?? .distantFuture }
 }
 
 private extension String {

@@ -107,9 +107,9 @@ struct IdeaBankView: View {
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Your")
-                        .font(.system(size: 32, weight: .regular, design: .default))
-                    Text("ideas.")
+                    Text("What’s on")
+                        .font(.agentDisplayLead)
+                    Text("your mind?")
                         .font(.agentDisplay)
                 }
                 .tracking(-0.64)
@@ -118,7 +118,7 @@ struct IdeaBankView: View {
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
-        .padding(.bottom, AgentSpacing.x8)
+        .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
 
     private var activeIdentity: ActiveCreatorIdentity {
@@ -130,7 +130,7 @@ struct IdeaBankView: View {
     }
 
     private var headerActions: some View {
-        HStack(spacing: AgentSpacing.x1) {
+        HStack(spacing: 0) {
             if isSelecting {
                 Button("Cancel", action: endSelection)
                     .font(.agentSubtext.weight(.semibold))
@@ -138,25 +138,30 @@ struct IdeaBankView: View {
                     .buttonStyle(.plain)
             } else {
                 if !ideas.isEmpty, selectedFilter != .archived {
-                    Button("Select", action: beginSelection)
-                        .font(.agentSubtext.weight(.semibold))
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button(action: beginSelection) {
+                        AgentIconView(.tasks, size: 18)
+                            .foregroundStyle(Color.agentText)
+                            .frame(width: 40, height: 44)
+                            .contentShape(Rectangle().inset(by: -2))
+                    }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Select ideas")
+                        .accessibilityHint("Choose one or more ideas to manage")
                 }
                 filterMenu
             }
         }
+        .padding(.trailing, isSelecting ? AgentSpacing.x2 : AgentSpacing.x1)
     }
 
     private var filterMenu: some View {
         Button {
             isFilterPresented.toggle()
         } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.system(size: 16, weight: .medium))
+            AgentIconView(.filter, size: 18)
                 .foregroundStyle(Color.agentText)
-                .frame(width: 44, height: 44)
-                .contentShape(.rect)
+                .frame(width: 40, height: 44)
+                .contentShape(Rectangle().inset(by: -2))
         }
         .buttonStyle(.plain)
         .popover(
@@ -208,14 +213,12 @@ struct IdeaBankView: View {
             HStack(spacing: AgentSpacing.x3) {
                 Group {
                     if let colorHex {
-                        Circle()
-                            .fill(Color(agentHex: colorHex))
+                        PillarColorMark(color: Color(agentHex: colorHex), diameter: 12)
                     } else if isUnfiled {
                         Circle()
                             .stroke(Color.agentSecondary, lineWidth: 1.25)
                     } else {
-                        Image(systemName: "square.grid.2x2")
-                            .font(.system(size: 12, weight: .medium))
+                        AgentIconView(.pillars, size: 12)
                     }
                 }
                 .frame(width: 14, height: 14)
@@ -226,8 +229,7 @@ struct IdeaBankView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if selectedFilter == filter {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .semibold))
+                    AgentIconView(.check, size: 13)
                         .foregroundStyle(Color.agentText)
                 }
             }
@@ -240,8 +242,7 @@ struct IdeaBankView: View {
 
     private var searchField: some View {
         HStack(spacing: AgentSpacing.x3) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
+            AgentIconView(.search, size: 15)
                 .foregroundStyle(Color.agentSecondary)
             TextField("Search ideas", text: $search)
                 .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
@@ -351,8 +352,7 @@ struct IdeaBankView: View {
             }
             .overlay {
                 if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
+                    AgentIconView(.check, size: 9)
                         .foregroundStyle(Color.agentSurface)
                 }
             }
@@ -362,24 +362,7 @@ struct IdeaBankView: View {
     }
 
     private var saveIdeaButton: some View {
-        Button(action: saveIdea) {
-            HStack(spacing: AgentSpacing.x3) {
-                Circle()
-                    .stroke(Color.agentSecondary, style: StrokeStyle(lineWidth: 1.25, dash: [2, 2]))
-                    .frame(width: 18, height: 18)
-                    .overlay {
-                        Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                Text("Save an idea")
-                    .font(.agentAddAction)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .foregroundStyle(Color.agentText)
-            .frame(minHeight: 60)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
+        AgentBlockAddActionButton(title: "Save idea", action: saveIdea)
     }
 
     private func saveIdea() {
@@ -490,37 +473,41 @@ private struct IdeaBankRow: View {
     let showsDisclosure: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-            Text(brief.title)
-                .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
-                .tracking(-0.2)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .center, spacing: AgentSpacing.x3) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                Text(brief.title)
+                    .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                    .tracking(-0.2)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: AgentSpacing.x2) {
-                Circle()
-                    .fill(pillar.map { Color(agentHex: $0.colorHex) } ?? Color.clear)
-                    .overlay {
-                        if pillar == nil {
-                            Circle().stroke(Color.agentSecondary, lineWidth: 1)
-                        }
+                HStack(spacing: AgentSpacing.x2) {
+                    if let pillar {
+                        PillarColorMark(
+                            color: Color(agentHex: pillar.colorHex),
+                            diameter: 7,
+                            lineWidth: 0.75
+                        )
+                    } else {
+                        Circle()
+                            .stroke(Color.agentSecondary, lineWidth: 1)
+                            .frame(width: 7, height: 7)
                     }
-                    .frame(width: 7, height: 7)
 
-                Text(metadata)
-                    .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
-                    .tracking(1)
-                    .textCase(.uppercase)
-                    .foregroundStyle(Color.agentSecondary)
-                    .lineLimit(1)
-
-                Spacer(minLength: AgentSpacing.x3)
-
-                if showsDisclosure {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                    Text(metadata)
+                        .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                        .tracking(1)
+                        .textCase(.uppercase)
                         .foregroundStyle(Color.agentSecondary)
+                        .lineLimit(1)
                 }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if showsDisclosure {
+                AgentIconView(.forward, size: 11)
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(width: 20, alignment: .trailing)
             }
         }
         .foregroundStyle(Color.agentText)

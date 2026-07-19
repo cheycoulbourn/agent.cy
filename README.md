@@ -45,6 +45,8 @@ xcodebuild -project AgentCy.xcodeproj -scheme AgentCy -destination 'platform=iOS
 
 See [Setup](docs/SETUP.md) for environment variables, Apple capabilities, CloudKit, RevenueCat, Anthropic, Railway, and TestFlight configuration.
 
+See [TestFlight release](docs/TESTFLIGHT.md) for the repeatable archive command, Apple-owned setup, and beta release gates.
+
 The production proxy can be built from the repository root with the included `Dockerfile`. It requires owner-supplied secrets and a persistent `/data` volume before serving a real pilot.
 
 ## Source of truth

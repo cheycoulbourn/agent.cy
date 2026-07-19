@@ -1,9 +1,91 @@
 import SwiftData
+import UIKit
 import XCTest
 @testable import AgentCy
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testEverySemanticAgentIconResolvesFromTheAssetCatalog() {
+        for icon in AgentIcon.allCases {
+            XCTAssertNotNil(
+                UIImage(named: icon.rawValue),
+                "Missing semantic icon asset: \(icon.rawValue)"
+            )
+        }
+    }
+
+    func testWeeklyAgendaRouteRequestsTheRootPlanView() {
+        let model = AppModel()
+        model.selectedTab = .ideaBank
+        model.presentedSheet = .quickCapture
+        let originalReset = model.requestedPlanNavigationReset
+
+        model.routeToWeeklyAgenda()
+
+        XCTAssertNil(model.presentedSheet)
+        XCTAssertEqual(model.selectedTab, .today)
+        XCTAssertEqual(model.requestedPlanNavigationReset, originalReset + 1)
+        guard case .week? = model.requestedPlanMode else {
+            return XCTFail("Weekly agenda mode was not requested")
+        }
+    }
+
+    func testPillarCollectionAllowsSixActivePillarsButNotSeven() {
+        XCTAssertTrue(PillarCollectionPolicy.canCreate(activeCount: 5))
+        XCTAssertFalse(PillarCollectionPolicy.canCreate(activeCount: 6))
+        XCTAssertEqual(PillarCollectionPolicy.maximumActiveCount, 6)
+    }
+
+    func testHomeWeekAgendaIncludesEveryRemainingWeekPostButExcludesTodayAndPastDays() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 17)))
+        let previousSunday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 12)))
+        let monday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 13)))
+        let thursday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16)))
+        let saturday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 18)))
+        let sunday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 19)))
+        let nextMonday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 20)))
+
+        XCTAssertFalse(HomeWeekAgendaPolicy.includes(targetDate: previousSunday, briefStatus: .posted, today: today, calendar: calendar))
+        XCTAssertFalse(HomeWeekAgendaPolicy.includes(targetDate: monday, briefStatus: .posted, today: today, calendar: calendar))
+        XCTAssertFalse(HomeWeekAgendaPolicy.includes(targetDate: thursday, briefStatus: .posted, today: today, calendar: calendar))
+        XCTAssertFalse(HomeWeekAgendaPolicy.includes(targetDate: today, briefStatus: .ready, today: today, calendar: calendar))
+        XCTAssertTrue(HomeWeekAgendaPolicy.includes(targetDate: saturday, briefStatus: .ready, today: today, calendar: calendar))
+        XCTAssertTrue(HomeWeekAgendaPolicy.includes(targetDate: sunday, briefStatus: .posted, today: today, calendar: calendar))
+        XCTAssertFalse(HomeWeekAgendaPolicy.includes(targetDate: nextMonday, briefStatus: .ready, today: today, calendar: calendar))
+        XCTAssertFalse(HomeWeekAgendaPolicy.includes(targetDate: saturday, briefStatus: .archived, today: today, calendar: calendar))
+    }
+
+    func testHomeNextWeekAgendaIncludesOnlyTheFollowingMondayThroughSunday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 17)))
+        let currentSunday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 19)))
+        let nextMonday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 20)))
+        let nextSunday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 26)))
+        let followingMonday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 27)))
+
+        XCTAssertFalse(HomeNextWeekAgendaPolicy.includes(targetDate: currentSunday, briefStatus: .ready, today: today, calendar: calendar))
+        XCTAssertTrue(HomeNextWeekAgendaPolicy.includes(targetDate: nextMonday, briefStatus: .scheduled, today: today, calendar: calendar))
+        XCTAssertTrue(HomeNextWeekAgendaPolicy.includes(targetDate: nextSunday, briefStatus: .posted, today: today, calendar: calendar))
+        XCTAssertFalse(HomeNextWeekAgendaPolicy.includes(targetDate: followingMonday, briefStatus: .ready, today: today, calendar: calendar))
+        XCTAssertFalse(HomeNextWeekAgendaPolicy.includes(targetDate: nextMonday, briefStatus: .archived, today: today, calendar: calendar))
+    }
+
+    func testHomeTodayPostsKeepPostedWorkVisible() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 17)))
+        let tomorrow = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 18)))
+
+        XCTAssertTrue(HomeTodayPostPolicy.includes(outputStatus: .scheduled, targetDate: today, briefStatus: .scheduled, today: today, calendar: calendar))
+        XCTAssertTrue(HomeTodayPostPolicy.includes(outputStatus: .posted, targetDate: today, briefStatus: .posted, today: today, calendar: calendar))
+        XCTAssertFalse(HomeTodayPostPolicy.includes(outputStatus: .draft, targetDate: today, briefStatus: .developing, today: today, calendar: calendar))
+        XCTAssertFalse(HomeTodayPostPolicy.includes(outputStatus: .posted, targetDate: tomorrow, briefStatus: .posted, today: today, calendar: calendar))
+        XCTAssertFalse(HomeTodayPostPolicy.includes(outputStatus: .posted, targetDate: today, briefStatus: .archived, today: today, calendar: calendar))
+    }
+
     func testCreatorFacingPostCopyFieldsStayCanonical() {
         XCTAssertEqual(
             CreatorPostCopyField.allCases.map(\.title),
@@ -28,6 +110,11 @@ final class DomainTests: XCTestCase {
             [.pastel, .neutral, .soho, .tooCool]
         )
         XCTAssertEqual(CreatorVibePalette.onboardingPalettes.count, 4)
+    }
+
+    func testOnboardingOffersNativeAndCreatorOwnedAIPaths() {
+        XCTAssertEqual(OnboardingAIProvider.allCases, [.agentCy, .claudeOrCodex])
+        XCTAssertEqual(OnboardingDraft().aiProvider, .agentCy)
     }
 
     func testPaletteSelectionLeavesMoreThanFivePillarsUnchanged() {
@@ -331,6 +418,28 @@ final class DomainTests: XCTestCase {
 
         XCTAssertEqual(Set(result.map(\.title)), ["Visible", "Past due"])
         XCTAssertEqual(result.filter { CyTaskAttentionPolicy.isPastDue($0, now: now, calendar: calendar) }.count, 1)
+    }
+
+    func testCyReferencedTitleCopyQuotesTaskAndPostTitles() {
+        XCTAssertEqual(
+            CyReferencedTitleCopy.quoted("Edit every planned post"),
+            "“Edit every planned post”"
+        )
+        XCTAssertEqual(
+            CyReferencedTitleCopy.quoted("  DITL vlog  "),
+            "“DITL vlog”"
+        )
+    }
+
+    func testCyReferencedTitleCopyPreventsNestedQuotes() {
+        XCTAssertEqual(
+            CyReferencedTitleCopy.quoted("\"Edit every planned post\""),
+            "“Edit every planned post”"
+        )
+        XCTAssertEqual(
+            CyReferencedTitleCopy.quoted("“DITL vlog”"),
+            "“DITL vlog”"
+        )
     }
 
     func testConversationMessageStoresStructuredCyActions() throws {
@@ -1538,10 +1647,13 @@ final class DomainTests: XCTestCase {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         let model = AppModel(reminderService: PreviewReminderService())
-        let nextWeek = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: Date()) ?? Date()
+        let calendar = Calendar.current
+        let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+        let nextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: currentWeekStart) ?? currentWeekStart
 
         let first = model.ensureWeek(startingAt: nextWeek, context: context)
-        let second = model.ensureWeek(startingAt: nextWeek.addingTimeInterval(86_400), context: context)
+        let secondDate = calendar.date(byAdding: .day, value: 1, to: nextWeek) ?? nextWeek
+        let second = model.ensureWeek(startingAt: secondDate, context: context)
 
         XCTAssertEqual(first.id, second.id)
         XCTAssertEqual(try context.fetch(FetchDescriptor<WeekPlan>()).count, 1)
@@ -1763,6 +1875,109 @@ final class DomainTests: XCTestCase {
             TaskCollectionPolicy.collection(briefID: nil, platformOutputID: nil),
             .myTasks
         )
+    }
+
+    func testTaskDateFiltersMatchTodayWeekPastDueAndSpecificDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 15, hour: 12
+        )))
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 15, hour: 18
+        )))
+        let monday = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 13, hour: 9
+        )))
+        let previousDay = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 14, hour: 9
+        )))
+        let nextWeek = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 20, hour: 9
+        )))
+
+        XCTAssertTrue(TaskListFilterPolicy.matchesDate(
+            today,
+            filter: .today,
+            selectedDate: today,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(TaskListFilterPolicy.matchesDate(
+            monday,
+            filter: .thisWeek,
+            selectedDate: today,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(TaskListFilterPolicy.matchesDate(
+            nextWeek,
+            filter: .thisWeek,
+            selectedDate: today,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(TaskListFilterPolicy.matchesDate(
+            previousDay,
+            filter: .pastDue,
+            selectedDate: today,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(TaskListFilterPolicy.matchesDate(
+            nil,
+            filter: .noDate,
+            selectedDate: today,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertTrue(TaskListFilterPolicy.matchesDate(
+            today,
+            filter: .specificDate,
+            selectedDate: today,
+            now: now,
+            calendar: calendar
+        ))
+    }
+
+    func testTaskPillarPriorityAndFocusFilters() {
+        let selectedPillarID = UUID()
+
+        XCTAssertTrue(TaskListFilterPolicy.matchesPillar(
+            selectedPillarID,
+            filter: .pillar(selectedPillarID)
+        ))
+        XCTAssertFalse(TaskListFilterPolicy.matchesPillar(nil, filter: .pillar(selectedPillarID)))
+        XCTAssertTrue(TaskListFilterPolicy.matchesPillar(nil, filter: .unfiled))
+
+        XCTAssertTrue(TaskListFilterPolicy.matchesPriority(.high, selected: .high))
+        XCTAssertFalse(TaskListFilterPolicy.matchesPriority(.low, selected: .high))
+        XCTAssertTrue(TaskListFilterPolicy.matchesPriority(.urgent, selected: nil))
+
+        XCTAssertTrue(TaskListFilterPolicy.matchesFocus(
+            title: "Planning & scripting",
+            kind: .planning,
+            hasFocusAssignment: true,
+            filter: .focus(.scripting)
+        ))
+        XCTAssertTrue(TaskListFilterPolicy.matchesFocus(
+            title: nil,
+            kind: .planning,
+            hasFocusAssignment: true,
+            filter: .focus(.planning)
+        ))
+        XCTAssertTrue(TaskListFilterPolicy.matchesFocus(
+            title: nil,
+            kind: .planning,
+            hasFocusAssignment: false,
+            filter: .noFocus
+        ))
+        XCTAssertFalse(TaskListFilterPolicy.matchesFocus(
+            title: "Editing",
+            kind: .editing,
+            hasFocusAssignment: true,
+            filter: .focus(.planning)
+        ))
     }
 
     func testTasksPageLimitsPostTasksToCurrentMondayThroughSunday() throws {
@@ -2357,6 +2572,9 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(AgendaDayPresentation.postCountLabel(0), "0 posts")
         XCTAssertEqual(AgendaDayPresentation.postCountLabel(1), "1 post")
         XCTAssertEqual(AgendaDayPresentation.postCountLabel(2), "2 posts")
+        XCTAssertNil(AgendaDayPresentation.compactPostCountLabel(0))
+        XCTAssertEqual(AgendaDayPresentation.compactPostCountLabel(1), "1 post")
+        XCTAssertEqual(AgendaDayPresentation.compactPostCountLabel(2), "2 posts")
     }
 
     func testOnlyPastDayDrillDownShowsExplicitSaveControl() throws {

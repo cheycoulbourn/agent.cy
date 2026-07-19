@@ -24,7 +24,7 @@ export function postSearchResult(posts: McpBridgePost[]): string {
     .map((post) => {
       const targets = post.outputs
         .filter((output) => output.targetDate)
-        .map((output) => `${output.destination || output.platform}: ${formatDate(output.targetDate!)}`);
+        .map((output) => `${output.destination || output.platform}: ${formatDate(output.targetDate!, output.includesTargetTime)}`);
       return [
         `## ${post.title}`,
         `ID: ${post.id}`,
@@ -43,7 +43,7 @@ export function agendaResult(snapshot: McpBridgeSnapshot, startDate: Date, days:
   const end = new Date(start);
   end.setDate(end.getDate() + days);
 
-  const entries: Array<{ date: Date; text: string }> = [];
+  const entries: Array<{ date: Date; includesTime: boolean; text: string }> = [];
   for (const post of snapshot.posts) {
     if (post.status === "archived") continue;
     for (const output of post.outputs) {
@@ -52,6 +52,7 @@ export function agendaResult(snapshot: McpBridgeSnapshot, startDate: Date, days:
       if (date >= start && date < end) {
         entries.push({
           date,
+          includesTime: output.includesTargetTime,
           text: `POST · ${post.title} · ${output.destination || output.platform} · ${output.status}`,
         });
       }
@@ -61,7 +62,11 @@ export function agendaResult(snapshot: McpBridgeSnapshot, startDate: Date, days:
     if (!task.targetDate) continue;
     const date = new Date(task.targetDate);
     if (date >= start && date < end) {
-      entries.push({ date, text: `TASK · ${task.title} · ${task.completed ? "complete" : task.priority}` });
+      entries.push({
+        date,
+        includesTime: task.includesTargetTime,
+        text: `TASK · ${task.title} · ${task.completed ? "complete" : task.priority}`,
+      });
     }
   }
   if (entries.length === 0) {
@@ -72,7 +77,7 @@ export function agendaResult(snapshot: McpBridgeSnapshot, startDate: Date, days:
   for (const entry of entries) {
     const key = dateOnly(entry.date);
     const values = grouped.get(key) ?? [];
-    values.push(`- ${entry.text}${hasTime(entry.date) ? ` · ${timeOnly(entry.date)}` : ""}`);
+    values.push(`- ${entry.text}${entry.includesTime ? ` · ${timeOnly(entry.date)}` : ""}`);
     grouped.set(key, values);
   }
   return [...grouped.entries()]
@@ -84,15 +89,16 @@ export function taskResult(tasks: McpBridgeTask[]): string {
   if (tasks.length === 0) return "No matching tasks found.";
   return tasks
     .map((task) => {
-      const date = task.targetDate ? formatDate(task.targetDate) : "No date";
+      const date = task.targetDate ? formatDate(task.targetDate, task.includesTargetTime) : "No date";
       return `- [${task.completed ? "x" : " "}] ${task.title} · ${task.priority} · ${date} · ID ${task.id}`;
     })
     .join("\n");
 }
 
-export function formatDate(value: string): string {
+export function formatDate(value: string, includesTime = true): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return value;
+  return includesTime ? date.toLocaleString() : dateOnly(date);
 }
 
 function dateOnly(value: Date): string {
@@ -104,10 +110,6 @@ function dateOnly(value: Date): string {
 
 function timeOnly(value: Date): string {
   return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function hasTime(value: Date): boolean {
-  return value.getHours() !== 0 || value.getMinutes() !== 0;
 }
 
 function startOfDay(value: Date): Date {

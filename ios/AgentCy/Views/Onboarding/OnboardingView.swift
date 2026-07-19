@@ -1,5 +1,7 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
+import UIKit
 
 @MainActor
 struct OnboardingView: View {
@@ -9,6 +11,7 @@ struct OnboardingView: View {
         case vibe
         case pillars
         case platforms
+        case ai
         case notifications
         case ready
 
@@ -21,6 +24,7 @@ struct OnboardingView: View {
             case .vibe: "Your vibe"
             case .pillars: "Your content"
             case .platforms: "Where you post"
+            case .ai: "Your AI"
             case .notifications: "Notifications"
             case .ready: "Ready"
             }
@@ -36,6 +40,12 @@ struct OnboardingView: View {
     @State private var draft: OnboardingDraft
     @State private var transitionEdge: Edge = .trailing
     @State private var pillarEditorDraft: OnboardingPillarDraft?
+    @State private var chooseMCPFolder = false
+    @State private var bridgeStatus: MCPBridgeConnectionStatus?
+    @State private var localCyStatus: LocalCyRuntimeStatus?
+    @State private var bridgeNotice: String?
+    @State private var copiedCommand: String?
+    @State private var showsBridgeSetupDetails = false
 
     init(previewOnly: Bool = false, initialDraft: OnboardingDraft = OnboardingDraft()) {
         self.previewOnly = previewOnly
@@ -75,6 +85,31 @@ struct OnboardingView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .fileImporter(
+            isPresented: $chooseMCPFolder,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            do {
+                guard let folder = try result.get().first else { return }
+                try MCPBridgePreferences.connect(to: folder)
+                try? MCPBridgeService.sync(context: context)
+                refreshBridgeStatus()
+            } catch {
+                bridgeNotice = CreatorFacingErrorMapper.presentation(
+                    for: error,
+                    action: "The Claude & Codex connection"
+                ).message
+            }
+        }
+        .alert("agent.cy", isPresented: Binding(
+            get: { bridgeNotice != nil },
+            set: { if !$0 { bridgeNotice = nil } }
+        )) {
+            Button("Close", role: .cancel) { bridgeNotice = nil }
+        } message: {
+            Text(bridgeNotice ?? "")
+        }
         .agentScreen()
         .preferredColorScheme(draft.appearance?.colorSchemeOverride)
         .agentKeyboardDismissal()
@@ -87,6 +122,13 @@ struct OnboardingView: View {
             }
         }
         .task { await appModel.refreshReminderSchedule(context: context) }
+        .task(id: step) {
+            guard step == .ai else { return }
+            while !Task.isCancelled, step == .ai {
+                refreshBridgeStatus()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
     }
 
     private var progressHeader: some View {
@@ -111,8 +153,7 @@ struct OnboardingView: View {
                     Button {
                         dismiss()
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .semibold))
+                        AgentIconView(.close, size: 12)
                             .frame(width: 32, height: 32)
                             .background(Color.agentSurface, in: .circle)
                     }
@@ -138,6 +179,8 @@ struct OnboardingView: View {
             pillarsStep
         case .platforms:
             platformsStep
+        case .ai:
+            aiStep
         case .notifications:
             notificationsStep
         case .ready:
@@ -167,6 +210,7 @@ struct OnboardingView: View {
                 PaperOnboardingFeature(title: "Capture the idea", detail: "Save it before it disappears.")
                 PaperOnboardingFeature(title: "Shape the post", detail: "Turn a rough thought into something usable.")
                 PaperOnboardingFeature(title: "Plan the work", detail: "Keep posts and tasks in one plan.")
+                PaperOnboardingFeature(title: "Bring your own AI", detail: "Power up your workflow with Claude or Codex.")
             }
             .padding(.top, AgentSpacing.x12)
 
@@ -276,8 +320,7 @@ struct OnboardingView: View {
                         .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
                     Spacer(minLength: 0)
                     if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .bold))
+                        AgentIconView(.check, size: 12)
                     }
                 }
 
@@ -322,8 +365,7 @@ struct OnboardingView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
+                    AgentIconView(.check, size: 11)
                         .frame(height: 12)
                 } else {
                     Color.clear.frame(height: 12)
@@ -349,21 +391,31 @@ struct OnboardingView: View {
             switch appearance {
             case .system:
                 LinearGradient(
-                    colors: [Color(agentHex: "FDFDFB"), Color(agentHex: "141414")],
+                    colors: [
+                        Color(uiColor: AgentColorPalette.surfaceLight.uiColor),
+                        Color(uiColor: AgentColorPalette.surfaceDark.uiColor),
+                    ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
             case .light:
-                Color(agentHex: "FDFDFB")
+                Color(uiColor: AgentColorPalette.surfaceLight.uiColor)
             case .dark:
-                Color(agentHex: "141414")
+                Color(uiColor: AgentColorPalette.surfaceDark.uiColor)
             }
         }
         .frame(width: 38, height: 38)
         .clipShape(.rect(cornerRadius: 9))
         .overlay {
             RoundedRectangle(cornerRadius: 9)
-                .stroke(Color(agentHex: appearance == .dark ? "5A5A5A" : "D7D8D3"), lineWidth: 1)
+                .stroke(
+                    Color(
+                        uiColor: appearance == .dark
+                            ? AgentOKLCH(lightness: 0.470, chroma: 0).uiColor
+                            : AgentColorPalette.borderLight.uiColor
+                    ),
+                    lineWidth: 1
+                )
         }
     }
 
@@ -393,8 +445,7 @@ struct OnboardingView: View {
                                     .foregroundStyle(Color.agentSecondary)
                             }
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 14, weight: .medium))
+                            AgentIconView(.forward, size: 14)
                         }
                         .padding(.horizontal, AgentSpacing.x4)
                         .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
@@ -412,7 +463,7 @@ struct OnboardingView: View {
                         pillarEditorDraft = OnboardingPillarDraft(colorHex: nextPillarColorHex)
                     } label: {
                         HStack(spacing: AgentSpacing.x3) {
-                            Image(systemName: "plus")
+                            AgentIconView(.add)
                             Text(draft.pillars.isEmpty ? "Add your anchor pillar" : "Add a branch")
                             Spacer()
                         }
@@ -476,6 +527,295 @@ struct OnboardingView: View {
                 .tracking(0.6)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.agentSecondary)
+        }
+    }
+
+    private var aiStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            PaperOnboardingPrompt(
+                title: "How should Cy work with you?",
+                subtitle: "Use Agent Cy in the app, or power up your workflow with your Claude or Codex account through a private local bridge."
+            )
+
+            VStack(spacing: AgentSpacing.x3) {
+                aiProviderCard(
+                    provider: .agentCy,
+                    title: "Agent Cy AI",
+                    detail: "Start in the app. No computer setup or API key required.",
+                    badge: "Easiest"
+                ) {
+                    CyAsterisk(size: 21, strokeWidth: 2)
+                }
+
+                aiProviderCard(
+                    provider: .claudeOrCodex,
+                    title: "Claude or Codex",
+                    detail: "Use your own CLI subscription on a Mac or Windows computer.",
+                    badge: "MCP"
+                ) {
+                    AgentIconView(.terminal, size: 18)
+                }
+            }
+
+            if draft.aiProvider == .agentCy {
+                AgentInsetSurface {
+                    HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                        Circle()
+                            .fill(Color.agentSuccess)
+                            .frame(width: 8, height: 8)
+                            .padding(.top, 6)
+                        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                            Text("Ready to use")
+                                .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                            Text("Cy uses agent.cy’s included AI access. You can connect Claude or Codex later in Settings.")
+                                .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                                .foregroundStyle(Color.agentSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            } else {
+                bridgeSetup
+            }
+        }
+    }
+
+    private func aiProviderCard<Icon: View>(
+        provider: OnboardingAIProvider,
+        title: String,
+        detail: String,
+        badge: String,
+        @ViewBuilder icon: () -> Icon
+    ) -> some View {
+        let selected = draft.aiProvider == provider
+        return Button {
+            draft.aiProvider = provider
+        } label: {
+            HStack(alignment: .center, spacing: AgentSpacing.x4) {
+                ZStack {
+                    Circle()
+                        .fill(selected ? Color.cyAccent.opacity(0.10) : Color.agentCanvas)
+                        .frame(width: 46, height: 46)
+                    icon()
+                }
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    HStack(spacing: AgentSpacing.x2) {
+                        Text(title)
+                            .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                        Text(badge.uppercased())
+                            .font(.paperMono(size: 9, weight: .medium, relativeTo: .caption))
+                            .tracking(0.7)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                    Text(detail)
+                        .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AgentSpacing.x2)
+                AgentIconView(selected ? .checkCircle : .radioEmpty)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(selected ? Color.cyAccent : Color.agentSecondary)
+            }
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(selected ? Color.cyAccent : Color.agentText.opacity(0.08), lineWidth: selected ? 1.5 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var bridgeSetup: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            bridgeStatusCard
+
+            VStack(spacing: AgentSpacing.x3) {
+                Button {
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.24)) {
+                        showsBridgeSetupDetails.toggle()
+                    }
+                } label: {
+                    HStack(spacing: AgentSpacing.x2) {
+                        Text(showsBridgeSetupDetails ? "Hide setup" : "Set up now")
+                        Spacer()
+                        AgentIconView(showsBridgeSetupDetails ? .collapse : .expand, size: 14)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PaperOnboardingOutlineButtonStyle())
+
+                if !showsBridgeSetupDetails {
+                    Button("Finish later") {
+                        moveForward()
+                    }
+                    .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if showsBridgeSetupDetails {
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                PaperFieldLabel("Set up on your computer")
+                onboardingInstruction(number: "1", text: "Download the agent.cy bridge on your Mac or Windows computer. Keep iCloud Drive signed in with the same Apple Account as this iPhone.")
+
+                Link(destination: URL(string: "https://github.com/cheycoulbourn/agent.cy/releases/latest")!) {
+                    HStack(spacing: AgentSpacing.x3) {
+                        AgentIconView(.download, size: 16)
+                            .frame(width: 24, height: 40)
+                            .foregroundStyle(Color.agentText)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Download bridge")
+                                .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
+                            Text("MAC & WINDOWS")
+                                .font(.paperMono(size: 10, weight: .medium, relativeTo: .caption))
+                                .tracking(0.9)
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+
+                        Spacer(minLength: AgentSpacing.x2)
+
+                        AgentIconView(.external, size: 14)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                    .foregroundStyle(Color.agentText)
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Download the agent.cy bridge for Mac or Windows")
+                .accessibilityHint("Opens the latest installer download page")
+
+                onboardingInstruction(number: "2", text: "Open Terminal or PowerShell in the downloaded folder and run the command for your computer.")
+                OnboardingCommandBlock(
+                    label: "Mac",
+                    command: "./agentcy-setup",
+                    copied: copiedCommand == "./agentcy-setup",
+                    onCopy: copyCommand
+                )
+                OnboardingCommandBlock(
+                    label: "Windows",
+                    command: ".\\agentcy-setup.exe",
+                    copied: copiedCommand == ".\\agentcy-setup.exe",
+                    onCopy: copyCommand
+                )
+
+                onboardingInstruction(number: "3", text: "Confirm that the installer registered agentcy with the CLI you use.")
+                OnboardingCommandBlock(
+                    label: "Claude Code",
+                    command: "claude mcp get agentcy",
+                    copied: copiedCommand == "claude mcp get agentcy",
+                    onCopy: copyCommand
+                )
+                OnboardingCommandBlock(
+                    label: "Codex",
+                    command: "codex mcp get agentcy",
+                    copied: copiedCommand == "codex mcp get agentcy",
+                    onCopy: copyCommand
+                )
+
+                onboardingInstruction(number: "4", text: "In Claude or Codex, paste this request. It creates the live heartbeat the iPhone can detect.")
+                OnboardingCommandBlock(
+                    label: "Ask your AI",
+                    command: "Call bridge_status for agent.cy.",
+                    copied: copiedCommand == "Call bridge_status for agent.cy.",
+                    onCopy: copyCommand
+                )
+
+                onboardingInstruction(number: "5", text: "Choose the same agent.cy MCP folder from iCloud Drive on this iPhone, then check the connection.")
+
+                Button {
+                    chooseMCPFolder = true
+                } label: {
+                    AgentIconLabel(
+                        title: MCPBridgePreferences.isConnected ? "Choose a different folder" : "Choose MCP folder",
+                        icon: .folder
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PaperOnboardingOutlineButtonStyle())
+
+                Button {
+                    checkBridgeConnection()
+                } label: {
+                    AgentIconLabel(title: "Check connection", icon: .refresh)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PaperOnboardingPrimaryButtonStyle())
+                }
+            }
+
+            Text("Your Claude or Codex credentials stay on your computer. agent.cy only sees the shared workspace and review proposals. You can finish this setup later in Settings.")
+                .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var bridgeStatusCard: some View {
+        let recentlyConnected = bridgeStatus?.isRecentlyConnected == true || localCyStatus?.isRecentlyAvailable == true
+        let hasFolder = MCPBridgePreferences.isConnected
+        let title: String = {
+            if recentlyConnected { return "Connected" }
+            if bridgeStatus != nil { return "Bridge found" }
+            if hasFolder { return "Folder connected" }
+            return "Not connected yet"
+        }()
+        let detail: String = {
+            if let bridgeStatus, recentlyConnected {
+                return "\(bridgeStatus.clientSummary) checked in \(bridgeStatus.updatedAt.formatted(.relative(presentation: .named)))."
+            }
+            if let localCyStatus, localCyStatus.isRecentlyAvailable {
+                return "Claude is available on your computer."
+            }
+            if let bridgeStatus {
+                return "\(bridgeStatus.clientSummary) was last verified \(bridgeStatus.updatedAt.formatted(date: .abbreviated, time: .shortened))."
+            }
+            if hasFolder {
+                return "The iCloud folder is ready. Run bridge_status from Claude or Codex to finish verification."
+            }
+            return "Complete the computer steps, then choose the shared iCloud Drive folder."
+        }()
+
+        return AgentInsetSurface {
+            HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                Circle()
+                    .fill(recentlyConnected ? Color.agentSuccess : Color.agentSecondary)
+                    .frame(width: 9, height: 9)
+                    .padding(.top, 6)
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(title)
+                        .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                    Text(detail)
+                        .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func onboardingInstruction(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: AgentSpacing.x3) {
+            Text(number)
+                .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                .foregroundStyle(Color.agentSecondary)
+                .frame(width: 18, alignment: .leading)
+            Text(text)
+                .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -583,7 +923,7 @@ struct OnboardingView: View {
                     Text("You’re ready, \(displayName).")
                         .font(.paperInter(size: 36, weight: .bold, relativeTo: .largeTitle))
                         .tracking(-0.8)
-                    Text("Your workspace is ready. You can change any of this later.")
+                    Text("Let’s take a quick look at how ideas become scheduled posts.")
                         .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
                         .foregroundStyle(Color.agentSecondary)
                 }
@@ -593,23 +933,58 @@ struct OnboardingView: View {
                 PaperReadyRow(label: "Vibe", value: vibeReadySummary)
                 PaperReadyRow(label: "Pillars", value: pillarReadySummary)
                 PaperReadyRow(label: "Platforms", value: platformReadySummary)
-                PaperReadyRow(label: "Notifications", value: notificationReadySummary)
+                PaperReadyRow(label: "AI", value: aiReadySummary, statusColor: aiReadyStatusColor)
+                PaperReadyRow(label: "Notifications", value: notificationReadySummary, showsDivider: false)
             }
             .padding(.horizontal, AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+
+            AgentInsetSurface {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    PaperFieldLabel("Up next")
+                    Text("See your Dashboard, open Quick Add, plan your week, organize pillars, and shape work with Cy.")
+                        .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
         }
     }
 
     private var navigationControls: some View {
         VStack(spacing: AgentSpacing.x2) {
+            if step == .ready {
+                Button {
+                    finish(startWalkthrough: true)
+                } label: {
+                    HStack(spacing: AgentSpacing.x2) {
+                        if appModel.isWorking {
+                            ProgressView().tint(Color.onAccent)
+                        }
+                        Text("Show me around")
+                        AgentIconView(.forward, size: 16)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PaperOnboardingPrimaryButtonStyle())
+                .disabled(appModel.isWorking)
+
+                Button("Go to dashboard") {
+                    finish(startWalkthrough: false)
+                }
+                .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+                .foregroundStyle(Color.agentSecondary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .buttonStyle(.plain)
+                .disabled(appModel.isWorking)
+            } else {
             HStack(spacing: AgentSpacing.x3) {
                 if step != .welcome {
                     Button {
                         moveBack()
                     } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
+                        AgentIconView(.back, size: 17)
                             .frame(width: 56, height: 56)
                     }
                     .buttonStyle(PaperOnboardingSecondaryButtonStyle())
@@ -633,6 +1008,8 @@ struct OnboardingView: View {
                 .disabled(!isStepValid || appModel.isWorking)
             }
 
+            }
+
             if skipIsAvailable {
                 Button("Skip for now") {
                     if step == .vibe {
@@ -652,16 +1029,19 @@ struct OnboardingView: View {
     }
 
     private var stepTransition: AnyTransition {
-        let insertion = AnyTransition.move(edge: transitionEdge).combined(with: .opacity)
-        let removal = AnyTransition.move(edge: transitionEdge == .trailing ? .leading : .trailing).combined(with: .opacity)
+        let insertion = AnyTransition.move(edge: transitionEdge)
+        let removal = AnyTransition.move(edge: transitionEdge == .trailing ? .leading : .trailing)
         return .asymmetric(insertion: insertion, removal: removal)
     }
 
     private var primaryButtonTitle: String {
         switch step {
         case .welcome: "Get started"
+        case .ai where draft.aiProvider == .claudeOrCodex && bridgeStatus?.isRecentlyConnected == true:
+            "Use Claude & Codex"
+        case .ai: "Continue"
         case .notifications: appModel.notificationAuthorization.canSchedule ? "Continue" : "Turn on notifications"
-        case .ready: previewOnly ? "Close preview" : "Start with Cy"
+        case .ready: "Show me around"
         default: "Continue"
         }
     }
@@ -684,7 +1064,7 @@ struct OnboardingView: View {
             draft.vibePalette != nil && draft.appearance != nil
         case .ready:
             true
-        case .pillars, .platforms, .notifications:
+        case .pillars, .platforms, .ai, .notifications:
             true
         }
     }
@@ -715,9 +1095,31 @@ struct OnboardingView: View {
         return count == 0 ? "Off" : "\(count) selected"
     }
 
+    private var aiReadySummary: String {
+        switch draft.aiProvider {
+        case .agentCy:
+            "Connected"
+        case .claudeOrCodex:
+            aiConnectionIsVerified ? "Connected" : "Finish setup later"
+        }
+    }
+
+    private var aiReadyStatusColor: Color {
+        switch draft.aiProvider {
+        case .agentCy:
+            Color.agentSuccess
+        case .claudeOrCodex:
+            aiConnectionIsVerified ? Color.agentSuccess : Color.agentSecondary
+        }
+    }
+
+    private var aiConnectionIsVerified: Bool {
+        bridgeStatus?.isRecentlyConnected == true || localCyStatus?.isRecentlyAvailable == true
+    }
+
     private func performPrimaryAction() {
         if step == .ready {
-            finish()
+            finish(startWalkthrough: true)
             return
         }
         guard step == .notifications, !previewOnly, !appModel.notificationAuthorization.canSchedule else {
@@ -760,13 +1162,24 @@ struct OnboardingView: View {
         }
     }
 
-    private func finish() {
+    private func finish(startWalkthrough: Bool) {
         if previewOnly {
+            if startWalkthrough {
+                appModel.startWalkthrough()
+            } else {
+                appModel.selectedTab = .home
+            }
             dismiss()
             return
         }
         Task {
-            _ = await appModel.completeOnboarding(draft, context: context)
+            let completed = await appModel.completeOnboarding(draft, context: context)
+            guard completed else { return }
+            if startWalkthrough {
+                appModel.startWalkthrough()
+            } else {
+                appModel.selectedTab = .home
+            }
         }
     }
 
@@ -817,6 +1230,73 @@ struct OnboardingView: View {
             get: { draft.accountHandles[destination, default: ""] },
             set: { draft.accountHandles[destination] = $0 }
         )
+    }
+
+    private func copyCommand(_ command: String) {
+        UIPasteboard.general.string = command
+        copiedCommand = command
+    }
+
+    private func refreshBridgeStatus() {
+        bridgeStatus = try? MCPBridgeService.connectionStatus()
+        Task {
+            localCyStatus = try? await LocalCyAIClient.shared.runtimeStatus()
+        }
+    }
+
+    private func checkBridgeConnection() {
+        guard MCPBridgePreferences.isConnected else {
+            chooseMCPFolder = true
+            return
+        }
+        try? MCPBridgeService.sync(context: context)
+        refreshBridgeStatus()
+        if bridgeStatus?.isRecentlyConnected == true || localCyStatus?.isRecentlyAvailable == true {
+            bridgeNotice = "Claude or Codex is connected."
+        } else {
+            bridgeNotice = "The shared folder is connected. On your computer, ask Claude or Codex to call bridge_status, then check again."
+        }
+    }
+}
+
+private struct OnboardingCommandBlock: View {
+    let label: String
+    let command: String
+    let copied: Bool
+    let onCopy: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            HStack {
+                Text(label.uppercased())
+                    .font(.paperMono(size: 9, weight: .medium, relativeTo: .caption))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.agentSecondary)
+                Spacer()
+                Button {
+                    onCopy(command)
+                } label: {
+                    AgentIconLabel(title: copied ? "Copied" : "Copy", icon: copied ? .check : .copy)
+                        .font(.paperInter(size: 12, weight: .semibold, relativeTo: .caption))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.agentText)
+                .frame(minHeight: 32)
+            }
+
+            Text(command)
+                .font(.paperMono(size: 13, weight: .regular, relativeTo: .body))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, AgentSpacing.x4)
+        .padding(.vertical, AgentSpacing.x3)
+        .background(Color.agentText.opacity(0.045), in: .rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.agentText.opacity(0.10), lineWidth: 1)
+        }
     }
 }
 
@@ -882,7 +1362,7 @@ private struct PaperConsentRow: View {
     var body: some View {
         Button { isOn.toggle() } label: {
             HStack(alignment: .top, spacing: AgentSpacing.x3) {
-                Image(systemName: isOn ? "checkmark.square.fill" : "square")
+                AgentIconView(isOn ? .checkboxSelected : .checkboxEmpty)
                     .font(.system(size: 20, weight: .regular))
                     .foregroundStyle(isOn ? Color.agentText : Color.agentSecondary)
                     .frame(width: 28, height: 28)
@@ -909,7 +1389,7 @@ private struct PaperOnboardingActionRow: View {
 
     var body: some View {
         HStack(spacing: AgentSpacing.x4) {
-            Image(systemName: symbol)
+            AgentIconView(AgentIcon(legacySystemName: symbol))
                 .font(.system(size: 19, weight: .regular))
                 .frame(width: 32)
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {
@@ -921,8 +1401,7 @@ private struct PaperOnboardingActionRow: View {
                     .lineLimit(2)
             }
             Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .medium))
+            AgentIconView(.forward, size: 14)
         }
         .padding(.horizontal, AgentSpacing.x4)
         .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
@@ -946,7 +1425,7 @@ private struct PaperPlatformCard: View {
         VStack(spacing: 0) {
             Button(action: onToggle) {
                 HStack(spacing: AgentSpacing.x4) {
-                    Image(systemName: symbol)
+                    AgentIconView(AgentIcon(legacySystemName: symbol))
                         .font(.system(size: 18, weight: .regular))
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
@@ -957,7 +1436,7 @@ private struct PaperPlatformCard: View {
                             .foregroundStyle(Color.agentSecondary)
                     }
                     Spacer()
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    AgentIconView(selected ? .checkCircle : .radioEmpty)
                         .font(.system(size: 20, weight: .regular))
                 }
                 .contentShape(.rect)
@@ -1005,8 +1484,7 @@ private struct PaperYouTubeCard: View {
                 }
             } label: {
                 HStack(spacing: AgentSpacing.x4) {
-                    Image(systemName: "play.rectangle.fill")
-                        .font(.system(size: 18, weight: .regular))
+                    AgentIconView(.play, size: 18)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("YouTube")
@@ -1016,7 +1494,7 @@ private struct PaperYouTubeCard: View {
                             .foregroundStyle(Color.agentSecondary)
                     }
                     Spacer()
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    AgentIconView(selected ? .checkCircle : .radioEmpty)
                         .font(.system(size: 20, weight: .regular))
                 }
                 .contentShape(.rect)
@@ -1072,6 +1550,8 @@ private struct PaperYouTubeCard: View {
 private struct PaperReadyRow: View {
     let label: String
     let value: String
+    var statusColor: Color? = nil
+    var showsDivider = true
 
     var body: some View {
         HStack {
@@ -1080,12 +1560,23 @@ private struct PaperReadyRow: View {
                 .tracking(0.9)
                 .textCase(.uppercase)
             Spacer()
-            Text(value)
-                .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+            HStack(spacing: AgentSpacing.x2) {
+                if let statusColor {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                }
+                Text(value)
+                    .font(.paperInter(size: 14, weight: .semibold, relativeTo: .subheadline))
+            }
         }
         .frame(minHeight: 52)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.agentText.opacity(label == "Platforms" ? 0 : 0.1)).frame(height: 1)
+            if showsDivider {
+                Rectangle()
+                    .fill(Color.agentText.opacity(0.1))
+                    .frame(height: 1)
+            }
         }
     }
 }
@@ -1165,17 +1656,20 @@ private struct OnboardingPillarEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", systemImage: "checkmark") {
+                    AgentToolbarIconButton(
+                        title: "Save",
+                        icon: .check,
+                        isEnabled: !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ) {
                         onSave(draft)
                         dismiss()
                     }
-                    .labelStyle(.iconOnly)
-                    .disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
             .agentScreen()
             .agentKeyboardDismissal()
@@ -1273,6 +1767,24 @@ private struct PaperOnboardingSecondaryButtonStyle: ButtonStyle {
             .background(Color.agentSurface, in: .circle)
             .overlay { Circle().stroke(Color.agentBorder, lineWidth: 1) }
             .opacity(configuration.isPressed ? 0.72 : 1)
+    }
+}
+
+private struct PaperOnboardingOutlineButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .padding(.horizontal, AgentSpacing.x4)
+            .foregroundStyle(Color.agentText)
+            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.agentBorder, lineWidth: 1)
+            }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
     }
 }
 

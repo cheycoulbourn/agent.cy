@@ -24,19 +24,16 @@ The three product jobs are:
 
 Initial flow:
 
-1. Age confirmation, privacy explanation, and optional content-free telemetry consent.
-2. Name, primary creator goal, and selected platforms.
-3. Assistance mode, defaulting to Collaborate.
-4. Add three real voice examples or choose **Add these later**.
-5. When three examples are ready, review and edit the voice profile extracted by Cy. When deferred, skip this step.
-6. Optional daily-focus and weekly-reset reminder setup.
-7. Bring a spark or Find a spark, then complete the first brief.
+1. Welcome, age confirmation, privacy explanation, and optional content-free diagnostics.
+2. Creator name and primary goal.
+3. One of four starting pillar palettes and System, Light, or Dark appearance.
+4. Optional anchor and supporting pillars.
+5. Optional platforms, formats, and private account-handle references.
+6. AI setup: choose native Agent Cy AI or Claude/Codex through the local MCP bridge.
+7. Optional local Daily overview and Monday planning reminders.
+8. Ready summary and entry into the workspace.
 
-Pillars and production rhythm are deferred. Cy proposes three to five pillars after three developed briefs.
-
-Examples can be added during onboarding or later in Settings through pasted text, on-device dictation, an Instagram post link kept as local provenance, or editable text recognized from a screenshot on-device. A link alone is not treated as voice evidence. The creator must paste or confirm the corresponding text. Raw screenshots and source URLs are never sent to the AI proxy.
-
-Each confirmed example is limited to 20,000 UTF-16 units, and the confirmed text sent in one creator context is limited to 40,000 UTF-8 bytes in total. The app enforces both limits before saving onboarding evidence and again before any remote request, with a specific amount to trim.
+The Claude/Codex path explains that the bridge runs on a Mac or Windows computer, provides copyable terminal commands, lets the creator select the shared iCloud Drive folder, and reports a detected client heartbeat. Setup may be finished later in Settings. No Claude or Codex credential is entered into or stored by the iPhone app.
 
 ## Assistance modes
 

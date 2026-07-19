@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct TaskNavigationRoute: Hashable {
     let taskID: UUID
@@ -21,11 +22,12 @@ private struct TaskNavigationDestinationView: View {
         }) {
             TaskDetailView(task: task)
         } else {
-            ContentUnavailableView(
-                "Task not found",
-                systemImage: "checkmark.square",
-                description: Text("It may have been completed or deleted.")
+            AgentEmptyState(
+                title: "Task not found",
+                message: "It may have been completed or deleted.",
+                icon: .tasks
             )
+            .agentScreen()
         }
     }
 }
@@ -38,8 +40,93 @@ extension View {
     }
 }
 
+enum TaskDateFilter: String, CaseIterable, Identifiable {
+    case all = "Any date"
+    case today = "Today"
+    case thisWeek = "This week"
+    case pastDue = "Past due"
+    case noDate = "No due date"
+    case specificDate = "Choose date"
+
+    var id: String { rawValue }
+}
+
+enum TaskPillarFilter: Equatable {
+    case all
+    case unfiled
+    case pillar(UUID)
+}
+
+enum TaskFocusFilter: Equatable {
+    case all
+    case noFocus
+    case focus(DailyFocusKind)
+}
+
+enum TaskListFilterPolicy {
+    static func matchesDate(
+        _ date: Date?,
+        filter: TaskDateFilter,
+        selectedDate: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        switch filter {
+        case .all:
+            return true
+        case .today:
+            return date.map { calendar.isDate($0, inSameDayAs: now) } == true
+        case .thisWeek:
+            guard let date, let week = calendar.dateInterval(of: .weekOfYear, for: now) else { return false }
+            return week.contains(date)
+        case .pastDue:
+            guard let date else { return false }
+            return calendar.startOfDay(for: date) < calendar.startOfDay(for: now)
+        case .noDate:
+            return date == nil
+        case .specificDate:
+            return date.map { calendar.isDate($0, inSameDayAs: selectedDate) } == true
+        }
+    }
+
+    static func matchesPillar(_ pillarID: UUID?, filter: TaskPillarFilter) -> Bool {
+        switch filter {
+        case .all: return true
+        case .unfiled: return pillarID == nil
+        case .pillar(let selectedID): return pillarID == selectedID
+        }
+    }
+
+    static func matchesPriority(_ priority: TaskPriority, selected: TaskPriority?) -> Bool {
+        guard let selected else { return true }
+        return priority.normalized == selected.normalized
+    }
+
+    static func matchesFocus(
+        title: String?,
+        kind: CreatorTaskKind,
+        hasFocusAssignment: Bool,
+        filter: TaskFocusFilter
+    ) -> Bool {
+        switch filter {
+        case .all:
+            return true
+        case .noFocus:
+            return !hasFocusAssignment
+        case .focus(let focus):
+            guard hasFocusAssignment else { return false }
+            let cleanTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !cleanTitle.isEmpty,
+               cleanTitle.localizedCaseInsensitiveContains(focus.title) {
+                return true
+            }
+            return focus.taskKind == kind
+        }
+    }
+}
+
 struct TasksView: View {
-    private enum StatusFilter: String, CaseIterable, Identifiable {
+    enum StatusFilter: String, CaseIterable, Identifiable {
         case open = "Open"
         case completed = "Completed"
         case archive = "Archived"
@@ -53,9 +140,14 @@ struct TasksView: View {
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var profiles: [CreatorProfile]
-    @State private var collection: TaskCollection = .postTasks
+    @State private var collection: TaskCollection = .myTasks
     @State private var status: StatusFilter = .open
     @State private var isFilterPresented = false
+    @State private var dateFilter: TaskDateFilter = .all
+    @State private var selectedFilterDate = Date()
+    @State private var pillarFilter: TaskPillarFilter = .all
+    @State private var priorityFilter: TaskPriority?
+    @State private var focusFilter: TaskFocusFilter = .all
     @State private var collapsedMyTaskDays: Set<String> = []
     @State private var isAddingPostTask = false
 
@@ -84,12 +176,29 @@ struct TasksView: View {
                 let isArchived = task.briefID.map(archivedBriefIDs.contains) == true
                 switch status {
                 case .open:
-                    return !task.isCompleted && !isArchived
+                    guard !task.isCompleted && !isArchived else { return false }
                 case .completed:
-                    return task.isCompleted && !isArchived
+                    guard task.isCompleted && !isArchived else { return false }
                 case .archive:
-                    return isArchived
+                    guard isArchived else { return false }
                 }
+
+                return TaskListFilterPolicy.matchesDate(
+                    visibilityDate(for: task),
+                    filter: dateFilter,
+                    selectedDate: selectedFilterDate
+                ) && TaskListFilterPolicy.matchesPillar(
+                    effectivePillarID(for: task),
+                    filter: pillarFilter
+                ) && TaskListFilterPolicy.matchesPriority(
+                    task.priority,
+                    selected: priorityFilter
+                ) && TaskListFilterPolicy.matchesFocus(
+                    title: task.dailyFocusTitle,
+                    kind: task.kind,
+                    hasFocusAssignment: hasFocusAssignment(task),
+                    filter: focusFilter
+                )
             }
             .sorted(by: sortTasks)
     }
@@ -123,6 +232,22 @@ struct TasksView: View {
         return nil
     }
 
+    private func effectivePillarID(for task: CreatorTask) -> UUID? {
+        if let pillarID = task.pillarID { return pillarID }
+        let linkedOutput = task.platformOutputID.flatMap { outputID in
+            outputs.first { $0.id == outputID }
+        }
+        let briefID = task.briefID ?? linkedOutput?.briefID
+        return briefID.flatMap { id in briefs.first(where: { $0.id == id })?.pillarID }
+    }
+
+    private func hasFocusAssignment(_ task: CreatorTask) -> Bool {
+        task.dailyFocusDate != nil
+            || task.dailyFocusTemplateEntryID != nil
+            || task.focusTaskTemplateID != nil
+            || !(task.dailyFocusTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -130,8 +255,8 @@ struct TasksView: View {
                 ForEach(TaskCollection.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal, AgentLayout.pageMargin)
-            .padding(.bottom, AgentSpacing.x4)
+            .padding(.horizontal, AgentLayout.dashboardGutter)
+            .padding(.bottom, AgentSpacing.x3)
 
             TabView(selection: $collection) {
                 ForEach(TaskCollection.allCases) { page in
@@ -141,12 +266,23 @@ struct TasksView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.snappy(duration: 0.24), value: collection)
+            .background(Color.agentSurface)
+            .clipShape(.rect(cornerRadius: AgentRadius.dashboard))
+            .padding(.horizontal, AgentLayout.dashboardGutter)
         }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isAddingPostTask) {
             PostTaskCreationFlow()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isFilterPresented) {
+            taskFilterSheet
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .onChange(of: appModel.activeWorkspaceID) {
+            pillarFilter = .all
         }
         .agentScreen()
     }
@@ -158,12 +294,12 @@ struct TasksView: View {
                 identity: activeIdentity,
                 openSettings: { appModel.presentedSheet = .settings }
             ) {
-                statusFilterButton
+                taskFilterButton
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text("Your")
-                    .font(.system(size: 32, weight: .regular, design: .default))
-                Text("tasks.")
+                Text("Let’s get")
+                    .font(.agentDisplayLead)
+                Text("things done.")
                     .font(.agentDisplay)
             }
             .tracking(-0.64)
@@ -171,7 +307,7 @@ struct TasksView: View {
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
-        .padding(.bottom, AgentSpacing.x8)
+        .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
 
     private var activeIdentity: ActiveCreatorIdentity {
@@ -182,54 +318,245 @@ struct TasksView: View {
         )
     }
 
-    private var statusFilterButton: some View {
+    private var taskFilterButton: some View {
         Button {
-            isFilterPresented.toggle()
+            isFilterPresented = true
         } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Color.agentText)
-                .frame(width: 44, height: 44)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .popover(
-            isPresented: $isFilterPresented,
-            attachmentAnchor: .rect(.bounds),
-            arrowEdge: .top
-        ) {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(StatusFilter.allCases) { filter in
-                    Button {
-                        status = filter
-                        isFilterPresented = false
-                    } label: {
-                        HStack(spacing: AgentSpacing.x3) {
-                            Text(filter.rawValue)
-                                .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
-                                .foregroundStyle(Color.agentText)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            if status == filter {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(Color.agentText)
-                            }
-                        }
-                        .padding(.horizontal, AgentSpacing.x4)
-                        .frame(minHeight: 46)
-                        .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
+            ZStack(alignment: .topTrailing) {
+                AgentIconView(.filter, size: 16)
+                    .foregroundStyle(Color.agentText)
+                    .frame(width: 44, height: 44)
+
+                if activeFilterCount > 0 {
+                    Text("\(activeFilterCount)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.agentSurface)
+                        .frame(minWidth: 17, minHeight: 17)
+                        .background(Color.agentText, in: .circle)
+                        .offset(x: 2, y: 2)
                 }
             }
-            .padding(.vertical, AgentSpacing.x2)
-            .frame(width: 220)
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(.ultraThinMaterial)
-            .presentationCornerRadius(24)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Filter tasks")
-        .accessibilityValue(status.rawValue)
+        .accessibilityValue(activeFilterCount == 0 ? "No filters" : "\(activeFilterCount) active")
+    }
+
+    private var taskFilterSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    Text("Narrow either task list by the details that matter right now.")
+                        .font(.agentBody)
+                        .foregroundStyle(Color.agentSecondary)
+
+                    VStack(spacing: 0) {
+                        filterMenuRow(label: "Status", value: status.rawValue) {
+                            ForEach(StatusFilter.allCases) { option in
+                                filterMenuButton(
+                                    option.rawValue,
+                                    isSelected: status == option
+                                ) { status = option }
+                            }
+                        }
+
+                        filterMenuRow(label: "Date", value: dateFilterLabel) {
+                            ForEach(TaskDateFilter.allCases) { option in
+                                filterMenuButton(
+                                    option.rawValue,
+                                    isSelected: dateFilter == option
+                                ) { dateFilter = option }
+                            }
+                        }
+
+                        if dateFilter == .specificDate {
+                            HStack(spacing: AgentSpacing.x3) {
+                                MetaLabel("On date")
+                                Spacer()
+                                DatePicker(
+                                    "Date",
+                                    selection: $selectedFilterDate,
+                                    displayedComponents: .date
+                                )
+                                .labelsHidden()
+                                .datePickerStyle(.compact)
+                            }
+                            .frame(minHeight: 52)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(Color.agentHairline).frame(height: 1)
+                            }
+                        }
+
+                        filterMenuRow(label: "Pillar", value: pillarFilterLabel) {
+                            filterMenuButton("All pillars", isSelected: pillarFilter == .all) {
+                                pillarFilter = .all
+                            }
+                            filterMenuButton("No pillar", isSelected: pillarFilter == .unfiled) {
+                                pillarFilter = .unfiled
+                            }
+                            ForEach(activePillars) { pillar in
+                                Button {
+                                    pillarFilter = .pillar(pillar.id)
+                                } label: {
+                                    Label {
+                                        Text(pillar.name)
+                                    } icon: {
+                                        Circle()
+                                            .fill(Color(agentHex: pillar.resolvedColorHex(in: activePillars)))
+                                    }
+                                }
+                            }
+                        }
+
+                        filterMenuRow(label: "Priority", value: priorityFilterLabel) {
+                            filterMenuButton("All priorities", isSelected: priorityFilter == nil) {
+                                priorityFilter = nil
+                            }
+                            ForEach(TaskPriority.selectableCases) { option in
+                                filterMenuButton(
+                                    option.title,
+                                    isSelected: priorityFilter == option
+                                ) { priorityFilter = option }
+                            }
+                        }
+
+                        filterMenuRow(label: "Focus", value: focusFilterLabel) {
+                            filterMenuButton("All focuses", isSelected: focusFilter == .all) {
+                                focusFilter = .all
+                            }
+                            filterMenuButton("No focus", isSelected: focusFilter == .noFocus) {
+                                focusFilter = .noFocus
+                            }
+                            ForEach(DailyFocusKind.selectableCases) { option in
+                                filterMenuButton(
+                                    option.title,
+                                    isSelected: focusFilter == .focus(option)
+                                ) { focusFilter = .focus(option) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+
+                    if activeFilterCount > 0 {
+                        Button("Clear filters") {
+                            resetTaskFilters()
+                        }
+                        .font(.agentBody.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .background(Color.agentSurface, in: .capsule)
+                        .overlay {
+                            Capsule().stroke(Color.agentBorder, lineWidth: 0.75)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x4)
+                .padding(.bottom, AgentSpacing.x8)
+            }
+            .navigationTitle("Filter tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { isFilterPresented = false }
+                }
+            }
+            .agentScreen()
+        }
+    }
+
+    private func filterMenuRow<Content: View>(
+        label: String,
+        value: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Menu(content: content) {
+            HStack(spacing: AgentSpacing.x3) {
+                MetaLabel(label)
+                Spacer()
+                Text(value)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(1)
+                AgentIconView(.moveVertical, size: 11)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            .frame(minHeight: 52)
+            .contentShape(.rect)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color.agentHairline).frame(height: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func filterMenuButton(
+        _ title: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            if isSelected {
+                AgentIconLabel(title: title, icon: .check)
+            } else {
+                Text(title)
+            }
+        }
+    }
+
+    private var activeFilterCount: Int {
+        (status == .open ? 0 : 1)
+            + (dateFilter == .all ? 0 : 1)
+            + (pillarFilter == .all ? 0 : 1)
+            + (priorityFilter == nil ? 0 : 1)
+            + (focusFilter == .all ? 0 : 1)
+    }
+
+    private var activePillars: [Pillar] {
+        pillars.filter {
+            !$0.isArchived && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
+
+    private var dateFilterLabel: String {
+        guard dateFilter == .specificDate else { return dateFilter.rawValue }
+        return selectedFilterDate.formatted(.dateTime.month(.abbreviated).day().year())
+    }
+
+    private var pillarFilterLabel: String {
+        switch pillarFilter {
+        case .all: "All pillars"
+        case .unfiled: "No pillar"
+        case .pillar(let id): activePillars.first(where: { $0.id == id })?.name ?? "All pillars"
+        }
+    }
+
+    private var priorityFilterLabel: String {
+        priorityFilter?.title ?? "All priorities"
+    }
+
+    private var focusFilterLabel: String {
+        switch focusFilter {
+        case .all: "All focuses"
+        case .noFocus: "No focus"
+        case .focus(let kind): kind.title
+        }
+    }
+
+    private func resetTaskFilters() {
+        status = .open
+        dateFilter = .all
+        selectedFilterDate = Date()
+        pillarFilter = .all
+        priorityFilter = nil
+        focusFilter = .all
     }
 
     @ViewBuilder
@@ -242,10 +569,13 @@ struct TasksView: View {
                 Text(emptyDescription(for: collection))
             } actions: {
                 if status == .open {
-                    Button("Add task") { openTaskComposer(for: collection) }
-                        .buttonStyle(AgentCompactPrimaryButtonStyle())
+                    AgentBlockAddActionButton(title: "Add task") {
+                        openTaskComposer(for: collection)
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.agentSurface)
         } else if status != .open {
             completedList(for: collection)
         } else {
@@ -284,20 +614,24 @@ struct TasksView: View {
                 .textCase(nil)
             }
             if status == .open {
-                AgentAddActionRow(title: "Add task") { openTaskComposer(for: collection) }
+                AgentBlockAddActionButton(title: "Add task") {
+                    openTaskComposer(for: collection)
+                }
                     .listRowInsets(EdgeInsets(
                         top: AgentSpacing.x2,
                         leading: AgentLayout.pageMargin,
                         bottom: AgentSpacing.x2,
                         trailing: AgentLayout.pageMargin
                     ))
-                    .listRowBackground(Color.agentCanvas)
+                    .listRowBackground(Color.agentSurface)
                     .listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .contentMargins(.top, 0, for: .scrollContent)
         .contentMargins(.bottom, 104, for: .scrollContent)
+        .background(Color.agentSurface)
     }
 
     private func completedList(for collection: TaskCollection) -> some View {
@@ -313,7 +647,9 @@ struct TasksView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .contentMargins(.top, 0, for: .scrollContent)
         .contentMargins(.bottom, 104, for: .scrollContent)
+        .background(Color.agentSurface)
     }
 
     private func row(_ task: CreatorTask) -> some View {
@@ -328,9 +664,8 @@ struct TasksView: View {
                 bottom: 0,
                 trailing: AgentLayout.pageMargin
             ))
-            .listRowBackground(Color.agentCanvas)
-            .listRowSeparatorTint(Color.agentHairline)
-            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+            .listRowBackground(Color.agentSurface)
+            .listRowSeparator(.hidden)
     }
 
     private func dueDateGroups(for collection: TaskCollection) -> [TaskDueDateGroup] {
@@ -366,7 +701,7 @@ struct TasksView: View {
                 Spacer()
                 MetaLabel("\(group.tasks.count)")
                 if canCollapse {
-                    Image(systemName: isCollapsed(group, collection: collection) ? "chevron.down" : "chevron.up")
+                    AgentIconView(isCollapsed(group, collection: collection) ? .expand : .collapse)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.agentSecondary)
                         .frame(width: 20, height: 20)
@@ -376,7 +711,7 @@ struct TasksView: View {
         }
         .buttonStyle(.plain)
         .allowsHitTesting(canCollapse)
-        .padding(.top, AgentSpacing.x4)
+        .padding(.top, AgentSpacing.x3)
         .padding(.bottom, AgentSpacing.x2)
     }
 
@@ -419,14 +754,19 @@ struct TasksView: View {
 
 }
 
-private struct PostTaskCreationFlow: View {
+struct PostTaskCreationFlow: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
+    let onTaskSaved: (() -> Void)?
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.targetDate) private var allOutputs: [PlatformOutput]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var search = ""
+
+    init(onTaskSaved: (() -> Void)? = nil) {
+        self.onTaskSaved = onTaskSaved
+    }
 
     private var briefs: [CreativeBrief] {
         allBriefs.filter {
@@ -520,7 +860,10 @@ private struct PostTaskCreationFlow: View {
                                         LinkedPostTaskComposer(
                                             brief: brief,
                                             output: output,
-                                            onSaved: { dismiss() }
+                                            onSaved: {
+                                                onTaskSaved?()
+                                                dismiss()
+                                            }
                                         )
                                     } label: {
                                         postRow(output: output, brief: brief)
@@ -541,13 +884,13 @@ private struct PostTaskCreationFlow: View {
                 .padding(.bottom, AgentSpacing.x12)
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("Add task")
+            .navigationTitle("New post task")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
             .agentScreen()
         }
@@ -555,8 +898,7 @@ private struct PostTaskCreationFlow: View {
 
     private var searchField: some View {
         HStack(spacing: AgentSpacing.x3) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
+            AgentIconView(.search, size: 15)
                 .foregroundStyle(Color.agentSecondary)
             TextField("Search scheduled posts", text: $search)
                 .font(.agentBody)
@@ -595,8 +937,7 @@ private struct PostTaskCreationFlow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
+            AgentIconView(.forward, size: 12)
                 .foregroundStyle(Color.agentSecondary)
         }
         .frame(minHeight: 68)
@@ -706,60 +1047,26 @@ private struct LinkedPostTaskComposer: View {
                         .focused($notesAreFocused)
                 }
 
-                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Subtasks")
-                            .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
-                        Spacer()
-                        MetaLabel("\(completedSubtaskDraftCount)")
-                    }
-
-                    ForEach($subtasks) { $subtask in
-                        DraftCaptureSubtaskRow(subtask: $subtask)
-                    }
-
-                    Button {
-                        subtasks.append(DraftCaptureSubtask())
-                    } label: {
-                        HStack(spacing: AgentSpacing.x3) {
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(
-                                    Color.agentText.opacity(0.3),
-                                    style: StrokeStyle(lineWidth: 1, dash: [3])
-                                )
-                                .frame(width: 18, height: 18)
-                            Text("Add subtask")
-                                .font(.agentAddAction)
-                            Spacer()
-                        }
-                        .foregroundStyle(Color.agentText)
-                        .frame(minHeight: 48)
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
+                DraftSubtaskComposer(subtasks: $subtasks)
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
             .padding(.bottom, AgentSpacing.x12)
         }
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle("New task")
+        .navigationTitle("New post task")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(action: save) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.black)
+                    AgentIconView(.check, size: 15)
+                        .foregroundStyle(Color.agentPureBlack)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.circle)
                 .controlSize(.large)
-                .tint(Color.white)
+                .tint(Color.agentPureWhite)
                 .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .opacity(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                 .accessibilityLabel("Add task")
@@ -790,10 +1097,6 @@ private struct LinkedPostTaskComposer: View {
             )
         }
         return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
-    }
-
-    private var completedSubtaskDraftCount: Int {
-        subtasks.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
     }
 
     private func save() {
@@ -861,6 +1164,8 @@ struct TaskRow: View {
     let task: CreatorTask
     let allTasks: [CreatorTask]
     var linkedPostTitle: String? = nil
+    var verticalInset: CGFloat = AgentSpacing.x1
+    @State private var showsDetail = false
 
     private var subtasks: [CreatorTask] {
         allTasks
@@ -877,11 +1182,8 @@ struct TaskRow: View {
             HStack(alignment: .top, spacing: AgentSpacing.x2) {
                 taskCheckbox(task, accessibilityPrefix: "task")
 
-                // Local taps stay on the destination-based stack used by the
-                // surrounding post or day. Value routes are reserved for
-                // external task deep links handled by AppShellView.
-                NavigationLink {
-                    TaskDetailView(task: task)
+                Button {
+                    showsDetail = true
                 } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(task.title)
@@ -917,33 +1219,26 @@ struct TaskRow: View {
                 .padding(.bottom, AgentSpacing.x2)
             }
         }
+        // TaskRow owns its vertical rhythm so List and VStack hosts render
+        // focus tasks at the exact same measured distance.
+        .padding(.vertical, verticalInset)
+        .navigationDestination(isPresented: $showsDetail) {
+            TaskDetailView(task: task)
+        }
     }
 
     private func taskCheckbox(_ item: CreatorTask, accessibilityPrefix: String) -> some View {
-        Button { appModel.toggleTask(item, context: context) } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(checkboxColor(for: item), lineWidth: 1.25)
-                    .background(
-                        item.isCompleted ? checkboxColor(for: item) : Color.clear,
-                        in: .rect(cornerRadius: 4)
-                    )
-                    .overlay {
-                        if item.isCompleted {
-                            Image(systemName: "checkmark")
-                                .font(.caption.bold())
-                                .foregroundStyle(Color.agentCanvas)
-                        }
-                    }
-                    .frame(width: 19, height: 19)
-            }
-            .frame(width: 44, height: 44, alignment: .center)
-            .contentShape(Rectangle())
+        AgentTaskCheckbox(
+            isCompleted: item.isCompleted,
+            color: checkboxColor(for: item),
+            accessibilityLabel: item.isCompleted
+                ? "Mark \(accessibilityPrefix) open"
+                : "Complete \(accessibilityPrefix)"
+        ) {
+            appModel.toggleTask(item, context: context)
         }
-        .buttonStyle(.borderless)
         .zIndex(1)
         .accessibilityIdentifier("task-checkbox-\(item.id.uuidString)")
-        .accessibilityLabel(item.isCompleted ? "Mark \(accessibilityPrefix) open" : "Complete \(accessibilityPrefix)")
     }
 
     private var metadataLine: some View {
@@ -1025,8 +1320,9 @@ struct TaskDetailView: View {
     @State private var confirmDelete = false
     @State private var showDueDateEditor = false
     @State private var originalFocusTemplateSignature: String?
-    @FocusState private var newSubtaskFocused: Bool
+    @State private var newSubtaskFocused = false
     @FocusState private var notesAreFocused: Bool
+    private static let subtaskComposerID = "task-detail-subtask-composer"
 
     private var subtasks: [CreatorTask] { allTasks.filter { $0.parentTaskID == task.id }.sorted { $0.sortOrder < $1.sortOrder } }
     private var completedSubtasks: [CreatorTask] { subtasks.filter(\.isCompleted) }
@@ -1052,8 +1348,9 @@ struct TaskDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 MetaLabel(task.isCompleted ? "Completed task" : "Task")
 
                 TextField("What's the task?", text: $task.title, axis: .vertical)
@@ -1114,27 +1411,15 @@ struct TaskDetailView: View {
 
                     ForEach(visibleSubtasks) { subtask in
                         HStack(spacing: AgentSpacing.x2) {
-                            Button {
+                            AgentTaskCheckbox(
+                                isCompleted: subtask.isCompleted,
+                                color: Color.agentText,
+                                accessibilityLabel: subtask.isCompleted
+                                    ? "Mark subtask open"
+                                    : "Complete subtask"
+                            ) {
                                 appModel.toggleTask(subtask, context: context)
-                            } label: {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color.agentBorder, lineWidth: 1.25)
-                                    .background(
-                                        subtask.isCompleted ? Color.agentText : Color.clear,
-                                        in: .rect(cornerRadius: 4)
-                                    )
-                                    .overlay {
-                                        if subtask.isCompleted {
-                                            Image(systemName: "checkmark")
-                                                .font(.caption.bold())
-                                                .foregroundStyle(Color.agentCanvas)
-                                        }
-                                    }
-                                    .frame(width: 19, height: 19)
-                                    .frame(width: 44, height: 44)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(subtask.isCompleted ? "Mark subtask open" : "Complete subtask")
 
                             TextField("Subtask", text: Bindable(subtask).title)
                                 .font(.agentBody)
@@ -1144,78 +1429,60 @@ struct TaskDetailView: View {
                         }
                         .padding(.vertical, AgentSpacing.x2)
 
-                        if subtask.id != visibleSubtasks.last?.id {
-                            Divider().foregroundStyle(Color.agentHairline)
-                        }
                     }
 
                     if isAddingSubtask {
                         HStack(spacing: AgentSpacing.x2) {
-                            TextField("What's the task?", text: $newSubtaskTitle)
-                                .font(.agentBody)
-                                .submitLabel(.done)
-                                .onSubmit(addSubtask)
-                                .focused($newSubtaskFocused)
-                                .padding(.horizontal, AgentSpacing.x3)
-                                .frame(minHeight: 44)
-                                .background(Color.agentSurface)
-                                .clipShape(.rect(cornerRadius: AgentRadius.control))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: AgentRadius.control)
-                                        .stroke(Color.agentBorder, lineWidth: 1)
-                                }
+                            AgentTaskCheckboxPlaceholder()
 
-                            Button(action: addSubtask) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(canAddSubtask ? Color.onAccent : Color.agentSecondary)
-                                    .frame(width: 44, height: 44)
-                                    .background(
-                                        canAddSubtask ? Color.actionAccent : Color.agentSurface,
-                                        in: .circle
-                                    )
-                                    .overlay {
-                                        Circle().stroke(
-                                            canAddSubtask ? Color.actionAccent : Color.agentBorder,
-                                            lineWidth: 1
-                                        )
-                                    }
+                            PersistentSubmitTextField(
+                                text: $newSubtaskTitle,
+                                isFocused: $newSubtaskFocused,
+                                placeholder: "Add a subtask"
+                            ) {
+                                saveSubtaskAndContinue(using: proxy)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(!canAddSubtask)
-                            .accessibilityLabel("Save subtask")
+                                .frame(minHeight: 44)
+                                .accessibilityHint("Press Return to save and add another subtask")
                         }
-                        .padding(.top, AgentSpacing.x2)
+                        .padding(.vertical, AgentSpacing.x2)
+                        .id(Self.subtaskComposerID)
                     } else {
                         AgentAddActionRow(title: "Add subtask") {
                             isAddingSubtask = true
                             Task { @MainActor in
                                 await Task.yield()
                                 newSubtaskFocused = true
+                                scrollSubtaskComposerIntoView(using: proxy)
                             }
                         }
                         .padding(.top, AgentSpacing.x2)
                     }
                 }
 
+                }
+                .padding(AgentLayout.pageMargin)
+                .padding(.bottom, 120)
             }
-            .padding(AgentLayout.pageMargin)
-            .padding(.bottom, 120)
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: newSubtaskFocused) { _, isFocused in
+                guard isFocused else { return }
+                scrollSubtaskComposerIntoView(using: proxy)
+            }
         }
         .navigationTitle("Task")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: saveAndDismiss) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.black)
+                    AgentIconView(.check, size: 15)
+                        .foregroundStyle(Color.agentText)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.circle)
                 .controlSize(.large)
-                .tint(Color.white)
+                .tint(Color.agentSurface)
                 .disabled(task.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .opacity(task.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                 .accessibilityLabel("Save task")
@@ -1233,15 +1500,14 @@ struct TaskDetailView: View {
                     Button("Duplicate task") { duplicate() }
                     Button("Delete task", role: .destructive) { confirmDelete = true }
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.black)
+                    AgentIconView(.more, size: 14)
+                        .foregroundStyle(Color.agentText)
                         .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.circle)
                 .controlSize(.large)
-                .tint(Color.white)
+                .tint(Color.agentSurface)
                 .accessibilityLabel("Task options")
             }
         }
@@ -1413,17 +1679,25 @@ struct TaskDetailView: View {
         }
     }
 
-    private var canAddSubtask: Bool {
-        !newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func addSubtask() {
+    private func saveSubtaskAndContinue(using proxy: ScrollViewProxy) {
         let title = newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         guard appModel.createSubtask(title: title, parent: task, context: context) != nil else { return }
         newSubtaskTitle = ""
-        isAddingSubtask = false
-        newSubtaskFocused = false
+        Task { @MainActor in
+            await Task.yield()
+            scrollSubtaskComposerIntoView(using: proxy)
+        }
+    }
+
+    private func scrollSubtaskComposerIntoView(using proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(180))
+            withAnimation(.easeOut(duration: 0.22)) {
+                proxy.scrollTo(Self.subtaskComposerID, anchor: .center)
+            }
+        }
     }
 
     private func saveAndDismiss() {
@@ -1450,6 +1724,80 @@ struct TaskDetailView: View {
     }
 }
 
+struct PersistentSubmitTextField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    let placeholder: String
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField()
+        textField.delegate = context.coordinator
+        textField.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.textChanged(_:)),
+            for: .editingChanged
+        )
+        textField.borderStyle = .none
+        textField.clearButtonMode = .never
+        textField.returnKeyType = .next
+        textField.placeholder = placeholder
+        textField.textColor = UIColor(Color.agentText)
+        textField.tintColor = UIColor(Color.actionAccent)
+        let baseFont = UIFont(name: "InterVariable", size: 16) ?? UIFont.systemFont(ofSize: 16)
+        textField.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: baseFont)
+        textField.adjustsFontForContentSizeCategory = true
+        return textField
+    }
+
+    func updateUIView(_ textField: UITextField, context: Context) {
+        context.coordinator.parent = self
+        if textField.text != text {
+            textField.text = text
+        }
+        textField.placeholder = placeholder
+
+        if isFocused, !textField.isFirstResponder {
+            DispatchQueue.main.async {
+                textField.becomeFirstResponder()
+            }
+        } else if !isFocused, textField.isFirstResponder {
+            DispatchQueue.main.async {
+                textField.resignFirstResponder()
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: PersistentSubmitTextField
+
+        init(parent: PersistentSubmitTextField) {
+            self.parent = parent
+        }
+
+        @objc func textChanged(_ textField: UITextField) {
+            parent.text = textField.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            parent.isFocused = true
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            parent.isFocused = false
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.onSubmit()
+            return false
+        }
+    }
+}
+
 private struct TaskEditorSetupRow: View {
     let label: String
     let value: String
@@ -1470,8 +1818,7 @@ private struct TaskEditorSetupRow: View {
             }
             Spacer(minLength: AgentSpacing.x2)
             if showsChevron {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .medium))
+                AgentIconView(.forward, size: 12)
             }
         }
         .foregroundStyle(Color.agentText)
@@ -1518,12 +1865,8 @@ private struct TaskDueDateEditor: View {
                             .tint(Color.actionAccent)
 
                         if hasDate {
-                            DatePicker(
-                                "Date",
-                                selection: $date,
-                                displayedComponents: .date
-                            )
-                            .datePickerStyle(.graphical)
+                            PillarCalendarDatePicker(date: $date, pillarMarkers: [])
+                                .frame(minHeight: 330)
 
                             timeChoice
                         }

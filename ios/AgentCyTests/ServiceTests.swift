@@ -621,6 +621,100 @@ final class ServiceTests: XCTestCase {
         XCTAssertEqual(brief.status, .archived)
     }
 
+    func testMCPBridgeCreatesAndSchedulesNewPostInOneApproval() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(PublishingFormat(
+            id: PublishingCatalog.instagramReelID,
+            destinationID: PublishingCatalog.instagramID,
+            name: "Reel",
+            kind: .shortVideo
+        ))
+        try context.save()
+        let date = Date(timeIntervalSince1970: 1_800_100_000)
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createPostDraft",
+            payload: MCPBridgeRequestPayload(
+                title: "A soft weekend in Charlotte",
+                premise: "Let a slow day unfold.",
+                notes: "Use the arrival footage first.",
+                pillarId: nil,
+                platform: CreatorPlatform.instagramReels.rawValue,
+                format: "Reel",
+                postId: nil,
+                outputId: nil,
+                hook: "Come spend a slow day in Charlotte with me.",
+                caption: "Charlotte, slowly.",
+                callToAction: "Save this for a slower weekend.",
+                targetDate: date,
+                includesTargetTime: false,
+                kind: nil,
+                lane: nil,
+                priority: nil,
+                taskId: nil
+            )
+        )
+
+        try MCPBridgeService.apply(request, context: context)
+
+        let brief = try XCTUnwrap(context.fetch(FetchDescriptor<CreativeBrief>()).first)
+        let output = try XCTUnwrap(context.fetch(FetchDescriptor<PlatformOutput>()).first)
+        XCTAssertEqual(brief.status, .scheduled)
+        XCTAssertEqual(brief.agendaDate, date)
+        XCTAssertEqual(output.status, .scheduled)
+        XCTAssertEqual(output.targetDate, date)
+        XCTAssertFalse(output.includesTargetTime)
+        XCTAssertEqual(output.formatID, PublishingCatalog.instagramReelID)
+    }
+
+    func testMCPBridgeInvalidFormatLeavesNoPartialPost() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(PublishingFormat(
+            id: PublishingCatalog.instagramReelID,
+            destinationID: PublishingCatalog.instagramID,
+            name: "Reel",
+            kind: .shortVideo
+        ))
+        try context.save()
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createPostDraft",
+            payload: MCPBridgeRequestPayload(
+                title: "A soft weekend in Charlotte",
+                premise: nil,
+                notes: nil,
+                pillarId: nil,
+                platform: CreatorPlatform.instagramReels.rawValue,
+                format: "Instagram Reel with a quiet opening",
+                postId: nil,
+                outputId: nil,
+                hook: nil,
+                caption: nil,
+                callToAction: nil,
+                targetDate: Date(),
+                includesTargetTime: false,
+                kind: nil,
+                lane: nil,
+                priority: nil,
+                taskId: nil
+            )
+        )
+
+        XCTAssertThrowsError(try MCPBridgeService.apply(request, context: context))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PlatformOutput>()).isEmpty)
+    }
+
     func testCanonicalComposeResultDecodesAndMapsToNonpersistentProposal() throws {
         let json = #"""
         {

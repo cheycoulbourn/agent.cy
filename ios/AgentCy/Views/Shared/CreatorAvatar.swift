@@ -34,8 +34,7 @@ struct CreatorAvatar: View {
                     .font(.system(size: size * 0.34, weight: .semibold))
                     .foregroundStyle(Color.agentText)
             } else {
-                Image(systemName: "person.fill")
-                    .font(.system(size: size * 0.42, weight: .medium))
+                AgentIconView(.profile, size: size * 0.42)
                     .foregroundStyle(Color.agentText)
             }
         }

@@ -137,6 +137,55 @@ describe("MCP bridge contracts", () => {
     expect(parsed.payload.notes).toBe("Use the arrival footage first.");
   });
 
+  it("keeps creation and scheduling in one dated post proposal", () => {
+    const parsed = McpBridgeChangeRequestSchema.parse({
+      schemaVersion: 1,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: "2026-07-18T12:00:00Z",
+      source: "codex",
+      type: "createPostDraft",
+      payload: {
+        title: "A soft weekend in Charlotte",
+        platform: "instagramReels",
+        format: "Reel",
+        targetDate: "2026-07-20T04:00:00Z",
+        includesTargetTime: false,
+      },
+    });
+
+    if (parsed.type !== "createPostDraft") {
+      throw new Error("Expected a createPostDraft proposal");
+    }
+    expect(parsed.payload.targetDate).toBe("2026-07-20T04:00:00Z");
+    expect(parsed.payload.includesTargetTime).toBe(false);
+  });
+
+  it("rejects posting dates hidden only in notes and non-catalog formats", () => {
+    const base = {
+      schemaVersion: 1,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: "2026-07-18T12:00:00Z",
+      source: "codex",
+      type: "createPostDraft",
+    } as const;
+
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...base,
+      payload: {
+        title: "A soft weekend in Charlotte",
+        notes: "Intended publish date: Monday, July 20.",
+      },
+    }).success).toBe(false);
+
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...base,
+      payload: {
+        title: "A soft weekend in Charlotte",
+        format: "Instagram Reel with a quiet travel diary opening",
+      },
+    }).success).toBe(false);
+  });
+
   it("keeps format and call to action out of freeform post notes", () => {
     const request = {
       schemaVersion: 1,

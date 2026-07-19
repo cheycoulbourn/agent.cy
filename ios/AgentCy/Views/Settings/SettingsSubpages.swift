@@ -101,8 +101,7 @@ struct SettingsIndexRow: View {
                     .lineLimit(1)
             }
             if showsChevron {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                AgentIconView(.forward, size: 12)
                     .foregroundStyle(secondaryTint)
             }
         }
@@ -126,7 +125,7 @@ struct SettingsPageShell<Content: View>: View {
                     EditorialHeader(kicker: kicker, title: title, subtitle: subtitle)
                         .padding(.horizontal, AgentLayout.pageMargin)
                         .padding(.top, AgentSpacing.x8)
-                        .padding(.bottom, AgentSpacing.x6)
+                        .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
                         .reportAgentViewHeight()
 
                     VStack(alignment: .leading, spacing: AgentSpacing.x6) {
@@ -154,9 +153,9 @@ struct SettingsPageShell<Content: View>: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Back", systemImage: "chevron.left") { dismiss() }
-                    .labelStyle(.iconOnly)
+                AgentToolbarIconButton(title: "Back", icon: .back) { dismiss() }
             }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .principal) {
                 Text("Settings").font(.agentHeadline)
             }
@@ -219,7 +218,9 @@ struct CreatorProfileSettingsView: View {
                     }
                 }
 
-                Button("Add account", systemImage: "plus") { showNewAccount = true }
+                Button { showNewAccount = true } label: {
+                    AgentIconLabel(title: "Add account", icon: .add)
+                }
                     .buttonStyle(AgentSecondaryButtonStyle())
                     .padding(.top, AgentSpacing.x4)
 
@@ -413,7 +414,7 @@ struct AccountSwitcherSettingsView: View {
                                                 .font(.agentMono)
                                                 .foregroundStyle(Color.cyAccent)
                                         }
-                                        Image(systemName: appModel.activeWorkspaceID == workspace.id ? "checkmark" : "circle")
+                                        AgentIconView(appModel.activeWorkspaceID == workspace.id ? .check : .radioEmpty)
                                             .font(.system(size: 13, weight: .semibold))
                                             .frame(width: 24, height: 24)
                                     }
@@ -427,15 +428,16 @@ struct AccountSwitcherSettingsView: View {
 
                                 if activeWorkspaces.count > 1 {
                                     Menu {
-                                        Button("Delete account", systemImage: "trash", role: .destructive) {
+                                        Button(role: .destructive) {
                                             pendingDeletion = AccountDeletionTarget(
                                                 id: workspace.id,
                                                 name: workspace.name
                                             )
+                                        } label: {
+                                            AgentIconLabel(title: "Delete account", icon: .trash)
                                         }
                                     } label: {
-                                        Image(systemName: "ellipsis")
-                                            .font(.system(size: 16, weight: .semibold))
+                                        AgentIconView(.more, size: 16)
                                             .foregroundStyle(Color.agentText)
                                             .frame(width: 44, height: 44)
                                             .contentShape(.circle)
@@ -552,8 +554,7 @@ private struct SocialAccountRow: View {
 
             if let url = account.profileURL {
                 Link(destination: url) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 15, weight: .semibold))
+                    AgentIconView(.external, size: 15)
                         .foregroundStyle(Color.agentText)
                         .frame(width: 44, height: 44)
                 }
@@ -561,8 +562,7 @@ private struct SocialAccountRow: View {
             }
 
             Button(action: onEdit) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                AgentIconView(.forward, size: 12)
                     .foregroundStyle(Color.agentSecondary)
                     .frame(width: 44, height: 44)
             }
@@ -1069,10 +1069,20 @@ struct CyQuickPromptsSettingsView: View {
 
 struct AppearanceSettingsView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Bindable var profile: CreatorProfile
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+    @State private var draftAppearance: AppearancePreference
+    @State private var draftPalette: CreatorVibePalette?
+    @State private var didSave = false
+
+    init(profile: CreatorProfile) {
+        self.profile = profile
+        _draftAppearance = State(initialValue: profile.appearance)
+        _draftPalette = State(initialValue: profile.vibePalette)
+    }
 
     var body: some View {
         SettingsPageShell(
@@ -1087,10 +1097,9 @@ struct AppearanceSettingsView: View {
                     VStack(spacing: 0) {
                         ForEach(AppearancePreference.allCases) { appearance in
                             Button {
-                                profile.appearance = appearance
+                                draftAppearance = appearance
                                 appModel.appearancePreference = appearance
                                 AgentAppearanceController.apply(appearance)
-                                try? context.save()
                             } label: {
                                 HStack(spacing: AgentSpacing.x4) {
                                     AppearanceSwatch(appearance: appearance)
@@ -1098,8 +1107,8 @@ struct AppearanceSettingsView: View {
                                         .font(.agentHeadline)
                                         .foregroundStyle(Color.agentText)
                                     Spacer()
-                                    if profile.appearance == appearance {
-                                        Image(systemName: "checkmark")
+                                    if draftAppearance == appearance {
+                                        AgentIconView(.check)
                                             .foregroundStyle(Color.agentText)
                                     }
                                 }
@@ -1137,6 +1146,27 @@ struct AppearanceSettingsView: View {
                 }
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: saveAndDismiss) {
+                    AgentIconView(.check, size: 15)
+                        .foregroundStyle(Color.agentPureBlack)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
+                .tint(Color.agentPureWhite)
+                .disabled(!hasChanges)
+                .opacity(hasChanges ? 1 : 0.42)
+                .accessibilityLabel("Save appearance")
+            }
+        }
+        .onDisappear {
+            guard !didSave else { return }
+            appModel.appearancePreference = profile.appearance
+            AgentAppearanceController.apply(profile.appearance)
+        }
     }
 
     private func paletteRow(_ palette: CreatorVibePalette) -> some View {
@@ -1165,9 +1195,8 @@ struct AppearanceSettingsView: View {
                     }
                 }
 
-                Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .opacity(profile.vibePalette == palette ? 1 : 0)
+                AgentIconView(.check, size: 13)
+                    .opacity(draftPalette == palette ? 1 : 0)
                     .frame(width: 16)
             }
             .foregroundStyle(Color.agentText)
@@ -1175,7 +1204,7 @@ struct AppearanceSettingsView: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(profile.vibePalette == palette ? .isSelected : [])
+        .accessibilityAddTraits(draftPalette == palette ? .isSelected : [])
     }
 
     private var activeWorkspacePillars: [Pillar] {
@@ -1189,13 +1218,28 @@ struct AppearanceSettingsView: View {
     }
 
     private func selectPalette(_ palette: CreatorVibePalette) {
-        profile.vibePalette = palette
-        PillarPaletteAssignment.apply(palette, to: activeWorkspacePillars)
+        draftPalette = palette
+    }
+
+    private var hasChanges: Bool {
+        draftAppearance != profile.appearance || draftPalette != profile.vibePalette
+    }
+
+    private func saveAndDismiss() {
+        profile.appearance = draftAppearance
+        profile.vibePalette = draftPalette
+        if let draftPalette {
+            PillarPaletteAssignment.apply(draftPalette, to: activeWorkspacePillars)
+        }
         do {
             try context.save()
+            appModel.appearancePreference = draftAppearance
+            AgentAppearanceController.apply(draftAppearance)
             WidgetSnapshotService.refresh(context: context)
+            didSave = true
+            dismiss()
         } catch {
-            appModel.notice = .error("Those pillar colors could not be updated.")
+            appModel.notice = .error("Your appearance changes could not be saved.")
         }
     }
 }
@@ -1215,7 +1259,7 @@ private struct AppearanceSwatch: View {
             case .light:
                 Color.agentSurface
             case .dark:
-                Color(red: 20 / 255, green: 20 / 255, blue: 20 / 255)
+                Color(uiColor: AgentColorPalette.surfaceDark.uiColor)
             }
         }
         .frame(width: 42, height: 42)
@@ -1335,8 +1379,10 @@ struct PublishingSettingsView: View {
                         .frame(minHeight: 50)
                     }
 
-                    Button("Add format", systemImage: "plus") {
+                    Button {
                         destinationForNewFormat = destination
+                    } label: {
+                        AgentIconLabel(title: "Add format", icon: .add)
                     }
                     .font(.agentSubtext)
                     .foregroundStyle(Color.agentText)
@@ -1344,8 +1390,10 @@ struct PublishingSettingsView: View {
                 }
             }
 
-            Button("Add destination", systemImage: "plus") {
+            Button {
                 showNewDestination = true
+            } label: {
+                AgentIconLabel(title: "Add destination", icon: .add)
             }
             .buttonStyle(AgentSecondaryButtonStyle())
         }
@@ -1491,7 +1539,7 @@ struct CalendarIntegrationSettingsView: View {
                             select(calendar)
                         } label: {
                             if calendar.id == calendarIdentifier {
-                                Label(calendar.displayTitle, systemImage: "checkmark")
+                                AgentIconLabel(title: calendar.displayTitle, icon: .check)
                             } else {
                                 Text(calendar.displayTitle)
                             }
@@ -1510,8 +1558,7 @@ struct CalendarIntegrationSettingsView: View {
                             }
                         }
                         Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 12, weight: .semibold))
+                        AgentIconView(.moveVertical, size: 12)
                             .foregroundStyle(Color.agentSecondary)
                     }
                     .padding(.horizontal, AgentSpacing.x4)

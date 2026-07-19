@@ -23,8 +23,7 @@ struct AIConnectionsSettingsView: View {
                             .foregroundStyle(Color.agentSecondary)
                     }
                     Spacer()
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 15, weight: .semibold))
+                    AgentIconView(.check, size: 15)
                         .foregroundStyle(Color.agentSuccess)
                 }
             }

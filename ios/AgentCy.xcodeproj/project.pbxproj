@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		032E3EC3747CDFC2D426662E /* SubscriptionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA6C9C86E362B62542DDF9A /* SubscriptionServiceTests.swift */; };
+		05A00B936F4C7F31E9B338B4 /* AgentOKLCH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7BC329069B84B8EF7C9DC2 /* AgentOKLCH.swift */; };
+		072C158E4D96D7BF7719084A /* AgentOKLCH.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7BC329069B84B8EF7C9DC2 /* AgentOKLCH.swift */; };
 		1260B9CA74204DF175D41F2F /* WeeklyFocusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EB07F9D3CB67353EDCE1559 /* WeeklyFocusTests.swift */; };
 		1335DE39E26ECD0BF9129A89 /* PrivacyEraseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB993766D86ACF3C2BE275F /* PrivacyEraseTests.swift */; };
 		1C214971853E88CF85BD1EB7 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F6D5B8F2772B45A4725B081 /* DesignTokens.swift */; };
@@ -22,6 +24,7 @@
 		2E57FC40E99545BB22654143 /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */; };
 		2EB109CD453CA7B8E88422A4 /* CreatorFacingErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EE865F30D7045BDE25BCB03 /* CreatorFacingErrorMapper.swift */; };
 		2EDCD6B93E581A9AC46643CD /* PostOutputDetailPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A767BC4BC6D8425E932DC66 /* PostOutputDetailPolicyTests.swift */; };
+		3001A6BC0F5C15D5EAAF10FE /* AgentOKLCHTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E71D4926F1A6F43D2FC06A5 /* AgentOKLCHTests.swift */; };
 		32CEEAC2741F7D2CA0C56788 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED042483D5E974837FB79516 /* AppModel.swift */; };
 		335FDFC5DB4C4A0241E57A15 /* HomeDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C8ED939263980C183ADC0D /* HomeDashboardView.swift */; };
 		3591BAF10577C5D2BEDB897A /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */; };
@@ -156,6 +159,7 @@
 		21CD1E6AF82397A608BF0BAE /* AgentCyWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AgentCyWidgets.entitlements; sourceTree = "<group>"; };
 		248EE354EECA4376746664F1 /* LifecycleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleService.swift; sourceTree = "<group>"; };
 		2A093BBE992B4F9C8FB54026 /* CaptureIdeaIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureIdeaIntent.swift; sourceTree = "<group>"; };
+		2C7BC329069B84B8EF7C9DC2 /* AgentOKLCH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentOKLCH.swift; sourceTree = "<group>"; };
 		2CBA889DE666233D1DAF7731 /* LocalCyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCyService.swift; sourceTree = "<group>"; };
 		2CE99C98B1218FE6C538B215 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		2E5218FDC69A00950C772AF0 /* MCPBridgeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPBridgeSettingsView.swift; sourceTree = "<group>"; };
@@ -198,6 +202,7 @@
 		89C8A149FB0B11AD4A75D0C0 /* FocusPlanning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPlanning.swift; sourceTree = "<group>"; };
 		8B173D7947488D50FC476EB0 /* VoiceExampleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceExampleService.swift; sourceTree = "<group>"; };
 		8D0AC4E38E4A613C1BABA115 /* CalendarSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncService.swift; sourceTree = "<group>"; };
+		8E71D4926F1A6F43D2FC06A5 /* AgentOKLCHTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentOKLCHTests.swift; sourceTree = "<group>"; };
 		8FCD77E5A7CC4A9D3D3B3C2C /* AgendaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgendaView.swift; sourceTree = "<group>"; };
 		974DEBD0CA292FD5B0254415 /* ReminderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderService.swift; sourceTree = "<group>"; };
 		97CBFDCC0967A07B6FAC4CCE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -335,6 +340,7 @@
 		5AE978D53B62AD551B974F46 /* AgentCyTests */ = {
 			isa = PBXGroup;
 			children = (
+				8E71D4926F1A6F43D2FC06A5 /* AgentOKLCHTests.swift */,
 				C31A43C956901ACA0B64E331 /* AIOperationIDRegistryTests.swift */,
 				7A82ED71F777E8E20951F02A /* APIClientTests.swift */,
 				6F2AEDB88E979EC9B6C428A2 /* CalendarSyncTests.swift */,
@@ -566,6 +572,7 @@
 			isa = PBXGroup;
 			children = (
 				5634890A78B64FFE66F89277 /* AgentCyWidgetSnapshot.swift */,
+				2C7BC329069B84B8EF7C9DC2 /* AgentOKLCH.swift */,
 				6EC56D0F9538E7410428720B /* WidgetTaskCompletionIntent.swift */,
 			);
 			path = AgentCyShared;
@@ -738,6 +745,7 @@
 				69A10980CADCF637DD9D03F0 /* AgentCyApp.swift in Sources */,
 				FD0C15D65A8FED9126562AFC /* AgentCyApplicationDelegate.swift in Sources */,
 				E1B8CD8D9FBB7D6CF73489FE /* AgentCyWidgetSnapshot.swift in Sources */,
+				072C158E4D96D7BF7719084A /* AgentOKLCH.swift in Sources */,
 				F67985900FE276638634C83C /* AgentPostCard.swift in Sources */,
 				32CEEAC2741F7D2CA0C56788 /* AppModel.swift in Sources */,
 				AE17A524DA0D2F8C22B40F4C /* AppShellView.swift in Sources */,
@@ -802,6 +810,7 @@
 			files = (
 				C759610EB926E81C658FC557 /* AIOperationIDRegistryTests.swift in Sources */,
 				82922D2A8BDFE92BD7D5F378 /* APIClientTests.swift in Sources */,
+				3001A6BC0F5C15D5EAAF10FE /* AgentOKLCHTests.swift in Sources */,
 				2611FB37A5012FFE578B971F /* CalendarSyncTests.swift in Sources */,
 				AA8C46FF2341C135532A7268 /* CaptureIdeaShortcutTests.swift in Sources */,
 				FF46BE5A29756A85F72C9474 /* ContentResetTests.swift in Sources */,
@@ -828,6 +837,7 @@
 			files = (
 				D66103300B527CE208E80C4C /* AgentCyWidgetSnapshot.swift in Sources */,
 				BE48248BD05E2DD406D5E87A /* AgentCyWidgets.swift in Sources */,
+				05A00B936F4C7F31E9B338B4 /* AgentOKLCH.swift in Sources */,
 				A2646ECD5551FFE8F5811E92 /* WidgetTaskCompletionIntent.swift in Sources */,
 				9F6BEE75819E8094D3A18EFD /* WidgetViews.swift in Sources */,
 			);
@@ -906,7 +916,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 134;
+				CURRENT_PROJECT_VERSION = 137;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_LANGUAGE = en;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -968,7 +978,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 134;
+				CURRENT_PROJECT_VERSION = 137;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_LANGUAGE = en;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

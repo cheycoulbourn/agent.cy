@@ -145,6 +145,11 @@ struct QuickCaptureView: View {
         var id: String { rawValue }
     }
 
+    private enum QuickTaskType {
+        case post
+        case focus
+    }
+
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -174,6 +179,9 @@ struct QuickCaptureView: View {
     @State private var taskPriority: TaskPriority = .none
     @State private var taskRecurrence: TaskRecurrenceFrequency = .none
     @State private var taskFocusAssignment: DailyFocusTaskAssignment?
+    @State private var quickTaskType: QuickTaskType?
+    @State private var showPostTaskCreation = false
+    @State private var didSavePostTask = false
     @State private var draftSubtasks: [DraftCaptureSubtask] = []
     @State private var showTaskDueDatePicker = false
     @State private var addTarget = false
@@ -213,42 +221,58 @@ struct QuickCaptureView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-                    if showingCySuggestions {
-                        cySuggestionsContent
-                    } else {
+            Group {
+                if !showingCySuggestions, kind == .post, let quickPostDraft {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                         captureKindRail
+                            .padding(.horizontal, AgentLayout.pageMargin)
+                            .padding(.top, AgentSpacing.x4)
 
-                        if kind == .post, let quickPostDraft {
-                            ResumablePostEditorView(
-                                brief: quickPostDraft.brief,
-                                output: quickPostDraft.output,
-                                contextLabel: "New post",
-                                onSpark: { showPostDevelopment = true }
-                            )
-                        } else {
-                            switch kind {
-                            case .spark: sparkComposer
-                            case .post: postComposer
-                            case .task: taskComposer
+                        ResumablePostEditorView(
+                            brief: quickPostDraft.brief,
+                            output: quickPostDraft.output,
+                            contextLabel: "New post",
+                            bottomActionClearance: AgentSpacing.x3,
+                            onSpark: { showPostDevelopment = true }
+                        )
+                    }
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                            if showingCySuggestions {
+                                cySuggestionsContent
+                            } else {
+                                captureKindRail
+
+                                switch kind {
+                                case .spark: sparkComposer
+                                case .post: postComposer
+                                case .task:
+                                    if quickTaskType == .focus {
+                                        taskComposer
+                                    } else {
+                                        taskTypeChooser
+                                    }
+                                }
                             }
                         }
+                        .padding(.horizontal, AgentLayout.pageMargin)
+                        .padding(.top, AgentSpacing.x4)
+                        .padding(.bottom, 120)
                     }
+                    .scrollDismissesKeyboard(.interactively)
                 }
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.top, AgentSpacing.x4)
-                .padding(.bottom, 120)
             }
-            .scrollDismissesKeyboard(.interactively)
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { closeCapture() }.labelStyle(.iconOnly)
+                    AgentToolbarIconButton(title: "Close", icon: .close) { closeCapture() }
                 }
+                .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .confirmationAction) {
-                    if !showingCySuggestions, kind == .spark || kind == .task {
+                    if !showingCySuggestions,
+                       kind == .spark || (kind == .task && quickTaskType == .focus) {
                         Button {
                             if kind == .spark {
                                 saveIdea()
@@ -256,15 +280,14 @@ struct QuickCaptureView: View {
                                 saveTask()
                             }
                         } label: {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.black)
+                            AgentIconView(.check, size: 15)
+                                .foregroundStyle(Color.agentPureBlack)
                                 .frame(width: 18, height: 18)
                         }
                         .buttonStyle(.borderedProminent)
                         .buttonBorderShape(.circle)
                         .controlSize(.large)
-                        .tint(Color(red: 1, green: 1, blue: 1))
+                        .tint(Color(uiColor: AgentColorPalette.pureWhite.uiColor))
                         .disabled(!canSaveToolbarItem)
                         .opacity(canSaveToolbarItem ? 1 : 0.4)
                         .accessibilityLabel(kind == .spark ? "Save idea" : "Save task")
@@ -295,10 +318,12 @@ struct QuickCaptureView: View {
                     addTarget = appModel.quickCaptureTargetDate != nil
                     if let requestedLane = appModel.quickCaptureTaskLane {
                         taskLane = requestedLane
+                        quickTaskType = .focus
                     }
                     appModel.quickCaptureTaskLane = nil
                     if let focusAssignment = appModel.quickCaptureTaskFocus {
                         taskFocusAssignment = focusAssignment
+                        quickTaskType = .focus
                         taskLane = .production
                         taskKind = focusAssignment.taskKind
                         targetDate = focusAssignment.date
@@ -318,6 +343,7 @@ struct QuickCaptureView: View {
             }
             .onChange(of: kind) { _, newKind in
                 if newKind == .post { beginQuickPostDraft() }
+                if newKind != .task { quickTaskType = nil }
                 if newKind != .spark {
                     updateSavedIdeaFromForm()
                     savedBrief = nil
@@ -346,6 +372,19 @@ struct QuickCaptureView: View {
                     includesTime: $taskIncludesTime
                 )
                 .presentationDetents([.large])
+            }
+            .sheet(isPresented: $showPostTaskCreation, onDismiss: {
+                if didSavePostTask {
+                    dismiss()
+                } else {
+                    quickTaskType = nil
+                }
+            }) {
+                PostTaskCreationFlow {
+                    didSavePostTask = true
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
         .presentationDetents([.height(620), .large], selection: $selectedDetent)
@@ -459,8 +498,7 @@ struct QuickCaptureView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 18)
                         .stroke(Color.agentText.opacity(0.3), lineWidth: 1.5)
-                    Image(systemName: "exclamationmark")
-                        .font(.system(size: 19, weight: .medium))
+                    AgentIconView(.warning, size: 19)
                         .foregroundStyle(Color.agentText)
                 }
                 .frame(width: 48, height: 48)
@@ -647,8 +685,7 @@ struct QuickCaptureView: View {
                         isCyIdeaCardVisible = false
                     }
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
+                    AgentIconView(.close, size: 12)
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
@@ -678,8 +715,7 @@ struct QuickCaptureView: View {
                             if isFindingIdeas {
                                 CyThinkingMark(color: .onCyAccent, size: 14)
                             } else {
-                                Image(systemName: "arrow.right")
-                                    .font(.system(size: 11, weight: .semibold))
+                                AgentIconView(.arrowRight, size: 11)
                             }
                         }
                         .font(.agentSubtext.weight(.semibold))
@@ -696,8 +732,7 @@ struct QuickCaptureView: View {
                 Button(action: openIdeaBank) {
                     HStack(spacing: 6) {
                         Text("Idea Bank")
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 11, weight: .semibold))
+                        AgentIconView(.arrowRight, size: 11)
                     }
                     .font(.agentSubtext.weight(.medium))
                     .foregroundStyle(Color.agentText)
@@ -731,6 +766,91 @@ struct QuickCaptureView: View {
     private func openIdeaBank() {
         appModel.presentedSheet = nil
         appModel.selectedTab = .ideaBank
+    }
+
+    private var taskTypeChooser: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                MetaLabel("Task type")
+                Text("What kind of task is this?")
+                    .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
+                    .tracking(-0.56)
+                Text("Choose where the task belongs before adding its details.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 0) {
+                taskTypeButton(
+                    title: "Post task",
+                    detail: "Connected to a scheduled post.",
+                    icon: .calendar,
+                    showsDivider: true
+                ) {
+                    quickTaskType = .post
+                    didSavePostTask = false
+                    showPostTaskCreation = true
+                }
+
+                taskTypeButton(
+                    title: "Focus task",
+                    detail: "Standalone or recurring work for a focus day.",
+                    icon: .tasks,
+                    showsDivider: false
+                ) {
+                    taskLane = .production
+                    quickTaskType = .focus
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentRadius.panel)
+                    .stroke(Color.agentBorder, lineWidth: 0.75)
+            }
+        }
+    }
+
+    private func taskTypeButton(
+        title: String,
+        detail: String,
+        icon: AgentIcon,
+        showsDivider: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: AgentSpacing.x4) {
+                AgentIconView(icon, size: 18)
+                    .foregroundStyle(Color.agentText)
+                    .frame(width: 28, height: 28)
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(title)
+                        .font(.agentBody.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+                    Text(detail)
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                AgentIconView(.forward, size: 12)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            .frame(minHeight: 76)
+            .contentShape(.rect)
+            .overlay(alignment: .bottom) {
+                if showsDivider {
+                    Rectangle()
+                        .fill(Color.agentHairline)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(detail)
     }
 
     private var taskComposer: some View {
@@ -824,37 +944,7 @@ struct QuickCaptureView: View {
                     .focused($focusedWritingField, equals: .taskNotes)
             }
 
-            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Subtasks")
-                        .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
-                    Spacer()
-                    MetaLabel("\(draftSubtasks.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count)")
-                }
-
-                ForEach($draftSubtasks) { $subtask in
-                    DraftCaptureSubtaskRow(subtask: $subtask)
-                }
-
-                Button {
-                    draftSubtasks.append(DraftCaptureSubtask())
-                } label: {
-                    HStack(spacing: AgentSpacing.x3) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color.agentText.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [3]))
-                            .frame(width: 18, height: 18)
-                        Text("Add subtask")
-                            .font(.agentAddAction)
-                        Spacer()
-                    }
-                    .foregroundStyle(Color.agentText)
-                    .frame(minHeight: 48)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
+            DraftSubtaskComposer(subtasks: $draftSubtasks)
         }
         .onChange(of: taskRecurrence) { _, recurrence in
             if recurrence != .none { addTarget = true }
@@ -969,8 +1059,10 @@ struct QuickCaptureView: View {
                 DatePicker("Time", selection: $targetDate, displayedComponents: .hourAndMinute)
             }
 
-            Button("Save post", systemImage: "checkmark") {
+            Button {
                 savePost(title: postTitle)
+            } label: {
+                AgentIconLabel(title: "Save post", icon: .check)
             }
             .buttonStyle(AgentPrimaryButtonStyle())
             .disabled(postTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1013,7 +1105,7 @@ struct QuickCaptureView: View {
         return switch kind {
         case .spark: "New idea"
         case .post: "New post"
-        case .task: "New task"
+        case .task: quickTaskType == .focus ? "New focus task" : "New task"
         }
     }
 
@@ -1290,29 +1382,82 @@ struct DraftCaptureSubtask: Identifiable {
     var isCompleted = false
 }
 
+struct DraftSubtaskComposer: View {
+    @Binding var subtasks: [DraftCaptureSubtask]
+    @State private var isAddingSubtask = false
+    @State private var newSubtaskTitle = ""
+    @State private var newSubtaskFocused = false
+
+    private var completedCount: Int {
+        subtasks.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Subtasks")
+                    .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                Spacer()
+                MetaLabel("\(completedCount)")
+            }
+
+            ForEach($subtasks) { $subtask in
+                DraftCaptureSubtaskRow(subtask: $subtask)
+            }
+
+            if isAddingSubtask {
+                HStack(spacing: AgentSpacing.x2) {
+                    AgentTaskCheckboxPlaceholder()
+
+                    PersistentSubmitTextField(
+                        text: $newSubtaskTitle,
+                        isFocused: $newSubtaskFocused,
+                        placeholder: "Add a subtask"
+                    ) {
+                        confirmSubtaskAndContinue()
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityHint("Press Return to save and add another subtask")
+                }
+                .padding(.vertical, AgentSpacing.x2)
+            } else {
+                AgentBlockAddActionButton(title: "Add sub-task") {
+                    isAddingSubtask = true
+                    Task { @MainActor in
+                        await Task.yield()
+                        newSubtaskFocused = true
+                    }
+                }
+                .padding(.top, AgentSpacing.x2)
+            }
+        }
+    }
+
+    private func confirmSubtaskAndContinue() {
+        let title = newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        var subtask = DraftCaptureSubtask()
+        subtask.title = title
+        subtasks.append(subtask)
+        newSubtaskTitle = ""
+        newSubtaskFocused = true
+    }
+}
+
 struct DraftCaptureSubtaskRow: View {
     @Binding var subtask: DraftCaptureSubtask
 
     var body: some View {
         HStack(spacing: AgentSpacing.x3) {
-            Button {
+            AgentTaskCheckbox(
+                isCompleted: subtask.isCompleted,
+                color: Color.agentText,
+                accessibilityLabel: subtask.isCompleted
+                    ? "Mark subtask open"
+                    : "Mark subtask complete"
+            ) {
                 subtask.isCompleted.toggle()
-            } label: {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(subtask.isCompleted ? Color.agentText : Color.clear)
-                    .frame(width: 18, height: 18)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color.agentText.opacity(subtask.isCompleted ? 0 : 0.3), lineWidth: 1)
-                        if subtask.isCompleted {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Color.agentCanvas)
-                        }
-                    }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(subtask.isCompleted ? "Mark subtask open" : "Mark subtask complete")
 
             TextField("Subtask", text: $subtask.title, axis: .vertical)
                 .font(.paperInter(size: 15, weight: .medium, relativeTo: .body))
@@ -1320,9 +1465,7 @@ struct DraftCaptureSubtaskRow: View {
                 .strikethrough(subtask.isCompleted)
         }
         .frame(minHeight: 48)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
-        }
+        .padding(.vertical, AgentSpacing.x1)
     }
 }
 
@@ -1454,8 +1597,7 @@ private struct IdeaCaptureSetupRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: AgentSpacing.x2)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .medium))
+            AgentIconView(.forward, size: 12)
         }
         .foregroundStyle(Color.agentText)
         .frame(maxWidth: .infinity, minHeight: 58)
@@ -1519,7 +1661,7 @@ private struct IdeaDirectionRow: View {
             Button(action: select) {
                 HStack(spacing: 6) {
                     Text(isSaved ? "Saved to Idea Bank" : "Save idea")
-                    Image(systemName: isSaved ? "checkmark" : "arrow.right")
+                    AgentIconView(isSaved ? .check : .arrowRight)
                         .font(.system(size: 11, weight: .semibold))
                 }
                 .font(.agentSubtext.weight(.semibold))

@@ -36,25 +36,25 @@ struct IdeaPostDraftView: View {
     }
 
     var body: some View {
-        ScrollView {
+        Group {
             if let draftOutput {
                 ResumablePostEditorView(
                     brief: brief,
                     output: draftOutput,
                     suggestedTargetDate: suggestedTargetDate,
+                    isAlreadyInIdeaBank: true,
                     onSpark: { showDevelopment = true }
                 )
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.top, AgentSpacing.x4)
-                .padding(.bottom, 120)
             } else if creationFailed {
-                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                    Text("Couldn’t open this idea.")
-                        .font(.agentHeadline)
-                    Button("Try again") { createDraft() }
-                        .buttonStyle(AgentSecondaryButtonStyle())
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                        Text("Couldn’t open this idea.")
+                            .font(.agentHeadline)
+                        Button("Try again") { createDraft() }
+                            .buttonStyle(AgentSecondaryButtonStyle())
+                    }
+                    .padding(AgentLayout.pageMargin)
                 }
-                .padding(AgentLayout.pageMargin)
             } else {
                 ProgressView("Opening your draft…")
                     .frame(maxWidth: .infinity, minHeight: 240)

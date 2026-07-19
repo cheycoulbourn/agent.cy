@@ -28,6 +28,9 @@ struct PillarsView: View {
     }
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
+    private var canAddPillar: Bool {
+        PillarCollectionPolicy.canCreate(activeCount: activePillars.count)
+    }
     private var anchor: Pillar? {
         activePillars.first { $0.parentPillarID == nil && $0.role == .anchor }
             ?? activePillars.first { $0.parentPillarID == nil }
@@ -47,10 +50,12 @@ struct PillarsView: View {
                         if let anchor {
                             VStack(alignment: .leading, spacing: 48) {
                                 anchorHero(anchor)
+                                    .appWalkthroughTarget(.pillarsOverview)
                                 branchesSection(anchor: anchor)
                             }
                         } else {
                             emptyAnchor
+                                .appWalkthroughTarget(.pillarsOverview)
                         }
                     }
                     .padding(.horizontal, AgentLayout.dashboardGutter)
@@ -102,9 +107,10 @@ struct PillarsView: View {
     }
 
     private var unavailableDestination: some View {
-        ContentUnavailableView(
-            "This item is no longer available",
-            systemImage: "tray"
+        AgentEmptyState(
+            title: "This item is no longer available",
+            message: "It may have been moved or deleted.",
+            icon: .ideas
         )
         .agentScreen()
     }
@@ -118,9 +124,9 @@ struct PillarsView: View {
             )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Your")
-                    .font(.system(size: 32, weight: .regular, design: .default))
-                Text("pillars.")
+                Text("What do you want")
+                    .font(.agentDisplayLead)
+                Text("to be known for?")
                     .font(.agentDisplay)
             }
             .tracking(-0.64)
@@ -128,7 +134,7 @@ struct PillarsView: View {
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x8)
-        .padding(.bottom, 58)
+        .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
 
     private var activeIdentity: ActiveCreatorIdentity {
@@ -150,22 +156,19 @@ struct PillarsView: View {
 
         return VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: AgentSpacing.x2) {
-                PaperPillarMeta("Anchor", weight: .semibold, tracking: 1.6)
+                PaperPillarMeta("Anchor pillar", weight: .semibold, tracking: 1.6)
                 Circle().fill(Color.agentText).frame(width: 3, height: 3)
                 PaperPillarMeta(daySummary(anchor.assignedWeekdays))
             }
 
             NavigationLink(value: PillarsRoute.pillar(anchor.id)) {
                 HStack(spacing: 14) {
-                    Circle()
-                        .fill(Color(agentHex: anchor.colorHex))
-                        .frame(width: 16, height: 16)
+                    PillarColorMark(color: Color(agentHex: anchor.colorHex), diameter: 16, lineWidth: 1)
                     Text(anchor.name)
                         .font(.paperInter(size: 32, weight: .medium, relativeTo: .title))
                         .tracking(-0.96)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
+                    AgentIconView(.forward, size: 14)
                         .foregroundStyle(Color.agentSecondary)
                         .frame(width: 44, height: 44)
                 }
@@ -190,9 +193,8 @@ struct PillarsView: View {
     private func branchesSection(anchor: Pillar) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: AgentSpacing.x2) {
-                PaperPillarMeta("Branches", weight: .semibold, tracking: 1.6)
+                PaperPillarMeta("Secondary pillars", weight: .semibold, tracking: 1.6)
                 PaperHairline().frame(maxWidth: .infinity)
-                PaperPillarMeta("Supporting pillars", tracking: 1)
             }
 
             ForEach(branches) { branch in
@@ -211,20 +213,23 @@ struct PillarsView: View {
                 .buttonStyle(.plain)
             }
 
-            PillarInlineAddAction(title: "Add a branch") {
-                newPillarParentID = anchor.id
-                showNewPillar = true
+            if canAddPillar {
+                AgentBlockAddActionButton(title: "Add pillar") {
+                    newPillarParentID = anchor.id
+                    showNewPillar = true
+                }
+                .padding(.top, AgentSpacing.x3)
             }
         }
     }
 
     private var emptyAnchor: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-            PaperPillarMeta("Anchor")
+            PaperPillarMeta("Anchor pillar")
             Text("Start with the pillar everything leads back to.")
                 .font(.paperInter(size: 28, weight: .medium, relativeTo: .title))
                 .tracking(-0.7)
-            Text("Your anchor is the central pillar. Branches support it.")
+            Text("Your anchor is the central pillar. Secondary pillars support it.")
                 .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
                 .foregroundStyle(Color.agentSecondary)
             Button("Create your anchor") {
@@ -236,32 +241,6 @@ struct PillarsView: View {
     }
 }
 
-private struct PillarInlineAddAction: View {
-    let title: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Circle()
-                    .stroke(Color.agentSecondary, style: StrokeStyle(lineWidth: 1.25, dash: [2, 2]))
-                    .frame(width: 10, height: 10)
-                Text(title)
-                    .font(.agentAddAction)
-                    .tracking(-0.25)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .foregroundStyle(Color.agentText)
-            .frame(minHeight: 66)
-            .overlay(alignment: .bottom) { PaperHairline() }
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct PillarBranchRow: View {
     let pillar: Pillar
     let metrics: PillarMetrics
@@ -270,14 +249,13 @@ private struct PillarBranchRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 HStack(spacing: 10) {
-                    Circle().fill(Color(agentHex: pillar.colorHex)).frame(width: 10, height: 10)
+                    PillarColorMark(color: Color(agentHex: pillar.colorHex), diameter: 10)
                     Text(pillar.name)
                         .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
                         .tracking(-0.25)
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                AgentIconView(.forward, size: 11)
             }
 
             HStack {
@@ -425,7 +403,7 @@ struct PillarDetailView: View {
             HStack {
                 Button { dismiss() } label: {
                     HStack(spacing: AgentSpacing.x2) {
-                        Image(systemName: "chevron.left")
+                        AgentIconView(.back)
                         Text("Pillars")
                     }
                     .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
@@ -440,8 +418,7 @@ struct PillarDetailView: View {
                         .buttonStyle(.plain)
 
                     Button(action: saveEdits) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 15, weight: .semibold))
+                        AgentIconView(.check, size: 15)
                             .foregroundStyle(Color.agentText)
                             .frame(width: 44, height: 44)
                             .background(Color.agentSurface, in: .circle)
@@ -462,10 +439,10 @@ struct PillarDetailView: View {
                 }
             }
 
-            PaperPillarMeta(isAnchor ? "Anchor" : "Branch")
+            PaperPillarMeta(isAnchor ? "Anchor pillar" : "Secondary pillar")
 
             HStack(spacing: 14) {
-                Circle().fill(Color(agentHex: displayedColorHex)).frame(width: 16, height: 16)
+                PillarColorMark(color: Color(agentHex: displayedColorHex), diameter: 16, lineWidth: 1)
                 if isEditing {
                     TextField("", text: $draftName)
                         .font(.paperInter(size: 32, weight: .medium, relativeTo: .title))
@@ -483,7 +460,7 @@ struct PillarDetailView: View {
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x4)
-        .padding(.bottom, 58)
+        .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
 
     @ViewBuilder
@@ -623,7 +600,7 @@ struct PillarDetailView: View {
                         ZStack {
                             Circle()
                                 .stroke(Color.agentSecondary, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                            Image(systemName: "plus").font(.system(size: 9, weight: .medium))
+                            AgentIconView(.add, size: 9)
                         }
                         .frame(width: 18, height: 18)
                         Text("Save an idea")
@@ -779,14 +756,11 @@ private struct PillarContentRow: View {
         case .cyDirection:
             CyAsterisk(color: .cyAccent, size: 12, strokeWidth: 1.2)
         case .voiceTranscript:
-            Image(systemName: "mic")
-                .font(.system(size: 10, weight: .medium))
+            AgentIconView(.microphone, size: 10)
         case .repurposedBrief:
-            Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 10, weight: .medium))
+            AgentIconView(.branch, size: 10)
         case .text:
-            Image(systemName: "tray")
-                .font(.system(size: 10, weight: .medium))
+            AgentIconView(.ideas, size: 10)
         }
     }
     private var metadata: String {
@@ -832,20 +806,23 @@ struct NewPillarView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(parentPillarID == nil ? "Anchor" : "Branch") {
+                Section(parentPillarID == nil ? "Anchor pillar" : "Secondary pillar") {
                     TextField("Name", text: $name)
                         .agentSingleLineSubmit()
                 }
                 Section("Color") { PillarColorChooser(paletteHexes: paletteHexes, selectedHex: $colorHex) }
                 Section("Days") { WeekdayChooser(selection: $assignedWeekdays, accentHex: colorHex) }
             }
-            .navigationTitle(parentPillarID == nil ? "New anchor" : "New branch")
+            .navigationTitle(parentPillarID == nil ? "New anchor" : "New pillar")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(
+                            name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                !PillarCollectionPolicy.canCreate(activeCount: activePillars.count)
+                        )
                 }
             }
             .task {
@@ -859,6 +836,11 @@ struct NewPillarView: View {
     }
 
     private func save() {
+        guard PillarCollectionPolicy.canCreate(activeCount: activePillars.count) else {
+            appModel.notice = .info("You can have up to six pillars.")
+            dismiss()
+            return
+        }
         let parent = activePillars.first { $0.id == parentPillarID }
         let pillar = Pillar(
             parentPillarID: parent?.id,
@@ -905,7 +887,6 @@ private struct PillarPaperSurface<Content: View>: View {
             .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
             .background(Color.agentSurface)
             .clipShape(.rect(cornerRadius: 28))
-            .shadow(color: Color.agentText.opacity(0.04), radius: 24, y: 2)
     }
 }
 
@@ -1072,8 +1053,7 @@ extension Font {
         .custom("InterVariable", size: size, relativeTo: style).weight(weight)
     }
     static func paperMono(size: CGFloat, weight: Font.Weight, relativeTo style: TextStyle) -> Font {
-        let name = weight == .semibold ? "IBMPlexMono-Medm" : "IBMPlexMono-Regular"
-        return .custom(name, size: size, relativeTo: style).weight(weight)
+        .custom("InterVariable", size: size, relativeTo: style).weight(weight)
     }
 }
 

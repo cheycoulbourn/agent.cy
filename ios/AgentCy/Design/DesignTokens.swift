@@ -18,6 +18,8 @@ enum AgentLayout {
     static let pageMargin: CGFloat = AgentSpacing.x6
     /// Outer gutter for the rounded dashboard surfaces used by Today, Agenda, and Pillars.
     static let dashboardGutter: CGFloat = AgentSpacing.x3
+    /// Consistent distance from the final line of a page header to its first primary surface.
+    static let pageHeaderToContentSpacing: CGFloat = AgentSpacing.x8
     /// Standard vertical gap between a section's metadata heading and its primary content.
     static let sectionHeadingSpacing: CGFloat = AgentSpacing.x2
 }
@@ -30,25 +32,266 @@ enum AgentRadius {
     static let dashboard: CGFloat = 28
 }
 
-extension Color {
-    static let agentCanvas = adaptive(light: 0xF5F6F3, dark: 0x1A1A1A)
-    static let agentSurface = adaptive(light: 0xFDFDFB, dark: 0x141414)
-    static let agentText = adaptive(light: 0x141414, dark: 0xF5F6F3)
-    static let agentSecondary = adaptive(light: 0x514D47, dark: 0xCFCBC3)
-    static let agentBorder = adaptive(light: 0xD7D8D3, dark: 0x383838)
-    static let agentHairline = adaptive(light: 0xE6E7E2, dark: 0x2D2D2D)
-    static let agentFocusControl = adaptive(light: 0x514D47, dark: 0x7D7972)
-    static let actionAccent = adaptive(light: 0x141414, dark: 0xF5F6F3)
-    static let cyAccent = adaptive(light: 0x9B3A2E, dark: 0x9B3A2E)
-    static let onCyAccent = adaptive(light: 0xF5F6F3, dark: 0xF5F6F3)
-    static let onAccent = adaptive(light: 0xF5F6F3, dark: 0x141414)
-    static let agentSuccess = adaptive(light: 0x2B6B4F, dark: 0x6FC49B)
-    static let agentDestructive = adaptive(light: 0x9B3A2E, dark: 0xC95A4B)
+/// Semantic icons for agent.cy. The artwork is curated from the creator's
+/// licensed Nucleo UI outline library and stored as template SVG assets so the
+/// same mark is used consistently in light mode, dark mode, and tinted states.
+enum AgentIcon: String, CaseIterable, Sendable {
+    case add = "agent-icon-add"
+    case close = "agent-icon-close"
+    case check = "agent-icon-check"
+    case checkCircle = "agent-icon-check-circle"
+    case radioEmpty = "agent-icon-radio-empty"
+    case radioSelected = "agent-icon-radio-selected"
+    case checkboxEmpty = "agent-icon-checkbox-empty"
+    case checkboxSelected = "agent-icon-checkbox-selected"
+    case back = "agent-icon-back"
+    case forward = "agent-icon-forward"
+    case expand = "agent-icon-expand"
+    case collapse = "agent-icon-collapse"
+    case moveVertical = "agent-icon-move-vertical"
+    case external = "agent-icon-external"
+    case arrowUp = "agent-icon-arrow-up"
+    case arrowRight = "agent-icon-arrow-right"
+    case branch = "agent-icon-branch"
+    case refresh = "agent-icon-refresh"
+    case home = "agent-icon-home"
+    case calendar = "agent-icon-calendar"
+    case tasks = "agent-icon-tasks"
+    case pillars = "agent-icon-pillars"
+    case ideas = "agent-icon-ideas"
+    case more = "agent-icon-more"
+    case menu = "agent-icon-menu"
+    case search = "agent-icon-search"
+    case filter = "agent-icon-filter"
+    case download = "agent-icon-download"
+    case upload = "agent-icon-upload"
+    case trash = "agent-icon-trash"
+    case duplicate = "agent-icon-duplicate"
+    case terminal = "agent-icon-terminal"
+    case image = "agent-icon-image"
+    case video = "agent-icon-video"
+    case microphone = "agent-icon-microphone"
+    case profile = "agent-icon-profile"
+    case warning = "agent-icon-warning"
+    case keyboardDown = "agent-icon-keyboard-down"
+    case idea = "agent-icon-idea"
+    case folder = "agent-icon-folder"
+    case key = "agent-icon-key"
+    case pencil = "agent-icon-pencil"
+    case archive = "agent-icon-archive"
+    case link = "agent-icon-link"
+    case attachment = "agent-icon-attachment"
+    case play = "agent-icon-play"
+    case stop = "agent-icon-stop"
+    case copy = "agent-icon-copy"
+    case text = "agent-icon-text"
+    case camera = "agent-icon-camera"
+    case music = "agent-icon-music"
+    case messages = "agent-icon-messages"
+    case verified = "agent-icon-verified"
+    case send = "agent-icon-send"
+    case sliders = "agent-icon-sliders"
+    case business = "agent-icon-business"
 
-    private static func adaptive(light: UInt32, dark: UInt32) -> Color {
+    init(legacySystemName name: String) {
+        switch name {
+        case "archivebox": self = .archive
+        case "asterisk", "sparkles": self = .idea
+        case "arrow.down.to.line", "square.and.arrow.down": self = .download
+        case "arrow.right": self = .arrowRight
+        case "arrow.triangle.2.circlepath": self = .refresh
+        case "arrow.triangle.branch": self = .branch
+        case "arrow.up": self = .arrowUp
+        case "arrow.up.right": self = .external
+        case "calendar": self = .calendar
+        case "checkmark": self = .check
+        case "checkmark.circle.fill": self = .checkCircle
+        case "checkmark.square", "checkmark.square.fill": self = .checkboxSelected
+        case "chevron.left": self = .back
+        case "chevron.right": self = .forward
+        case "chevron.down": self = .expand
+        case "chevron.up": self = .collapse
+        case "chevron.up.chevron.down": self = .moveVertical
+        case "circle": self = .radioEmpty
+        case "doc.fill", "doc.on.doc", "text.page": self = .copy
+        case "ellipsis": self = .more
+        case "exclamationmark": self = .warning
+        case "folder": self = .folder
+        case "house": self = .home
+        case "key": self = .key
+        case "keyboard.chevron.compact.down": self = .keyboardDown
+        case "lightbulb", "lightbulb.fill": self = .idea
+        case "link": self = .link
+        case "line.3.horizontal": self = .menu
+        case "line.3.horizontal.decrease": self = .filter
+        case "magnifyingglass": self = .search
+        case "mic": self = .microphone
+        case "music.note": self = .music
+        case "pencil": self = .pencil
+        case "person.fill": self = .profile
+        case "camera.aperture": self = .camera
+        case "photo.on.rectangle.angled": self = .image
+        case "play.fill", "play.rectangle.fill": self = .play
+        case "plus": self = .add
+        case "square": self = .checkboxEmpty
+        case "square.and.arrow.up": self = .upload
+        case "square.grid.2x2": self = .pillars
+        case "slider.horizontal.3": self = .sliders
+        case "square.on.square": self = .duplicate
+        case "stop.fill": self = .stop
+        case "terminal": self = .terminal
+        case "trash": self = .trash
+        case "tray": self = .ideas
+        case "text.alignleft", "text.viewfinder": self = .text
+        case "bubble.left.and.text.bubble.right": self = .messages
+        case "checkmark.seal": self = .verified
+        case "paperplane", "paperplane.fill": self = .send
+        case "briefcase": self = .business
+        case "video.fill": self = .video
+        case "xmark": self = .close
+        case "xmark.circle.fill": self = .close
+        default: self = .idea
+        }
+    }
+}
+
+struct AgentIconView: View {
+    let icon: AgentIcon
+    var size: CGFloat = 18
+
+    nonisolated init(_ icon: AgentIcon, size: CGFloat = 18) {
+        self.icon = icon
+        self.size = size
+    }
+
+    nonisolated init(systemName: String, size: CGFloat = 18) {
+        self.init(AgentIcon(legacySystemName: systemName), size: size)
+    }
+
+    var body: some View {
+        Image(icon.rawValue)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+struct AgentIconLabel: View {
+    let title: String
+    let icon: AgentIcon
+    var iconSize: CGFloat = 16
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            AgentIconView(icon, size: iconSize)
+        }
+    }
+}
+
+struct AgentToolbarIconButton: View {
+    let title: String
+    let icon: AgentIcon
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            AgentIconView(icon, size: 17)
+                .foregroundStyle(Color.agentText)
+                .frame(width: 44, height: 44)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.clear.interactive(), in: .circle)
+        .overlay {
+            Circle()
+                .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.42)
+        .accessibilityLabel(title)
+    }
+}
+
+extension Color {
+    static let agentPureBlack = Color(uiColor: AgentColorPalette.pureBlack.uiColor)
+    static let agentPureWhite = Color(uiColor: AgentColorPalette.pureWhite.uiColor)
+    static let agentCanvas = adaptive(light: AgentColorPalette.canvasLight, dark: AgentColorPalette.canvasDark)
+    static let agentSurface = adaptive(light: AgentColorPalette.surfaceLight, dark: AgentColorPalette.surfaceDark)
+    static let agentText = adaptive(light: AgentColorPalette.inkLight, dark: AgentColorPalette.inkDark)
+    static let agentSecondary = adaptive(light: AgentColorPalette.secondaryLight, dark: AgentColorPalette.secondaryDark)
+    static let agentBorder = adaptive(light: AgentColorPalette.borderLight, dark: AgentColorPalette.borderDark)
+    static let agentHairline = adaptive(light: AgentColorPalette.hairlineLight, dark: AgentColorPalette.hairlineDark)
+    static let agentFocusControl = adaptive(light: AgentColorPalette.focusLight, dark: AgentColorPalette.focusDark)
+    static let actionAccent = adaptive(light: AgentColorPalette.inkLight, dark: AgentColorPalette.inkDark)
+    static let cyAccent = Color(uiColor: AgentColorPalette.cy.uiColor)
+    static let onCyAccent = Color(uiColor: AgentColorPalette.inkDark.uiColor)
+    static let onAccent = adaptive(light: AgentColorPalette.inkDark, dark: AgentColorPalette.inkLight)
+    static let agentSuccess = adaptive(light: AgentColorPalette.successLight, dark: AgentColorPalette.successDark)
+    static let agentDestructive = adaptive(light: AgentColorPalette.destructiveLight, dark: AgentColorPalette.destructiveDark)
+    static let agentPriorityHigh = adaptive(light: AgentColorPalette.priorityHighLight, dark: AgentColorPalette.priorityHighDark)
+
+    private static func adaptive(light: AgentOKLCH, dark: AgentOKLCH) -> Color {
         Color(uiColor: UIColor { traits in
-            UIColor(rgb: traits.userInterfaceStyle == .dark ? dark : light)
+            traits.userInterfaceStyle == .dark ? dark.uiColor : light.uiColor
         })
+    }
+}
+
+enum PillarVisualContrast {
+    static func outlineColor(for color: Color, colorScheme: ColorScheme) -> Color {
+        let style: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
+        let resolved = UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
+        guard let oklch = AgentOKLCH(uiColor: resolved) else {
+            return Color.agentText.opacity(0.34)
+        }
+
+        if colorScheme == .dark {
+            return Color.agentPureWhite.opacity(oklch.lightness < 0.52 ? 0.58 : 0.20)
+        }
+        return Color.agentPureBlack.opacity(oklch.lightness > 0.82 ? 0.38 : 0.16)
+    }
+
+    static func cardBorderColor(for color: Color, colorScheme: ColorScheme) -> Color {
+        let style: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
+        let resolved = UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
+        guard let oklch = AgentOKLCH(uiColor: resolved) else {
+            return Color.agentText.opacity(0.34)
+        }
+
+        if colorScheme == .dark, oklch.lightness < 0.52 {
+            return Color.agentPureWhite.opacity(0.52)
+        }
+        if colorScheme == .light, oklch.lightness > 0.82 {
+            return Color.agentPureBlack.opacity(0.32)
+        }
+        return color.opacity(colorScheme == .dark ? 0.86 : 0.72)
+    }
+}
+
+struct PillarColorMark: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let color: Color
+    var diameter: CGFloat = 8
+    var lineWidth: CGFloat = 0.75
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: diameter, height: diameter)
+            .overlay {
+                Circle()
+                    .stroke(
+                        PillarVisualContrast.outlineColor(for: color, colorScheme: colorScheme),
+                        lineWidth: lineWidth
+                    )
+            }
     }
 }
 
@@ -80,18 +323,14 @@ enum AgentAppearanceController {
     }
 }
 
-private extension UIColor {
-    convenience init(rgb: UInt32) {
-        self.init(
-            red: CGFloat((rgb >> 16) & 0xFF) / 255,
-            green: CGFloat((rgb >> 8) & 0xFF) / 255,
-            blue: CGFloat(rgb & 0xFF) / 255,
-            alpha: 1
-        )
-    }
-}
-
 extension Font {
+    static var agentDisplayLead: Font {
+        if UIFont(name: "InterVariable", size: 32) != nil {
+            return .custom("InterVariable", size: 32, relativeTo: .largeTitle)
+        }
+        return .system(size: 32, weight: .regular, design: .default)
+    }
+
     static var agentDisplay: Font {
         if UIFont(name: "InterVariable", size: 32) != nil {
             return .custom("InterVariable", size: 32, relativeTo: .largeTitle).weight(.bold)
@@ -145,10 +384,10 @@ extension Font {
     }
 
     static var agentMono: Font {
-        if UIFont(name: "IBMPlexMono-Medm", size: 11) != nil {
-            return .custom("IBMPlexMono-Medm", size: 11, relativeTo: .caption)
+        if UIFont(name: "InterVariable", size: 11) != nil {
+            return .custom("InterVariable", size: 11, relativeTo: .caption).weight(.medium)
         }
-        return .system(size: 11, weight: .medium, design: .monospaced)
+        return .system(size: 11, weight: .medium, design: .default)
     }
 }
 
@@ -166,7 +405,7 @@ struct AgentPrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(foreground)
             .background(background, in: .capsule)
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
@@ -184,13 +423,14 @@ struct AgentCyPrimaryButtonStyle: ButtonStyle {
             .background(Color.cyAccent, in: .capsule)
             .shadow(color: Color.cyAccent.opacity(0.28), radius: 16, y: 6)
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 struct AgentSecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -200,7 +440,9 @@ struct AgentSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.agentText)
             .background(Color.agentSurface, in: .capsule)
             .overlay(Capsule().strokeBorder(Color.agentBorder, lineWidth: 1))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
+            .opacity(isEnabled ? 1 : 0.42)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -218,8 +460,7 @@ struct AgentAddActionRow: View {
                             style: StrokeStyle(lineWidth: 1.5, dash: [3, 3])
                         )
                         .frame(width: 18, height: 18)
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
+                    AgentIconView(.add, size: 10)
                 }
                 .frame(width: 18, height: 18)
 
@@ -232,6 +473,86 @@ struct AgentAddActionRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct AgentBlockAddActionButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                HStack(spacing: AgentSpacing.x2) {
+                    AgentIconView(.add, size: 12)
+
+                    Text(title)
+                        .font(.agentSubtext.weight(.medium))
+                        .textCase(.uppercase)
+                }
+                .foregroundStyle(Color.agentSecondary)
+                .frame(maxWidth: .infinity, minHeight: 38, alignment: .center)
+                .padding(.horizontal, AgentSpacing.x3)
+                .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.control)
+                        .stroke(Color.agentBorder, lineWidth: 1)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct AgentTaskCheckbox: View {
+    let isCompleted: Bool
+    var color: Color = .agentBorder
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            AgentTaskCheckboxMark(isCompleted: isCompleted, color: color)
+                .frame(width: 20, height: 44, alignment: .leading)
+                // Keep a full-size touch target without making the visible
+                // checkbox consume 44 points of horizontal row layout.
+                .contentShape(Rectangle().inset(by: -12))
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct AgentTaskCheckboxMark: View {
+    let isCompleted: Bool
+    var color: Color = .agentBorder
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 4)
+            .stroke(color, lineWidth: 1.25)
+            .background(
+                isCompleted ? color : Color.clear,
+                in: .rect(cornerRadius: 4)
+            )
+            .overlay {
+                if isCompleted {
+                    AgentIconView(.check, size: 11)
+                        .foregroundStyle(Color.agentCanvas)
+                }
+            }
+            .frame(width: 19, height: 19)
+    }
+}
+
+struct AgentTaskCheckboxPlaceholder: View {
+    var color: Color = .agentBorder
+
+    var body: some View {
+        AgentTaskCheckboxMark(isCompleted: false, color: color)
+            .frame(width: 20, height: 44, alignment: .leading)
+            .accessibilityHidden(true)
     }
 }
 
@@ -252,13 +573,14 @@ struct AgentCompactPrimaryButtonStyle: ButtonStyle {
             .background(background, in: .capsule)
             .overlay(Capsule().stroke(border, lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 struct AgentCompactSecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -268,7 +590,9 @@ struct AgentCompactSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.agentText)
             .background(Color.agentSurface, in: .capsule)
             .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
+            .opacity(isEnabled ? 1 : 0.42)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -283,7 +607,7 @@ struct AgentIconPrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.onAccent)
             .background(Color.actionAccent, in: .circle)
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.95 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
@@ -298,22 +622,17 @@ struct AgentCyFloatingButtonStyle: ButtonStyle {
             .frame(width: 56, height: 56)
             .foregroundStyle(Color.onCyAccent)
             .background(Color.cyAccent, in: .circle)
-            .shadow(color: Color.black.opacity(0.22), radius: 12, y: 5)
+            .shadow(color: Color.agentPureBlack.opacity(0.22), radius: 12, y: 5)
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 extension Color {
     init(agentHex rawValue: String) {
-        let cleaned = rawValue.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        let value = UInt64(cleaned, radix: 16) ?? 0x5D6B58
-        self.init(
-            red: Double((value >> 16) & 0xFF) / 255,
-            green: Double((value >> 8) & 0xFF) / 255,
-            blue: Double(value & 0xFF) / 255
-        )
+        let oklch = AgentOKLCH(hex: rawValue) ?? AgentColorPalette.focusLight
+        self.init(uiColor: oklch.uiColor)
     }
 }
 
@@ -339,9 +658,11 @@ struct PillarMenuChoiceLabel: View {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: diameter, height: diameter))
         let image = renderer.image { context in
             UIColor(Color(agentHex: colorHex)).setFill()
-            context.cgContext.fillEllipse(
-                in: CGRect(x: 0, y: 0, width: diameter, height: diameter)
-            )
+            let swatchRect = CGRect(x: 0.75, y: 0.75, width: diameter - 1.5, height: diameter - 1.5)
+            context.cgContext.fillEllipse(in: swatchRect)
+            UIColor.label.withAlphaComponent(0.38).setStroke()
+            context.cgContext.setLineWidth(1)
+            context.cgContext.strokeEllipse(in: swatchRect)
         }
         return image.withRenderingMode(.alwaysOriginal)
     }
@@ -449,6 +770,35 @@ struct SectionRuleHeader: View {
     }
 }
 
+struct AgentEmptyState: View {
+    let title: String
+    let message: String
+    var icon: AgentIcon?
+
+    var body: some View {
+        VStack(spacing: AgentSpacing.x3) {
+            if let icon {
+                AgentIconView(icon, size: 22)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+
+            VStack(spacing: AgentSpacing.x1) {
+                Text(title)
+                    .font(.agentHeadline)
+                    .foregroundStyle(Color.agentText)
+                    .multilineTextAlignment(.center)
+                Text(message)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, AgentSpacing.x8)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 enum CyVoiceHeading: String, CaseIterable, Sendable {
     case says = "Cy says"
     case thinksYouShould = "Cy thinks you should"
@@ -493,11 +843,11 @@ struct CyVoiceCard: View {
     var secondaryAction: CyVoiceAction?
     var dismissAction: (() -> Void)?
 
-    private let foreground = Color(agentHex: "F5F6F3")
-    private let secondary = Color(agentHex: "CFCBC3")
+    private let foreground = Color(uiColor: AgentColorPalette.inkDark.uiColor)
+    private let secondary = Color(uiColor: AgentColorPalette.secondaryDark.uiColor)
 
     private var background: Color {
-        colorScheme == .dark ? Color(agentHex: "241B19") : Color(agentHex: "141414")
+        Color(uiColor: (colorScheme == .dark ? AgentColorPalette.cyPanel : AgentColorPalette.surfaceDark).uiColor)
     }
 
     var body: some View {
@@ -512,8 +862,7 @@ struct CyVoiceCard: View {
                 Spacer(minLength: 0)
                 if let dismissAction {
                     Button(action: dismissAction) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .medium))
+                        AgentIconView(.close, size: 13)
                             .frame(width: 44, height: 44)
                             .contentShape(.rect)
                     }
@@ -543,8 +892,7 @@ struct CyVoiceCard: View {
                 Button(action: primaryAction.action) {
                     HStack(spacing: AgentSpacing.x2) {
                         Text(primaryAction.title)
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 13, weight: .medium))
+                        AgentIconView(.arrowRight, size: 13)
                     }
                     .font(.agentBody.weight(.semibold))
                     .foregroundStyle(background)
@@ -561,8 +909,7 @@ struct CyVoiceCard: View {
                 Button(action: secondaryAction.action) {
                     HStack(spacing: 6) {
                         Text(secondaryAction.title)
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 12, weight: .medium))
+                        AgentIconView(.arrowRight, size: 12)
                     }
                     .font(.agentSubtext)
                     .foregroundStyle(foreground)
@@ -687,7 +1034,7 @@ struct CyCallout<Content: View>: View {
         .foregroundStyle(Color.agentText)
         .padding(AgentSpacing.x6)
         .background(
-            colorScheme == .dark ? Color(agentHex: "241B19") : Color(agentHex: "141414"),
+            Color(uiColor: (colorScheme == .dark ? AgentColorPalette.cyPanel : AgentColorPalette.surfaceDark).uiColor),
             in: .rect(cornerRadius: 20)
         )
         .overlay {
@@ -866,85 +1213,65 @@ private struct AgentKeyboardDismissalModifier: ViewModifier {
 }
 
 enum AgentChipContrast {
-    private struct RGB {
-        let red: Double
-        let green: Double
-        let blue: Double
-
-        init?(hex: String) {
-            let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-            guard cleaned.count == 6, let value = UInt64(cleaned, radix: 16) else { return nil }
-            red = Double((value >> 16) & 0xFF) / 255
-            green = Double((value >> 8) & 0xFF) / 255
-            blue = Double(value & 0xFF) / 255
-        }
-
-        func mixed(toward target: RGB, amount: Double) -> RGB {
-            RGB(
-                red: red + (target.red - red) * amount,
-                green: green + (target.green - green) * amount,
-                blue: blue + (target.blue - blue) * amount
-            )
-        }
-
-        private init(red: Double, green: Double, blue: Double) {
-            self.red = red
-            self.green = green
-            self.blue = blue
-        }
-
-        var luminance: Double {
-            func linear(_ component: Double) -> Double {
-                component <= 0.04045 ? component / 12.92 : pow((component + 0.055) / 1.055, 2.4)
-            }
-            return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
-        }
-
-        var hex: String {
-            let redValue = Int((red * 255).rounded()).clamped(to: 0...255)
-            let greenValue = Int((green * 255).rounded()).clamped(to: 0...255)
-            let blueValue = Int((blue * 255).rounded()).clamped(to: 0...255)
-            return String(format: "%02X%02X%02X", redValue, greenValue, blueValue)
-        }
-
-        static let black = RGB(red: 0x14 / 255, green: 0x14 / 255, blue: 0x14 / 255)
-        static let offWhite = RGB(red: 0xF5 / 255, green: 0xF6 / 255, blue: 0xF3 / 255)
-    }
-
     static func adjustedHex(
         pillarHex: String,
         against backgroundHex: String,
         minimumContrast: Double = 3
     ) -> String {
-        guard let pillar = RGB(hex: pillarHex), let background = RGB(hex: backgroundHex) else {
+        guard let pillar = AgentOKLCH(hex: pillarHex),
+              let background = AgentOKLCH(hex: backgroundHex) else {
             return "5D6B58"
         }
-        guard contrast(pillar, background) < minimumContrast else { return pillar.hex }
+        guard contrast(pillar, background) < minimumContrast else { return pillar.hexString }
 
-        let target = background.luminance > 0.5 ? RGB.black : RGB.offWhite
-        for step in 1...20 {
-            let candidate = pillar.mixed(toward: target, amount: Double(step) * 0.05)
-            if contrast(candidate, background) >= minimumContrast { return candidate.hex }
+        let shouldDarken = background.lightness > 0.56
+        for step in 1 ... 100 {
+            let delta = Double(step) / 100
+            let candidate = AgentOKLCH(
+                lightness: pillar.lightness + (shouldDarken ? -delta : delta),
+                chroma: pillar.chroma,
+                hue: pillar.hue,
+                alpha: pillar.alpha
+            )
+            if contrast(candidate, background) >= minimumContrast {
+                return candidate.hexString
+            }
         }
-        return target.hex
+        return shouldDarken
+            ? AgentColorPalette.inkLight.hexString
+            : AgentColorPalette.inkDark.hexString
     }
 
     static func foregroundHex(on backgroundHex: String) -> String {
-        guard let background = RGB(hex: backgroundHex) else { return "141414" }
-        return contrast(RGB.black, background) >= contrast(RGB.offWhite, background)
-            ? RGB.black.hex
-            : RGB.offWhite.hex
+        guard let background = AgentOKLCH(hex: backgroundHex) else {
+            return AgentColorPalette.inkLight.hexString
+        }
+        return contrast(AgentColorPalette.inkLight, background) >= contrast(AgentColorPalette.inkDark, background)
+            ? AgentColorPalette.inkLight.hexString
+            : AgentColorPalette.inkDark.hexString
     }
 
-    private static func contrast(_ first: RGB, _ second: RGB) -> Double {
-        let lighter = max(first.luminance, second.luminance)
-        let darker = min(first.luminance, second.luminance)
+    private static func contrast(_ first: AgentOKLCH, _ second: AgentOKLCH) -> Double {
+        let firstLuminance = relativeLuminance(first.uiColor)
+        let secondLuminance = relativeLuminance(second.uiColor)
+        let lighter = max(firstLuminance, secondLuminance)
+        let darker = min(firstLuminance, secondLuminance)
         return (lighter + 0.05) / (darker + 0.05)
     }
-}
 
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+    private static func relativeLuminance(_ color: UIColor) -> Double {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return 0 }
+
+        func linear(_ component: CGFloat) -> Double {
+            let value = Double(component)
+            return value <= 0.04045
+                ? value / 12.92
+                : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
     }
 }

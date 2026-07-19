@@ -43,6 +43,21 @@ enum QuickCaptureLaunchMode: Sendable {
     case cyIdeas
 }
 
+enum AppWalkthroughStep: Int, CaseIterable, Identifiable {
+    case dashboard
+    case quickAdd
+    case agenda
+    case pillars
+    case cy
+
+    var id: Int { rawValue }
+}
+
+enum AppWalkthrough {
+    static let currentVersion = 1
+    static let completedVersionStorageKey = "agentcy.walkthrough.completedVersion"
+}
+
 struct TaskCompletionUndoState: Identifiable, Equatable {
     let taskID: UUID
     let taskTitle: String
@@ -75,8 +90,11 @@ final class AppModel {
     var widgetBriefOpensEditor = false
     var requestedTaskID: UUID?
     var requestedPlanMode: PlanMode?
+    var requestedPlanWeekOffset: Int?
+    var requestedPlanNavigationReset = 0
     var requestedSettingsPage: RequestedSettingsPage?
     var pendingCyPrompt: String?
+    var walkthroughStep: AppWalkthroughStep?
     var taskCompletionUndo: TaskCompletionUndoState?
     var notificationAuthorization: AgentNotificationAuthorization = .notDetermined
     var nextNotificationPreviews: [AgentNotificationPreview] = []
@@ -91,6 +109,19 @@ final class AppModel {
         quickCaptureStartsWithIdeas = mode == .cyIdeas
         quickCaptureStartsWithPost = mode == .post
         quickCaptureStartsWithTask = mode == .task
+    }
+
+    func startWalkthrough() {
+        presentedSheet = nil
+        selectedTab = .home
+        walkthroughStep = .dashboard
+    }
+
+    func routeToWeeklyAgenda() {
+        presentedSheet = nil
+        requestedPlanNavigationReset &+= 1
+        requestedPlanMode = .week
+        selectedTab = .today
     }
 
     func presentCreatorError(_ error: Error, action: String? = nil) {
@@ -568,6 +599,10 @@ final class AppModel {
         do {
             try context.save()
             appearancePreference = profile.appearance
+            LocalCyPreferences.isEnabled = draft.aiProvider == .claudeOrCodex
+            if MCPBridgePreferences.isConnected {
+                try? MCPBridgeService.sync(context: context, workspaceID: workspace.id)
+            }
             await refreshReminderSchedule(context: context)
             return true
         } catch {
@@ -2324,6 +2359,15 @@ final class AppModel {
     }
 
     func acceptPillar(_ proposal: Pillar, context: ModelContext) {
+        let workspaces = (try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
+        let activePillarCount = ((try? context.fetch(FetchDescriptor<Pillar>())) ?? []).filter {
+            !$0.isArchived &&
+                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeWorkspaceID, workspaces: workspaces)
+        }.count
+        guard PillarCollectionPolicy.canCreate(activeCount: activePillarCount) else {
+            notice = .info("You can have up to six pillars.")
+            return
+        }
         let pillar = Pillar(name: proposal.name, detail: proposal.detail, colorHex: proposal.colorHex)
         pillar.workspaceID = resolvedWorkspaceID(context: context)
         context.insert(pillar)

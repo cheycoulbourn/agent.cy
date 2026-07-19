@@ -49,9 +49,7 @@ struct AgentPostCard: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             HStack(alignment: .top, spacing: AgentSpacing.x3) {
                 HStack(spacing: AgentSpacing.x2) {
-                    Circle()
-                        .fill(accent)
-                        .frame(width: 7, height: 7)
+                    PillarColorMark(color: accent, diameter: 7)
                     Text(pillar.uppercased())
                         .font(.agentMono)
                         .tracking(0.7)
@@ -89,8 +87,7 @@ struct AgentPostCard: View {
                         .font(.agentMono)
                         .fixedSize()
                 }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .medium))
+                AgentIconView(.forward, size: 13)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,7 +101,7 @@ struct AgentPostCard: View {
 
     private var cardBorder: Color {
         if status == .draft { return Color.agentText.opacity(0.28) }
-        return accent.opacity(colorScheme == .dark ? 0.82 : 0.68)
+        return PillarVisualContrast.cardBorderColor(for: accent, colorScheme: colorScheme)
     }
 
     private var statusTitle: String {
@@ -144,7 +141,7 @@ struct AgentInlinePostAction: View {
 
     var body: some View {
         Button(title, action: action)
-            .font(.system(size: 12, weight: .medium))
+            .font(.paperInter(size: 12, weight: .medium, relativeTo: .caption))
             .foregroundStyle(isAlert ? Color.agentDestructive : Color.agentText)
             .underline(pattern: .solid)
             .buttonStyle(.plain)

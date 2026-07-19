@@ -16,6 +16,32 @@ final class PostOutputDetailPolicyTests: XCTestCase {
         XCTAssertFalse(MCPReviewEditPolicy.allowsEditing(type: "addTask"))
     }
 
+    func testMCPIdeaReviewKeepsItsPillarNameAndIdentifiesMetadataAsAnIdea() {
+        XCTAssertEqual(
+            MCPReviewPillarPresentation.label(type: "createIdea", pillarName: "Lifestyle"),
+            "Lifestyle"
+        )
+        XCTAssertEqual(
+            MCPReviewPillarPresentation.label(type: "createIdea", pillarName: "Unfiled"),
+            "Unfiled"
+        )
+        XCTAssertEqual(
+            MCPReviewPillarPresentation.metadata(type: "createIdea", fallback: "Post"),
+            "Idea"
+        )
+    }
+
+    func testMCPPostReviewKeepsPostPillarAndMetadata() {
+        XCTAssertEqual(
+            MCPReviewPillarPresentation.label(type: "createPostDraft", pillarName: "Lifestyle"),
+            "Lifestyle"
+        )
+        XCTAssertEqual(
+            MCPReviewPillarPresentation.metadata(type: "createPostDraft", fallback: "Instagram"),
+            "Instagram"
+        )
+    }
+
     func testDatedDraftOnScheduledBriefAlwaysResumesPostEditor() {
         XCTAssertEqual(
             PostOutputDetailPolicy.destination(

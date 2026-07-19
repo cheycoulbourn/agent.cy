@@ -210,7 +210,11 @@ private struct PreviewScheduledPostRoot: View {
                let brief = briefs.first(where: { $0.id == output.briefID }) {
                 ScheduledPostDetailView(brief: brief, output: output)
             } else {
-                ContentUnavailableView("No scheduled preview post", systemImage: "calendar")
+                AgentEmptyState(
+                    title: "No scheduled preview post",
+                    message: "Schedule a post to preview the finalized page.",
+                    icon: .calendar
+                )
             }
         }
     }
@@ -251,7 +255,7 @@ private struct InstallationInviteGate: View {
                     Button {
                         Task { await appModel.redeemInstallationInvite(inviteCode, context: context) }
                     } label: {
-                        Label("Connect Cy", systemImage: "key")
+                        AgentIconLabel(title: "Connect Cy", icon: .key)
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(AgentPrimaryButtonStyle())

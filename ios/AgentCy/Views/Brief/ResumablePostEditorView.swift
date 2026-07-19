@@ -1,6 +1,7 @@
 import SwiftData
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 private enum PostDraftSetupPicker: String, Identifiable {
@@ -37,6 +38,8 @@ struct ResumablePostEditorView: View {
     let onSpark: () -> Void
     let contextLabel: String?
     let isReviewEditing: Bool
+    let isAlreadyInIdeaBank: Bool
+    let bottomActionClearance: CGFloat
 
     @State private var targetDate: Date
     @State private var hasTargetDate: Bool
@@ -58,6 +61,7 @@ struct ResumablePostEditorView: View {
     @State private var showMarkdownExporter = false
     @State private var pendingProposal: BriefProposal?
     @State private var activeSetupPicker: PostDraftSetupPicker?
+    @State private var isKeyboardVisible = false
     @FocusState private var notesAreFocused: Bool
 
     private var pillars: [Pillar] {
@@ -77,6 +81,8 @@ struct ResumablePostEditorView: View {
         suggestedTargetDate: Date? = nil,
         contextLabel: String? = nil,
         isReviewEditing: Bool = false,
+        isAlreadyInIdeaBank: Bool = false,
+        bottomActionClearance: CGFloat = 88,
         onSpark: @escaping () -> Void
     ) {
         self.brief = brief
@@ -84,6 +90,8 @@ struct ResumablePostEditorView: View {
         self.onSpark = onSpark
         self.contextLabel = contextLabel
         self.isReviewEditing = isReviewEditing
+        self.isAlreadyInIdeaBank = isAlreadyInIdeaBank
+        self.bottomActionClearance = bottomActionClearance
         let briefID = brief.id
         _outputs = Query(
             filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
@@ -105,60 +113,68 @@ struct ResumablePostEditorView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-            HStack {
-                MetaLabel(contextLabel ?? (isEditingFinalizedPost ? "Edit post" : "Draft post"))
-                Spacer()
-                if !isEditingFinalizedPost && !isReviewEditing {
-                    Button(action: openSpark) {
-                        HStack(spacing: AgentSpacing.x2) {
-                            CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
-                            Text("Spark")
+        ScrollView {
+            VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                HStack {
+                    MetaLabel(contextLabel ?? (isEditingFinalizedPost ? "Edit post" : "Draft post"))
+                    Spacer()
+                    if !isEditingFinalizedPost && !isReviewEditing {
+                        Button(action: openSpark) {
+                            HStack(spacing: AgentSpacing.x2) {
+                                CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
+                                Text("Spark")
+                            }
+                                .font(.agentSubtext.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 40)
+                                .foregroundStyle(Color.cyAccent)
+                                .background(Color.cyAccent.opacity(0.06), in: .capsule)
+                                .overlay(Capsule().stroke(Color.cyAccent.opacity(0.18), lineWidth: 1))
+                                .shadow(color: Color.cyAccent.opacity(0.16), radius: 12, y: 4)
                         }
-                            .font(.agentSubtext.weight(.semibold))
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 40)
-                            .foregroundStyle(Color.cyAccent)
-                            .background(Color.cyAccent.opacity(0.06), in: .capsule)
-                            .overlay(Capsule().stroke(Color.cyAccent.opacity(0.18), lineWidth: 1))
-                            .shadow(color: Color.cyAccent.opacity(0.16), radius: 12, y: 4)
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens Cy with this saved post as context")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Opens Cy with this saved post as context")
                 }
+
+                TextField("Post title", text: $brief.title, axis: .vertical)
+                    .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
+                    .tracking(-0.56)
+                    .lineLimit(1...3)
+
+                postSetupSection
+
+                if let contentFormat = selectedFormat?.kind.contentFormat {
+                    AgentDurationPicker(seconds: $output.durationSeconds, format: contentFormat)
+                }
+
+                postCopySection
+
+                recurrenceSection
+
+                if showsBrandDealsSection {
+                    collaborationSection
+                }
+
+                if showsMoodBoardsSection {
+                    moodBoardSection
+                }
+
+                notesSection
+
+                mediaSection
+
+                moreDetailsSection
+                postedLinkSection
+                tasksSection
             }
-
-            TextField("Post title", text: $brief.title, axis: .vertical)
-                .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
-                .tracking(-0.56)
-                .lineLimit(1...3)
-
-            postSetupSection
-
-            if let contentFormat = selectedFormat?.kind.contentFormat {
-                AgentDurationPicker(seconds: $output.durationSeconds, format: contentFormat)
-            }
-
-            postCopySection
-
-            recurrenceSection
-
-            if showsBrandDealsSection {
-                collaborationSection
-            }
-
-            if showsMoodBoardsSection {
-                moodBoardSection
-            }
-
-            notesSection
-
-            mediaSection
-
-            moreDetailsSection
-            postedLinkSection
-            tasksSection
-            scheduleButton
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.top, AgentSpacing.x4)
+            .padding(.bottom, showsFloatingScheduleButton ? AgentSpacing.x6 : 80)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            floatingScheduleButton
         }
         .sheet(isPresented: $showDatePicker, onDismiss: finishDateSelection) {
             PostDraftDatePicker(
@@ -194,15 +210,14 @@ struct ResumablePostEditorView: View {
             if isEditingFinalizedPost || isReviewEditing {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: saveDraft) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.black)
+                        AgentIconView(.check, size: 15)
+                            .foregroundStyle(Color.agentPureBlack)
                             .frame(width: 18, height: 18)
                     }
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .tint(Color.white)
+                    .tint(Color.agentPureWhite)
                     .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                     .accessibilityLabel("Save changes")
@@ -213,46 +228,61 @@ struct ResumablePostEditorView: View {
                         Button(role: .destructive) {
                             confirmDeleteDraft = true
                         } label: {
-                            Image(systemName: "trash")
+                            AgentIconView(.trash)
                         }
                         .accessibilityLabel("Delete empty draft")
                     } else {
                         Menu {
-                            Button("Move to Idea Bank", systemImage: "lightbulb") {
-                                confirmMoveToIdeaBank = true
+                            if !isAlreadyInIdeaBank {
+                                Button {
+                                    confirmMoveToIdeaBank = true
+                                } label: {
+                                    AgentIconLabel(title: "Move to Idea Bank", icon: .idea)
+                                }
                             }
-                            Button("Save draft", systemImage: "square.and.arrow.down") {
+                            Button {
                                 saveDraft()
+                            } label: {
+                                AgentIconLabel(title: "Save draft", icon: .download)
                             }
-                            Button("Duplicate post", systemImage: "square.on.square") {
+                            Button {
                                 duplicateDraft()
+                            } label: {
+                                AgentIconLabel(title: "Duplicate post", icon: .duplicate)
                             }
                             Divider()
-                            Button("Copy Markdown", systemImage: "doc.on.doc") {
+                            Button {
                                 copyMarkdown()
+                            } label: {
+                                AgentIconLabel(title: "Copy Markdown", icon: .copy)
                             }
-                            Button("Export Markdown", systemImage: "square.and.arrow.up") {
+                            Button {
                                 exportMarkdown()
+                            } label: {
+                                AgentIconLabel(title: "Export Markdown", icon: .upload)
                             }
                             Divider()
-                            Button("Delete post", systemImage: "trash", role: .destructive) {
+                            Button(role: .destructive) {
                                 confirmDeleteDraft = true
+                            } label: {
+                                AgentIconLabel(title: "Delete post", icon: .trash)
                             }
                         } label: {
-                            Image(systemName: "ellipsis")
+                            AgentIconView(.more)
+                                .foregroundStyle(Color.agentText)
                         }
                         .accessibilityLabel("Draft options")
                     }
                 }
             }
         }
-        .confirmationDialog("Delete this post?", isPresented: $confirmDeleteDraft, titleVisibility: .visible) {
+        .alert("Delete this post?", isPresented: $confirmDeleteDraft) {
             Button("Delete post", role: .destructive, action: deleteDraft)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This permanently deletes the draft and its linked tasks.")
         }
-        .confirmationDialog("Move this post to Idea Bank?", isPresented: $confirmMoveToIdeaBank, titleVisibility: .visible) {
+        .alert("Move this post to Idea Bank?", isPresented: $confirmMoveToIdeaBank) {
             Button("Move to Idea Bank", action: makeIdea)
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -274,6 +304,12 @@ struct ResumablePostEditorView: View {
         .onChange(of: selectedMoodBoardMedia) { _, items in
             guard !items.isEmpty else { return }
             Task { await importMoodBoardMedia(items) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.16)) { isKeyboardVisible = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.16)) { isKeyboardVisible = false }
         }
         .fileImporter(
             isPresented: $showCollaborationFileImporter,
@@ -377,20 +413,26 @@ struct ResumablePostEditorView: View {
             SectionRuleHeader(title: "Tasks", trailing: "\(topLevelTasks.count)")
             ForEach(topLevelTasks) { task in
                 TaskRow(task: task, allTasks: tasks)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
-                    }
             }
-            AgentAddActionRow(title: "Add task") { showTaskComposer = true }
+            AgentBlockAddActionButton(title: "Add task") { showTaskComposer = true }
         }
     }
 
+    private var showsFloatingScheduleButton: Bool {
+        !isEditingFinalizedPost && !isReviewEditing
+    }
+
     @ViewBuilder
-    private var scheduleButton: some View {
-        if !isEditingFinalizedPost && !isReviewEditing {
+    private var floatingScheduleButton: some View {
+        if showsFloatingScheduleButton {
             Button("Schedule post", action: requestSchedule)
                 .buttonStyle(AgentPrimaryButtonStyle())
                 .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x2)
+                .padding(.bottom, isKeyboardVisible ? AgentSpacing.x2 : bottomActionClearance)
+                .shadow(color: Color.agentPureBlack.opacity(0.14), radius: 16, y: 7)
+                .accessibilityHint("Sets a date and adds this post to the weekly agenda")
         }
     }
 
@@ -526,8 +568,7 @@ struct ResumablePostEditorView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .semibold))
+                    AgentIconView(.check, size: 13)
                         .foregroundStyle(Color.agentText)
                 }
             }
@@ -784,7 +825,7 @@ struct ResumablePostEditorView: View {
                     matching: .images
                 ) {
                     HStack(spacing: AgentSpacing.x3) {
-                        Image(systemName: "photo.on.rectangle.angled")
+                        AgentIconView(.image)
                         Text(importingMoodBoardMedia ? "Adding images" : "Add mood board images")
                         Spacer()
                         if importingMoodBoardMedia { ProgressView().controlSize(.small) }
@@ -949,7 +990,7 @@ struct ResumablePostEditorView: View {
                 matching: .any(of: [.images, .videos])
             ) {
                 HStack(spacing: AgentSpacing.x3) {
-                    Image(systemName: "photo.on.rectangle.angled")
+                    AgentIconView(.image)
                     Text(importingMedia ? "Adding media" : "Add photos or videos")
                     Spacer()
                     if importingMedia { ProgressView().controlSize(.small) }
@@ -1172,7 +1213,15 @@ struct ResumablePostEditorView: View {
 
         persistChanges(commitSuggestedTargetDate: true)
         guard appModel.schedulePostSeries(output: output, date: targetDate, context: context) else { return }
+        openWeeklyAgenda()
+    }
+
+    private func openWeeklyAgenda() {
         dismiss()
+        Task { @MainActor in
+            await Task.yield()
+            appModel.routeToWeeklyAgenda()
+        }
     }
 
     private func openSpark() {
@@ -1452,7 +1501,7 @@ private struct PostAttachmentRow: View {
             }
             Spacer()
             Button(role: .destructive, action: onDelete) {
-                Image(systemName: "trash")
+                AgentIconView(.trash)
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
@@ -1481,7 +1530,7 @@ private struct PostMediaThumbnail: View {
                 } else {
                     ZStack {
                         Color.agentCanvas
-                        Image(systemName: attachment.kind == .video ? "play.fill" : "doc.fill")
+                        AgentIconView(attachment.kind == .video ? .play : .copy)
                             .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(Color.agentSecondary)
                     }
@@ -1495,8 +1544,7 @@ private struct PostMediaThumbnail: View {
             }
 
             Button(role: .destructive, action: onDelete) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
+                AgentIconView(.close, size: 10)
                     .foregroundStyle(Color.agentText)
                     .frame(width: 28, height: 28)
                     .background(.ultraThinMaterial, in: .circle)
@@ -1506,11 +1554,10 @@ private struct PostMediaThumbnail: View {
             .accessibilityLabel("Remove \(attachment.fileName)")
 
             if attachment.kind == .video {
-                Image(systemName: "video.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                AgentIconView(.video, size: 11)
                     .foregroundStyle(.white)
                     .padding(6)
-                    .background(Color.black.opacity(0.58), in: .capsule)
+                    .background(Color.agentPureBlack.opacity(0.58), in: .capsule)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(8)
                     .allowsHitTesting(false)
@@ -1538,8 +1585,7 @@ private struct PostDraftSetupRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: AgentSpacing.x2)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .medium))
+            AgentIconView(.forward, size: 12)
         }
         .foregroundStyle(Color.agentText)
         .frame(maxWidth: .infinity, minHeight: 58)
@@ -1646,7 +1692,7 @@ extension Array where Element == PillarCalendarMarker {
 /// Draw the month ourselves so pillar assignments are part of every date cell.
 /// `UICalendarView` can silently discard custom decorations after selection or
 /// month updates, which made otherwise-valid pillar assignments disappear.
-private struct PillarCalendarDatePicker: View {
+struct PillarCalendarDatePicker: View {
     @Binding var date: Date
     let pillarMarkers: [PillarCalendarMarker]
     private var calendar: Calendar = .current
@@ -1698,8 +1744,7 @@ private struct PillarCalendarDatePicker: View {
             Button {
                 moveMonth(by: -1)
             } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 18, weight: .medium))
+                AgentIconView(.back, size: 18)
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("Previous month")
@@ -1707,8 +1752,7 @@ private struct PillarCalendarDatePicker: View {
             Button {
                 moveMonth(by: 1)
             } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 18, weight: .medium))
+                AgentIconView(.forward, size: 18)
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("Next month")
@@ -1729,6 +1773,7 @@ private struct PillarCalendarDatePicker: View {
 
     private func dayButton(_ day: Date) -> some View {
         let isSelected = calendar.isDate(day, inSameDayAs: date)
+        let isToday = calendar.isDateInToday(day)
         let colors = pillarMarkers.colorHexes(for: day, calendar: calendar)
 
         return Button {
@@ -1740,6 +1785,13 @@ private struct PillarCalendarDatePicker: View {
                     .foregroundStyle(isSelected ? Color.agentCanvas : Color.agentText)
                     .frame(width: 40, height: 40)
                     .background(isSelected ? Color.agentText : Color.clear, in: .circle)
+                    .overlay {
+                        if isToday {
+                            Circle()
+                                .stroke(Color.actionAccent, lineWidth: 1.5)
+                                .padding(1)
+                        }
+                    }
 
                 HStack(spacing: 3) {
                     ForEach(Array(colors.prefix(3).enumerated()), id: \.offset) { _, colorHex in
@@ -1758,7 +1810,7 @@ private struct PillarCalendarDatePicker: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel(for: day, colorCount: colors.count))
+        .accessibilityLabel(accessibilityLabel(for: day, colorCount: colors.count, isToday: isToday))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -1807,8 +1859,8 @@ private struct PillarCalendarDatePicker: View {
         date = calendar.date(from: combined) ?? selectedDay
     }
 
-    private func accessibilityLabel(for day: Date, colorCount: Int) -> String {
-        let dateLabel = day.formatted(date: .complete, time: .omitted)
+    private func accessibilityLabel(for day: Date, colorCount: Int, isToday: Bool) -> String {
+        let dateLabel = day.formatted(date: .complete, time: .omitted) + (isToday ? ", today" : "")
         guard colorCount > 0 else { return dateLabel }
         let assignment = colorCount == 1 ? "one pillar" : "\(colorCount) pillars"
         return "\(dateLabel), assigned to \(assignment)"
@@ -1832,6 +1884,7 @@ struct PostDraftTaskComposer: View {
     @State private var includeDate = true
     @State private var includesTime = false
     @State private var date: Date
+    @State private var showDatePicker = false
 
     init(brief: CreativeBrief, output: PlatformOutput, defaultDate: Date) {
         self.brief = brief
@@ -1852,7 +1905,18 @@ struct PostDraftTaskComposer: View {
                 }
                 Toggle("Set a due date", isOn: $includeDate)
                 if includeDate {
-                    DatePicker("Date", selection: $date, displayedComponents: .date)
+                    Button {
+                        showDatePicker = true
+                    } label: {
+                        HStack {
+                            Text("Date")
+                            Spacer()
+                            Text(date.formatted(.dateTime.month(.abbreviated).day().year()))
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
                     Toggle("Include a time", isOn: $includesTime)
                     if includesTime {
                         DatePicker("Time", selection: $date, displayedComponents: .hourAndMinute)
@@ -1865,15 +1929,14 @@ struct PostDraftTaskComposer: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(action: addTask) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.black)
+                        AgentIconView(.check, size: 15)
+                            .foregroundStyle(Color.agentPureBlack)
                             .frame(width: 18, height: 18)
                     }
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .tint(Color.white)
+                    .tint(Color.agentPureWhite)
                     .accessibilityLabel("Save task")
                         .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .opacity(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
@@ -1881,6 +1944,11 @@ struct PostDraftTaskComposer: View {
             }
         }
         .agentScreen()
+        .sheet(isPresented: $showDatePicker) {
+            PostTaskDatePicker(date: $date)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private func addTask() {
@@ -1910,5 +1978,37 @@ struct PostDraftTaskComposer: View {
         try? context.save()
         appModel.queueCalendarSync(context: context)
         dismiss()
+    }
+}
+
+private struct PostTaskDatePicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var date: Date
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    PillarCalendarDatePicker(date: $date, pillarMarkers: [])
+                        .frame(minHeight: 330)
+                        .accessibilityLabel("Task due date")
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x4)
+                .padding(.bottom, AgentSpacing.x8)
+            }
+            .navigationTitle("Due date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Use date") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .agentScreen()
     }
 }

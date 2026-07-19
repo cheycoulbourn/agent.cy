@@ -86,9 +86,8 @@ struct CaptureIdeaShortcutSettingsView: View {
                 RoundedRectangle(cornerRadius: AgentRadius.control)
                     .fill(Color.actionAccent)
                     .frame(width: 60, height: 60)
-                Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white)
+                AgentIconView(.idea, size: 24)
+                    .foregroundStyle(Color.agentPureWhite)
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {

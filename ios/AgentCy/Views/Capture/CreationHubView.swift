@@ -31,18 +31,17 @@ struct CreationHubView: View {
             ZStack {
                 HStack {
                     Button { dismiss() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .medium))
+                        AgentIconView(.close, size: 17)
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.clear.interactive(), in: .circle)
                     .overlay {
                         Circle()
-                            .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
+                            .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
                             .allowsHitTesting(false)
                     }
-                    .shadow(color: Color.black.opacity(0.08), radius: 12, y: 4)
+                    .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
                     .accessibilityLabel("Close")
                     Spacer()
                 }
@@ -111,6 +110,7 @@ struct CreationHubView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             MetaLabel("With Cy")
                 .foregroundStyle(Color.cyAccent)
+                .padding(.leading, AgentLayout.dashboardGutter)
 
             Button { openCapture(.cyIdeas) } label: {
                 HStack(spacing: AgentSpacing.x4) {
@@ -129,8 +129,7 @@ struct CreationHubView: View {
 
                     Spacer(minLength: AgentSpacing.x2)
 
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 13, weight: .semibold))
+                    AgentIconView(.arrowRight, size: 13)
                         .foregroundStyle(Color.cyAccent)
                         .frame(width: 32, height: 32)
                 }
@@ -170,8 +169,7 @@ struct CreationHubView: View {
 
                 Spacer(minLength: AgentSpacing.x2)
 
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .medium))
+                AgentIconView(.add, size: 15)
                     .frame(width: 40, height: 40)
                     .glassEffect(.clear.interactive(), in: .circle)
                     .overlay {

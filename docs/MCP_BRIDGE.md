@@ -23,6 +23,8 @@ The wizard:
 3. Registers `agentcy` for the current user.
 4. Runs a local bridge check and reports Connected or Repair needed.
 
+The installer and every successful `bridge_status` call write a content-free `bridge-status.json` heartbeat. It contains only the detected client names, verification time, and connection message. Onboarding and Settings use this file to show whether Claude Code or Codex was actually detected. It contains no creator content or credentials.
+
 Re-run the wizard to repair an installation. Run it with `--uninstall` to remove client registrations while keeping the creator's iCloud Drive workspace.
 
 ## Advanced developer setup
@@ -46,9 +48,21 @@ Then on iPhone:
 2. Choose **iCloud Drive > agent.cy MCP**.
 3. Tap **Sync now**.
 
+The same setup is available during onboarding under **Your AI**. Every terminal command is displayed in a copyable code block, and setup can be deferred without losing onboarding progress.
+
 Restart Claude Code or Codex after initial setup. Ask it to call `bridge_status` to verify the connection.
 
 Start content work in Plan mode. Use the client's native question tool to learn the creator's goals, audience, account, pillars, capacity, and constraints before proposing a plan. Do not call an MCP write tool until the creator explicitly approves the plan. The customizable starter prompt in **Settings > AI > Claude & Codex** encodes this workflow for both Claude Code and Codex.
+
+When the approved plan includes a date for a new post, call `create_post_draft` once with `targetDate` and `includesTargetTime`. The creator then reviews creation and scheduling together in Cy. Omit `targetDate` only when the creator explicitly wants an unscheduled draft. Never place the posting date only in `notes`, and do not follow a dated `create_post_draft` with a second `schedule_post` request.
+
+## Cy review
+
+Claude and Codex proposals always pass through one creator-controlled review in Cy. The review uses the same post hierarchy and pillar color as the calendar, shows the complete post and posting details, and supports Edit, Approve, and Deny. A dated new-post proposal uses **Approve & schedule** to create the post and place it on the calendar atomically. It never asks for a second scheduling approval. An undated proposal uses **Approve draft** and remains resumable in the post editor.
+
+Posts created or edited directly inside agent.cy do not enter the Cy review queue. `schedule_post` remains a separate review only when Claude or Codex is changing the date of a post that already exists.
+
+Use exact built-in format values: `Reel`, `Carousel`, `Feed post`, `Story`, `Short video`, `Long video`, `Short`, or `Video`. Production context belongs in `notes`; captions and calls to action belong in their structured fields.
 
 To configure one client or a different folder:
 
@@ -80,5 +94,7 @@ Approval-queued write tools:
 - `add_task`
 - `complete_task`
 - `change_request_status`
+
+`schedule_post` remains available for moving or scheduling a post that already exists in agent.cy. It is not needed when a new `create_post_draft` request already contains `targetDate`.
 
 Delete, archive, publish, erase, attachment access, and raw database access are deliberately not exposed.

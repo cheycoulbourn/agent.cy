@@ -44,8 +44,7 @@ struct AgendaPostIdeaPickerView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Button(action: startNewPost) {
                             HStack(spacing: AgentSpacing.x3) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 16, weight: .medium))
+                                AgentIconView(.add, size: 16)
                                     .frame(width: 22, height: 22)
 
                                 VStack(alignment: .leading, spacing: AgentSpacing.x1) {
@@ -58,8 +57,7 @@ struct AgendaPostIdeaPickerView: View {
                                 }
 
                                 Spacer(minLength: AgentSpacing.x2)
-                                Image(systemName: "arrow.right")
-                                    .font(.system(size: 13, weight: .semibold))
+                                AgentIconView(.arrowRight, size: 13)
                                     .foregroundStyle(Color.agentSecondary)
                             }
                             .foregroundStyle(Color.agentText)
@@ -161,19 +159,13 @@ private struct AgendaPostEditorDestination: View {
                 }
             case .new:
                 if let newBrief, let newOutput {
-                    ScrollView {
-                        ResumablePostEditorView(
-                            brief: newBrief,
-                            output: newOutput,
-                            onSpark: {
-                                appModel.notice = .info("Save this draft, then open Cy when you're ready to build it out.")
-                            }
-                        )
-                        .padding(.horizontal, AgentLayout.pageMargin)
-                        .padding(.top, AgentSpacing.x4)
-                        .padding(.bottom, 130)
-                    }
-                    .scrollDismissesKeyboard(.interactively)
+                    ResumablePostEditorView(
+                        brief: newBrief,
+                        output: newOutput,
+                        onSpark: {
+                            appModel.notice = .info("Save this draft, then open Cy when you're ready to build it out.")
+                        }
+                    )
                 } else if creationFailed {
                     unavailableState("This post draft could not be started.")
                 } else {
@@ -251,8 +243,7 @@ private struct AgendaIdeaBankRow: View {
             }
 
             Spacer(minLength: AgentSpacing.x2)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
+            AgentIconView(.forward, size: 11)
                 .foregroundStyle(Color.agentSecondary)
         }
         .foregroundStyle(Color.agentText)
