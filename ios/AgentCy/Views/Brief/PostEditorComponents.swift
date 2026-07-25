@@ -65,7 +65,7 @@ struct BriefDisclosureLabel: View {
         HStack {
             Text(title).font(.agentHeadline).foregroundStyle(Color.agentText)
             Spacer()
-            Text(detail).font(.agentMono).foregroundStyle(Color.agentSecondary)
+            Text(detail).font(.agentMetadata).foregroundStyle(Color.agentSecondary)
         }
         .frame(minHeight: 44)
     }

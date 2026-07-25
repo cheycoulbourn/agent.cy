@@ -158,6 +158,7 @@ actor CaptureIdeaShortcutStore {
         let title = Self.title(from: cleanIdea)
         let brief = CreativeBrief(title: title, premise: cleanIdea, source: .text)
         brief.workspaceID = activeID
+        brief.ideaBankPlacement = .idea
         brief.pillarID = resolvedPillarID
         modelContext.insert(brief)
         try modelContext.save()

@@ -14,6 +14,26 @@ final class DomainTests: XCTestCase {
         }
     }
 
+    func testIdeaBankPlacementUsesExplicitIntentAndLegacyFallback() {
+        let legacyIdea = CreativeBrief(title: "Legacy idea", premise: "", status: .spark)
+        XCTAssertTrue(IdeaBankPlacementPolicy.includes(legacyIdea))
+
+        let postDraft = CreativeBrief(title: "Post draft", premise: "", status: .spark)
+        postDraft.ideaBankPlacement = .post
+        XCTAssertFalse(IdeaBankPlacementPolicy.includes(postDraft))
+
+        let savedIdea = CreativeBrief(title: "Saved idea", premise: "", status: .ready)
+        savedIdea.ideaBankPlacement = .idea
+        XCTAssertTrue(IdeaBankPlacementPolicy.includes(savedIdea))
+
+        savedIdea.status = .archived
+        XCTAssertFalse(IdeaBankPlacementPolicy.includes(savedIdea))
+    }
+
+    func testScheduledStatusUsesCreatorFacingScheduledLabel() {
+        XCTAssertEqual(BriefStatus.scheduled.title, "Scheduled")
+    }
+
     func testWeeklyAgendaRouteRequestsTheRootPlanView() {
         let model = AppModel()
         model.selectedTab = .ideaBank
@@ -713,7 +733,7 @@ final class DomainTests: XCTestCase {
         )
         XCTAssertEqual(
             TodayOutputPresentation.section(outputStatus: .scheduled, briefStatus: .developing),
-            .drafted
+            .inProgress
         )
         XCTAssertEqual(
             TodayOutputPresentation.section(outputStatus: .scheduled, briefStatus: .scheduled),
@@ -723,6 +743,93 @@ final class DomainTests: XCTestCase {
             TodayOutputPresentation.section(outputStatus: .posted, briefStatus: .posted),
             .goingLive
         )
+    }
+
+    func testMarkingAnIdeaInProgressAddsAWorkDateWithoutSchedulingPublication() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        let brief = CreativeBrief(title: "Film the studio tour", status: .spark)
+        let output = PlatformOutput(briefID: brief.id, status: .draft)
+        let task = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Film the opening"
+        )
+        context.insert(brief)
+        context.insert(output)
+        context.insert(task)
+        try context.save()
+
+        let workDate = try XCTUnwrap(
+            Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 22, hour: 12))
+        )
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        XCTAssertTrue(model.markPostInProgress(
+            brief: brief,
+            output: output,
+            date: workDate,
+            context: context
+        ))
+        XCTAssertEqual(brief.status, .developing)
+        XCTAssertEqual(brief.status.title, "In progress")
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(output.targetDate, workDate)
+        XCTAssertEqual(brief.agendaDate, workDate)
+        XCTAssertEqual(task.targetDate, Calendar.current.startOfDay(for: workDate))
+    }
+
+    func testScheduledPostCanReturnToDraftWithoutLosingItsWorkDate() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        let date = try XCTUnwrap(
+            Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 24, hour: 12))
+        )
+        let brief = CreativeBrief(title: "A scheduled post", status: .scheduled)
+        brief.agendaDate = date
+        let output = PlatformOutput(briefID: brief.id, status: .scheduled)
+        output.targetDate = date
+        context.insert(brief)
+        context.insert(output)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        XCTAssertTrue(model.markPostDraft(brief: brief, output: output, context: context))
+        XCTAssertEqual(brief.status, .ready)
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(output.targetDate, date)
+        XCTAssertEqual(brief.agendaDate, date)
+    }
+
+    func testScheduledPostCanReturnToInProgress() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        let date = try XCTUnwrap(
+            Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 25, hour: 12))
+        )
+        let brief = CreativeBrief(title: "Film this next", status: .scheduled)
+        let output = PlatformOutput(briefID: brief.id, status: .scheduled)
+        output.targetDate = date
+        context.insert(brief)
+        context.insert(output)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        XCTAssertTrue(model.markPostInProgress(
+            brief: brief,
+            output: output,
+            date: date,
+            context: context
+        ))
+        XCTAssertEqual(brief.status, .developing)
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(output.targetDate, date)
     }
 
     func testDraftPostResumesEditorEvenIfItsOutputWasMarkedScheduled() {
@@ -780,6 +887,21 @@ final class DomainTests: XCTestCase {
         ))
     }
 
+    func testMovingPostToIdeaBankSuppressesEditorExitPersistence() {
+        XCTAssertTrue(PostDraftExitPersistencePolicy.shouldPersist(
+            isDeleting: false,
+            didMoveToIdeaBank: false
+        ))
+        XCTAssertFalse(PostDraftExitPersistencePolicy.shouldPersist(
+            isDeleting: true,
+            didMoveToIdeaBank: false
+        ))
+        XCTAssertFalse(PostDraftExitPersistencePolicy.shouldPersist(
+            isDeleting: false,
+            didMoveToIdeaBank: true
+        ))
+    }
+
     func testDraftCanMoveBackToIdeaBankWithoutLosingItsContent() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -804,6 +926,7 @@ final class DomainTests: XCTestCase {
             context: context
         ))
         XCTAssertEqual(draft.brief.status, .spark)
+        XCTAssertEqual(draft.brief.ideaBankPlacement, .idea)
         XCTAssertNil(draft.brief.agendaDate)
         XCTAssertNil(draft.output.targetDate)
         XCTAssertEqual(draft.output.status, .draft)
@@ -842,6 +965,7 @@ final class DomainTests: XCTestCase {
 
         XCTAssertTrue(model.movePostToIdeaBank(brief: brief, output: reel, context: context))
         XCTAssertEqual(brief.status, .spark)
+        XCTAssertEqual(brief.ideaBankPlacement, .idea)
         XCTAssertNil(brief.agendaDate)
         XCTAssertEqual(brief.notes, "Keep this direction as an idea.")
         XCTAssertEqual(reel.status, .draft)
@@ -852,6 +976,42 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(short.recurrence, .none)
         XCTAssertFalse(reel.includesTargetTime)
         XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
+    }
+
+    func testClearingPostDateRemovesAgendaPlacementAndRecurrence() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+        let date = Date(timeIntervalSince1970: 1_752_475_600)
+        let brief = CreativeBrief(title: "A scheduled post", premise: "", status: .scheduled)
+        brief.agendaDate = date
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
+        output.targetDate = date
+        output.includesTargetTime = true
+        output.recurrence = .weekly
+        output.recurrenceWeekdays = [.monday]
+        let task = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Finish the caption",
+            kind: .publishing,
+            targetDate: date
+        )
+        context.insert(brief)
+        context.insert(output)
+        context.insert(task)
+        try context.save()
+
+        XCTAssertTrue(model.clearPostDate(brief: brief, output: output, context: context))
+        XCTAssertNil(output.targetDate)
+        XCTAssertFalse(output.includesTargetTime)
+        XCTAssertEqual(output.recurrence, .none)
+        XCTAssertTrue(output.recurrenceWeekdays.isEmpty)
+        XCTAssertEqual(output.status, .ready)
+        XCTAssertEqual(brief.status, .ready)
+        XCTAssertNil(brief.agendaDate)
+        XCTAssertNil(task.targetDate)
     }
 
     @MainActor
@@ -2630,7 +2790,7 @@ final class DomainTests: XCTestCase {
         )
         XCTAssertEqual(
             AgendaOutputOrdering.rank(outputStatus: .draft, briefStatus: .spark),
-            1
+            2
         )
         XCTAssertEqual(
             AgendaOutputOrdering.rank(outputStatus: .scheduled, briefStatus: .developing),

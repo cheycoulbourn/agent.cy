@@ -7,15 +7,22 @@ struct IdeaPostDraftView: View {
     let brief: CreativeBrief
     let preferredOutput: PlatformOutput?
     let suggestedTargetDate: Date?
+    let isAlreadyInIdeaBank: Bool
     @Query private var outputs: [PlatformOutput]
     @State private var createdOutput: PlatformOutput?
     @State private var showDevelopment = false
     @State private var creationFailed = false
 
-    init(brief: CreativeBrief, output: PlatformOutput? = nil, suggestedTargetDate: Date? = nil) {
+    init(
+        brief: CreativeBrief,
+        output: PlatformOutput? = nil,
+        suggestedTargetDate: Date? = nil,
+        isAlreadyInIdeaBank: Bool = false
+    ) {
         self.brief = brief
         preferredOutput = output
         self.suggestedTargetDate = suggestedTargetDate
+        self.isAlreadyInIdeaBank = isAlreadyInIdeaBank
         let briefID = brief.id
         _outputs = Query(
             filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
@@ -42,7 +49,7 @@ struct IdeaPostDraftView: View {
                     brief: brief,
                     output: draftOutput,
                     suggestedTargetDate: suggestedTargetDate,
-                    isAlreadyInIdeaBank: true,
+                    isAlreadyInIdeaBank: isAlreadyInIdeaBank,
                     onSpark: { showDevelopment = true }
                 )
             } else if creationFailed {
@@ -60,7 +67,7 @@ struct IdeaPostDraftView: View {
                     .frame(maxWidth: .infinity, minHeight: 240)
             }
         }
-        .navigationTitle(brief.title)
+        .navigationTitle("Edit post")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             guard draftOutput == nil else { return }

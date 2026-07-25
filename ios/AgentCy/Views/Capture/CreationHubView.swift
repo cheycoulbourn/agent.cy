@@ -3,7 +3,9 @@ import SwiftUI
 struct CreationHubView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showQuickCapture = false
+    @State private var closeIsPulsing = false
 
     var body: some View {
         NavigationStack {
@@ -13,6 +15,9 @@ struct CreationHubView: View {
 
                     createActions
                     cyAction
+                    if appModel.walkthroughStep == .quickAdd {
+                        quickAddWalkthroughCard
+                    }
                 }
                 .padding(.horizontal, AgentLayout.dashboardGutter)
                 .padding(.bottom, AgentSpacing.x16)
@@ -33,6 +38,22 @@ struct CreationHubView: View {
                     Button { dismiss() } label: {
                         AgentIconView(.close, size: 17)
                             .frame(width: 44, height: 44)
+                            .foregroundStyle(
+                                appModel.walkthroughStep == .quickAdd
+                                    ? Color.onCyAccent
+                                    : Color.agentText
+                            )
+                            .background {
+                                if appModel.walkthroughStep == .quickAdd {
+                                    Circle()
+                                        .fill(Color.cyAccent)
+                                        .shadow(
+                                            color: Color.cyAccent.opacity(closeIsPulsing ? 0.18 : 0.46),
+                                            radius: closeIsPulsing ? 14 : 8
+                                        )
+                                        .scaleEffect(closeIsPulsing ? 1.04 : 1)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.clear.interactive(), in: .circle)
@@ -43,6 +64,11 @@ struct CreationHubView: View {
                     }
                     .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
                     .accessibilityLabel("Close")
+                    .accessibilityHint(
+                        appModel.walkthroughStep == .quickAdd
+                            ? "Closes Quick Add and continues the guided tour"
+                            : "Closes Quick Add"
+                    )
                     Spacer()
                 }
 
@@ -61,6 +87,12 @@ struct CreationHubView: View {
         .padding(.horizontal, AgentLayout.dashboardGutter)
         .padding(.top, AgentSpacing.x8)
         .padding(.bottom, AgentSpacing.x2)
+        .onAppear {
+            guard appModel.walkthroughStep == .quickAdd, !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
+                closeIsPulsing = true
+            }
+        }
     }
 
     private enum Destination { case idea, post, task, cyIdeas }
@@ -104,6 +136,48 @@ struct CreationHubView: View {
         }
         .padding(.bottom, AgentSpacing.x2)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
+    }
+
+    private var quickAddWalkthroughCard: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(spacing: AgentSpacing.x2) {
+                AgentIconView(.add, size: 15)
+                    .foregroundStyle(Color.cyAccent)
+                Text("QUICK ADD")
+                    .font(.agentMetadata)
+                    .tracking(0.8)
+                    .foregroundStyle(Color.cyAccent)
+            }
+
+            Text("Start with what you have.")
+                .font(.agentHeadline)
+
+            Text("Save a thought as an Idea, shape something ready to publish as a Post, or capture the next step as a Task. Cy can suggest three directions when you want help getting started.")
+                .font(.agentBody)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                dismiss()
+            } label: {
+                HStack(spacing: AgentSpacing.x2) {
+                    Text("Close and continue")
+                    Spacer()
+                    AgentIconView(.close, size: 13)
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.onCyAccent)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(maxWidth: .infinity, minHeight: 46)
+                .background(Color.cyAccent, in: .capsule)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Returns to the app and continues the guided tour")
+        }
+        .padding(AgentSpacing.x5)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
     }
 
     private var cyAction: some View {

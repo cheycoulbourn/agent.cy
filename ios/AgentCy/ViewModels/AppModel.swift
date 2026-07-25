@@ -47,14 +47,16 @@ enum AppWalkthroughStep: Int, CaseIterable, Identifiable {
     case dashboard
     case quickAdd
     case agenda
+    case tasks
     case pillars
+    case ideaBank
     case cy
 
     var id: Int { rawValue }
 }
 
 enum AppWalkthrough {
-    static let currentVersion = 1
+    static let currentVersion = 2
     static let completedVersionStorageKey = "agentcy.walkthrough.completedVersion"
 }
 
@@ -740,6 +742,7 @@ final class AppModel {
         notes: String = "",
         pillarID: UUID? = nil,
         targetDate: Date? = nil,
+        placement: IdeaBankPlacement = .idea,
         context: ModelContext
     ) -> CreativeBrief? {
         guard can(.createSpark, context: context) else { return nil }
@@ -752,6 +755,7 @@ final class AppModel {
         let title = cleanedTitle.isEmpty ? titleFromSpark(premise) : cleanedTitle
         let brief = CreativeBrief(title: title, premise: premise, source: source)
         brief.workspaceID = resolvedWorkspaceID(context: context)
+        brief.ideaBankPlacement = placement
         brief.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         brief.pillarID = pillarID
         brief.agendaDate = targetDate
@@ -828,6 +832,7 @@ final class AppModel {
                 source: .cyDirection,
                 notes: cleanResponse,
                 pillarID: pillarID,
+                placement: .post,
                 context: context
               ) else { return nil }
 
@@ -872,6 +877,7 @@ final class AppModel {
         let brief = CreativeBrief(title: "", premise: "", source: .text, status: .spark)
         let workspaceID = resolvedWorkspaceID(context: context)
         brief.workspaceID = workspaceID
+        brief.ideaBankPlacement = .post
         brief.pillarID = pillarID
         brief.durationSeconds = normalizedDuration
         brief.agendaDate = targetDate
@@ -930,6 +936,7 @@ final class AppModel {
             createdAt: now
         )
         copy.workspaceID = brief.workspaceID ?? resolvedWorkspaceID(context: context)
+        copy.ideaBankPlacement = .post
         copy.notes = brief.notes
         copy.scriptEnabled = brief.scriptEnabled
         copy.audience = brief.audience
@@ -1062,6 +1069,7 @@ final class AppModel {
     func movePostToIdeaBank(
         brief: CreativeBrief,
         output: PlatformOutput,
+        showsNotice: Bool = true,
         context: ModelContext
     ) -> Bool {
         guard brief.status != .archived, output.briefID == brief.id else { return false }
@@ -1082,6 +1090,7 @@ final class AppModel {
         ))) ?? []
         let now = Date()
         brief.status = .spark
+        brief.ideaBankPlacement = .idea
         brief.agendaDate = nil
         brief.archivedAt = nil
         brief.updatedAt = now
@@ -1101,7 +1110,9 @@ final class AppModel {
 
         do {
             try context.save()
-            notice = .info("Moved to your Idea Bank.")
+            if showsNotice {
+                notice = .info("Moved to your Idea Bank.")
+            }
             queueCalendarSync(context: context)
             return true
         } catch {
@@ -1150,6 +1161,7 @@ final class AppModel {
         )
         let workspaceID = resolvedWorkspaceID(context: context)
         brief.workspaceID = workspaceID
+        brief.ideaBankPlacement = .post
         brief.notes = cleanNotes
         brief.pillarID = pillarID
         brief.durationSeconds = platform.format.durationOptions.contains(durationSeconds)
@@ -1773,6 +1785,94 @@ final class AppModel {
         try? context.save()
     }
 
+    @discardableResult
+    func markPostDraft(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        context: ModelContext
+    ) -> Bool {
+        guard brief.status != .archived, output.briefID == brief.id else { return false }
+
+        let now = Date()
+        brief.ideaBankPlacement = .post
+        output.status = .draft
+        output.postedAt = nil
+
+        let siblingOutputs = outputs(for: brief, context: context).filter { $0.id != output.id }
+        let nextBriefStatus: BriefStatus
+        if siblingOutputs.contains(where: { $0.status == .posted }) {
+            nextBriefStatus = .posted
+        } else if siblingOutputs.contains(where: { $0.status == .scheduled }) {
+            nextBriefStatus = .scheduled
+        } else {
+            nextBriefStatus = .ready
+        }
+        if brief.status != nextBriefStatus {
+            brief.status = nextBriefStatus
+            brief.appendLifecycleStatus(nextBriefStatus, at: now)
+        }
+        brief.updatedAt = now
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            notice = .info("Status changed to Draft.")
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That post could not be changed to Draft.")
+            return false
+        }
+    }
+
+    @discardableResult
+    func markPostInProgress(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        date: Date,
+        context: ModelContext
+    ) -> Bool {
+        guard can(.schedule, context: context) else { return false }
+        guard brief.status != .archived,
+              output.briefID == brief.id,
+              output.status != .posted else {
+            notice = .info("Posted work must be marked not posted before it can be In progress.")
+            return false
+        }
+
+        let workDate = RecurringPostSchedule.normalizedTargetDate(
+            date,
+            includesTime: output.includesTargetTime
+        )
+        brief.ideaBankPlacement = .post
+        let previousDate = output.targetDate
+        if brief.status != .developing {
+            brief.status = .developing
+            brief.appendLifecycleStatus(.developing, at: Date())
+        }
+        output.status = .draft
+        output.targetDate = workDate
+        brief.agendaDate = workDate
+        brief.updatedAt = Date()
+        rescheduleLinkedTasks(
+            for: output,
+            from: previousDate,
+            to: workDate,
+            context: context
+        )
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            notice = .info("Added to your agenda as In progress.")
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That post could not be added to your agenda.")
+            return false
+        }
+    }
+
     func schedule(output: PlatformOutput, date: Date?, context: ModelContext) {
         guard can(.schedule, context: context) else { return }
         guard let brief = brief(id: output.briefID, context: context) else {
@@ -1780,6 +1880,7 @@ final class AppModel {
             return
         }
         let previousDate = output.targetDate
+        brief.ideaBankPlacement = .post
         if [.spark, .developing].contains(brief.status), output.status == .draft {
             rescheduleLinkedTasks(
                 for: output,
@@ -1811,6 +1912,51 @@ final class AppModel {
     }
 
     @discardableResult
+    func clearPostDate(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        context: ModelContext
+    ) -> Bool {
+        guard brief.status != .archived,
+              output.briefID == brief.id,
+              output.status != .posted else {
+            notice = .info("Posted work keeps its posting date.")
+            return false
+        }
+
+        let allTasks = (try? context.fetch(FetchDescriptor<CreatorTask>())) ?? []
+        PostTaskReschedulePolicy.clearOpenTaskDates(allTasks, for: output)
+        output.targetDate = nil
+        output.includesTargetTime = false
+        output.recurrence = .none
+        output.recurrenceWeekdays = []
+        output.recurrenceMonthDay = nil
+        output.recurrenceEndDate = nil
+        if output.status == .scheduled {
+            output.status = .ready
+        }
+
+        let remainingDates = outputs(for: brief, context: context)
+            .filter { $0.id != output.id }
+            .compactMap(\.targetDate)
+            .sorted()
+        brief.agendaDate = remainingDates.first
+        BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
+        brief.updatedAt = Date()
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            notice = .info("Date cleared.")
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That date could not be cleared.")
+            return false
+        }
+    }
+
+    @discardableResult
     func schedulePostSeries(output: PlatformOutput, date: Date, context: ModelContext) -> Bool {
         guard can(.schedule, context: context) else { return false }
         guard let brief = brief(id: output.briefID, context: context) else {
@@ -1822,6 +1968,7 @@ final class AppModel {
             date,
             includesTime: output.includesTargetTime
         )
+        brief.ideaBankPlacement = .post
         let previousDate = output.targetDate
         if brief.status == .spark || brief.status == .developing {
             BriefLifecycle.approve(brief)

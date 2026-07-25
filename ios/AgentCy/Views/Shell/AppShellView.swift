@@ -2,37 +2,6 @@ import SwiftData
 import SwiftUI
 import UIKit
 
-enum AppWalkthroughTarget: Hashable {
-    case dashboardOverview
-    case dashboardMenu
-    case quickAdd
-    case agendaCalendar
-    case agendaMenu
-    case pillarsOverview
-    case pillarsMenu
-    case cyComposer
-    case cyMenu
-}
-
-struct AppWalkthroughTargetPreferenceKey: PreferenceKey {
-    static let defaultValue: [AppWalkthroughTarget: Anchor<CGRect>] = [:]
-
-    static func reduce(
-        value: inout [AppWalkthroughTarget: Anchor<CGRect>],
-        nextValue: () -> [AppWalkthroughTarget: Anchor<CGRect>]
-    ) {
-        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
-    }
-}
-
-extension View {
-    func appWalkthroughTarget(_ target: AppWalkthroughTarget) -> some View {
-        anchorPreference(key: AppWalkthroughTargetPreferenceKey.self, value: .bounds) {
-            [target: $0]
-        }
-    }
-}
-
 struct AppShellView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var modelContext
@@ -84,7 +53,7 @@ struct AppShellView: View {
                     PaperBottomNavigation(selection: model.selectedTab, onSelect: selectTab, showCyPlanningCue: WeeklyPlanningCue.shouldPulse(
                         on: cueDate,
                         lastOpenedWeekKey: cyPlanningWeekOpened
-                    ), hasPendingCyReview: hasPendingMCPReview, openCreationHub: openCreationHub)
+                    ), hasPendingCyReview: hasPendingMCPReview, walkthroughStep: model.walkthroughStep, openCreationHub: openCreationHub)
                     .padding(.horizontal, AgentLayout.pageMargin)
                     .padding(.top, AgentSpacing.x2)
                     .padding(.bottom, AgentSpacing.x3)
@@ -102,26 +71,38 @@ struct AppShellView: View {
                         .zIndex(5)
                 }
 
+                if !isKeyboardVisible, let walkthroughStep = model.walkthroughStep {
+                    WalkthroughGuideCard(
+                        step: walkthroughStep,
+                        primaryAction: { performWalkthroughAction(for: walkthroughStep) },
+                        skipAction: finishWalkthrough
+                    )
+                    .id(walkthroughStep)
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(
+                        walkthroughStep.prefersTopPlacement ? .top : .bottom,
+                        walkthroughStep.prefersTopPlacement ? 148 : 92
+                    )
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: walkthroughStep.prefersTopPlacement ? .top : .bottom
+                    )
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .asymmetric(
+                                insertion: .move(edge: walkthroughStep.prefersTopPlacement ? .top : .bottom)
+                                    .combined(with: .opacity),
+                                removal: .offset(y: -12).combined(with: .opacity)
+                            )
+                    )
+                    .zIndex(12)
+                }
+
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .animation(.easeOut(duration: 0.24), value: appModel.taskCompletionUndo)
-            .overlayPreferenceValue(AppWalkthroughTargetPreferenceKey.self) { targets in
-                GeometryReader { overlayProxy in
-                    if !isKeyboardVisible,
-                       let walkthroughStep = model.walkthroughStep,
-                       let target = walkthroughStep.resolvedTarget(in: targets) {
-                        WalkthroughSpotlightOverlay(
-                            step: walkthroughStep,
-                            targetRect: overlayProxy[target],
-                            primaryAction: { performWalkthroughAction(for: walkthroughStep) },
-                            skipAction: finishWalkthrough
-                        )
-                        .id(walkthroughStep)
-                        .transition(reduceMotion ? .identity : .opacity)
-                        .zIndex(12)
-                    }
-                }
-            }
         }
         .scrollDismissesKeyboard(.interactively)
         .sheet(item: $model.presentedSheet) { sheet in
@@ -203,11 +184,15 @@ struct AppShellView: View {
         case .quickAdd:
             openCreationHub()
         case .agenda:
+            setWalkthroughStep(.tasks, tab: .tasks)
+        case .tasks:
             setWalkthroughStep(.pillars, tab: .pillars)
         case .pillars:
+            setWalkthroughStep(.ideaBank, tab: .ideaBank)
+        case .ideaBank:
             setWalkthroughStep(.cy, tab: .cy)
         case .cy:
-            finishWalkthrough()
+            startCreatingAfterWalkthrough()
         }
     }
 
@@ -232,12 +217,20 @@ struct AppShellView: View {
     }
 
     private func finishWalkthrough() {
+        completeWalkthrough(openCreationHub: false)
+    }
+
+    private func startCreatingAfterWalkthrough() {
+        completeWalkthrough(openCreationHub: true)
+    }
+
+    private func completeWalkthrough(openCreationHub: Bool) {
         completedWalkthroughVersion = AppWalkthrough.currentVersion
         walkthroughIsWaitingForQuickAddDismissal = false
         let changes = {
-            appModel.presentedSheet = nil
             appModel.walkthroughStep = nil
             appModel.selectedTab = .home
+            appModel.presentedSheet = openCreationHub ? .creationHub : nil
         }
         if reduceMotion {
             changes()
@@ -329,232 +322,144 @@ struct AppShellView: View {
 private extension AppWalkthroughStep {
     var title: String {
         switch self {
-        case .dashboard: "Your day, at a glance."
-        case .quickAdd: "Start with whatever you have."
-        case .agenda: "Give the work a place."
-        case .pillars: "Keep ideas connected."
-        case .cy: "Shape it with Cy."
+        case .dashboard: "Your day starts here."
+        case .quickAdd: "Capture it before it disappears."
+        case .agenda: "Give the work a day."
+        case .tasks: "Know what comes next."
+        case .pillars: "Build around what matters."
+        case .ideaBank: "Keep ideas without scheduling them."
+        case .cy: "Your creative rhythm starts now."
         }
     }
 
     var detail: String {
         switch self {
         case .dashboard:
-            "See today’s focus, scheduled posts, tasks, and recent ideas."
+            "The dashboard brings today’s focus, posts, and tasks into one place."
         case .quickAdd:
-            "Save an idea, create a post, or add a task from the plus button."
+            "The plus button starts an idea, post, or task from anywhere in the app."
         case .agenda:
-            "Plan posts by day and use focus days to batch similar work."
+            "Use the week to see what is scheduled and which focus belongs to each day."
+        case .tasks:
+            "Focus tasks repeat with your weekly rhythm. Post tasks stay linked to the post they support."
         case .pillars:
-            "Pillars organize what you create. The Idea Bank holds thoughts you are not ready to schedule."
+            "Your anchor pillar is the through-line. Secondary pillars support it."
+        case .ideaBank:
+            "The Idea Bank holds thoughts you want to return to later."
         case .cy:
-            "Ask for ideas, post development, or planning help. Review changes before they enter your calendar."
+            "One idea can become a post, a plan, and a body of work you’re proud to keep building."
+        }
+    }
+
+    var suggestion: String {
+        switch self {
+        case .dashboard:
+            "Scroll to Customize when you want to add, remove, or reorder cards."
+        case .quickAdd:
+            "Try saving one thought you do not want to lose."
+        case .agenda:
+            "Tap a day to open it, or use + to schedule a post."
+        case .tasks:
+            "Check a box to complete work, or open a task to change its date or priority."
+        case .pillars:
+            "Choose preferred days so the Agenda can recommend where each post fits."
+        case .ideaBank:
+            "Open an idea when you are ready to turn it into a post."
+        case .cy:
+            "Start with the thought already on your mind. You can shape the rest as you go."
         }
     }
 
     var primaryActionTitle: String {
         switch self {
-        case .dashboard, .agenda, .pillars: "Next"
+        case .dashboard: "Next: Quick Add"
         case .quickAdd: "Open Quick Add"
-        case .cy: "Finish"
+        case .agenda: "Next: Tasks"
+        case .tasks: "Next: Pillars"
+        case .pillars: "Next: Idea Bank"
+        case .ideaBank: "Next: Cy"
+        case .cy: "Start creating"
         }
+    }
+
+    var suggestionLabel: String {
+        self == .cy ? "YOUR FIRST MOVE" : "TRY THIS"
     }
 
     var progressLabel: String {
         "\(rawValue + 1) of \(Self.allCases.count)"
     }
 
-    var preferredTargets: [AppWalkthroughTarget] {
+    var icon: AgentIcon {
         switch self {
-        case .dashboard: [.dashboardOverview, .dashboardMenu]
-        case .quickAdd: [.quickAdd]
-        case .agenda: [.agendaCalendar, .agendaMenu]
-        case .pillars: [.pillarsOverview, .pillarsMenu]
-        case .cy: [.cyComposer, .cyMenu]
+        case .dashboard: .home
+        case .quickAdd: .add
+        case .agenda: .calendar
+        case .tasks: .tasks
+        case .pillars: .pillars
+        case .ideaBank: .ideas
+        case .cy: .idea
         }
     }
 
-    func resolvedTarget(
-        in targets: [AppWalkthroughTarget: Anchor<CGRect>]
-    ) -> Anchor<CGRect>? {
-        preferredTargets.lazy.compactMap { targets[$0] }.first
-    }
-
-    var spotlightCornerRadius: CGFloat {
-        switch self {
-        case .quickAdd: 34
-        case .agenda, .dashboard, .pillars: 22
-        case .cy: 28
-        }
-    }
+    var prefersTopPlacement: Bool { self == .cy }
 }
 
-private struct WalkthroughSpotlightOverlay: View {
+private struct WalkthroughGuideCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     let step: AppWalkthroughStep
-    let targetRect: CGRect
     let primaryAction: () -> Void
     let skipAction: () -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            let spotlight = spotlightRect(in: proxy.size)
-
-            ZStack {
-                WalkthroughSpotlightMask(
-                    spotlightRect: spotlight,
-                    cornerRadius: step.spotlightCornerRadius
-                )
-                .fill(
-                    Color.agentPureBlack.opacity(colorScheme == .dark ? 0.58 : 0.44),
-                    style: FillStyle(eoFill: true)
-                )
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-
-                WalkthroughInteractionShield(spotlightRect: spotlight)
-                    .accessibilityHidden(true)
-
-                RoundedRectangle(cornerRadius: step.spotlightCornerRadius)
-                    .stroke(Color.cyAccent, lineWidth: 1.5)
-                    .frame(width: spotlight.width, height: spotlight.height)
-                    .position(x: spotlight.midX, y: spotlight.midY)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-
-                coachPlacement(around: spotlight, in: proxy.size)
-            }
-            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: targetRect)
-        }
-        .ignoresSafeArea()
-    }
-
-    @ViewBuilder
-    private func coachPlacement(around spotlight: CGRect, in size: CGSize) -> some View {
-        let placeAbove = spotlight.midY > size.height * 0.54
-
-        VStack(spacing: 0) {
-            if placeAbove {
-                WalkthroughCoachCard(
-                    step: step,
-                    primaryAction: primaryAction,
-                    skipAction: skipAction
-                )
-                .padding(.top, 64)
-                Spacer(minLength: AgentSpacing.x4)
-            } else {
-                Spacer(minLength: AgentSpacing.x4)
-                WalkthroughCoachCard(
-                    step: step,
-                    primaryAction: primaryAction,
-                    skipAction: skipAction
-                )
-                .padding(.bottom, 92)
-            }
-        }
-        .padding(.horizontal, AgentLayout.pageMargin)
-    }
-
-    private func spotlightRect(in size: CGSize) -> CGRect {
-        let bounds = CGRect(origin: .zero, size: size).insetBy(dx: 6, dy: 6)
-        let expanded = targetRect.insetBy(dx: -10, dy: -10)
-        return expanded.intersection(bounds)
-    }
-}
-
-private struct WalkthroughSpotlightMask: Shape {
-    let spotlightRect: CGRect
-    let cornerRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addRect(rect)
-        path.addRoundedRect(
-            in: spotlightRect,
-            cornerSize: CGSize(width: cornerRadius, height: cornerRadius)
-        )
-        return path
-    }
-}
-
-private struct WalkthroughInteractionShield: View {
-    let spotlightRect: CGRect
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-
-            ZStack {
-                blocker(
-                    x: size.width / 2,
-                    y: spotlightRect.minY / 2,
-                    width: size.width,
-                    height: spotlightRect.minY
-                )
-                blocker(
-                    x: size.width / 2,
-                    y: spotlightRect.maxY + (size.height - spotlightRect.maxY) / 2,
-                    width: size.width,
-                    height: size.height - spotlightRect.maxY
-                )
-                blocker(
-                    x: spotlightRect.minX / 2,
-                    y: spotlightRect.midY,
-                    width: spotlightRect.minX,
-                    height: spotlightRect.height
-                )
-                blocker(
-                    x: spotlightRect.maxX + (size.width - spotlightRect.maxX) / 2,
-                    y: spotlightRect.midY,
-                    width: size.width - spotlightRect.maxX,
-                    height: spotlightRect.height
-                )
-            }
-        }
-    }
-
-    private func blocker(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> some View {
-        Color.clear
-            .frame(width: max(0, width), height: max(0, height))
-            .contentShape(.rect)
-            .position(x: x, y: y)
-            .onTapGesture { }
-    }
-}
-
-private struct WalkthroughCoachCard: View {
-    let step: AppWalkthroughStep
-    let primaryAction: () -> Void
-    let skipAction: () -> Void
+    @State private var contentIsVisible = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             HStack(alignment: .center, spacing: AgentSpacing.x3) {
-                Text(step.progressLabel.uppercased())
-                    .font(.paperInter(size: 11, weight: .semibold, relativeTo: .caption))
-                    .tracking(1)
-                    .foregroundStyle(Color.agentSecondary)
+                WalkthroughAnimatedGlyph(step: step, isVisible: contentIsVisible)
 
-                Spacer()
+                Text("GUIDED TOUR · \(step.progressLabel.uppercased())")
+                    .font(.paperInter(size: 11, weight: .semibold, relativeTo: .caption))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.agentSecondary)
+                    .monospacedDigit()
+
+                Spacer(minLength: AgentSpacing.x2)
 
                 Button("Skip tour", action: skipAction)
                     .font(.paperInter(size: 13, weight: .semibold, relativeTo: .caption))
                     .foregroundStyle(Color.agentSecondary)
                     .frame(minWidth: 72, minHeight: 44)
+                    .contentShape(.rect)
                     .buttonStyle(.plain)
             }
 
-            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                 Text(step.title)
-                    .font(.paperInter(size: 22, weight: .bold, relativeTo: .title2))
+                    .font(.paperInter(size: 20, weight: .bold, relativeTo: .title2))
                     .foregroundStyle(Color.agentText)
                     .fixedSize(horizontal: false, vertical: true)
+
                 Text(step.detail)
-                    .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                    .font(.paperInter(size: 14, weight: .regular, relativeTo: .body))
                     .foregroundStyle(Color.agentSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(step.suggestionLabel)
+                    .font(.paperInter(size: 10, weight: .semibold, relativeTo: .caption2))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.cyAccent)
+
+                Text(step.suggestion)
+                    .font(.paperInter(size: 13, weight: .medium, relativeTo: .subheadline))
+                    .foregroundStyle(Color.agentText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(AgentSpacing.x3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.agentCanvas.opacity(colorScheme == .dark ? 0.44 : 0.72), in: .rect(cornerRadius: 12))
 
             Button(action: primaryAction) {
                 HStack(spacing: AgentSpacing.x2) {
@@ -562,27 +467,102 @@ private struct WalkthroughCoachCard: View {
                     Spacer()
                     AgentIconView(step == .cy ? .check : .forward, size: 15)
                 }
-                .font(.paperInter(size: 15, weight: .semibold, relativeTo: .headline))
-                .foregroundStyle(Color.agentCanvas)
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .background(Color.agentText, in: .capsule)
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WalkthroughPrimaryButtonStyle(isFinalStep: step == .cy))
             .accessibilityHint("Continues to the next walkthrough step")
         }
         .padding(AgentSpacing.x4)
-        .background(Color.agentSurface, in: .rect(cornerRadius: 20))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.cyAccent.opacity(0.34), lineWidth: 1)
+        .frame(maxWidth: 440)
+        .background(Color.agentSurface, in: .rect(cornerRadius: 28))
+        .agentSurfaceChrome(cornerRadius: 28, role: .floating)
+        .onAppear {
+            if reduceMotion {
+                contentIsVisible = true
+            } else {
+                contentIsVisible = false
+                withAnimation(.spring(duration: 0.3, bounce: 0)) {
+                    contentIsVisible = true
+                }
+            }
         }
-        .accessibilityLabel("Walkthrough. \(step.title) \(step.detail)")
         .accessibilityElement(children: .contain)
         .accessibilitySortPriority(100)
     }
 }
 
+private struct WalkthroughAnimatedGlyph: View {
+    let step: AppWalkthroughStep
+    let isVisible: Bool
+
+    var body: some View {
+        Group {
+            if step == .cy {
+                CyAsterisk(color: .cyAccent, size: 18, strokeWidth: 1.6)
+            } else {
+                AgentIconView(step.icon, size: 17)
+                    .foregroundStyle(Color.cyAccent)
+            }
+        }
+        .frame(width: 36, height: 36)
+        .background(Color.cyAccent.opacity(0.10), in: .circle)
+        .scaleEffect(isVisible ? 1 : 0.25)
+        .opacity(isVisible ? 1 : 0)
+        .blur(radius: isVisible ? 0 : 4)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct WalkthroughPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isFinalStep: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.paperInter(size: 15, weight: .semibold, relativeTo: .headline))
+            .foregroundStyle(isFinalStep ? Color.onCyAccent : Color.agentCanvas)
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(isFinalStep ? Color.cyAccent : Color.agentText, in: .capsule)
+            .shadow(
+                color: isFinalStep ? Color.cyAccent.opacity(0.24) : .clear,
+                radius: isFinalStep ? 12 : 0,
+                y: isFinalStep ? 4 : 0
+            )
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct WalkthroughControlCue: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.cyAccent)
+
+            Circle()
+                .stroke(Color.cyAccent.opacity(isExpanded ? 0.10 : 0.42), lineWidth: 2)
+                .padding(-5)
+                .scaleEffect(isExpanded ? 1.16 : 1)
+        }
+            .shadow(
+                color: Color.cyAccent.opacity(reduceMotion ? 0.32 : (isExpanded ? 0.18 : 0.48)),
+                radius: reduceMotion ? 8 : (isExpanded ? 14 : 8)
+            )
+            .scaleEffect(reduceMotion ? 1 : (isExpanded ? 1.04 : 1))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
+                    isExpanded = true
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
 private extension View {
     func appTabLayer(_ tab: AppTab, selection: AppTab) -> some View {
         opacity(selection == tab ? 1 : 0)
@@ -600,6 +580,7 @@ private struct PaperBottomNavigation: View {
     let onSelect: (AppTab) -> Void
     let showCyPlanningCue: Bool
     let hasPendingCyReview: Bool
+    let walkthroughStep: AppWalkthroughStep?
     let openCreationHub: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -623,13 +604,16 @@ private struct PaperBottomNavigation: View {
                                     .frame(width: 46, height: 46)
                                     .foregroundStyle(foreground(for: tab))
                                     .background {
+                                        if isWalkthroughTarget(tab) {
+                                            WalkthroughControlCue()
+                                        }
                                         if tab == .cy,
                                            showCyPlanningCue,
                                            !hasPendingCyReview,
                                            selection != .cy {
                                             CyWeeklyPlanningPulse()
                                         }
-                                        if selection == tab {
+                                        if selection == tab, !isWalkthroughTarget(tab) {
                                             Circle()
                                                 .fill(Color.clear)
                                                 .glassEffect(
@@ -648,13 +632,6 @@ private struct PaperBottomNavigation: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.plain)
-                            .anchorPreference(
-                                key: AppWalkthroughTargetPreferenceKey.self,
-                                value: .bounds
-                            ) { anchor in
-                                guard let target = walkthroughTarget(for: tab) else { return [:] }
-                                return [target: anchor]
-                            }
                             .accessibilityLabel(tab.title)
                             .accessibilityHint(
                                 cyAccessibilityHint(for: tab)
@@ -680,17 +657,21 @@ private struct PaperBottomNavigation: View {
                 Button(action: openCreationHub) {
                     AgentIconView(.add, size: 24)
                         .frame(width: 56, height: 56)
-                        .foregroundStyle(Color.agentText)
+                        .foregroundStyle(walkthroughStep == .quickAdd ? Color.onCyAccent : Color.agentText)
                 }
                 .buttonStyle(.plain)
                 .glassEffect(.clear, in: .circle)
+                .background {
+                    if walkthroughStep == .quickAdd {
+                        WalkthroughControlCue()
+                    }
+                }
                 .overlay {
                     Circle()
                         .stroke(innerHighlight, lineWidth: 0.5)
-                        .allowsHitTesting(false)
+                    .allowsHitTesting(false)
                 }
                 .contentShape(.circle)
-                .appWalkthroughTarget(.quickAdd)
                 .zIndex(2)
                 .accessibilityLabel("Create")
                 .accessibilityHint("Opens ideas, posts, tasks, and Idea Bank")
@@ -703,6 +684,7 @@ private struct PaperBottomNavigation: View {
     }
 
     private func foreground(for tab: AppTab) -> Color {
+        if isWalkthroughTarget(tab) { return .onCyAccent }
         if tab == .cy { return selection == .cy ? .onCyAccent : .cyAccent }
         return .agentText
     }
@@ -711,13 +693,15 @@ private struct PaperBottomNavigation: View {
         Color.agentPureWhite.opacity(colorScheme == .dark ? 0.14 : 0.45)
     }
 
-    private func walkthroughTarget(for tab: AppTab) -> AppWalkthroughTarget? {
-        switch tab {
-        case .home: .dashboardMenu
-        case .today: .agendaMenu
-        case .pillars: .pillarsMenu
-        case .cy: .cyMenu
-        case .tasks, .ideaBank: nil
+    private func isWalkthroughTarget(_ tab: AppTab) -> Bool {
+        switch walkthroughStep {
+        case .dashboard: tab == .home
+        case .agenda: tab == .today
+        case .tasks: tab == .tasks
+        case .pillars: tab == .pillars
+        case .ideaBank: tab == .ideaBank
+        case .cy: tab == .cy
+        case .quickAdd, .none: false
         }
     }
 

@@ -716,6 +716,7 @@ enum MCPBridgeService {
             let pillarID = try validatedPillarID(request.payload.pillarId, context: context, workspaceID: workspaceID, workspaces: workspaces)
             let brief = CreativeBrief(title: title, premise: "", source: .text, status: .spark)
             brief.workspaceID = workspaceID
+            brief.ideaBankPlacement = .idea
             brief.notes = request.payload.notes ?? ""
             brief.pillarID = pillarID
             context.insert(brief)
@@ -729,6 +730,7 @@ enum MCPBridgeService {
                 status: .spark
             )
             brief.workspaceID = workspaceID
+            brief.ideaBankPlacement = .post
             brief.notes = request.payload.notes ?? ""
             brief.pillarID = pillarID
             brief.spokenHook = request.payload.hook ?? ""

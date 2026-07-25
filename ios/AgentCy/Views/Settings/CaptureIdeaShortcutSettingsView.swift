@@ -95,7 +95,7 @@ struct CaptureIdeaShortcutSettingsView: View {
                     .font(.agentHeadline)
                     .foregroundStyle(Color.agentText)
                 Text("IDEA + PILLAR · SAVES PRIVATELY")
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
             }
 
@@ -104,16 +104,13 @@ struct CaptureIdeaShortcutSettingsView: View {
         .padding(AgentSpacing.x4)
         .background(Color.agentCanvas)
         .clipShape(.rect(cornerRadius: AgentRadius.panel))
-        .overlay {
-            RoundedRectangle(cornerRadius: AgentRadius.panel)
-                .stroke(Color.agentBorder, lineWidth: 1)
-        }
+        .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
     }
 
     private func instructionRow(number: String, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: AgentSpacing.x4) {
             Text(number)
-                .font(.agentMono)
+                .font(.agentMetadata)
                 .foregroundStyle(Color.agentSecondary)
                 .frame(width: 28, alignment: .leading)
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {
@@ -135,7 +132,7 @@ struct CaptureIdeaShortcutSettingsView: View {
     private func setupStep(number: String, text: String) -> some View {
         HStack(alignment: .top, spacing: AgentSpacing.x3) {
             Text(number)
-                .font(.agentMono)
+                .font(.agentMetadata)
                 .foregroundStyle(Color.agentText)
                 .frame(width: 26, height: 26)
                 .background(Color.agentCanvas, in: Circle())

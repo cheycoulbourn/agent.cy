@@ -39,10 +39,7 @@ struct AgentPostCard: View {
         .padding(.horizontal, AgentSpacing.x4)
         .padding(.vertical, AgentSpacing.x4)
         .background(cardBackground, in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(cardBorder, lineWidth: 1)
-        )
+        .agentSurfaceChrome(cornerRadius: 12, borderColor: cardBorder)
     }
 
     private var cardContent: some View {
@@ -51,14 +48,14 @@ struct AgentPostCard: View {
                 HStack(spacing: AgentSpacing.x2) {
                     PillarColorMark(color: accent, diameter: 7)
                     Text(pillar.uppercased())
-                        .font(.agentMono)
+                        .font(.agentMetadata)
                         .tracking(0.7)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(statusTitle)
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(0.6)
                     .padding(.horizontal, AgentSpacing.x2)
                     .frame(minHeight: 24)
@@ -78,13 +75,13 @@ struct AgentPostCard: View {
 
             HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
                 Text(metadata.uppercased())
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(0.7)
                     .lineLimit(2)
                 Spacer(minLength: AgentSpacing.x3)
                 if let timeText {
                     Text(timeText)
-                        .font(.agentMono)
+                        .font(.agentMetadata)
                         .fixedSize()
                 }
                 AgentIconView(.forward, size: 13)

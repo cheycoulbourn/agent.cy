@@ -158,7 +158,10 @@ struct SettingsView: View {
                                 appModel.startWalkthrough()
                                 dismiss()
                             } label: {
-                                SettingsIndexRow(title: "Replay walkthrough", value: "5 steps")
+                                SettingsIndexRow(
+                                    title: "Replay walkthrough",
+                                    value: "\(AppWalkthroughStep.allCases.count) steps"
+                                )
                             }
                             .buttonStyle(.plain)
                             NavigationLink {
@@ -198,7 +201,7 @@ struct SettingsView: View {
                         }
 
                         Text("Version \(versionLabel)")
-                            .font(.agentMono)
+                            .font(.agentMetadata)
                             .foregroundStyle(Color.agentSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, AgentSpacing.x2)
@@ -208,6 +211,7 @@ struct SettingsView: View {
                     .padding(.bottom, AgentSpacing.x12)
                     .background(Color.agentSurface)
                     .clipShape(.rect(cornerRadius: AgentRadius.floating))
+                    .agentSurfaceChrome(cornerRadius: AgentRadius.floating, role: .structural)
                 }
             }
             .scrollIndicators(.hidden)

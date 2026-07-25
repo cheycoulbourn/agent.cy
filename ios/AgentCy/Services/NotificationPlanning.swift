@@ -114,6 +114,21 @@ struct NotificationBriefSnapshot: Equatable, Sendable {
     let title: String
     let status: BriefStatus
     let updatedAt: Date
+    let isSavedIdea: Bool
+
+    init(
+        id: UUID,
+        title: String,
+        status: BriefStatus,
+        updatedAt: Date,
+        isSavedIdea: Bool? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.status = status
+        self.updatedAt = updatedAt
+        self.isSavedIdea = isSavedIdea ?? (status == .spark || status == .developing)
+    }
 }
 
 struct NotificationOutputSnapshot: Equatable, Sendable {
@@ -266,7 +281,7 @@ enum AgentNotificationPlanBuilder {
 
         let activeBriefs = input.briefs.filter { $0.status != .archived }
         let savedIdeas = activeBriefs
-            .filter { $0.status == .spark || $0.status == .developing }
+            .filter(\.isSavedIdea)
             .sorted { $0.updatedAt > $1.updatedAt }
 
         for offset in 0...input.horizonDays {

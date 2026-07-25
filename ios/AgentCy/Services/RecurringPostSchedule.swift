@@ -301,6 +301,7 @@ enum RecurringPostMaterializer {
             status: .ready,
             createdAt: createdAt
         )
+        clone.ideaBankPlacement = .post
         clone.notes = source.notes
         clone.scriptEnabled = source.scriptEnabled
         clone.audience = source.audience

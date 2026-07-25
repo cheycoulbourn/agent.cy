@@ -86,6 +86,15 @@ struct TodayView: View {
         }
     }
 
+    private var inProgressOutputs: [PlatformOutput] {
+        todayOutputs.filter { output in
+            TodayOutputPresentation.section(
+                outputStatus: output.status,
+                briefStatus: brief(for: output)?.status
+            ) == .inProgress
+        }
+    }
+
     private var goingLiveOutputs: [PlatformOutput] {
         todayOutputs.filter { output in
             TodayOutputPresentation.section(
@@ -169,7 +178,7 @@ struct TodayView: View {
                     if let focus = resolvedFocus {
                         HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
                             Text(focus.title).font(.agentTitle)
-                            Text("DAY \(weekdayPosition) OF 7").font(.agentMono)
+                            Text("DAY \(weekdayPosition) OF 7").font(.agentMetadata)
                             Spacer()
                             AgentIconView(.forward, size: 13)
                         }
@@ -212,11 +221,20 @@ struct TodayView: View {
                 postOutputSection(title: "Scheduled", outputs: goingLiveOutputs, displayAsDraft: false)
             }
 
+            if !inProgressOutputs.isEmpty {
+                postOutputSection(
+                    title: "In progress",
+                    outputs: inProgressOutputs,
+                    displayAsDraft: true,
+                    statusTextOverride: "In progress"
+                )
+            }
+
             if !draftedOutputs.isEmpty {
                 postOutputSection(title: "Drafted", outputs: draftedOutputs, displayAsDraft: true)
             }
 
-            if goingLiveOutputs.isEmpty, draftedOutputs.isEmpty {
+            if goingLiveOutputs.isEmpty, inProgressOutputs.isEmpty, draftedOutputs.isEmpty {
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                     sectionHeading("Posts", count: 0, unit: "post")
                     Text("No posts planned.")
@@ -233,7 +251,8 @@ struct TodayView: View {
     private func postOutputSection(
         title: String,
         outputs: [PlatformOutput],
-        displayAsDraft: Bool
+        displayAsDraft: Bool,
+        statusTextOverride: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             sectionHeading(title, count: outputs.count, unit: "post")
@@ -248,7 +267,8 @@ struct TodayView: View {
                             metadata: outputLabel(output),
                             timeText: output.includesTargetTime
                                 ? output.targetDate?.formatted(date: .omitted, time: .shortened)
-                                : nil
+                                : nil,
+                            statusTextOverride: statusTextOverride
                         )
                     }
                     .buttonStyle(.plain)
@@ -320,7 +340,7 @@ struct TodayView: View {
         HStack(alignment: .firstTextBaseline) {
             MetaLabel(title)
             Spacer()
-            Text("\(count) \(count == 1 ? unit : unit + "s")".uppercased()).font(.agentMono)
+            Text("\(count) \(count == 1 ? unit : unit + "s")".uppercased()).font(.agentMetadata)
         }
     }
 
@@ -417,6 +437,7 @@ struct TodayView: View {
 
 enum TodayOutputSection: Equatable {
     case drafted
+    case inProgress
     case goingLive
 }
 
@@ -425,7 +446,10 @@ enum TodayOutputPresentation {
         outputStatus: PlatformOutputStatus,
         briefStatus: BriefStatus?
     ) -> TodayOutputSection {
-        if outputStatus == .draft || briefStatus == .spark || briefStatus == .developing {
+        if briefStatus == .developing {
+            return .inProgress
+        }
+        if outputStatus == .draft || briefStatus == .spark {
             return .drafted
         }
         return .goingLive

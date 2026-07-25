@@ -142,11 +142,11 @@ struct OnboardingView: View {
             }
             HStack(alignment: .center) {
                 Text(step.label.uppercased())
-                    .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                    .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
                     .tracking(1.1)
                 Spacer()
                 Text("\(step.rawValue + 1) / \(Step.allCases.count)")
-                    .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                    .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
                     .tracking(0.8)
                     .foregroundStyle(Color.agentSecondary)
                 if previewOnly {
@@ -343,10 +343,10 @@ struct OnboardingView: View {
             .padding(AgentSpacing.x4)
             .frame(maxWidth: .infinity, minHeight: 102, alignment: .topLeading)
             .background(Color.agentSurface, in: .rect(cornerRadius: 16))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(isSelected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
-            }
+            .agentSurfaceChrome(
+                cornerRadius: 16,
+                borderColor: isSelected ? Color.agentText : nil
+            )
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(palette.title), \(palette.detail)")
@@ -375,10 +375,10 @@ struct OnboardingView: View {
             .padding(.vertical, AgentSpacing.x3)
             .frame(maxWidth: .infinity, minHeight: 102)
             .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(isSelected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
-            }
+            .agentSurfaceChrome(
+                cornerRadius: 14,
+                borderColor: isSelected ? Color.agentText : nil
+            )
         }
         .buttonStyle(.plain)
         .accessibilityLabel(appearance.title)
@@ -439,7 +439,7 @@ struct OnboardingView: View {
                                 Text(pillar.name)
                                     .font(.paperInter(size: 18, weight: .semibold, relativeTo: .headline))
                                 Text(index == 0 ? "Anchor pillar" : weekdaySummary(pillar.assignedWeekdays))
-                                    .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                                    .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
                                     .tracking(0.8)
                                     .textCase(.uppercase)
                                     .foregroundStyle(Color.agentSecondary)
@@ -450,10 +450,7 @@ struct OnboardingView: View {
                         .padding(.horizontal, AgentSpacing.x4)
                         .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
                         .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
-                        }
+                        .agentSurfaceChrome(cornerRadius: 14)
                     }
                     .buttonStyle(.plain)
                 }
@@ -485,7 +482,7 @@ struct OnboardingView: View {
                 Spacer()
                 Text(draft.pillars.isEmpty ? "Optional" : "You can edit these later")
             }
-            .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+            .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
             .tracking(0.7)
             .textCase(.uppercase)
             .foregroundStyle(Color.agentSecondary)
@@ -523,7 +520,7 @@ struct OnboardingView: View {
             }
 
             Text("Nothing is connected, fetched, or posted automatically.")
-                .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
                 .tracking(0.6)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.agentSecondary)
@@ -603,7 +600,7 @@ struct OnboardingView: View {
                         Text(title)
                             .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
                         Text(badge.uppercased())
-                            .font(.paperMono(size: 9, weight: .medium, relativeTo: .caption))
+                            .font(.paperMetadata(size: 9, weight: .medium, relativeTo: .caption))
                             .tracking(0.7)
                             .foregroundStyle(Color.agentSecondary)
                     }
@@ -614,16 +611,16 @@ struct OnboardingView: View {
                 }
                 Spacer(minLength: AgentSpacing.x2)
                 AgentIconView(selected ? .checkCircle : .radioEmpty)
-                    .font(.system(size: 20, weight: .medium))
+                    .font(.agentInter(size: 20, weight: .medium, relativeTo: .body))
                     .foregroundStyle(selected ? Color.cyAccent : Color.agentSecondary)
             }
             .padding(AgentSpacing.x4)
             .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
             .background(Color.agentSurface, in: .rect(cornerRadius: 16))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(selected ? Color.cyAccent : Color.agentText.opacity(0.08), lineWidth: selected ? 1.5 : 1)
-            }
+            .agentSurfaceChrome(
+                cornerRadius: 16,
+                borderColor: selected ? Color.cyAccent : nil
+            )
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -674,7 +671,7 @@ struct OnboardingView: View {
                             Text("Download bridge")
                                 .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
                             Text("MAC & WINDOWS")
-                                .font(.paperMono(size: 10, weight: .medium, relativeTo: .caption))
+                                .font(.paperMetadata(size: 10, weight: .medium, relativeTo: .caption))
                                 .tracking(0.9)
                                 .foregroundStyle(Color.agentSecondary)
                         }
@@ -688,10 +685,7 @@ struct OnboardingView: View {
                     .padding(.horizontal, AgentSpacing.x4)
                     .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                     .background(Color.agentSurface, in: .rect(cornerRadius: 16))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.agentBorder, lineWidth: 1)
-                    }
+                    .agentSurfaceChrome(cornerRadius: 16)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -810,7 +804,7 @@ struct OnboardingView: View {
     private func onboardingInstruction(number: String, text: String) -> some View {
         HStack(alignment: .top, spacing: AgentSpacing.x3) {
             Text(number)
-                .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
                 .foregroundStyle(Color.agentSecondary)
                 .frame(width: 18, alignment: .leading)
             Text(text)
@@ -843,6 +837,7 @@ struct OnboardingView: View {
             }
             .padding(.horizontal, AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+            .agentSurfaceChrome(cornerRadius: 16)
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 PaperFieldLabel("Preview")
@@ -854,10 +849,8 @@ struct OnboardingView: View {
             }
             .padding(AgentSpacing.x4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
-            }
+            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+            .agentSurfaceChrome(cornerRadius: 16)
 
             Text("Notifications are scheduled locally on this iPhone. You can change every category later in Settings.")
                 .font(.paperInter(size: 13, weight: .regular, relativeTo: .caption))
@@ -938,6 +931,7 @@ struct OnboardingView: View {
             }
             .padding(.horizontal, AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: 16))
+            .agentSurfaceChrome(cornerRadius: 16)
 
             AgentInsetSurface {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
@@ -1269,7 +1263,7 @@ private struct OnboardingCommandBlock: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             HStack {
                 Text(label.uppercased())
-                    .font(.paperMono(size: 9, weight: .medium, relativeTo: .caption))
+                    .font(.paperMetadata(size: 9, weight: .medium, relativeTo: .caption))
                     .tracking(0.8)
                     .foregroundStyle(Color.agentSecondary)
                 Spacer()
@@ -1285,7 +1279,7 @@ private struct OnboardingCommandBlock: View {
             }
 
             Text(command)
-                .font(.paperMono(size: 13, weight: .regular, relativeTo: .body))
+                .font(.paperMetadata(size: 13, weight: .regular, relativeTo: .body))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1325,7 +1319,7 @@ private struct PaperFieldLabel: View {
 
     var body: some View {
         Text(title.uppercased())
-            .font(.paperMono(size: 10, weight: .medium, relativeTo: .caption))
+            .font(.paperMetadata(size: 10, weight: .medium, relativeTo: .caption))
             .tracking(1.1)
     }
 }
@@ -1363,7 +1357,7 @@ private struct PaperConsentRow: View {
         Button { isOn.toggle() } label: {
             HStack(alignment: .top, spacing: AgentSpacing.x3) {
                 AgentIconView(isOn ? .checkboxSelected : .checkboxEmpty)
-                    .font(.system(size: 20, weight: .regular))
+                    .font(.agentInter(size: 20, relativeTo: .body))
                     .foregroundStyle(isOn ? Color.agentText : Color.agentSecondary)
                     .frame(width: 28, height: 28)
                 VStack(alignment: .leading, spacing: 2) {
@@ -1390,7 +1384,7 @@ private struct PaperOnboardingActionRow: View {
     var body: some View {
         HStack(spacing: AgentSpacing.x4) {
             AgentIconView(AgentIcon(legacySystemName: symbol))
-                .font(.system(size: 19, weight: .regular))
+                .font(.agentInter(size: 19, relativeTo: .body))
                 .frame(width: 32)
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                 Text(title)
@@ -1406,6 +1400,7 @@ private struct PaperOnboardingActionRow: View {
         .padding(.horizontal, AgentSpacing.x4)
         .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
         .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+        .agentSurfaceChrome(cornerRadius: 14)
         .overlay {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
@@ -1426,7 +1421,7 @@ private struct PaperPlatformCard: View {
             Button(action: onToggle) {
                 HStack(spacing: AgentSpacing.x4) {
                     AgentIconView(AgentIcon(legacySystemName: symbol))
-                        .font(.system(size: 18, weight: .regular))
+                        .font(.agentInter(size: 18, relativeTo: .body))
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
@@ -1437,7 +1432,7 @@ private struct PaperPlatformCard: View {
                     }
                     Spacer()
                     AgentIconView(selected ? .checkCircle : .radioEmpty)
-                        .font(.system(size: 20, weight: .regular))
+                        .font(.agentInter(size: 20, relativeTo: .body))
                 }
                 .contentShape(.rect)
                 .padding(.horizontal, AgentSpacing.x4)
@@ -1458,6 +1453,7 @@ private struct PaperPlatformCard: View {
             }
         }
         .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+        .agentSurfaceChrome(cornerRadius: 14)
         .overlay {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(selected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: 1)
@@ -1495,7 +1491,7 @@ private struct PaperYouTubeCard: View {
                     }
                     Spacer()
                     AgentIconView(selected ? .checkCircle : .radioEmpty)
-                        .font(.system(size: 20, weight: .regular))
+                        .font(.agentInter(size: 20, relativeTo: .body))
                 }
                 .contentShape(.rect)
                 .padding(.horizontal, AgentSpacing.x4)
@@ -1522,6 +1518,7 @@ private struct PaperYouTubeCard: View {
             }
         }
         .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+        .agentSurfaceChrome(cornerRadius: 14)
         .overlay {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(selected ? Color.agentText : Color.agentText.opacity(0.08), lineWidth: 1)
@@ -1556,7 +1553,7 @@ private struct PaperReadyRow: View {
     var body: some View {
         HStack {
             Text(label)
-                .font(.paperMono(size: 10, weight: .medium, relativeTo: .caption))
+                .font(.paperMetadata(size: 10, weight: .medium, relativeTo: .caption))
                 .tracking(0.9)
                 .textCase(.uppercase)
             Spacer()
@@ -1630,7 +1627,7 @@ private struct OnboardingPillarEditor: View {
                             PaperFieldLabel("Preferred days")
                             Spacer()
                             Text("\(draft.assignedWeekdays.count) of 7")
-                                .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                                .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
                                 .foregroundStyle(Color.agentSecondary)
                         }
                         OnboardingWeekdayChooser(
@@ -1731,7 +1728,7 @@ private struct OnboardingWeekdayChooser: View {
                     }
                 } label: {
                     Text(day.letter)
-                        .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                        .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
                         .foregroundStyle(selection.contains(day) ? Color(agentHex: foregroundHex) : Color.agentText)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(selection.contains(day) ? Color(agentHex: accentHex) : Color.agentSurface, in: .circle)

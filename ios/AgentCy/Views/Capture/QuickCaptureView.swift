@@ -96,7 +96,7 @@ struct CyProUpsellView: View {
 
                 VStack(spacing: AgentSpacing.x3) {
                     Text("14 days free · then $8.99 a month")
-                        .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                        .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
                         .tracking(0.5)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.agentSecondary)
@@ -258,7 +258,7 @@ struct QuickCaptureView: View {
                         }
                         .padding(.horizontal, AgentLayout.pageMargin)
                         .padding(.top, AgentSpacing.x4)
-                        .padding(.bottom, 120)
+                        .agentBottomNavigationClearance()
                     }
                     .scrollDismissesKeyboard(.interactively)
                 }
@@ -459,7 +459,7 @@ struct QuickCaptureView: View {
                         Task { await loadIdeas() }
                     } label: {
                         Text("Try again")
-                            .font(.agentMono)
+                            .font(.agentMetadata)
                             .tracking(1.2)
                             .textCase(.uppercase)
                             .foregroundStyle(Color.cyAccent)
@@ -743,11 +743,10 @@ struct QuickCaptureView: View {
         }
         .padding(AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.cyAccent.opacity(0.24), lineWidth: 1)
-        }
-        .shadow(color: Color.cyAccent.opacity(0.08), radius: 14, y: 4)
+        .agentSurfaceChrome(
+            cornerRadius: 16,
+            borderColor: Color.cyAccent.opacity(0.24)
+        )
     }
 
     private var cyIdeaCardTitle: String {
@@ -805,10 +804,7 @@ struct QuickCaptureView: View {
             }
             .padding(.horizontal, AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
-            .overlay {
-                RoundedRectangle(cornerRadius: AgentRadius.panel)
-                    .stroke(Color.agentBorder, lineWidth: 0.75)
-            }
+            .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
         }
     }
 
@@ -1662,7 +1658,7 @@ private struct IdeaDirectionRow: View {
                 HStack(spacing: 6) {
                     Text(isSaved ? "Saved to Idea Bank" : "Save idea")
                     AgentIconView(isSaved ? .check : .arrowRight)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.agentInter(size: 11, weight: .semibold, relativeTo: .caption))
                 }
                 .font(.agentSubtext.weight(.semibold))
                 .foregroundStyle(Color.cyAccent)

@@ -16,12 +16,17 @@ coverage/
 # Xcode / Swift
 DerivedData/
 build/
+ios/build-device/
 *.xcuserstate
 xcuserdata/
 *.xccheckout
 *.moved-aside
 .swiftpm/
 .build/
+
+# XcodeGen is canonical at ios/AgentCy.xcodeproj. Finder/Xcode copies can
+# silently retain obsolete resources such as retired fonts.
+ios/AgentCy [0-9]*.xcodeproj/
 
 # Runtime artifacts
 server/data/

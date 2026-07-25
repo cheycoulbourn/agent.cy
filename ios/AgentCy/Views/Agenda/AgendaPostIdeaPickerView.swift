@@ -3,8 +3,10 @@ import SwiftUI
 
 struct AgendaPostIdeaPickerView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query private var profiles: [CreatorProfile]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
 
     let day: Date
@@ -24,7 +26,7 @@ struct AgendaPostIdeaPickerView: View {
     private var ideas: [CreativeBrief] {
         briefs.filter { brief in
             let isFiledHere = brief.pillarID.map(activePillarIDs.contains) ?? true
-            return isFiledHere && (brief.status == .spark || brief.status == .developing)
+            return isFiledHere && brief.status == .spark
         }
     }
     private var plannedDate: Date {
@@ -95,7 +97,7 @@ struct AgendaPostIdeaPickerView: View {
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
-            .padding(.bottom, 130)
+            .agentBottomNavigationClearance(additional: AgentSpacing.x3)
         }
         .navigationTitle("Schedule post")
         .navigationBarTitleDisplayMode(.inline)
@@ -106,7 +108,22 @@ struct AgendaPostIdeaPickerView: View {
     }
 
     private func startNewPost() {
-        editorRoute = .new(date: plannedDate)
+        let platform = profiles.first?.selectedPlatforms.first ?? .instagramReels
+        let catalog = PublishingCatalog.identifiers(for: platform)
+        guard let draft = appModel.beginPostDraft(
+            pillarID: nil,
+            platform: platform,
+            destinationID: catalog.destination,
+            formatID: catalog.format,
+            durationSeconds: platform.format.defaultDuration,
+            targetDate: plannedDate,
+            context: context
+        ) else { return }
+
+        editorRoute = .draft(
+            briefID: draft.brief.id,
+            outputID: draft.output.id
+        )
     }
 
     private func openIdea(_ brief: CreativeBrief) {
@@ -115,13 +132,13 @@ struct AgendaPostIdeaPickerView: View {
 }
 
 private enum AgendaPostEditorRoute: Hashable, Identifiable {
-    case new(date: Date)
+    case draft(briefID: UUID, outputID: UUID)
     case idea(briefID: UUID, suggestedDate: Date)
 
     var id: String {
         switch self {
-        case .new(let date):
-            "new-\(date.timeIntervalSinceReferenceDate)"
+        case .draft(let briefID, let outputID):
+            "draft-\(briefID.uuidString)-\(outputID.uuidString)"
         case .idea(let briefID, let date):
             "idea-\(briefID.uuidString)-\(date.timeIntervalSinceReferenceDate)"
         }
@@ -130,20 +147,19 @@ private enum AgendaPostEditorRoute: Hashable, Identifiable {
 
 private struct AgendaPostEditorDestination: View {
     @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
-    @Query private var profiles: [CreatorProfile]
     @Query private var allBriefs: [CreativeBrief]
+    @Query private var allOutputs: [PlatformOutput]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
 
     let route: AgendaPostEditorRoute
 
-    @State private var newBrief: CreativeBrief?
-    @State private var newOutput: PlatformOutput?
-    @State private var hasPreparedNewDraft = false
-    @State private var creationFailed = false
-
     private var briefs: [CreativeBrief] {
         allBriefs.filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
+        }
+    }
+    private var outputs: [PlatformOutput] {
+        allOutputs.filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
         }
     }
@@ -153,12 +169,17 @@ private struct AgendaPostEditorDestination: View {
             switch route {
             case .idea(let briefID, let suggestedDate):
                 if let brief = briefs.first(where: { $0.id == briefID }) {
-                    IdeaPostDraftView(brief: brief, suggestedTargetDate: suggestedDate)
+                    IdeaPostDraftView(
+                        brief: brief,
+                        suggestedTargetDate: suggestedDate,
+                        isAlreadyInIdeaBank: true
+                    )
                 } else {
                     unavailableState("Post not found. It may have been moved or deleted.")
                 }
-            case .new:
-                if let newBrief, let newOutput {
+            case .draft(let briefID, let outputID):
+                if let newBrief = briefs.first(where: { $0.id == briefID }),
+                   let newOutput = outputs.first(where: { $0.id == outputID }) {
                     ResumablePostEditorView(
                         brief: newBrief,
                         output: newOutput,
@@ -166,22 +187,13 @@ private struct AgendaPostEditorDestination: View {
                             appModel.notice = .info("Save this draft, then open Cy when you're ready to build it out.")
                         }
                     )
-                } else if creationFailed {
-                    unavailableState("This post draft could not be started.")
                 } else {
-                    ProgressView("Opening your draft…")
-                        .frame(maxWidth: .infinity, minHeight: 240)
+                    unavailableState("This post draft could not be opened.")
                 }
             }
         }
         .navigationTitle("New post")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: route.id) {
-            guard case .new(let date) = route, !hasPreparedNewDraft else { return }
-            hasPreparedNewDraft = true
-            await Task.yield()
-            prepareNewDraft(for: date)
-        }
         .agentScreen()
     }
 
@@ -196,25 +208,6 @@ private struct AgendaPostEditorDestination: View {
         }
         .frame(maxWidth: .infinity, minHeight: 240, alignment: .leading)
         .padding(AgentLayout.pageMargin)
-    }
-
-    private func prepareNewDraft(for date: Date) {
-        let platform = profiles.first?.selectedPlatforms.first ?? .instagramReels
-        let catalog = PublishingCatalog.identifiers(for: platform)
-        guard let draft = appModel.beginPostDraft(
-            pillarID: nil,
-            platform: platform,
-            destinationID: catalog.destination,
-            formatID: catalog.format,
-            durationSeconds: platform.format.defaultDuration,
-            targetDate: date,
-            context: context
-        ) else {
-            creationFailed = true
-            return
-        }
-        newBrief = draft.brief
-        newOutput = draft.output
     }
 }
 
@@ -264,7 +257,7 @@ private struct AgendaPickerMeta: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+            .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
             .tracking(1)
             .foregroundStyle(Color.agentSecondary)
             .lineLimit(1)

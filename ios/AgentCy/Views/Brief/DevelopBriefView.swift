@@ -131,7 +131,7 @@ struct DevelopBriefView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Build out")
-                    .font(.system(size: 32, weight: .regular))
+                    .font(.agentDisplayLead)
                 Text(brief.title.isEmpty ? "this post." : "\(brief.title).")
                     .font(.agentDisplay)
                     .lineLimit(3)
@@ -163,7 +163,7 @@ struct DevelopBriefView: View {
 
             if !contextMetadata.isEmpty {
                 Text(contextMetadata.joined(separator: " · "))
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
                     .lineLimit(2)
             }
@@ -171,11 +171,10 @@ struct DevelopBriefView: View {
         .padding(AgentSpacing.x4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cyAccent.opacity(0.07), in: .rect(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.cyAccent.opacity(0.22), lineWidth: 1)
-        }
-        .shadow(color: Color.cyAccent.opacity(0.10), radius: 18, y: 5)
+        .agentSurfaceChrome(
+            cornerRadius: 16,
+            borderColor: Color.cyAccent.opacity(0.22)
+        )
     }
 
     private var starterSection: some View {

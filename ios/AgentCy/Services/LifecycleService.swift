@@ -8,6 +8,7 @@ enum BriefLifecycle {
 
     static func approve(_ brief: CreativeBrief, now: Date = Date()) {
         guard brief.status != .archived else { return }
+        brief.ideaBankPlacement = .post
         transition(brief, to: .ready, now: now)
     }
 
@@ -29,6 +30,7 @@ enum BriefLifecycle {
     @discardableResult
     static func togglePosted(_ output: PlatformOutput, brief: CreativeBrief, now: Date = Date()) -> Bool {
         guard output.briefID == brief.id, canExecute(brief) else { return false }
+        brief.ideaBankPlacement = .post
         if output.status == .posted {
             output.status = output.targetDate == nil ? .ready : .scheduled
             output.postedAt = nil
@@ -42,6 +44,7 @@ enum BriefLifecycle {
     @discardableResult
     static func schedule(_ output: PlatformOutput, for date: Date?, brief: CreativeBrief) -> Bool {
         guard output.briefID == brief.id, canExecute(brief) else { return false }
+        brief.ideaBankPlacement = .post
         output.targetDate = date
         if output.status != .posted {
             output.status = date == nil ? .ready : .scheduled

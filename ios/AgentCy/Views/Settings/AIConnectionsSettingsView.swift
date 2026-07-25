@@ -45,7 +45,7 @@ struct AIConnectionsSettingsView: View {
     private func instruction(number: String, text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
             Text(number)
-                .font(.agentMono)
+                .font(.agentMetadata)
                 .foregroundStyle(Color.agentSecondary)
                 .frame(width: 20, alignment: .leading)
             Text(text)

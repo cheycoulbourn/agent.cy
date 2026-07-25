@@ -50,12 +50,10 @@ struct PillarsView: View {
                         if let anchor {
                             VStack(alignment: .leading, spacing: 48) {
                                 anchorHero(anchor)
-                                    .appWalkthroughTarget(.pillarsOverview)
                                 branchesSection(anchor: anchor)
                             }
                         } else {
                             emptyAnchor
-                                .appWalkthroughTarget(.pillarsOverview)
                         }
                     }
                     .padding(.horizontal, AgentLayout.dashboardGutter)
@@ -84,7 +82,7 @@ struct PillarsView: View {
             }
         case .idea(let id):
             if let brief = briefs.first(where: { $0.id == id }) {
-                IdeaPostDraftView(brief: brief)
+                IdeaPostDraftView(brief: brief, isAlreadyInIdeaBank: true)
             } else {
                 unavailableDestination
             }
@@ -342,7 +340,7 @@ struct PillarDetailView: View {
         briefs.filter { $0.pillarID == pillar.id && $0.status != .archived }
     }
     private var ideas: [CreativeBrief] {
-        familyBriefs.filter { $0.status == .spark || $0.status == .developing }
+        familyBriefs.filter(IdeaBankPlacementPolicy.includes)
     }
     private var scheduled: [CreativeBrief] {
         familyBriefs.filter { brief in
@@ -527,7 +525,7 @@ struct PillarDetailView: View {
         } label: {
             VStack(spacing: AgentSpacing.x2) {
                 Text(day.letter)
-                    .font(.paperMono(size: 10, weight: .medium, relativeTo: .caption))
+                    .font(.paperMetadata(size: 10, weight: .medium, relativeTo: .caption))
                 Circle()
                     .fill(
                         selected
@@ -559,7 +557,7 @@ struct PillarDetailView: View {
                         Text(tab.rawValue)
                         if tab != .posted {
                             Text("\(count(for: tab))")
-                                .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                                .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
                         }
                     }
                     .font(.paperInter(size: 14, weight: selectedTab == tab ? .semibold : .regular, relativeTo: .subheadline))
@@ -887,6 +885,7 @@ private struct PillarPaperSurface<Content: View>: View {
             .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
             .background(Color.agentSurface)
             .clipShape(.rect(cornerRadius: 28))
+            .agentSurfaceChrome(cornerRadius: 28)
     }
 }
 
@@ -923,7 +922,7 @@ private struct PaperPillarMeta: View {
 
     var body: some View {
         Text(text.isEmpty ? "None" : text)
-            .font(.paperMono(size: 10, weight: weight, relativeTo: .caption))
+            .font(.paperMetadata(size: 10, weight: weight, relativeTo: .caption))
             .tracking(tracking)
             .textCase(.uppercase)
             .foregroundStyle(Color.agentText)
@@ -949,7 +948,7 @@ private struct WeekdayChooser: View {
                     if selection.contains(day) { selection.remove(day) } else { selection.insert(day) }
                 } label: {
                     Text(day.letter)
-                        .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                        .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
                         .foregroundStyle(selection.contains(day) ? Color(agentHex: foregroundHex) : Color.agentText)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(selection.contains(day) ? Color(agentHex: accentHex) : Color.agentSurface, in: .circle)
@@ -1021,7 +1020,7 @@ private struct PillarMetrics {
     private var familyBriefs: [CreativeBrief] {
         briefs.filter { $0.pillarID.map(IDs.contains) == true && $0.status != .archived }
     }
-    var ideaCount: Int { familyBriefs.filter { $0.status == .spark || $0.status == .developing }.count }
+    var ideaCount: Int { familyBriefs.filter(IdeaBankPlacementPolicy.includes).count }
     var postedCount: Int {
         familyBriefs.filter { brief in
             brief.status == .posted || outputs.contains { $0.briefID == brief.id && $0.status == .posted }
@@ -1052,7 +1051,7 @@ extension Font {
     static func paperInter(size: CGFloat, weight: Font.Weight, relativeTo style: TextStyle) -> Font {
         .custom("InterVariable", size: size, relativeTo: style).weight(weight)
     }
-    static func paperMono(size: CGFloat, weight: Font.Weight, relativeTo style: TextStyle) -> Font {
+    static func paperMetadata(size: CGFloat, weight: Font.Weight, relativeTo style: TextStyle) -> Font {
         .custom("InterVariable", size: size, relativeTo: style).weight(weight)
     }
 }

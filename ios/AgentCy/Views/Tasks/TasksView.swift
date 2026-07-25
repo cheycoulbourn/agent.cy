@@ -268,6 +268,7 @@ struct TasksView: View {
             .animation(.snappy(duration: 0.24), value: collection)
             .background(Color.agentSurface)
             .clipShape(.rect(cornerRadius: AgentRadius.dashboard))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
             .padding(.horizontal, AgentLayout.dashboardGutter)
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -329,7 +330,7 @@ struct TasksView: View {
 
                 if activeFilterCount > 0 {
                     Text("\(activeFilterCount)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.agentInter(size: 10, weight: .bold, relativeTo: .caption2))
                         .foregroundStyle(Color.agentSurface)
                         .frame(minWidth: 17, minHeight: 17)
                         .background(Color.agentText, in: .circle)
@@ -574,7 +575,12 @@ struct TasksView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: appModel.walkthroughStep == .tasks ? .top : .center
+            )
+            .padding(.top, appModel.walkthroughStep == .tasks ? AgentSpacing.x3 : 0)
             .background(Color.agentSurface)
         } else if status != .open {
             completedList(for: collection)
@@ -702,7 +708,7 @@ struct TasksView: View {
                 MetaLabel("\(group.tasks.count)")
                 if canCollapse {
                     AgentIconView(isCollapsed(group, collection: collection) ? .expand : .collapse)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.agentInter(size: 11, weight: .semibold, relativeTo: .caption))
                         .foregroundStyle(Color.agentSecondary)
                         .frame(width: 20, height: 20)
                 }
@@ -931,7 +937,7 @@ struct PostTaskCreationFlow: View {
                     .foregroundStyle(Color.agentText)
                     .lineLimit(2)
                 Text(postMetadata(output: output, brief: brief))
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
                     .lineLimit(1)
             }
@@ -1261,7 +1267,7 @@ struct TaskRow: View {
 
     private func metadata(_ value: String, color: Color = .agentSecondary) -> some View {
         Text(value)
-            .font(.agentMono)
+            .font(.agentMetadata)
             .foregroundStyle(color)
     }
 
@@ -1462,7 +1468,7 @@ struct TaskDetailView: View {
 
                 }
                 .padding(AgentLayout.pageMargin)
-                .padding(.bottom, 120)
+                .agentBottomNavigationClearance()
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: newSubtaskFocused) { _, isFocused in
@@ -1748,7 +1754,13 @@ struct PersistentSubmitTextField: UIViewRepresentable {
         textField.placeholder = placeholder
         textField.textColor = UIColor(Color.agentText)
         textField.tintColor = UIColor(Color.actionAccent)
-        let baseFont = UIFont(name: "InterVariable", size: 16) ?? UIFont.systemFont(ofSize: 16)
+        let baseFont: UIFont
+        if let interFont = UIFont(name: "InterVariable", size: 16) {
+            baseFont = interFont
+        } else {
+            assertionFailure("InterVariable.ttf must be registered before rendering task text.")
+            baseFont = .systemFont(ofSize: 16)
+        }
         textField.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: baseFont)
         textField.adjustsFontForContentSizeCategory = true
         return textField

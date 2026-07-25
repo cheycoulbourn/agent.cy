@@ -83,6 +83,7 @@ struct AgentCyApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .font(.agentBody)
                 .environment(appModel)
                 .modelContainer(container)
                 .tint(.actionAccent)

@@ -234,7 +234,7 @@ struct WeeklyRhythmWidgetView: View {
                         Link(destination: AgentCyDeepLink.agenda(day: day.date).url) {
                             VStack(spacing: 4) {
                                 Text(day.date.formatted(.dateTime.weekday(.narrow)).uppercased())
-                                    .font(.widgetMono(size: 9))
+                                    .font(.widgetMetadata(size: 9))
                                 Text(day.date.formatted(.dateTime.day()))
                                     .font(.widgetInter(size: 16, weight: .semibold))
                                 if let color = day.pillarColorHex {
@@ -392,7 +392,7 @@ struct ProductionQueueWidgetView: View {
 
                                 Spacer()
                                 Text(post.status.uppercased())
-                                    .font(.widgetMono(size: 10))
+                                    .font(.widgetMetadata(size: 10))
                                     .tracking(0.4)
                                     .foregroundStyle(WidgetPalette.ink)
                                     .padding(.horizontal, 8)
@@ -446,7 +446,7 @@ struct ProductionQueueWidgetView: View {
                                 .foregroundStyle(WidgetPalette.secondary)
 
                             Text("+ CREATE POST")
-                                .font(.widgetMono(size: 10))
+                                .font(.widgetMetadata(size: 10))
                                 .tracking(1)
                                 .foregroundStyle(WidgetPalette.cy)
                                 .padding(.top, 3)
@@ -628,7 +628,7 @@ private struct CyAsteriskBadge: View {
 
 private extension View {
     func widgetMeta(color: Color = WidgetPalette.secondary) -> some View {
-        font(.widgetMono(size: 10))
+        font(.widgetMetadata(size: 10))
             .tracking(1.15)
             .foregroundStyle(color)
             .lineLimit(1)
@@ -640,7 +640,7 @@ private extension Font {
         .custom("InterVariable", size: size).weight(weight)
     }
 
-    static func widgetMono(size: CGFloat) -> Font {
+    static func widgetMetadata(size: CGFloat) -> Font {
         .custom("InterVariable", size: size).weight(.medium)
     }
 }

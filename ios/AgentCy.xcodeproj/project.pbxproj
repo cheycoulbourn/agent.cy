@@ -21,13 +21,11 @@
 		2611FB37A5012FFE578B971F /* CalendarSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F2AEDB88E979EC9B6C428A2 /* CalendarSyncTests.swift */; };
 		2629B9CE5005E66836774096 /* CreationHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF5D39AF07AF8D3D888DCA6 /* CreationHubView.swift */; };
 		2AB215AB3F745A0D89D3255D /* PlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DFD4047D1F33099CD660CE5 /* PlanView.swift */; };
-		2E57FC40E99545BB22654143 /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */; };
 		2EB109CD453CA7B8E88422A4 /* CreatorFacingErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EE865F30D7045BDE25BCB03 /* CreatorFacingErrorMapper.swift */; };
 		2EDCD6B93E581A9AC46643CD /* PostOutputDetailPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A767BC4BC6D8425E932DC66 /* PostOutputDetailPolicyTests.swift */; };
 		3001A6BC0F5C15D5EAAF10FE /* AgentOKLCHTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E71D4926F1A6F43D2FC06A5 /* AgentOKLCHTests.swift */; };
 		32CEEAC2741F7D2CA0C56788 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED042483D5E974837FB79516 /* AppModel.swift */; };
 		335FDFC5DB4C4A0241E57A15 /* HomeDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C8ED939263980C183ADC0D /* HomeDashboardView.swift */; };
-		3591BAF10577C5D2BEDB897A /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */; };
 		3903D2A3E2CDD1CC34841450 /* PostEditorComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C22B6E8D45F1951E8331A963 /* PostEditorComponents.swift */; };
 		3BAE2F9A4E2906914291ABE6 /* ScheduledPostDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C26E202DB70629638DA317 /* ScheduledPostDetailView.swift */; };
 		4153A21E91401E952D1BCBF2 /* AgendaPostIdeaPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62699651BAD3691F1ABCAD72 /* AgendaPostIdeaPickerView.swift */; };
@@ -36,7 +34,6 @@
 		4913F85E046CEC163B0356AD /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1759E0C4AC460805C96F5D6 /* RootView.swift */; };
 		4AC0901CD7A948E120F8F71E /* FocusPlanning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C8A149FB0B11AD4A75D0C0 /* FocusPlanning.swift */; };
 		54BC0FA1A7DED32416AF3FCF /* PillarRemovalService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888E3C9082B1FC80FE3B29E6 /* PillarRemovalService.swift */; };
-		5BC9BFAA18C7FC03B97A2543 /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */; };
 		66735B010AA70910DB10603B /* NotificationPlanning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B5300E4EDA6FA5A925C9E40 /* NotificationPlanning.swift */; };
 		68FD230A752C4AF536829FA5 /* PostProposalReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E9DD5DFBF64722049E24BFC /* PostProposalReviewView.swift */; };
 		69A10980CADCF637DD9D03F0 /* AgentCyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845644F532223058568885B9 /* AgentCyApp.swift */; };
@@ -70,7 +67,6 @@
 		9E0CF64CB96395AACD7D8134 /* LocalCyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBA889DE666233D1DAF7731 /* LocalCyService.swift */; };
 		9F6BEE75819E8094D3A18EFD /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C42336B0994600F8593C1B /* WidgetViews.swift */; };
 		A2646ECD5551FFE8F5811E92 /* WidgetTaskCompletionIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EC56D0F9538E7410428720B /* WidgetTaskCompletionIntent.swift */; };
-		A57DAC9D72FCC6C1F4058698 /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */; };
 		A9565BAB6ECCA6E659C27F33 /* PostTaskScheduleRepairService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D8E87EE5EDF9ACFFB924D9 /* PostTaskScheduleRepairService.swift */; };
 		A9C0DD1A7A339B5DCFA15B73 /* PostTaskReschedulePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BABCBADB9FDD75A8C47C7B9 /* PostTaskReschedulePolicy.swift */; };
 		AA8C46FF2341C135532A7268 /* CaptureIdeaShortcutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC7AC4FBA341418297F73C6 /* CaptureIdeaShortcutTests.swift */; };
@@ -218,7 +214,6 @@
 		ABAB4909D9C767854BBEA979 /* AgentCy.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AgentCy.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF3A1AF3AB9AB17B76B21B6D /* IBM-Plex-Mono-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "IBM-Plex-Mono-LICENSE.txt"; sourceTree = "<group>"; };
 		B2F4F61347993771D9912A20 /* PrivacyEraseCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyEraseCoordinator.swift; sourceTree = "<group>"; };
-		B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Medium.ttf"; sourceTree = "<group>"; };
 		BE759452C2BE05FF44F2A687 /* IdeaBankView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaBankView.swift; sourceTree = "<group>"; };
 		BF8574EBD41FD1CECA143FD7 /* VoiceExampleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceExampleTests.swift; sourceTree = "<group>"; };
 		C08741943A860FC8204756B4 /* WidgetSnapshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshotService.swift; sourceTree = "<group>"; };
@@ -227,7 +222,6 @@
 		C22B6E8D45F1951E8331A963 /* PostEditorComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostEditorComponents.swift; sourceTree = "<group>"; };
 		C31A43C956901ACA0B64E331 /* AIOperationIDRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIOperationIDRegistryTests.swift; sourceTree = "<group>"; };
 		C78A95CFA647DFB3A9E1A22D /* IdeaPostDraftView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaPostDraftView.swift; sourceTree = "<group>"; };
-		C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Regular.ttf"; sourceTree = "<group>"; };
 		CD0F814A5A4235CC5331B8BB /* WeeklyFocusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyFocusView.swift; sourceTree = "<group>"; };
 		CDEA0469B163CE1502C499B0 /* InterVariable.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = InterVariable.ttf; sourceTree = "<group>"; };
 		CEB993766D86ACF3C2BE275F /* PrivacyEraseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyEraseTests.swift; sourceTree = "<group>"; };
@@ -499,8 +493,6 @@
 		DF3EE4A055F95AE444B81FA2 /* Fonts */ = {
 			isa = PBXGroup;
 			children = (
-				B9E610350167CEBF710642FD /* IBMPlexMono-Medium.ttf */,
-				C7B3F766DA59C5CFB8F1C925 /* IBMPlexMono-Regular.ttf */,
 				CDEA0469B163CE1502C499B0 /* InterVariable.ttf */,
 			);
 			path = Fonts;
@@ -708,8 +700,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				5BC9BFAA18C7FC03B97A2543 /* IBMPlexMono-Medium.ttf in Resources */,
-				3591BAF10577C5D2BEDB897A /* IBMPlexMono-Regular.ttf in Resources */,
 				C70F11C6A616991F9ACC77D8 /* InterVariable.ttf in Resources */,
 				D1532C733499BD1B37CB2A27 /* PrivacyInfo.xcprivacy in Resources */,
 			);
@@ -721,8 +711,6 @@
 			files = (
 				D7C2FCCA8DF6F0CC4261C0C9 /* Assets.xcassets in Resources */,
 				D3E6C8D5AAEF13FEE6000290 /* IBM-Plex-Mono-LICENSE.txt in Resources */,
-				2E57FC40E99545BB22654143 /* IBMPlexMono-Medium.ttf in Resources */,
-				A57DAC9D72FCC6C1F4058698 /* IBMPlexMono-Regular.ttf in Resources */,
 				BDD17153690F30CC2AD12A8F /* Inter-LICENSE.txt in Resources */,
 				8F891736787AD1051E407432 /* InterVariable.ttf in Resources */,
 				964EB0ABA5065F31CD12F33B /* PrivacyInfo.xcprivacy in Resources */,
@@ -916,7 +904,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 137;
+				CURRENT_PROJECT_VERSION = 138;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_LANGUAGE = en;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -978,7 +966,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 137;
+				CURRENT_PROJECT_VERSION = 138;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_LANGUAGE = en;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

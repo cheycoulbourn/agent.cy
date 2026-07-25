@@ -31,7 +31,7 @@ struct CreatorAvatar: View {
                     .clipped()
             } else if !initials.isEmpty {
                 Text(initials)
-                    .font(.system(size: size * 0.34, weight: .semibold))
+                    .font(.agentInter(size: size * 0.34, weight: .semibold, relativeTo: .body))
                     .foregroundStyle(Color.agentText)
             } else {
                 AgentIconView(.profile, size: size * 0.42)

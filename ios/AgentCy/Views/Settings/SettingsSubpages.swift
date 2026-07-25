@@ -142,6 +142,7 @@ struct SettingsPageShell<Content: View>: View {
                     )
                     .background(Color.agentSurface)
                     .clipShape(.rect(cornerRadius: AgentRadius.floating))
+                    .agentSurfaceChrome(cornerRadius: AgentRadius.floating)
                 }
             }
         }
@@ -195,7 +196,7 @@ struct CreatorProfileSettingsView: View {
                     MetaLabel("Social accounts")
                     Spacer()
                     Text("Manual references")
-                        .font(.agentMono)
+                        .font(.agentMetadata)
                         .foregroundStyle(Color.agentSecondary)
                 }
                 .padding(.bottom, AgentSpacing.x3)
@@ -411,11 +412,11 @@ struct AccountSwitcherSettingsView: View {
 
                                         if appModel.activeWorkspaceID == workspace.id {
                                             Text("Active")
-                                                .font(.agentMono)
+                                                .font(.agentMetadata)
                                                 .foregroundStyle(Color.cyAccent)
                                         }
                                         AgentIconView(appModel.activeWorkspaceID == workspace.id ? .check : .radioEmpty)
-                                            .font(.system(size: 13, weight: .semibold))
+                                            .font(.agentInter(size: 13, weight: .semibold, relativeTo: .subheadline))
                                             .frame(width: 24, height: 24)
                                     }
                                     .foregroundStyle(Color.agentText)
@@ -1006,7 +1007,7 @@ struct CyQuickPromptsSettingsView: View {
                             text: promptBinding(at: index)
                         )
                         Text("\(prompts[index].count)/\(CreatorProfile.maxCyQuickPromptLength)")
-                            .font(.agentMono)
+                            .font(.agentMetadata)
                             .foregroundStyle(Color.agentSecondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
@@ -1371,7 +1372,7 @@ struct PublishingSettingsView: View {
                                     .font(.agentBody)
                                     .foregroundStyle(Color.agentText)
                                 Text(format.kind.title)
-                                    .font(.agentMono)
+                                    .font(.agentMetadata)
                                     .foregroundStyle(Color.agentSecondary)
                             }
                         }
@@ -1945,7 +1946,7 @@ struct AccessSettingsView: View {
                 MetaLabel("Current access")
                 Spacer()
                 Text(planStatus(access))
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
                     .padding(.horizontal, AgentSpacing.x3)
                     .frame(minHeight: 28)
@@ -1974,10 +1975,7 @@ struct AccessSettingsView: View {
         }
         .padding(AgentSpacing.x4)
         .background(Color.agentSurface, in: .rect(cornerRadius: 18))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.agentBorder, lineWidth: 1)
-        }
+        .agentSurfaceChrome(cornerRadius: 18)
     }
 
     private func proAccessCard(_ access: SubscriptionAccess) -> some View {
@@ -2009,7 +2007,7 @@ struct AccessSettingsView: View {
                 Spacer(minLength: 0)
 
                 Text(isActive ? "Active" : "$8.99/mo")
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.onCyAccent)
                     .padding(.horizontal, AgentSpacing.x3)
                     .frame(minHeight: 30)
@@ -2042,11 +2040,10 @@ struct AccessSettingsView: View {
             ),
             in: .rect(cornerRadius: 22)
         )
-        .overlay {
-            RoundedRectangle(cornerRadius: 22)
-                .stroke(Color.cyAccent.opacity(0.42), lineWidth: 1)
-        }
-        .shadow(color: Color.cyAccent.opacity(0.13), radius: 20, y: 8)
+        .agentSurfaceChrome(
+            cornerRadius: 22,
+            borderColor: Color.cyAccent.opacity(0.42)
+        )
     }
 
     private func planBenefit(_ text: String) -> some View {

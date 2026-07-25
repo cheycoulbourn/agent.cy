@@ -22,6 +22,8 @@ enum AgentLayout {
     static let pageHeaderToContentSpacing: CGFloat = AgentSpacing.x8
     /// Standard vertical gap between a section's metadata heading and its primary content.
     static let sectionHeadingSpacing: CGFloat = AgentSpacing.x2
+    /// Clears the floating bottom navigation without each screen inventing its own inset.
+    static let bottomNavigationClearance: CGFloat = 120
 }
 
 enum AgentRadius {
@@ -150,7 +152,11 @@ enum AgentIcon: String, CaseIterable, Sendable {
         case "video.fill": self = .video
         case "xmark": self = .close
         case "xmark.circle.fill": self = .close
-        default: self = .idea
+        default:
+            #if DEBUG
+            assertionFailure("Unsupported legacy system icon: \(name)")
+            #endif
+            self = .warning
         }
     }
 }
@@ -324,6 +330,17 @@ enum AgentAppearanceController {
 }
 
 extension Font {
+    static func agentInter(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        relativeTo style: TextStyle = .body
+    ) -> Font {
+        if UIFont(name: "InterVariable", size: size) != nil {
+            return .custom("InterVariable", size: size, relativeTo: style).weight(weight)
+        }
+        return .system(size: size, weight: weight, design: .default)
+    }
+
     static var agentDisplayLead: Font {
         if UIFont(name: "InterVariable", size: 32) != nil {
             return .custom("InterVariable", size: 32, relativeTo: .largeTitle)
@@ -383,7 +400,9 @@ extension Font {
         return .system(size: 15, weight: .medium, design: .default)
     }
 
-    static var agentMono: Font {
+    /// Compact Inter style for metadata, statuses, dates, and eyebrow labels.
+    /// Keep this semantic token in the same family as the rest of the app.
+    static var agentMetadata: Font {
         if UIFont(name: "InterVariable", size: 11) != nil {
             return .custom("InterVariable", size: 11, relativeTo: .caption).weight(.medium)
         }
@@ -618,7 +637,7 @@ struct AgentCyFloatingButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 21, weight: .semibold))
+            .font(.agentInter(size: 21, weight: .semibold, relativeTo: .title3))
             .frame(width: 56, height: 56)
             .foregroundStyle(Color.onCyAccent)
             .background(Color.cyAccent, in: .circle)
@@ -701,7 +720,7 @@ struct MetaLabel: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.agentMono)
+            .font(.agentMetadata)
             .tracking(1.4)
             .foregroundStyle(Color.agentSecondary)
             .accessibilityLabel(text)
@@ -720,7 +739,7 @@ struct AgentDurationPicker: View {
             Picker("Duration", selection: $seconds) {
                 ForEach(options, id: \.self) { duration in
                     Text(durationLabel(duration))
-                        .font(.agentMono)
+                        .font(.agentMetadata)
                         .lineLimit(1)
                         .tag(duration)
                         .accessibilityLabel(accessibilityDurationLabel(duration))
@@ -759,7 +778,7 @@ struct SectionRuleHeader: View {
             Spacer()
             if let trailing {
                 Text(trailing)
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
             }
         }
@@ -855,7 +874,7 @@ struct CyVoiceCard: View {
             HStack(spacing: AgentSpacing.x2) {
                 CyAsterisk()
                 Text(heading.rawValue.uppercased())
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(1.4)
                     .foregroundStyle(Color.cyAccent)
                     .accessibilityLabel(heading.rawValue)
@@ -922,11 +941,10 @@ struct CyVoiceCard: View {
         }
         .padding(AgentSpacing.x6)
         .background(background, in: .rect(cornerRadius: 20))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.cyAccent.opacity(colorScheme == .dark ? 0.42 : 0.18), lineWidth: 1)
-        }
-        .shadow(color: Color.cyAccent.opacity(colorScheme == .dark ? 0.14 : 0.08), radius: 18, y: 6)
+        .agentSurfaceChrome(
+            cornerRadius: 20,
+            borderColor: Color.cyAccent.opacity(colorScheme == .dark ? 0.42 : 0.18)
+        )
         .accessibilityElement(children: .contain)
     }
 }
@@ -1023,7 +1041,7 @@ struct CyCallout<Content: View>: View {
             HStack(spacing: AgentSpacing.x2) {
                 CyAsterisk()
                 Text(heading.rawValue.uppercased())
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(1.4)
                     .foregroundStyle(Color.cyAccent)
                     .accessibilityLabel(heading.rawValue)
@@ -1037,11 +1055,10 @@ struct CyCallout<Content: View>: View {
             Color(uiColor: (colorScheme == .dark ? AgentColorPalette.cyPanel : AgentColorPalette.surfaceDark).uiColor),
             in: .rect(cornerRadius: 20)
         )
-        .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.cyAccent.opacity(colorScheme == .dark ? 0.42 : 0.18), lineWidth: 1)
-        }
-        .shadow(color: Color.cyAccent.opacity(colorScheme == .dark ? 0.14 : 0.08), radius: 18, y: 6)
+        .agentSurfaceChrome(
+            cornerRadius: 20,
+            borderColor: Color.cyAccent.opacity(colorScheme == .dark ? 0.42 : 0.18)
+        )
         .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .contain)
     }
@@ -1074,10 +1091,11 @@ struct AgentDashboardSurface<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, AgentSpacing.x6)
             .padding(.top, AgentSpacing.x8)
-            .padding(.bottom, 120)
+            .agentBottomNavigationClearance()
             .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
             .background(Color.agentSurface)
             .clipShape(.rect(cornerRadius: AgentRadius.dashboard))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard, role: .structural)
     }
 }
 
@@ -1096,10 +1114,122 @@ struct AgentInsetSurface<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AgentLayout.pageMargin)
             .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
+    }
+}
+
+enum AgentSurfaceRole {
+    case structural
+    case card
+    case floating
+}
+
+private struct AgentSurfaceChromeModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    let cornerRadius: CGFloat
+    let borderColor: Color?
+    let role: AgentSurfaceRole
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        borderColor ?? (
+                            colorScheme == .dark
+                                ? Color.agentPureWhite.opacity(0.08)
+                                : Color.agentPureBlack.opacity(0.06)
+                        ),
+                        lineWidth: 0.75
+                    )
+                    .allowsHitTesting(false)
+            }
+            .shadow(
+                color: shadowColor,
+                radius: shadowRadius,
+                y: shadowOffset
+            )
+            .shadow(
+                color: secondaryShadowColor,
+                radius: secondaryShadowRadius,
+                y: secondaryShadowOffset
+            )
+    }
+
+    private var shadowColor: Color {
+        switch role {
+        case .structural:
+            .clear
+        case .card:
+            Color.agentPureBlack.opacity(colorScheme == .dark ? 0.12 : 0.045)
+        case .floating:
+            Color.agentPureBlack.opacity(colorScheme == .dark ? 0.22 : 0.08)
+        }
+    }
+
+    private var shadowRadius: CGFloat {
+        switch role {
+        case .structural: 0
+        case .card: 12
+        case .floating: 24
+        }
+    }
+
+    private var shadowOffset: CGFloat {
+        switch role {
+        case .structural: 0
+        case .card: 4
+        case .floating: 10
+        }
+    }
+
+    private var secondaryShadowColor: Color {
+        switch role {
+        case .structural, .card:
+            .clear
+        case .floating:
+            Color.agentPureBlack.opacity(colorScheme == .dark ? 0.10 : 0.04)
+        }
+    }
+
+    private var secondaryShadowRadius: CGFloat {
+        role == .floating ? 6 : 0
+    }
+
+    private var secondaryShadowOffset: CGFloat {
+        role == .floating ? 2 : 0
+    }
+}
+
+private struct AgentBottomNavigationClearanceModifier: ViewModifier {
+    let additional: CGFloat
+
+    func body(content: Content) -> some View {
+        content.padding(.bottom, AgentLayout.bottomNavigationClearance + additional)
     }
 }
 
 extension View {
+    /// The canonical card treatment used by the guided walkthrough and every
+    /// elevated app surface: one neutral hairline plus two ambient shadow layers.
+    func agentSurfaceChrome(
+        cornerRadius: CGFloat,
+        borderColor: Color? = nil,
+        role: AgentSurfaceRole = .card
+    ) -> some View {
+        modifier(
+            AgentSurfaceChromeModifier(
+                cornerRadius: cornerRadius,
+                borderColor: borderColor,
+                role: role
+            )
+        )
+    }
+
+    func agentBottomNavigationClearance(additional: CGFloat = 0) -> some View {
+        modifier(AgentBottomNavigationClearanceModifier(additional: additional))
+    }
+
     func reportAgentViewHeight() -> some View {
         background {
             GeometryReader { proxy in

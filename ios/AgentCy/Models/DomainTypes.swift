@@ -346,9 +346,9 @@ enum BriefStatus: String, CaseIterable, Codable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .spark: "Idea"
-        case .developing: "Draft"
+        case .developing: "In progress"
         case .ready: "Ready"
-        case .scheduled: "Planned"
+        case .scheduled: "Scheduled"
         case .posted: "Posted"
         case .archived: "Archived"
         }
@@ -362,6 +362,29 @@ enum BriefStatus: String, CaseIterable, Codable, Identifiable, Sendable {
         case .scheduled: "calendar"
         case .posted: "paperplane.fill"
         case .archived: "archivebox"
+        }
+    }
+}
+
+/// Explicitly separates saved ideas from post drafts that share the early
+/// lifecycle states. `nil` is reserved for stores created before this field
+/// existed and is handled by `IdeaBankPlacementPolicy`.
+enum IdeaBankPlacement: String, Codable, Sendable {
+    case idea
+    case post
+}
+
+enum IdeaBankPlacementPolicy {
+    static func includes(_ brief: CreativeBrief) -> Bool {
+        guard brief.status != .archived else { return false }
+        switch brief.ideaBankPlacement {
+        case .idea:
+            return true
+        case .post:
+            return false
+        case nil:
+            // Migration-safe fallback for existing creator data.
+            return brief.status == .spark || brief.status == .developing
         }
     }
 }

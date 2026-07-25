@@ -401,7 +401,7 @@ struct MCPBridgeSettingsView: View {
     private func instruction(number: String, text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
             Text(number)
-                .font(.agentMono)
+                .font(.agentMetadata)
                 .foregroundStyle(Color.agentSecondary)
                 .frame(width: 20, alignment: .leading)
             Text(text)
@@ -496,7 +496,7 @@ struct MCPBridgeRequestReviewView: View {
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
-            .padding(.bottom, 120)
+            .agentBottomNavigationClearance()
         }
         .scrollIndicators(.hidden)
         .background(Color.agentCanvas)
@@ -566,12 +566,12 @@ struct MCPBridgeRequestReviewView: View {
             HStack(spacing: AgentSpacing.x2) {
                 PillarColorMark(color: pillarColor, diameter: 7)
                 Text(reviewPillarLabel.uppercased())
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(0.7)
                     .lineLimit(1)
                 Spacer()
                 Text("TO REVIEW")
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(0.6)
                     .padding(.horizontal, AgentSpacing.x2)
                     .frame(minHeight: 24)
@@ -653,7 +653,7 @@ struct MCPBridgeRequestReviewView: View {
                         Text(task.title)
                             .font(.agentBody.weight(.semibold))
                         Text(taskMetadata(task))
-                            .font(.agentMono)
+                            .font(.agentMetadata)
                             .foregroundStyle(Color.agentSecondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1108,7 +1108,7 @@ private struct MCPCreatePostDraftReviewEditor: View {
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
-            .padding(.bottom, 120)
+            .agentBottomNavigationClearance()
         }
         .scrollIndicators(.hidden)
         .navigationTitle("Edit post")
@@ -1138,7 +1138,7 @@ private struct MCPCreatePostDraftReviewEditor: View {
                 .font(.agentBody)
                 .foregroundStyle(Color.agentText)
             AgentIconView(.forward)
-                .font(.caption.weight(.semibold))
+                .font(.agentInter(size: 12, weight: .semibold, relativeTo: .caption))
                 .foregroundStyle(Color.agentSecondary)
         }
         .padding(.horizontal, AgentSpacing.x4)

@@ -53,7 +53,7 @@ struct WeeklyFocusSetupView: View {
                                 } label: {
                                     HStack(spacing: AgentSpacing.x4) {
                                         Text(day.letter)
-                                            .font(.agentMono)
+                                            .font(.agentMetadata)
                                             .frame(width: 28, height: 28)
                                             .background(Color.agentCanvas, in: .circle)
 
@@ -226,6 +226,7 @@ private struct WeeklyFocusDaySelectionView: View {
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
 
                 if selection.count == 2 {
                     Text("Two focuses selected. Remove one to choose another.")
@@ -591,6 +592,7 @@ struct DailyFocusDetailView: View {
                 .padding(AgentSpacing.x6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                     focusTaskCollection(
@@ -604,10 +606,11 @@ struct DailyFocusDetailView: View {
                 .padding(AgentSpacing.x6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x6)
-            .padding(.bottom, 120)
+            .agentBottomNavigationClearance()
         }
         .navigationTitle("Focus")
         .navigationBarTitleDisplayMode(.inline)
@@ -880,6 +883,7 @@ struct DailyFocusEditorView: View {
                     .padding(.horizontal, AgentSpacing.x4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                    .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
 
                     DisclosureGroup("Add details", isExpanded: $detailsExpanded) {
                         VStack(alignment: .leading, spacing: AgentSpacing.x4) {

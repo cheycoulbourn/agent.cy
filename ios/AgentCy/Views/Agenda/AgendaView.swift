@@ -1,6 +1,33 @@
 import SwiftData
 import SwiftUI
 
+private enum AgendaDisplayMode: String, CaseIterable, Identifiable {
+    case week
+    case calendar
+    case list
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .week: "Week"
+        case .calendar: "Calendar"
+        case .list: "List"
+        }
+    }
+}
+
+private struct AgendaOutputDayGroup: Identifiable {
+    let day: Date
+    let outputs: [PlatformOutput]
+
+    var id: Date { day }
+}
+
+private enum AgendaLayout {
+    static let modeRailReservedHeight: CGFloat = 47
+}
+
 struct AgendaView: View {
     @Binding var weekOffset: Int
     @Binding var selectedDay: Date
@@ -23,6 +50,8 @@ struct AgendaView: View {
     @State private var focusedDay: AgendaDaySelection?
     @State private var deepLinkedBrief: CreativeBrief?
     @State private var deepLinkedBriefOpensEditor = false
+    @State private var displayMode: AgendaDisplayMode = .week
+    @State private var calendarMonth = Date()
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
@@ -51,6 +80,7 @@ struct AgendaView: View {
     }
     private var weekDays: [Date] { (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) } }
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
+    private var activeBriefIDs: Set<UUID> { Set(activeBriefs.map(\.id)) }
 
     init(
         weekOffset: Binding<Int>,
@@ -64,25 +94,43 @@ struct AgendaView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if showsHeader {
-                        header
-                            .reportAgentViewHeight()
-                    }
-                    AgendaPinnedCalendarSurface(
-                        minimumHeight: max(0, proxy.size.height - (showsHeader ? headerHeight : 0))
-                    ) {
-                        calendarStrip
-                    } content: {
-                        VStack(spacing: 0) {
-                            ForEach(weekDays, id: \.self) { day in
-                                weekRow(day)
+            VStack(alignment: .leading, spacing: 0) {
+                if showsHeader {
+                    header
+                        .reportAgentViewHeight()
+                }
+
+                agendaModeRail
+                    .padding(.horizontal, AgentLayout.dashboardGutter)
+                    .padding(.bottom, AgentSpacing.x3)
+
+                Group {
+                    switch displayMode {
+                    case .week:
+                        AgendaFixedCalendarSurface(
+                            minimumHeight: max(
+                                0,
+                                proxy.size.height -
+                                    (showsHeader ? headerHeight : 0) -
+                                    AgendaLayout.modeRailReservedHeight
+                            )
+                        ) {
+                            calendarStrip
+                        } content: {
+                            VStack(spacing: 0) {
+                                ForEach(weekDays, id: \.self) { day in
+                                    weekRow(day)
+                                }
                             }
                         }
+                    case .calendar:
+                        calendarAgendaView
+                    case .list:
+                        agendaListView
                     }
-                    .padding(.horizontal, AgentLayout.dashboardGutter)
                 }
+                .padding(.horizontal, AgentLayout.dashboardGutter)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -115,6 +163,10 @@ struct AgendaView: View {
             }
         }
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
+        .onChange(of: displayMode) { _, mode in
+            guard mode == .calendar else { return }
+            calendarMonth = selectedDay
+        }
         .onChange(of: appModel.requestedPlanNavigationReset) { _, _ in
             schedulingPost = nil
             reschedulingOutput = nil
@@ -138,6 +190,17 @@ struct AgendaView: View {
             appModel.widgetAgendaDay = nil
         }
         .agentDashboardScreen()
+    }
+
+    private var agendaModeRail: some View {
+        Picker("Agenda view", selection: $displayMode) {
+            ForEach(AgendaDisplayMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: .infinity)
+        .accessibilityHint("Switch between week, calendar, and post list views")
     }
 
     private var header: some View {
@@ -172,9 +235,9 @@ struct AgendaView: View {
                         Circle()
                             .stroke(Color.agentBorder, lineWidth: 0.75)
                     }
-                    .frame(width: 40, height: 40)
+                    .frame(width: 36, height: 36)
 
-                AgentIconView(AgentIcon(legacySystemName: symbol), size: 15)
+                AgentIconView(AgentIcon(legacySystemName: symbol), size: 14)
                     .foregroundStyle(Color.agentText)
             }
             .frame(width: 44, height: 44)
@@ -200,10 +263,6 @@ struct AgendaView: View {
         }
         .padding(.horizontal, -AgentSpacing.x2)
         .padding(.bottom, AgentSpacing.x4)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.agentHairline).frame(height: 1)
-        }
-        .appWalkthroughTarget(.agendaCalendar)
     }
 
     private func calendarDay(_ day: Date) -> some View {
@@ -219,7 +278,7 @@ struct AgendaView: View {
         } label: {
             VStack(spacing: 10) {
                 Text(day.formatted(.dateTime.weekday(.abbreviated)))
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .textCase(.uppercase)
                     .foregroundStyle(Color.agentSecondary)
                 Text(day.formatted(.dateTime.day()))
@@ -253,6 +312,262 @@ struct AgendaView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
         .accessibilityAddTraits(isToday ? .isSelected : [])
+    }
+
+    private var calendarAgendaView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                AgentInsetSurface {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                        calendarMonthHeader
+                        calendarMonthGrid
+                    }
+                }
+
+                AgentInsetSurface {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                        SectionRuleHeader(
+                            title: selectedDay.formatted(
+                                .dateTime.weekday(.wide).month(.abbreviated).day()
+                            ),
+                            trailing: AgendaDayPresentation.postCountLabel(
+                                outputs(on: selectedDay).count
+                            )
+                        )
+
+                        let selectedOutputs = outputs(on: selectedDay)
+                        if selectedOutputs.isEmpty {
+                            Text("No posts planned.")
+                                .font(.agentBody)
+                                .foregroundStyle(Color.agentSecondary)
+                                .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                                ForEach(selectedOutputs) { output in
+                                    if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
+                                        agendaPostCard(
+                                            output: output,
+                                            brief: brief,
+                                            day: selectedDay,
+                                            dayTasks: tasks(on: selectedDay)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Button {
+                            focusedDay = AgendaDaySelection(day: selectedDay)
+                        } label: {
+                            HStack {
+                                Text("View the day")
+                                    .font(.agentBody.weight(.semibold))
+                                Spacer()
+                                AgentIconView(.forward, size: 11)
+                            }
+                            .foregroundStyle(Color.agentText)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .agentBottomNavigationClearance()
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var calendarMonthHeader: some View {
+        HStack(spacing: AgentSpacing.x2) {
+            Text(calendarMonthStart.formatted(.dateTime.month(.wide).year()))
+                .font(.agentTitle)
+                .foregroundStyle(Color.agentText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            calendarMonthButton(amount: -1)
+            calendarMonthButton(amount: 1)
+        }
+    }
+
+    private func calendarMonthButton(amount: Int) -> some View {
+        Button {
+            shiftCalendarMonth(amount)
+        } label: {
+            AgentIconView(amount < 0 ? .back : .forward, size: 13)
+                .foregroundStyle(Color.agentText)
+                .frame(width: 44, height: 44)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(amount < 0 ? "Previous month" : "Next month")
+    }
+
+    private var calendarMonthGrid: some View {
+        VStack(spacing: AgentSpacing.x2) {
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: AgentSpacing.x1), count: 7),
+                spacing: AgentSpacing.x2
+            ) {
+                ForEach(calendarWeekdaySymbols, id: \.self) { symbol in
+                    Text(symbol)
+                        .font(.agentMetadata)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .accessibilityHidden(true)
+                }
+
+                ForEach(calendarMonthDays, id: \.self) { day in
+                    calendarMonthCell(day)
+                }
+            }
+        }
+    }
+
+    private func calendarMonthCell(_ day: Date) -> some View {
+        let calendar = Calendar.current
+        let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
+        let isToday = calendar.isDateInToday(day)
+        let isCurrentMonth = calendar.isDate(day, equalTo: calendarMonthStart, toGranularity: .month)
+        let postCount = outputs(on: day).count
+        let dotColor = pillarHex(on: day).map {
+            Color(agentHex: AgendaPillarDotPresentation.displayedHex(storedHex: $0))
+        }
+
+        return Button {
+            withAnimation(.snappy(duration: 0.22)) {
+                selectedDay = calendar.startOfDay(for: day)
+                if !isCurrentMonth {
+                    calendarMonth = day
+                }
+            }
+        } label: {
+            VStack(spacing: 5) {
+                Text(day.formatted(.dateTime.day()))
+                    .font(.agentBody.weight(isSelected || isToday ? .semibold : .regular))
+                    .foregroundStyle(
+                        isSelected ? Color.agentCanvas :
+                            (isCurrentMonth ? Color.agentText : Color.agentSecondary)
+                    )
+
+                HStack(spacing: 4) {
+                    if let dotColor {
+                        PillarColorMark(color: dotColor, diameter: 6)
+                            .overlay {
+                                Circle()
+                                    .stroke(Color.agentText.opacity(0.2), lineWidth: 0.5)
+                            }
+                    }
+                    if postCount > 0 {
+                        Text("\(postCount)")
+                            .font(.agentMetadata.weight(.semibold))
+                            .foregroundStyle(isSelected ? Color.agentCanvas : Color.agentSecondary)
+                    }
+                }
+                .frame(height: 8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(
+                isSelected ? Color.agentText : Color.clear,
+                in: .rect(cornerRadius: 13)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 13)
+                    .strokeBorder(
+                        !isSelected && isToday ? Color.agentFocusControl : Color.clear,
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(.rect(cornerRadius: 13))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            [
+                day.formatted(.dateTime.weekday(.wide).month(.wide).day()),
+                AgendaDayPresentation.postCountLabel(postCount)
+            ].joined(separator: ", ")
+        )
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var agendaListView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                if upcomingAgendaGroups.isEmpty && pastAgendaGroups.isEmpty {
+                    AgentInsetSurface {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                            Text("No scheduled posts yet.")
+                                .font(.agentTitle)
+                                .foregroundStyle(Color.agentText)
+                            Text("Posts with a date will appear here.")
+                                .font(.agentBody)
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
+                    }
+                } else {
+                    agendaListSection(title: "Upcoming", groups: upcomingAgendaGroups)
+                    agendaListSection(title: "Past", groups: pastAgendaGroups)
+                }
+            }
+            .agentBottomNavigationClearance()
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    @ViewBuilder
+    private func agendaListSection(
+        title: String,
+        groups: [AgendaOutputDayGroup]
+    ) -> some View {
+        if !groups.isEmpty {
+            AgentInsetSurface {
+                VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                    SectionRuleHeader(
+                        title: title,
+                        trailing: AgendaDayPresentation.postCountLabel(
+                            groups.reduce(0) { $0 + $1.outputs.count }
+                        )
+                    )
+
+                    ForEach(groups) { group in
+                        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                            Button {
+                                selectedDay = group.day
+                                focusedDay = AgendaDaySelection(day: group.day)
+                            } label: {
+                                HStack {
+                                    Text(
+                                        group.day.formatted(
+                                            .dateTime.weekday(.wide).month(.abbreviated).day()
+                                        )
+                                    )
+                                    .font(.agentHeadline)
+                                    Spacer()
+                                    AgentIconView(.forward, size: 11)
+                                        .foregroundStyle(Color.agentSecondary)
+                                }
+                                .foregroundStyle(Color.agentText)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+
+                            ForEach(group.outputs) { output in
+                                if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
+                                    agendaPostCard(
+                                        output: output,
+                                        brief: brief,
+                                        day: group.day,
+                                        dayTasks: tasks(on: group.day)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -311,7 +626,7 @@ struct AgendaView: View {
         } label: {
             HStack(spacing: AgentSpacing.x3) {
                 Text(day.formatted(.dateTime.weekday(.abbreviated).day()))
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .textCase(.uppercase)
                     .frame(width: 56, alignment: .leading)
                 AgentIconView(.check, size: 13)
@@ -324,7 +639,7 @@ struct AgendaView: View {
 
                 if let postCountLabel {
                     Text(postCountLabel)
-                        .font(.agentMono)
+                        .font(.agentMetadata)
                         .foregroundStyle(Color.agentSecondary)
                         .fixedSize()
                 }
@@ -374,7 +689,7 @@ struct AgendaView: View {
             } label: {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                     Text(dayHeaderDate(day))
-                        .font(.agentMono.weight(Calendar.current.isDateInToday(day) ? .semibold : .medium))
+                        .font(.agentMetadata.weight(Calendar.current.isDateInToday(day) ? .semibold : .medium))
                         .textCase(.uppercase)
                         .foregroundStyle(Calendar.current.isDateInToday(day) ? Color.cyAccent : Color.agentText)
                         .fixedSize()
@@ -405,20 +720,21 @@ struct AgendaView: View {
     }
 
     private func agendaPostCard(output: PlatformOutput, brief: CreativeBrief, day: Date, dayTasks: [CreatorTask]) -> some View {
-        let isDraft = TodayOutputPresentation.section(
+        let section = TodayOutputPresentation.section(
             outputStatus: output.status,
             briefStatus: brief.status
-        ) == .drafted
-        let overdue = !isDraft && AgendaDayPresentation.isOverdue(
+        )
+        let displaysAsDraft = section != .goingLive
+        let overdue = section == .goingLive && AgendaDayPresentation.isOverdue(
             targetDate: output.targetDate,
             status: output.status,
             now: Date()
         )
         let accent = pillarAccent(for: brief)
         let firstTaskDate = firstTaskDate(for: output, dayTasks: dayTasks)
-        let displayStatus: PlatformOutputStatus = isDraft ? .draft : output.status
+        let displayStatus: PlatformOutputStatus = displaysAsDraft ? .draft : output.status
         let displayTime = firstTaskDate ?? (output.includesTargetTime ? output.targetDate : nil)
-        let statusText = overdue ? "Missed" : nil
+        let statusText = overdue ? "Missed" : (section == .inProgress ? "In progress" : nil)
 
         return AgentPostCard(
             title: outputTitle(output, brief: brief),
@@ -510,6 +826,84 @@ struct AgendaView: View {
         let targetWeekStart = calendar.date(byAdding: .day, value: -targetDaysSinceMonday, to: day) ?? day
         return calendar.dateComponents([.weekOfYear], from: currentWeekStart, to: targetWeekStart).weekOfYear ?? 0
     }
+    private var calendarMonthStart: Date {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month], from: calendarMonth)
+        return calendar.date(from: components) ?? calendar.startOfDay(for: calendarMonth)
+    }
+    private var calendarWeekdaySymbols: [String] {
+        let calendar = Calendar.current
+        let symbols = calendar.veryShortStandaloneWeekdaySymbols
+        let offset = max(0, min(symbols.count - 1, calendar.firstWeekday - 1))
+        return Array(symbols[offset...] + symbols[..<offset])
+    }
+    private var calendarMonthDays: [Date] {
+        let calendar = Calendar.current
+        let monthStart = calendarMonthStart
+        let weekday = calendar.component(.weekday, from: monthStart)
+        let leadingCount = (weekday - calendar.firstWeekday + 7) % 7
+        let gridStart = calendar.date(byAdding: .day, value: -leadingCount, to: monthStart) ?? monthStart
+        return (0..<42).compactMap {
+            calendar.date(byAdding: .day, value: $0, to: gridStart)
+        }
+    }
+    private var datedAgendaOutputs: [PlatformOutput] {
+        outputs
+            .filter {
+                $0.targetDate != nil &&
+                    AgendaContentVisibility.includesOutput(
+                        briefID: $0.briefID,
+                        activeBriefIDs: activeBriefIDs
+                    )
+            }
+            .sorted {
+                let lhsDate = $0.targetDate ?? .distantFuture
+                let rhsDate = $1.targetDate ?? .distantFuture
+                if lhsDate != rhsDate { return lhsDate < rhsDate }
+                return $0.createdAt < $1.createdAt
+            }
+    }
+    private var upcomingAgendaGroups: [AgendaOutputDayGroup] {
+        agendaOutputGroups
+            .filter { $0.day >= Calendar.current.startOfDay(for: Date()) }
+            .sorted { $0.day < $1.day }
+    }
+    private var pastAgendaGroups: [AgendaOutputDayGroup] {
+        agendaOutputGroups
+            .filter { $0.day < Calendar.current.startOfDay(for: Date()) }
+            .sorted { $0.day > $1.day }
+    }
+    private var agendaOutputGroups: [AgendaOutputDayGroup] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: datedAgendaOutputs) {
+            calendar.startOfDay(for: $0.targetDate ?? .distantFuture)
+        }
+        return grouped.map { day, dayOutputs in
+            AgendaOutputDayGroup(
+                day: day,
+                outputs: dayOutputs.sorted { lhs, rhs in
+                    AgendaOutputOrdering.precedes(
+                        lhs,
+                        briefStatus: activeBriefs.first(where: { $0.id == lhs.briefID })?.status,
+                        rhs,
+                        briefStatus: activeBriefs.first(where: { $0.id == rhs.briefID })?.status
+                    )
+                }
+            )
+        }
+    }
+    private func shiftCalendarMonth(_ amount: Int) {
+        guard let newMonth = Calendar.current.date(
+            byAdding: .month,
+            value: amount,
+            to: calendarMonthStart
+        ) else { return }
+
+        withAnimation(.snappy(duration: 0.24)) {
+            calendarMonth = newMonth
+            selectedDay = newMonth
+        }
+    }
     private func outputs(on day: Date) -> [PlatformOutput] {
         outputs.filter { output in output.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } == true && activeBriefs.contains { $0.id == output.briefID } }
             .sorted { lhs, rhs in
@@ -554,7 +948,7 @@ struct AgendaView: View {
     }
 }
 
-private struct AgendaPinnedCalendarSurface<Header: View, Content: View>: View {
+private struct AgendaFixedCalendarSurface<Header: View, Content: View>: View {
     let minimumHeight: CGFloat?
     @ViewBuilder let header: Header
     @ViewBuilder let content: Content
@@ -574,50 +968,41 @@ private struct AgendaPinnedCalendarSurface<Header: View, Content: View>: View {
     }
 
     var body: some View {
-        LazyVStack(
-            alignment: .leading,
-            spacing: 0,
-            pinnedViews: [.sectionHeaders]
-        ) {
-            Section {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AgentSpacing.x6)
+                .padding(.top, AgentSpacing.x4)
+                .padding(.bottom, AgentSpacing.x2)
+                .background(
+                    Color.agentSurface,
+                    in: .rect(cornerRadius: AgentRadius.dashboard)
+                )
+                .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
+                // Leave room for the fixed card's shadow-border.
+                .padding(.top, 2)
+                .padding(.bottom, AgentSpacing.x3)
+
+            ScrollView {
                 content
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, AgentSpacing.x6)
                     .padding(.top, AgentSpacing.x6)
-                    .padding(.bottom, 120)
+                    .agentBottomNavigationClearance()
                     .frame(
                         maxWidth: .infinity,
                         minHeight: contentMinimumHeight,
                         alignment: .topLeading
                     )
-                    .background(Color.agentSurface)
-                    .clipShape(
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 0,
-                            bottomLeadingRadius: AgentRadius.dashboard,
-                            bottomTrailingRadius: AgentRadius.dashboard,
-                            topTrailingRadius: 0
-                        )
-                    )
-            } header: {
-                header
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, AgentSpacing.x6)
-                    .padding(.top, AgentSpacing.x4)
-                    .background {
-                        ZStack {
-                            Color.agentCanvas
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: AgentRadius.dashboard,
-                                bottomLeadingRadius: 0,
-                                bottomTrailingRadius: 0,
-                                topTrailingRadius: AgentRadius.dashboard
-                            )
-                            .fill(Color.agentSurface)
-                        }
-                }
-                .zIndex(1)
             }
+            // The surface card remains fixed. Only its agenda rows scroll,
+            // matching the Tasks page container behavior.
+            .scrollIndicators(.hidden)
+            .scrollClipDisabled(false)
+            .background(Color.agentSurface)
+            .clipShape(.rect(cornerRadius: AgentRadius.dashboard))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -633,10 +1018,14 @@ enum AgendaOutputOrdering {
         outputStatus: PlatformOutputStatus,
         briefStatus: BriefStatus?
     ) -> Int {
-        TodayOutputPresentation.section(
+        switch TodayOutputPresentation.section(
             outputStatus: outputStatus,
             briefStatus: briefStatus
-        ) == .drafted ? 1 : 0
+        ) {
+        case .goingLive: 0
+        case .inProgress: 1
+        case .drafted: 2
+        }
     }
 
     static func precedes(
@@ -887,7 +1276,7 @@ struct DayAgendaView: View {
                 .padding(.top, AgentSpacing.x8)
             }
             .padding(.top, AgentSpacing.x6)
-            .padding(.bottom, 110)
+            .agentBottomNavigationClearance()
         }
         .navigationTitle(day.formatted(.dateTime.weekday(.wide)))
         .navigationBarTitleDisplayMode(.inline)
@@ -1028,7 +1417,7 @@ struct DayAgendaView: View {
                     Text(displayedPillar?.name ?? "Assign a pillar")
                         .font(.agentBody.weight(.semibold))
                     Spacer()
-                    AgentIconView(.moveVertical, size: 11)
+                    AgentIconView(.expand, size: 11)
                 }
                 .foregroundStyle(Color.agentText)
                 .frame(maxWidth: .infinity, minHeight: 52)

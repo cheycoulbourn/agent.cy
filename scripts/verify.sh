@@ -8,6 +8,8 @@ IOS_SOURCE_ONLY="${IOS_SOURCE_ONLY:-0}"
 
 cd "$ROOT"
 
+"$ROOT/scripts/check_inter_typography.sh"
+
 pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test

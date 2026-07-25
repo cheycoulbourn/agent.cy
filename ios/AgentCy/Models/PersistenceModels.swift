@@ -252,6 +252,8 @@ final class CreativeBrief {
     var lifecycleHistoryText: String = ""
     var sourceRaw: String = SparkSource.text.rawValue
     var statusRaw: String = BriefStatus.spark.rawValue
+    /// Optional for additive CloudKit migration compatibility.
+    var ideaBankPlacementRaw: String?
     var pillarID: UUID?
     var isBrandCollaboration: Bool = false
     var brandName: String = ""
@@ -297,6 +299,11 @@ final class CreativeBrief {
     var status: BriefStatus {
         get { BriefStatus(rawValue: statusRaw) ?? .spark }
         set { statusRaw = newValue.rawValue }
+    }
+
+    var ideaBankPlacement: IdeaBankPlacement? {
+        get { ideaBankPlacementRaw.flatMap(IdeaBankPlacement.init(rawValue:)) }
+        set { ideaBankPlacementRaw = newValue?.rawValue }
     }
 
     var compensationType: CompensationType {

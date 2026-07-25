@@ -8,6 +8,7 @@ private enum PostDraftSetupPicker: String, Identifiable {
     case pillar
     case platform
     case format
+    case status
 
     var id: String { rawValue }
 
@@ -16,6 +17,27 @@ private enum PostDraftSetupPicker: String, Identifiable {
         case .pillar: "Choose a pillar"
         case .platform: "Choose a platform"
         case .format: "Choose a format"
+        case .status: "Choose a status"
+        }
+    }
+}
+
+private enum PostWorkflowStatus: String, CaseIterable, Identifiable {
+    case idea
+    case draft
+    case inProgress
+    case scheduled
+    case posted
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .idea: "Idea"
+        case .draft: "Draft"
+        case .inProgress: "In progress"
+        case .scheduled: "Scheduled"
+        case .posted: "Posted"
         }
     }
 }
@@ -46,6 +68,8 @@ struct ResumablePostEditorView: View {
     @State private var shouldPersistTargetDate: Bool
     @State private var showDatePicker = false
     @State private var scheduleAfterDatePicker = false
+    @State private var markInProgressAfterDatePicker = false
+    @State private var markPostedAfterDatePicker = false
     @State private var didChooseDate = false
     @State private var showTaskComposer = false
     @State private var showMorePostDetails = false
@@ -57,13 +81,12 @@ struct ResumablePostEditorView: View {
     @State private var confirmDeleteDraft = false
     @State private var confirmMoveToIdeaBank = false
     @State private var isDeletingDraft = false
+    @State private var didMoveToIdeaBank = false
     @State private var markdownDocument: MarkdownFileDocument?
     @State private var showMarkdownExporter = false
     @State private var pendingProposal: BriefProposal?
     @State private var activeSetupPicker: PostDraftSetupPicker?
     @State private var isKeyboardVisible = false
-    @FocusState private var notesAreFocused: Bool
-
     private var pillars: [Pillar] {
         allPillars.filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: brief.workspaceID ?? appModel.activeWorkspaceID, workspaces: workspaces)
@@ -116,7 +139,7 @@ struct ResumablePostEditorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 HStack {
-                    MetaLabel(contextLabel ?? (isEditingFinalizedPost ? "Edit post" : "Draft post"))
+                    MetaLabel(contextLabel ?? editorContextLabel)
                     Spacer()
                     if !isEditingFinalizedPost && !isReviewEditing {
                         Button(action: openSpark) {
@@ -137,10 +160,7 @@ struct ResumablePostEditorView: View {
                     }
                 }
 
-                TextField("Post title", text: $brief.title, axis: .vertical)
-                    .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
-                    .tracking(-0.56)
-                    .lineLimit(1...3)
+                BufferedPostTitleField(text: $brief.title)
 
                 postSetupSection
 
@@ -188,8 +208,18 @@ struct ResumablePostEditorView: View {
                         )
                     }
                 },
-                title: scheduleAfterDatePicker ? "Schedule post" : "Post date",
-                confirmationTitle: scheduleAfterDatePicker ? "Schedule" : "Set date"
+                title: markInProgressAfterDatePicker
+                    ? "Work date"
+                    : (markPostedAfterDatePicker
+                        ? "Posted date"
+                        : (scheduleAfterDatePicker ? "Schedule post" : "Post date")),
+                confirmationTitle: markInProgressAfterDatePicker
+                    ? "Add to agenda"
+                    : (markPostedAfterDatePicker
+                        ? "Mark posted"
+                        : (scheduleAfterDatePicker ? "Schedule" : "Set date")),
+                canClearDate: hasTargetDate && workflowStatus != .posted,
+                onClearDate: clearTargetDate
             ) {
                 applyTargetDate()
             }
@@ -222,7 +252,7 @@ struct ResumablePostEditorView: View {
                     .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                     .accessibilityLabel("Save changes")
                 }
-            } else if canDeleteDraft {
+            } else if canManageDraft {
                 ToolbarItem(placement: .topBarTrailing) {
                     if canDeleteAsEmptyDraft {
                         Button(role: .destructive) {
@@ -233,13 +263,6 @@ struct ResumablePostEditorView: View {
                         .accessibilityLabel("Delete empty draft")
                     } else {
                         Menu {
-                            if !isAlreadyInIdeaBank {
-                                Button {
-                                    confirmMoveToIdeaBank = true
-                                } label: {
-                                    AgentIconLabel(title: "Move to Idea Bank", icon: .idea)
-                                }
-                            }
                             Button {
                                 saveDraft()
                             } label: {
@@ -289,9 +312,15 @@ struct ResumablePostEditorView: View {
             Text("Its title, notes, and pillar stay with the idea. Its schedule and linked post tasks are removed.")
         }
         .onDisappear {
-            if !isDeletingDraft { persistChanges() }
+            if PostDraftExitPersistencePolicy.shouldPersist(
+                isDeleting: isDeletingDraft,
+                didMoveToIdeaBank: didMoveToIdeaBank
+            ) {
+                persistChanges()
+            }
         }
         .onAppear {
+            repairIdeaBankPlacementIfNeeded()
             pendingProposal = appModel.proposal(for: brief, context: context)
         }
         .sheet(item: $pendingProposal) { proposal in
@@ -348,10 +377,22 @@ struct ResumablePostEditorView: View {
             .disabled(output.destinationID == nil)
             .opacity(output.destinationID == nil ? 0.55 : 1)
 
-            Button { editDueDate() } label: {
-                PostDraftSetupRow(label: "Due", value: targetDateLabel)
+            Button {
+                presentSetupPicker(.status)
+            } label: {
+                PostDraftSetupRow(label: "Status", value: workflowStatus.title)
             }
             .buttonStyle(.plain)
+
+            if workflowStatus != .idea {
+                Button { editDueDate() } label: {
+                    PostDraftSetupRow(
+                        label: brief.status == .developing ? "Work date" : "Due",
+                        value: targetDateLabel
+                    )
+                }
+                .buttonStyle(.plain)
+            }
         }
         .overlay(alignment: .top) {
             Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
@@ -359,22 +400,7 @@ struct ResumablePostEditorView: View {
     }
 
     private var notesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            AgentInputHeader(title: "Notes", isEditing: notesAreFocused) {
-                notesAreFocused = false
-            }
-            TextEditor(text: $brief.notes)
-                .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 160)
-                .padding(16)
-                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
-                )
-                .focused($notesAreFocused)
-        }
+        BufferedPostNotesEditor(text: $brief.notes)
     }
 
     @ViewBuilder
@@ -535,10 +561,17 @@ struct ResumablePostEditorView: View {
                             }
                         }
                     }
+
+                case .status:
+                    ForEach(Array(PostWorkflowStatus.allCases.enumerated()), id: \.element.id) { index, status in
+                        if index > 0 { setupPickerDivider() }
+                        workflowStatusPickerChoice(status)
+                    }
                 }
             }
             .padding(.horizontal, AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
         }
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x4)
@@ -578,6 +611,31 @@ struct ResumablePostEditorView: View {
         .buttonStyle(.plain)
     }
 
+    private func workflowStatusPickerChoice(_ status: PostWorkflowStatus) -> some View {
+        Button {
+            activeSetupPicker = nil
+            Task { @MainActor in
+                await Task.yield()
+                applyWorkflowStatus(status)
+            }
+        } label: {
+            HStack(spacing: AgentSpacing.x3) {
+                Text(status.title)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if workflowStatus == status {
+                    AgentIconView(.check, size: 13)
+                        .foregroundStyle(Color.agentText)
+                }
+            }
+            .frame(minHeight: 54)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func setupPickerDivider() -> some View {
         Rectangle()
             .fill(Color.agentHairline)
@@ -597,6 +655,7 @@ struct ResumablePostEditorView: View {
         case .pillar: optionCount = activePillars.count + 1
         case .platform: optionCount = max(activeDestinations.count, 1)
         case .format: optionCount = max(activeFormats.count, 1)
+        case .status: optionCount = PostWorkflowStatus.allCases.count
         }
         return min(560, max(220, CGFloat(optionCount * 55) + 112))
     }
@@ -605,6 +664,23 @@ struct ResumablePostEditorView: View {
             briefStatus: brief.status,
             outputStatus: output.status
         )
+    }
+    private var editorContextLabel: String {
+        if isEditingFinalizedPost { return "Edit post" }
+        switch workflowStatus {
+        case .idea: return "Idea"
+        case .inProgress: return "In progress"
+        case .draft: return "Draft post"
+        case .scheduled, .posted: return "Edit post"
+        }
+    }
+
+    private var workflowStatus: PostWorkflowStatus {
+        if output.status == .posted || brief.status == .posted { return .posted }
+        if output.status == .scheduled || brief.status == .scheduled { return .scheduled }
+        if brief.status == .developing { return .inProgress }
+        if brief.status == .spark, isAlreadyInIdeaBank { return .idea }
+        return .draft
     }
     private var selectedPillar: Pillar? { activePillars.first { $0.id == brief.pillarID } }
     private var activeDestinations: [PublishingDestination] { destinations.filter { !$0.isArchived } }
@@ -621,8 +697,8 @@ struct ResumablePostEditorView: View {
         tasks.filter { $0.parentTaskID == nil }.sorted { $0.sortOrder < $1.sortOrder }
     }
 
-    private var canDeleteDraft: Bool {
-        [.spark, .developing].contains(brief.status) && output.status == .draft
+    private var canManageDraft: Bool {
+        !isEditingFinalizedPost && !isReviewEditing
     }
 
     private var canDeleteAsEmptyDraft: Bool {
@@ -734,7 +810,7 @@ struct ResumablePostEditorView: View {
                                 .font(.agentBody)
                                 .keyboardType(.decimalPad)
                             Text("USD")
-                                .font(.agentMono)
+                                .font(.agentMetadata)
                                 .foregroundStyle(Color.agentSecondary)
                         }
                         .padding(.horizontal, AgentSpacing.x4)
@@ -887,7 +963,7 @@ struct ResumablePostEditorView: View {
                                 output.recurrenceWeekdays = selection
                             } label: {
                                 Text(weekday.letter)
-                                    .font(.agentMono)
+                                    .font(.agentMetadata)
                                     .foregroundStyle(output.recurrenceWeekdays.contains(weekday) ? Color.onAccent : Color.agentText)
                                     .frame(maxWidth: .infinity, minHeight: 42)
                                     .background(
@@ -1008,7 +1084,7 @@ struct ResumablePostEditorView: View {
             .disabled(importingMedia)
 
             Text("Media stays with this post and is not sent to Cy unless you explicitly include it later.")
-                .font(.agentMono)
+                .font(.agentMetadata)
                 .foregroundStyle(Color.agentSecondary)
         }
     }
@@ -1169,12 +1245,44 @@ struct ResumablePostEditorView: View {
         hasTargetDate = true
         shouldPersistTargetDate = true
         didChooseDate = true
-        appModel.schedule(output: output, date: targetDate, context: context)
-        persistChanges()
+        if markInProgressAfterDatePicker || markPostedAfterDatePicker {
+            persistChanges(commitSuggestedTargetDate: true)
+        } else {
+            appModel.schedule(output: output, date: targetDate, context: context)
+            persistChanges()
+        }
     }
 
     private func editDueDate() {
         scheduleAfterDatePicker = false
+        markInProgressAfterDatePicker = false
+        markPostedAfterDatePicker = false
+        didChooseDate = false
+        showDatePicker = true
+    }
+
+    private func clearTargetDate() {
+        guard workflowStatus != .posted else { return }
+
+        scheduleAfterDatePicker = false
+        markInProgressAfterDatePicker = false
+        markPostedAfterDatePicker = false
+        didChooseDate = false
+
+        guard appModel.clearPostDate(brief: brief, output: output, context: context) else { return }
+        hasTargetDate = false
+        shouldPersistTargetDate = true
+        output.includesTargetTime = false
+    }
+
+    private func requestInProgress() {
+        guard appModel.allows(.schedule, context: context) else {
+            appModelNotice("Adding work to the agenda is not available with your current access.")
+            return
+        }
+        markInProgressAfterDatePicker = true
+        scheduleAfterDatePicker = false
+        markPostedAfterDatePicker = false
         didChooseDate = false
         showDatePicker = true
     }
@@ -1184,8 +1292,10 @@ struct ResumablePostEditorView: View {
             appModelNotice("Scheduling is not available with your current access.")
             return
         }
-        guard hasTargetDate else {
+        if workflowStatus == .idea || !hasTargetDate {
             scheduleAfterDatePicker = true
+            markInProgressAfterDatePicker = false
+            markPostedAfterDatePicker = false
             didChooseDate = false
             showDatePicker = true
             return
@@ -1195,9 +1305,93 @@ struct ResumablePostEditorView: View {
 
     private func finishDateSelection() {
         let shouldSchedule = scheduleAfterDatePicker && didChooseDate
+        let shouldMarkInProgress = markInProgressAfterDatePicker && didChooseDate
+        let shouldMarkPosted = markPostedAfterDatePicker && didChooseDate
         scheduleAfterDatePicker = false
+        markInProgressAfterDatePicker = false
+        markPostedAfterDatePicker = false
         didChooseDate = false
-        if shouldSchedule { schedulePost() }
+        if shouldMarkInProgress {
+            markInProgress()
+        } else if shouldMarkPosted {
+            markPosted()
+        } else if shouldSchedule {
+            schedulePost()
+        }
+    }
+
+    private func applyWorkflowStatus(_ status: PostWorkflowStatus) {
+        guard status != workflowStatus else { return }
+
+        switch status {
+        case .idea:
+            confirmMoveToIdeaBank = true
+        case .draft:
+            persistChanges(commitSuggestedTargetDate: true)
+            _ = appModel.markPostDraft(brief: brief, output: output, context: context)
+        case .inProgress:
+            if hasTargetDate {
+                markInProgress()
+            } else {
+                requestInProgress()
+            }
+        case .scheduled:
+            requestSchedule()
+        case .posted:
+            requestPosted()
+        }
+    }
+
+    private func requestPosted() {
+        guard appModel.allows(.updatePosting, context: context),
+              appModel.allows(.schedule, context: context) else {
+            appModelNotice("Updating posting status is not available with your current access.")
+            return
+        }
+        guard hasTargetDate else {
+            markPostedAfterDatePicker = true
+            scheduleAfterDatePicker = false
+            markInProgressAfterDatePicker = false
+            didChooseDate = false
+            showDatePicker = true
+            return
+        }
+        markPosted()
+    }
+
+    private func markPosted() {
+        let cleanTitle = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else {
+            appModelNotice("Name the post before marking it Posted.")
+            return
+        }
+        guard hasTargetDate else {
+            requestPosted()
+            return
+        }
+
+        persistChanges(commitSuggestedTargetDate: true)
+        if output.status != .scheduled {
+            guard appModel.schedulePostSeries(output: output, date: targetDate, context: context) else { return }
+        }
+        appModel.togglePosted(output: output, context: context)
+        if output.status == .posted { openWeeklyAgenda() }
+    }
+
+    private func markInProgress() {
+        let cleanTitle = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else {
+            appModelNotice("Name the post before adding it to your agenda.")
+            return
+        }
+        persistChanges(commitSuggestedTargetDate: true)
+        guard appModel.markPostInProgress(
+            brief: brief,
+            output: output,
+            date: targetDate,
+            context: context
+        ) else { return }
+        openWeeklyAgenda()
     }
 
     private func schedulePost() {
@@ -1237,7 +1431,32 @@ struct ResumablePostEditorView: View {
     private func makeIdea() {
         persistChanges()
         guard appModel.movePostToIdeaBank(brief: brief, output: output, context: context) else { return }
+        hasTargetDate = false
+        shouldPersistTargetDate = false
+        output.includesTargetTime = false
+        didMoveToIdeaBank = true
         dismiss()
+    }
+
+    private func repairIdeaBankPlacementIfNeeded() {
+        guard isAlreadyInIdeaBank else { return }
+        brief.ideaBankPlacement = .idea
+
+        guard brief.status == .spark,
+              brief.agendaDate != nil || output.targetDate != nil else {
+            try? context.save()
+            return
+        }
+        guard appModel.movePostToIdeaBank(
+            brief: brief,
+            output: output,
+            showsNotice: false,
+            context: context
+        ) else { return }
+
+        hasTargetDate = false
+        shouldPersistTargetDate = true
+        output.includesTargetTime = false
     }
 
     private func duplicateDraft() {
@@ -1322,7 +1541,9 @@ struct ResumablePostEditorView: View {
     }
 
     private var targetDateLabel: String {
-        guard hasTargetDate else { return "Set a due date" }
+        guard hasTargetDate else {
+            return brief.status == .developing ? "Set a work date" : "Set a due date"
+        }
         if output.includesTargetTime {
             return targetDate.formatted(
                 .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
@@ -1402,6 +1623,12 @@ enum PostDraftTargetPersistencePolicy {
     }
 }
 
+enum PostDraftExitPersistencePolicy {
+    static func shouldPersist(isDeleting: Bool, didMoveToIdeaBank: Bool) -> Bool {
+        !isDeleting && !didMoveToIdeaBank
+    }
+}
+
 enum EmptyPostDraftDeletionPolicy {
     static func shouldOfferDirectDelete(
         brief: CreativeBrief,
@@ -1455,18 +1682,36 @@ enum EmptyPostDraftDeletionPolicy {
 private struct PostEditorTextField: View {
     let label: String
     @Binding var text: String
+    @State private var draftText: String
     var axis: Axis = .vertical
     var minimumHeight: CGFloat = 72
     var keyboardType: UIKeyboardType = .default
     var textContentType: UITextContentType?
     @FocusState private var isFocused: Bool
 
+    init(
+        label: String,
+        text: Binding<String>,
+        axis: Axis = .vertical,
+        minimumHeight: CGFloat = 72,
+        keyboardType: UIKeyboardType = .default,
+        textContentType: UITextContentType? = nil
+    ) {
+        self.label = label
+        _text = text
+        _draftText = State(initialValue: text.wrappedValue)
+        self.axis = axis
+        self.minimumHeight = minimumHeight
+        self.keyboardType = keyboardType
+        self.textContentType = textContentType
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             AgentInputHeader(title: label, isEditing: isFocused) {
                 isFocused = false
             }
-            TextField("", text: $text, axis: axis)
+            TextField("", text: $draftText, axis: axis)
                 .font(.agentBody)
                 .lineLimit(axis == .vertical ? 2...8 : 1...1)
                 .keyboardType(keyboardType)
@@ -1482,6 +1727,118 @@ private struct PostEditorTextField: View {
                 }
                 .focused($isFocused)
         }
+        .task(id: draftText) {
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            commitDraft()
+        }
+        .onChange(of: isFocused) { _, focused in
+            if !focused { commitDraft() }
+        }
+        .onChange(of: text) { _, newValue in
+            guard !isFocused, newValue != draftText else { return }
+            draftText = newValue
+        }
+        .onDisappear(perform: commitDraft)
+    }
+
+    private func commitDraft() {
+        guard text != draftText else { return }
+        text = draftText
+    }
+}
+
+private struct BufferedPostTitleField: View {
+    @Binding var text: String
+    @State private var draftText: String
+    @FocusState private var isFocused: Bool
+
+    init(text: Binding<String>) {
+        _text = text
+        _draftText = State(initialValue: text.wrappedValue)
+    }
+
+    var body: some View {
+        TextField("Post title", text: $draftText, axis: .vertical)
+            .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
+            .tracking(-0.56)
+            .lineLimit(1...3)
+            .focused($isFocused)
+            .task(id: draftText) {
+                do {
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                } catch {
+                    return
+                }
+                commitDraft()
+            }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { commitDraft() }
+            }
+            .onChange(of: text) { _, newValue in
+                guard !isFocused, newValue != draftText else { return }
+                draftText = newValue
+            }
+            .onDisappear(perform: commitDraft)
+    }
+
+    private func commitDraft() {
+        guard text != draftText else { return }
+        text = draftText
+    }
+}
+
+private struct BufferedPostNotesEditor: View {
+    @Binding var text: String
+    @State private var draftText: String
+    @FocusState private var isFocused: Bool
+
+    init(text: Binding<String>) {
+        _text = text
+        _draftText = State(initialValue: text.wrappedValue)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AgentInputHeader(title: "Notes", isEditing: isFocused) {
+                isFocused = false
+            }
+            TextEditor(text: $draftText)
+                .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 160)
+                .padding(16)
+                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                }
+                .focused($isFocused)
+        }
+        .task(id: draftText) {
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            commitDraft()
+        }
+        .onChange(of: isFocused) { _, focused in
+            if !focused { commitDraft() }
+        }
+        .onChange(of: text) { _, newValue in
+            guard !isFocused, newValue != draftText else { return }
+            draftText = newValue
+        }
+        .onDisappear(perform: commitDraft)
+    }
+
+    private func commitDraft() {
+        guard text != draftText else { return }
+        text = draftText
     }
 }
 
@@ -1496,7 +1853,7 @@ private struct PostAttachmentRow: View {
                     .font(.agentBody)
                     .lineLimit(1)
                 Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
             }
             Spacer()
@@ -1531,7 +1888,7 @@ private struct PostMediaThumbnail: View {
                     ZStack {
                         Color.agentCanvas
                         AgentIconView(attachment.kind == .video ? .play : .copy)
-                            .font(.system(size: 24, weight: .medium))
+                            .font(.agentInter(size: 24, weight: .medium, relativeTo: .title3))
                             .foregroundStyle(Color.agentSecondary)
                     }
                 }
@@ -1571,11 +1928,14 @@ private struct PostDraftSetupRow: View {
     let label: String
     let value: String
     var color: Color?
+    var showsChevron = true
 
     var body: some View {
         HStack(spacing: 14) {
             MetaLabel(label)
-                .frame(width: 68, alignment: .leading)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: 92, alignment: .leading)
             HStack(spacing: AgentSpacing.x2) {
                 if let color {
                     Circle().fill(color).frame(width: 8, height: 8)
@@ -1583,9 +1943,14 @@ private struct PostDraftSetupRow: View {
                 Text(value)
                     .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .allowsTightening(true)
             }
+            .layoutPriority(1)
             Spacer(minLength: AgentSpacing.x2)
-            AgentIconView(.forward, size: 12)
+            if showsChevron {
+                AgentIconView(.forward, size: 12)
+            }
         }
         .foregroundStyle(Color.agentText)
         .frame(maxWidth: .infinity, minHeight: 58)
@@ -1603,6 +1968,8 @@ private struct PostDraftDatePicker: View {
     let pillarMarkers: [PillarCalendarMarker]
     let title: String
     let confirmationTitle: String
+    let canClearDate: Bool
+    let onClearDate: () -> Void
     let onSave: () -> Void
 
     var body: some View {
@@ -1645,6 +2012,20 @@ private struct PostDraftDatePicker: View {
                     .overlay {
                         RoundedRectangle(cornerRadius: AgentRadius.control)
                             .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+
+                    if canClearDate {
+                        Button(role: .destructive) {
+                            onClearDate()
+                            dismiss()
+                        } label: {
+                            Text("Clear date")
+                                .font(.paperInter(size: 15, weight: .medium, relativeTo: .body))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.agentDestructive)
+                        .accessibilityHint("Removes this post from the agenda")
                     }
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)
@@ -1764,7 +2145,7 @@ struct PillarCalendarDatePicker: View {
         LazyVGrid(columns: gridColumns, spacing: 0) {
             ForEach(weekdaySymbols, id: \.self) { symbol in
                 Text(symbol)
-                    .font(.paperMono(size: 11, weight: .medium, relativeTo: .caption))
+                    .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
                     .foregroundStyle(Color.agentSecondary)
                     .frame(maxWidth: .infinity)
             }

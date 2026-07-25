@@ -35,10 +35,9 @@ struct IdeaBankView: View {
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var ideas: [CreativeBrief] {
         briefs.filter { brief in
-            let isIdea = brief.status == .spark || brief.status == .developing
             let matchesLifecycle = selectedFilter == .archived
                 ? brief.status == .archived
-                : isIdea
+                : IdeaBankPlacementPolicy.includes(brief)
             let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
             guard matchesLifecycle, !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return false
@@ -76,7 +75,7 @@ struct IdeaBankView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(item: $selectedIdea) { brief in
-            IdeaPostDraftView(brief: brief)
+            IdeaPostDraftView(brief: brief, isAlreadyInIdeaBank: true)
         }
         .confirmationDialog(
             deletionConfirmationTitle,
@@ -262,7 +261,7 @@ struct IdeaBankView: View {
     private var selectionActions: some View {
         HStack(spacing: AgentSpacing.x3) {
             Text("\(selectedIdeaIDs.count) SELECTED")
-                .font(.agentMono)
+                .font(.agentMetadata)
                 .foregroundStyle(Color.agentSecondary)
 
             Spacer(minLength: AgentSpacing.x2)
@@ -495,7 +494,7 @@ private struct IdeaBankRow: View {
                     }
 
                     Text(metadata)
-                        .font(.paperMono(size: 10, weight: .regular, relativeTo: .caption))
+                        .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
                         .tracking(1)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.agentSecondary)
@@ -524,6 +523,9 @@ private struct IdeaBankRow: View {
     private var metadata: String {
         let pillarName = pillar?.name ?? "Unfiled"
         let relativeDate = brief.updatedAt.formatted(.relative(presentation: .named))
+        if brief.status == .developing {
+            return "\(pillarName) · In progress · \(relativeDate)"
+        }
         return "\(pillarName) · \(relativeDate)"
     }
 }

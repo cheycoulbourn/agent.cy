@@ -354,13 +354,14 @@ struct PlanHeader<Actions: View>: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(firstLine)
-                    .font(.system(size: 32, weight: .regular, design: .default))
+                    .font(.agentDisplayLead)
                 Text(secondLine)
                     .font(.agentDisplay)
             }
             .tracking(-0.64)
             .foregroundStyle(Color.agentText)
-            .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
 
         }
         .padding(.horizontal, AgentLayout.pageMargin)

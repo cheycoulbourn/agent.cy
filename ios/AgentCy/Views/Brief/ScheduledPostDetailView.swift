@@ -147,7 +147,6 @@ struct ScheduledPostDetailView: View {
     @State private var showRescheduler = false
     @State private var confirmArchive = false
     @State private var confirmDelete = false
-    @State private var confirmMoveToIdeaBank = false
     @State private var selectedMoodBoardPreview: MoodBoardImagePreview?
     @State private var attachmentPreviewURL: URL?
     @State private var markdownDocument: MarkdownFileDocument?
@@ -220,13 +219,6 @@ struct ScheduledPostDetailView: View {
                         showEditor = true
                     } label: {
                         AgentIconLabel(title: "Edit post", icon: .pencil)
-                    }
-                    if canMoveToIdeaBank {
-                        Button {
-                            confirmMoveToIdeaBank = true
-                        } label: {
-                            AgentIconLabel(title: "Move to Idea Bank", icon: .idea)
-                        }
                     }
                     Divider()
                     Button {
@@ -319,12 +311,6 @@ struct ScheduledPostDetailView: View {
         } message: {
             Text("You can find it later under Archived in the Idea Bank.")
         }
-        .alert("Move this post to Idea Bank?", isPresented: $confirmMoveToIdeaBank) {
-            Button("Move to Idea Bank", action: moveToIdeaBank)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Its title, notes, and pillar stay with the idea. Its schedule and linked post tasks are removed.")
-        }
         .alert("Delete this post?", isPresented: $confirmDelete) {
             if PostSeriesDeletionPolicy.isPartOfSeries(output) {
                 Button("Delete this post", role: .destructive) {
@@ -355,11 +341,11 @@ struct ScheduledPostDetailView: View {
             HStack(spacing: AgentSpacing.x2) {
                 PillarColorMark(color: pillarColor, diameter: 7)
                 Text(pillarName.uppercased())
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(0.7)
                 Spacer()
                 Text(statusTitle)
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .tracking(0.6)
                     .padding(.horizontal, AgentSpacing.x2)
                     .frame(minHeight: 24)
@@ -382,7 +368,7 @@ struct ScheduledPostDetailView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             SectionRuleHeader(title: "Posting details")
             detailRow(label: "Date", value: scheduleDateText)
-            detailRow(label: "Platform", value: platformLabel)
+            detailRow(label: "Platform", value: platformLabel, keepsValueOnOneLine: true)
             detailRow(label: "Duration", value: durationLabel)
             if isMissed {
                 AgentInlinePostAction(title: "Reschedule", isAlert: true) {
@@ -394,13 +380,13 @@ struct ScheduledPostDetailView: View {
         .padding(.horizontal, AgentSpacing.x4)
         .padding(.vertical, AgentSpacing.x4)
         .background(pillarColor.opacity(0.10), in: .rect(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(
-                    PillarVisualContrast.cardBorderColor(for: pillarColor, colorScheme: colorScheme),
-                    lineWidth: 1
-                )
-        }
+        .agentSurfaceChrome(
+            cornerRadius: 12,
+            borderColor: PillarVisualContrast.cardBorderColor(
+                for: pillarColor,
+                colorScheme: colorScheme
+            )
+        )
     }
 
     @ViewBuilder
@@ -452,7 +438,7 @@ struct ScheduledPostDetailView: View {
                                 .lineLimit(1)
                             Spacer()
                             Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
-                                .font(.agentMono)
+                                .font(.agentMetadata)
                                 .foregroundStyle(Color.agentSecondary)
                             AgentIconView(.forward, size: 13)
                                 .foregroundStyle(Color.agentSecondary)
@@ -584,13 +570,23 @@ struct ScheduledPostDetailView: View {
         )
     }
 
-    private func detailRow(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x4) {
+    private func detailRow(
+        label: String,
+        value: String,
+        keepsValueOnOneLine: Bool = false
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
             MetaLabel(label)
-                .frame(width: 72, alignment: .leading)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: 92, alignment: .leading)
             Text(value)
                 .font(.agentBody.weight(.medium))
+                .lineLimit(keepsValueOnOneLine ? 1 : nil)
+                .minimumScaleFactor(keepsValueOnOneLine ? 0.78 : 1)
+                .allowsTightening(keepsValueOnOneLine)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
         }
     }
 
@@ -744,16 +740,6 @@ struct ScheduledPostDetailView: View {
         if appModel.deletePost(brief: brief, output: output, scope: scope, context: context) {
             dismiss()
         }
-    }
-    private func moveToIdeaBank() {
-        if appModel.movePostToIdeaBank(brief: brief, output: output, context: context) {
-            dismiss()
-        }
-    }
-    private var canMoveToIdeaBank: Bool {
-        ![.spark, .developing, .posted, .archived].contains(brief.status) &&
-            output.status != .posted &&
-            !outputs.contains(where: { $0.status == .posted })
     }
     private var contentFields: [DisplayField] {
         var fields = CreatorPostCopyField.allCases.compactMap { field -> DisplayField? in

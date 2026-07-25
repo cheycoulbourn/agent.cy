@@ -30,8 +30,6 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>InterVariable.ttf</string>
-		<string>IBMPlexMono-Regular.ttf</string>
-		<string>IBMPlexMono-Medium.ttf</string>
 	</array>
 </dict>
 </plist>

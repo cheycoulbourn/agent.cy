@@ -295,7 +295,7 @@ private struct CyMarkdownResponseView: View {
         case .numbered(let marker):
             HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
                 Text(marker)
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.cyAccent)
                     .frame(width: 18, alignment: .leading)
                 Text(inlineMarkdown(block.text))
@@ -639,7 +639,7 @@ struct AskCyView: View {
                                     AgentIconView(selectedReviewIDs.contains(request.id)
                                         ? .checkCircle
                                         : .radioEmpty)
-                                        .font(.system(size: 20, weight: .medium))
+                                        .font(.agentInter(size: 20, weight: .medium, relativeTo: .body))
                                         .foregroundStyle(selectedReviewIDs.contains(request.id)
                                             ? Color.cyAccent
                                             : Color.agentSecondary)
@@ -686,7 +686,7 @@ struct AskCyView: View {
                             .fill(Color.agentBorder)
                             .frame(width: 1, height: 12)
                         Text("\(pendingReviews.count)")
-                            .font(.agentMono)
+                            .font(.agentMetadata)
                     }
                     .foregroundStyle(isSelectingReviews ? Color.cyAccent : Color.agentSecondary)
                     .frame(minHeight: 44)
@@ -696,7 +696,7 @@ struct AskCyView: View {
                 .accessibilityLabel(isSelectingReviews ? "Finish selecting proposals" : "Select proposals")
             } else {
                 Text("\(pendingReviews.count)")
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
             }
         }
@@ -768,7 +768,7 @@ struct AskCyView: View {
                 MetaLabel("Agent (Cy)")
 
                 Text("|")
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(Color.agentBorder)
                     .accessibilityHidden(true)
 
@@ -778,7 +778,7 @@ struct AskCyView: View {
                     .accessibilityHidden(true)
 
                 Text(remoteIsConnected ? "Connected" : "Disconnected")
-                    .font(.agentMono)
+                    .font(.agentMetadata)
                     .foregroundStyle(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
                     .lineLimit(1)
             }
@@ -820,7 +820,7 @@ struct AskCyView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Hey \(activeIdentity.greetingName),")
-                    .font(.system(size: 32, weight: .regular))
+                    .font(.agentDisplayLead)
                 Text("what are we creating today?")
                     .font(.agentDisplay)
             }
@@ -836,7 +836,7 @@ struct AskCyView: View {
                             ForEach(Array(onYourPlateItems.enumerated()), id: \.element.id) { index, item in
                                 HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
                                     Text("\(item.count)")
-                                        .font(.agentMono)
+                                        .font(.agentMetadata)
                                         .foregroundStyle(Color.cyAccent)
                                         .frame(width: 24, alignment: .leading)
                                     Text(item.title)
@@ -928,6 +928,7 @@ struct AskCyView: View {
             .padding(.horizontal, AgentSpacing.x4)
             .frame(maxWidth: .infinity, minHeight: 50)
             .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+            .agentSurfaceChrome(cornerRadius: 14)
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(Color.agentBorder, lineWidth: 1)
@@ -1040,6 +1041,7 @@ struct AskCyView: View {
                     }
                 }
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
                 .overlay {
                     RoundedRectangle(cornerRadius: AgentRadius.panel)
                         .stroke(Color.agentBorder, lineWidth: 0.75)
@@ -1061,13 +1063,13 @@ struct AskCyView: View {
                                 .foregroundStyle(Color.agentText)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(taskProposal.kind.title)
-                                .font(.agentMono)
+                                .font(.agentMetadata)
                                 .foregroundStyle(Color.agentSecondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                         AgentIconView(wasAdded ? .check : .add)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.agentInter(size: 14, weight: .semibold, relativeTo: .subheadline))
                             .foregroundStyle(Color.onCyAccent)
                             .frame(width: 36, height: 36)
                             .background(Color.cyAccent, in: .circle)
@@ -1096,7 +1098,7 @@ struct AskCyView: View {
                             .font(.agentSubtext.weight(.semibold))
                         Spacer(minLength: AgentSpacing.x2)
                         AgentIconView(sentToPostMessageIDs.contains(message.id) ? .check : .arrowRight)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.agentInter(size: 12, weight: .semibold, relativeTo: .caption))
                     }
                     .foregroundStyle(Color.cyAccent)
                     .padding(.horizontal, AgentSpacing.x3)
@@ -1136,18 +1138,24 @@ struct AskCyView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             ZStack(alignment: .bottomTrailing) {
-                TextField(text: $prompt, axis: .vertical) {
-                    Text(composerPlaceholder)
-                        .foregroundStyle(Color.agentSecondary)
-                }
+                TextField("", text: $prompt, axis: .vertical)
                 .font(.agentBody)
                 .foregroundStyle(Color.agentText)
                 .lineLimit(1...4)
                 .focused($composerIsFocused)
                 .padding(.leading, AgentSpacing.x4)
                 .padding(.trailing, AgentSpacing.x12 + AgentSpacing.x3)
-                .padding(.vertical, AgentSpacing.x4)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, AgentSpacing.x2)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .center)
+                .overlay(alignment: .leading) {
+                    if prompt.isEmpty {
+                        Text(composerPlaceholder)
+                            .font(.agentBody)
+                            .foregroundStyle(Color.agentSecondary)
+                            .padding(.leading, AgentSpacing.x4)
+                            .allowsHitTesting(false)
+                    }
+                }
 
                 composerActionButton
                     .padding(6)
@@ -1164,7 +1172,6 @@ struct AskCyView: View {
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.vertical, AgentSpacing.x2)
         .padding(.bottom, bottomClearance)
-        .appWalkthroughTarget(.cyComposer)
     }
 
     private var composerActionButton: some View {
@@ -1180,7 +1187,7 @@ struct AskCyView: View {
             }
         } label: {
             AgentIconView(isSending ? .stop : .arrowUp)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.agentInter(size: 16, weight: .semibold, relativeTo: .body))
                 .foregroundStyle(foreground)
                 .frame(width: 44, height: 44)
                 .background(background, in: .circle)

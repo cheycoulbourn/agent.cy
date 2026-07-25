@@ -284,7 +284,13 @@ final class LocalReminderService: ReminderServicing {
                 showTitles: settings.showNotificationTitles
             ),
             briefs: briefs.map {
-                NotificationBriefSnapshot(id: $0.id, title: $0.title, status: $0.status, updatedAt: $0.updatedAt)
+                NotificationBriefSnapshot(
+                    id: $0.id,
+                    title: $0.title,
+                    status: $0.status,
+                    updatedAt: $0.updatedAt,
+                    isSavedIdea: IdeaBankPlacementPolicy.includes($0)
+                )
             },
             outputs: outputs.map {
                 NotificationOutputSnapshot(

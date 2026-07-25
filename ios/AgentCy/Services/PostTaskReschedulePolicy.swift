@@ -101,4 +101,26 @@ enum PostTaskReschedulePolicy {
         }
         return movedCount
     }
+
+    @discardableResult
+    static func clearOpenTaskDates(
+        _ tasks: [CreatorTask],
+        for output: PlatformOutput
+    ) -> Int {
+        var clearedCount = 0
+        for task in tasks where !task.isCompleted {
+            guard isLinked(
+                taskBriefID: task.briefID,
+                taskOutputID: task.platformOutputID,
+                toOutputID: output.id,
+                briefID: output.briefID
+            ) else { continue }
+
+            task.targetDate = nil
+            task.includesTargetTime = false
+            task.dailyFocusDate = nil
+            clearedCount += 1
+        }
+        return clearedCount
+    }
 }

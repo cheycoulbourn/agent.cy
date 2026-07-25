@@ -154,7 +154,7 @@ enum WidgetSnapshotService {
         }
 
         let latestIdea = briefs
-            .filter { $0.status == .spark || $0.status == .developing }
+            .filter(IdeaBankPlacementPolicy.includes)
             .sorted { $0.updatedAt > $1.updatedAt }
             .first
             .map { brief in
