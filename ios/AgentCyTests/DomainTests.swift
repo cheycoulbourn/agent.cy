@@ -74,6 +74,45 @@ final class DomainTests: XCTestCase {
         )
     }
 
+    func testContinueWorkingIncludesUnscheduledCustomStatusesAndUsesTheirExactLabel() {
+        XCTAssertTrue(
+            ContinueWorkingPostPolicy.includes(
+                briefStatus: .developing,
+                outputStatus: .ready,
+                customStatus: "To be filmed"
+            )
+        )
+        XCTAssertEqual(
+            ContinueWorkingPostPolicy.displayLabel(
+                briefStatus: .developing,
+                outputStatus: .ready,
+                customStatus: "  For   review "
+            ),
+            "For review"
+        )
+        XCTAssertTrue(
+            ContinueWorkingPostPolicy.includes(
+                briefStatus: .ready,
+                outputStatus: .draft,
+                customStatus: nil
+            )
+        )
+        XCTAssertFalse(
+            ContinueWorkingPostPolicy.includes(
+                briefStatus: .scheduled,
+                outputStatus: .scheduled,
+                customStatus: "To be filmed"
+            )
+        )
+        XCTAssertFalse(
+            ContinueWorkingPostPolicy.includes(
+                briefStatus: .posted,
+                outputStatus: .posted,
+                customStatus: "For review"
+            )
+        )
+    }
+
     func testWorkspaceRemembersCustomPostStatusesWithoutDuplicates() {
         let workspace = CreatorWorkspace(profileID: UUID(), name: "Creator")
 
@@ -953,6 +992,32 @@ final class DomainTests: XCTestCase {
         XCTAssertNil(output.targetDate)
         XCTAssertNil(brief.agendaDate)
         XCTAssertEqual(task.targetDate, Calendar.current.startOfDay(for: workDate))
+    }
+
+    func testSettingPostDateOnCustomStatusPreservesTheCustomStatus() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        let brief = CreativeBrief(title: "Film the styling reel", status: .developing)
+        brief.customStatusLabel = "To be filmed"
+        let output = PlatformOutput(briefID: brief.id, status: .draft)
+        context.insert(brief)
+        context.insert(output)
+        try context.save()
+
+        let postDate = try XCTUnwrap(
+            Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 30, hour: 12))
+        )
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        model.schedule(output: output, date: postDate, context: context)
+
+        XCTAssertEqual(brief.customStatusLabel, "To be filmed")
+        XCTAssertEqual(brief.resolvedCustomStatusLabel, "To be filmed")
+        XCTAssertEqual(brief.status, .developing)
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(output.targetDate, postDate)
     }
 
     func testScheduledPostCanReturnToDraftWithoutLosingItsWorkDate() throws {

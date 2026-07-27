@@ -755,8 +755,20 @@ struct HomeDashboardView: View {
 
     private var continueWorkingSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            Text("Continue working on…")
-                .font(.agentTitle)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Continue working on…")
+                    .font(.agentTitle)
+
+                Spacer()
+
+                Button("View all") {
+                    appModel.routeToOpenPostsList()
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the agenda list filtered to open posts")
+            }
 
             Rectangle()
                 .fill(Color.agentHairline)
@@ -778,10 +790,10 @@ struct HomeDashboardView: View {
                             metadata: platformLabel(for: item.output),
                             timeText: (item.brief.workDate ?? item.output.targetDate)?
                                 .formatted(.dateTime.month(.abbreviated).day()),
-                            statusTextOverride: CustomPostStatusPolicy.displayLabel(
+                            statusTextOverride: ContinueWorkingPostPolicy.displayLabel(
                                 briefStatus: item.brief.status,
                                 outputStatus: item.output.status,
-                                customStatus: item.brief.customStatusLabel
+                                customStatus: item.brief.resolvedCustomStatusLabel
                             ),
                             destination: AnyView(
                                 ResumablePostEditorView(
@@ -955,11 +967,12 @@ struct HomeDashboardView: View {
 
     private var continueWorkingItems: [HomeContinueWorkingItem] {
         let candidates = outputs.compactMap { output -> HomeContinueWorkingItem? in
-            guard output.status == .draft,
-                  let brief = brief(for: output),
-                  brief.status != .archived,
-                  brief.status != .scheduled,
-                  brief.status != .posted,
+            guard let brief = brief(for: output),
+                  ContinueWorkingPostPolicy.includes(
+                    briefStatus: brief.status,
+                    outputStatus: output.status,
+                    customStatus: brief.resolvedCustomStatusLabel
+                  ),
                   !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return nil }
 

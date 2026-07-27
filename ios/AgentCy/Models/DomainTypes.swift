@@ -114,6 +114,48 @@ enum CustomPostStatusPolicy {
     }
 }
 
+enum ContinueWorkingPostPolicy {
+    static func includes(
+        briefStatus: BriefStatus,
+        outputStatus: PlatformOutputStatus,
+        customStatus: String?
+    ) -> Bool {
+        guard briefStatus != .archived,
+              briefStatus != .scheduled,
+              briefStatus != .posted,
+              outputStatus != .scheduled,
+              outputStatus != .posted else {
+            return false
+        }
+
+        if CustomPostStatusPolicy.normalized(customStatus) != nil {
+            return true
+        }
+
+        return outputStatus == .draft
+    }
+
+    static func displayLabel(
+        briefStatus: BriefStatus,
+        outputStatus: PlatformOutputStatus,
+        customStatus: String?
+    ) -> String {
+        if let customStatus = CustomPostStatusPolicy.normalized(customStatus),
+           outputStatus != .scheduled,
+           outputStatus != .posted,
+           briefStatus != .scheduled,
+           briefStatus != .posted {
+            return customStatus
+        }
+
+        return CustomPostStatusPolicy.displayLabel(
+            briefStatus: briefStatus,
+            outputStatus: outputStatus,
+            customStatus: customStatus
+        )
+    }
+}
+
 enum AssistanceMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case drive
     case collaborate

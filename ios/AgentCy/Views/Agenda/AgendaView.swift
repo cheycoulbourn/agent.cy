@@ -41,6 +41,7 @@ private enum AgendaListStandardStatus: String, CaseIterable, Hashable {
 
 private enum AgendaListStatusFilter: Hashable {
     case all
+    case open
     case standard(AgendaListStandardStatus)
     case custom(String)
 }
@@ -156,6 +157,10 @@ struct AgendaView: View {
     private var weekDays: [Date] { (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) } }
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
     private var activeBriefIDs: Set<UUID> { Set(activeBriefs.map(\.id)) }
+    private var activeWorkspace: CreatorWorkspace? {
+        guard let activeWorkspaceID = appModel.activeWorkspaceID else { return nil }
+        return workspaces.first(where: { $0.id == activeWorkspaceID && !$0.isArchived })
+    }
 
     init(
         weekOffset: Binding<Int>,
@@ -250,6 +255,11 @@ struct AgendaView: View {
             focusedDay = nil
             deepLinkedBrief = nil
             deepLinkedBriefOpensEditor = false
+        }
+        .onChange(of: appModel.requestedOpenPostsList, initial: true) { _, request in
+            guard request > 0 else { return }
+            displayMode = .list
+            listStatusFilter = .open
         }
         .onChange(of: appModel.widgetBriefID, initial: true) { _, id in
             guard let id, let brief = activeBriefs.first(where: { $0.id == id }) else { return }
@@ -636,6 +646,9 @@ struct AgendaView: View {
                 Picker("Status", selection: $listStatusFilter) {
                     Text("All statuses")
                         .tag(AgendaListStatusFilter.all)
+
+                    Text("Open posts")
+                        .tag(AgendaListStatusFilter.open)
 
                     ForEach(AgendaListStandardStatus.allCases, id: \.self) { status in
                         Text(status.title)
@@ -1259,6 +1272,12 @@ struct AgendaView: View {
             switch listStatusFilter {
             case .all:
                 matchesStatus = true
+            case .open:
+                matchesStatus = ContinueWorkingPostPolicy.includes(
+                    briefStatus: brief.status,
+                    outputStatus: output.status,
+                    customStatus: brief.resolvedCustomStatusLabel
+                )
             case .standard(let status):
                 switch status {
                 case .draft:
@@ -1267,7 +1286,8 @@ struct AgendaView: View {
                         brief.resolvedCustomStatusLabel == nil
                 case .inProgress:
                     matchesStatus = output.status == .draft &&
-                        brief.status == .developing
+                        brief.status == .developing &&
+                        brief.resolvedCustomStatusLabel == nil
                 case .scheduled:
                     matchesStatus = output.status == .scheduled ||
                         brief.status == .scheduled
@@ -1311,8 +1331,10 @@ struct AgendaView: View {
     }
     private var availableListCustomStatuses: [String] {
         var seen = Set<String>()
-        return activeBriefs
-            .compactMap(\.resolvedCustomStatusLabel)
+        var values = activeWorkspace?.customPostStatuses ?? []
+        values.append(contentsOf: activeBriefs.compactMap(\.resolvedCustomStatusLabel))
+        return values
+            .compactMap(CustomPostStatusPolicy.normalized)
             .filter { seen.insert($0.lowercased()).inserted }
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
@@ -1338,6 +1360,8 @@ struct AgendaView: View {
         switch listStatusFilter {
         case .all:
             "All"
+        case .open:
+            "Open posts"
         case .standard(let status):
             status.title
         case .custom(let status):

@@ -94,6 +94,7 @@ final class AppModel {
     var requestedPlanMode: PlanMode?
     var requestedPlanWeekOffset: Int?
     var requestedPlanNavigationReset = 0
+    var requestedOpenPostsList = 0
     var requestedSettingsPage: RequestedSettingsPage?
     var pendingCyPrompt: String?
     var walkthroughStep: AppWalkthroughStep?
@@ -123,6 +124,13 @@ final class AppModel {
         presentedSheet = nil
         requestedPlanNavigationReset &+= 1
         requestedPlanMode = .week
+        selectedTab = .today
+    }
+
+    func routeToOpenPostsList() {
+        presentedSheet = nil
+        requestedPlanNavigationReset &+= 1
+        requestedOpenPostsList &+= 1
         selectedTab = .today
     }
 
@@ -1888,7 +1896,6 @@ final class AppModel {
             return
         }
         let previousDate = output.targetDate
-        brief.customStatusLabel = nil
         brief.ideaBankPlacement = .post
         if [.spark, .developing].contains(brief.status), output.status == .draft {
             rescheduleLinkedTasks(
@@ -1904,6 +1911,7 @@ final class AppModel {
             queueCalendarSync(context: context)
             return
         }
+        brief.customStatusLabel = nil
         guard BriefLifecycle.schedule(output, for: date, brief: brief) else {
             notice = .info("Finish this post before adding tasks or a posting date.")
             return
