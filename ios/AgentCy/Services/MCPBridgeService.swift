@@ -232,6 +232,8 @@ struct MCPBridgePostSnapshot: Codable {
     let notes: String
     let status: String
     let pillarId: UUID?
+    let workDate: Date?
+    let includesWorkTime: Bool
     let durationSeconds: Int
     let hook: String
     let firstFrameText: String
@@ -245,7 +247,8 @@ struct MCPBridgePostSnapshot: Codable {
     let tasks: [MCPBridgeTaskSnapshot]
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, premise, notes, status, pillarId, durationSeconds, hook
+        case id, title, premise, notes, status, pillarId, workDate, includesWorkTime
+        case durationSeconds, hook
         case firstFrameText, script, ending, callToAction, createdAt, updatedAt
         case markdown, outputs, tasks
     }
@@ -258,6 +261,8 @@ struct MCPBridgePostSnapshot: Codable {
         try container.encode(notes, forKey: .notes)
         try container.encode(status, forKey: .status)
         try container.encodeOptional(pillarId, forKey: .pillarId)
+        try container.encodeOptional(workDate, forKey: .workDate)
+        try container.encode(includesWorkTime, forKey: .includesWorkTime)
         try container.encode(durationSeconds, forKey: .durationSeconds)
         try container.encode(hook, forKey: .hook)
         try container.encode(firstFrameText, forKey: .firstFrameText)
@@ -645,6 +650,8 @@ enum MCPBridgeService {
                 notes: brief.notes,
                 status: brief.status.rawValue,
                 pillarId: brief.pillarID,
+                workDate: brief.workDate,
+                includesWorkTime: brief.includesWorkTime,
                 durationSeconds: brief.durationSeconds,
                 hook: brief.spokenHook,
                 firstFrameText: brief.firstFrameText,

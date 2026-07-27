@@ -54,6 +54,10 @@ enum PostOutputDetailPolicy {
 }
 
 enum FinalizedPostPresentation {
+    static func notes(_ briefNotes: String) -> String {
+        briefNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func isMissed(
         outputStatus: PlatformOutputStatus,
         targetDate: Date?,
@@ -522,10 +526,10 @@ struct ScheduledPostDetailView: View {
 
     @ViewBuilder
     private var notesSection: some View {
-        if !summary.isEmpty {
+        if !displayNotes.isEmpty {
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                 SectionRuleHeader(title: "Notes")
-                Text(summary)
+                Text(displayNotes)
                     .font(.agentBody)
                     .foregroundStyle(Color.agentSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -610,10 +614,8 @@ struct ScheduledPostDetailView: View {
         let override = output.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         return override.isEmpty ? brief.title : override
     }
-    private var summary: String {
-        let notes = brief.notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !notes.isEmpty { return notes }
-        return brief.premise.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var displayNotes: String {
+        FinalizedPostPresentation.notes(brief.notes)
     }
     private var isMissed: Bool {
         FinalizedPostPresentation.isMissed(

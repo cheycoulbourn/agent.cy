@@ -1288,11 +1288,6 @@ struct NewPostSettingsView: View {
                     isOn: $profile.showsHookInPostEditor
                 )
                 postSectionToggle(
-                    title: "Brand deals",
-                    detail: "Track partners, compensation, terms, and deal files.",
-                    isOn: $profile.showsBrandDealsInPostEditor
-                )
-                postSectionToggle(
                     title: "Mood boards",
                     detail: "Add visual references and inspiration images.",
                     isOn: $profile.showsMoodBoardsInPostEditor

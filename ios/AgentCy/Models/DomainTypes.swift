@@ -89,6 +89,31 @@ enum WorkspaceScope {
     }
 }
 
+enum CustomPostStatusPolicy {
+    static let maximumLength = 32
+
+    static func normalized(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let collapsed = rawValue
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        return String(collapsed.prefix(maximumLength))
+    }
+
+    static func displayLabel(
+        briefStatus: BriefStatus,
+        outputStatus: PlatformOutputStatus,
+        customStatus: String?
+    ) -> String {
+        if outputStatus == .posted || briefStatus == .posted { return "Posted" }
+        if outputStatus == .scheduled || briefStatus == .scheduled { return "Scheduled" }
+        if let customStatus = normalized(customStatus) { return customStatus }
+        if briefStatus == .developing { return "In progress" }
+        return "Draft"
+    }
+}
+
 enum AssistanceMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case drive
     case collaborate
@@ -543,6 +568,76 @@ enum TaskPriority: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .low, .medium: .none
         default: self
+        }
+    }
+}
+
+enum BrandPartnerStage: String, CaseIterable, Codable, Identifiable, Sendable {
+    case wishlist
+    case reachedOut
+    case talking
+    case workingTogether
+    case pastPartner
+    case archived
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .wishlist: "Wishlist"
+        case .reachedOut: "Reached out"
+        case .talking: "Talking"
+        case .workingTogether: "Working together"
+        case .pastPartner: "Past partner"
+        case .archived: "Archived"
+        }
+    }
+}
+
+enum BrandPartnerType: String, CaseIterable, Codable, Identifiable, Sendable {
+    case brand
+    case agency
+    case publicRelations
+    case creator
+    case other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .brand: "Brand"
+        case .agency: "Agency"
+        case .publicRelations: "PR"
+        case .creator: "Creator"
+        case .other: "Other"
+        }
+    }
+}
+
+enum BrandActivityKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case reachedOut
+    case followedUp
+    case receivedReply
+    case meetingBooked
+    case proposalSent
+    case contractSigned
+    case deliverableSent
+    case paymentReceived
+    case custom
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .reachedOut: "Reached out"
+        case .followedUp: "Sent a follow-up"
+        case .receivedReply: "Received a reply"
+        case .meetingBooked: "Booked a meeting"
+        case .proposalSent: "Sent a proposal"
+        case .contractSigned: "Signed a contract"
+        case .deliverableSent: "Sent a deliverable"
+        case .paymentReceived: "Received payment"
+        case .custom: "Custom"
         }
     }
 }
@@ -1199,6 +1294,7 @@ struct OnboardingDraft: Equatable, Sendable {
     var voiceProfilePayloadJSON = ""
     var accountHandles: [BuiltInDestinationKind: String] = [:]
     var aiProvider: OnboardingAIProvider = .agentCy
+    var brandPartnershipsEnabled = false
     var dailyReminderEnabled = true
     var dailyReminderHour = 9
     var dailyReminderMinute = 0

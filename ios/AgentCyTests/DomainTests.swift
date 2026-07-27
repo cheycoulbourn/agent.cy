@@ -5,6 +5,14 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testFinalizedPostNotesNeverFallBackToPremise() {
+        XCTAssertEqual(
+            FinalizedPostPresentation.notes("  Updated production note. \n"),
+            "Updated production note."
+        )
+        XCTAssertEqual(FinalizedPostPresentation.notes("   \n"), "")
+    }
+
     func testEverySemanticAgentIconResolvesFromTheAssetCatalog() {
         for icon in AgentIcon.allCases {
             XCTAssertNotNil(
@@ -32,6 +40,137 @@ final class DomainTests: XCTestCase {
 
     func testScheduledStatusUsesCreatorFacingScheduledLabel() {
         XCTAssertEqual(BriefStatus.scheduled.title, "Scheduled")
+    }
+
+    func testCustomPostStatusNormalizesAndKeepsLifecyclePrecedence() {
+        XCTAssertEqual(
+            CustomPostStatusPolicy.normalized("  To   be \n filmed  "),
+            "To be filmed"
+        )
+        XCTAssertNil(CustomPostStatusPolicy.normalized(" \n "))
+        XCTAssertEqual(
+            CustomPostStatusPolicy.displayLabel(
+                briefStatus: .developing,
+                outputStatus: .draft,
+                customStatus: "For review"
+            ),
+            "For review"
+        )
+        XCTAssertEqual(
+            CustomPostStatusPolicy.displayLabel(
+                briefStatus: .scheduled,
+                outputStatus: .scheduled,
+                customStatus: "For review"
+            ),
+            "Scheduled"
+        )
+        XCTAssertEqual(
+            CustomPostStatusPolicy.displayLabel(
+                briefStatus: .posted,
+                outputStatus: .posted,
+                customStatus: "For review"
+            ),
+            "Posted"
+        )
+    }
+
+    func testWorkspaceRemembersCustomPostStatusesWithoutDuplicates() {
+        let workspace = CreatorWorkspace(profileID: UUID(), name: "Creator")
+
+        XCTAssertEqual(workspace.rememberCustomPostStatus(" To be filmed "), "To be filmed")
+        XCTAssertEqual(workspace.rememberCustomPostStatus("to BE filmed"), "To be filmed")
+        XCTAssertEqual(workspace.rememberCustomPostStatus("For review"), "For review")
+        XCTAssertEqual(workspace.customPostStatuses, ["To be filmed", "For review"])
+    }
+
+    func testWorkspaceForgetsCustomPostStatusCaseInsensitively() {
+        let workspace = CreatorWorkspace(profileID: UUID(), name: "Creator")
+        _ = workspace.rememberCustomPostStatus("To be filmed")
+        _ = workspace.rememberCustomPostStatus("For review")
+
+        XCTAssertEqual(workspace.forgetCustomPostStatus("to BE FILMED"), "To be filmed")
+        XCTAssertEqual(workspace.customPostStatuses, ["For review"])
+        XCTAssertNil(workspace.forgetCustomPostStatus("Missing"))
+    }
+
+    func testApplyingCustomPostStatusKeepsPostInWorkingPipeline() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey")
+        let workspace = CreatorWorkspace(profileID: profile.id, name: "@creator")
+        let brief = CreativeBrief(title: "Studio setup", status: .ready)
+        brief.workspaceID = workspace.id
+        let output = PlatformOutput(briefID: brief.id, status: .scheduled)
+        output.workspaceID = workspace.id
+        output.targetDate = Date()
+
+        context.insert(profile)
+        context.insert(workspace)
+        context.insert(brief)
+        context.insert(output)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        model.activeWorkspaceID = workspace.id
+
+        XCTAssertTrue(
+            model.applyCustomPostStatus(
+                "To be filmed",
+                to: brief,
+                output: output,
+                context: context
+            )
+        )
+        XCTAssertEqual(brief.status, .developing)
+        XCTAssertEqual(brief.resolvedCustomStatusLabel, "To be filmed")
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(workspace.customPostStatuses, ["To be filmed"])
+    }
+
+    func testDeletingCustomPostStatusReturnsScopedPostsToInProgressWithoutClearingDates() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey")
+        let workspace = CreatorWorkspace(profileID: profile.id, name: "@creator")
+        let otherWorkspace = CreatorWorkspace(profileID: profile.id, name: "@other")
+        _ = workspace.rememberCustomPostStatus("To be filmed")
+        _ = workspace.rememberCustomPostStatus("For review")
+        _ = otherWorkspace.rememberCustomPostStatus("To be filmed")
+
+        let workDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let postDate = Date(timeIntervalSince1970: 1_800_086_400)
+        let brief = CreativeBrief(title: "Studio setup", status: .developing)
+        brief.workspaceID = workspace.id
+        brief.customStatusLabel = "To be filmed"
+        brief.workDate = workDate
+        let output = PlatformOutput(briefID: brief.id, status: .draft)
+        output.workspaceID = workspace.id
+        output.targetDate = postDate
+
+        let otherBrief = CreativeBrief(title: "Other creator post", status: .developing)
+        otherBrief.workspaceID = otherWorkspace.id
+        otherBrief.customStatusLabel = "To be filmed"
+
+        context.insert(profile)
+        context.insert(workspace)
+        context.insert(otherWorkspace)
+        context.insert(brief)
+        context.insert(output)
+        context.insert(otherBrief)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        model.activeWorkspaceID = workspace.id
+
+        XCTAssertTrue(model.deleteCustomPostStatus("to BE filmed", context: context))
+        XCTAssertNil(brief.resolvedCustomStatusLabel)
+        XCTAssertEqual(brief.status, .developing)
+        XCTAssertEqual(brief.workDate, workDate)
+        XCTAssertEqual(output.targetDate, postDate)
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(workspace.customPostStatuses, ["For review"])
+        XCTAssertEqual(otherBrief.resolvedCustomStatusLabel, "To be filmed")
+        XCTAssertEqual(otherWorkspace.customPostStatuses, ["To be filmed"])
     }
 
     func testWeeklyAgendaRouteRequestsTheRootPlanView() {
@@ -553,7 +692,7 @@ final class DomainTests: XCTestCase {
     func testNewPostOptionalSectionsDefaultOnAndPersistCreatorChoices() throws {
         let defaults = CreatorProfile()
         XCTAssertTrue(defaults.showsHookInPostEditor)
-        XCTAssertTrue(defaults.showsBrandDealsInPostEditor)
+        XCTAssertFalse(defaults.showsBrandDealsInPostEditor)
         XCTAssertTrue(defaults.showsMoodBoardsInPostEditor)
 
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
@@ -668,6 +807,39 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(outputs.allSatisfy { $0.caption == "One useful caption." })
     }
 
+    func testSchedulingSinglePostClearsRecurrenceAndDoesNotCreateFuturePosts() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+
+        let first = try XCTUnwrap(Calendar.current.date(from: DateComponents(
+            year: 2026,
+            month: 7,
+            day: 27,
+            hour: 9
+        )))
+        let brief = CreativeBrief(title: "One post", premise: "Schedule this once")
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels)
+        output.recurrence = .weekly
+        output.recurrenceWeekdays = [.monday]
+        context.insert(brief)
+        context.insert(output)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        XCTAssertTrue(model.scheduleSinglePost(output: output, date: first, context: context))
+
+        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
+        XCTAssertEqual(briefs.count, 1)
+        XCTAssertEqual(outputs.count, 1)
+        XCTAssertEqual(output.recurrence, .none)
+        XCTAssertTrue(output.recurrenceWeekdays.isEmpty)
+        XCTAssertNil(output.recurrenceEndDate)
+        XCTAssertNil(output.seriesRootOutputID)
+        XCTAssertEqual(output.status, .scheduled)
+    }
+
     func testDeletingRecurringPostAndFuturePreservesPastAndRemovesLinkedTasks() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -765,6 +937,7 @@ final class DomainTests: XCTestCase {
         let workDate = try XCTUnwrap(
             Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 22, hour: 12))
         )
+        brief.includesWorkTime = true
         let model = AppModel(reminderService: PreviewReminderService())
 
         XCTAssertTrue(model.markPostInProgress(
@@ -776,8 +949,9 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(brief.status, .developing)
         XCTAssertEqual(brief.status.title, "In progress")
         XCTAssertEqual(output.status, .draft)
-        XCTAssertEqual(output.targetDate, workDate)
-        XCTAssertEqual(brief.agendaDate, workDate)
+        XCTAssertEqual(brief.workDate, workDate)
+        XCTAssertNil(output.targetDate)
+        XCTAssertNil(brief.agendaDate)
         XCTAssertEqual(task.targetDate, Calendar.current.startOfDay(for: workDate))
     }
 
@@ -810,12 +984,17 @@ final class DomainTests: XCTestCase {
         let context = container.mainContext
         context.insert(SubscriptionState(access: .paid))
 
-        let date = try XCTUnwrap(
+        let postDate = try XCTUnwrap(
             Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 25, hour: 12))
         )
+        let workDate = try XCTUnwrap(
+            Calendar.current.date(from: DateComponents(year: 2026, month: 7, day: 23, hour: 10))
+        )
         let brief = CreativeBrief(title: "Film this next", status: .scheduled)
+        brief.agendaDate = postDate
+        brief.includesWorkTime = true
         let output = PlatformOutput(briefID: brief.id, status: .scheduled)
-        output.targetDate = date
+        output.targetDate = postDate
         context.insert(brief)
         context.insert(output)
         try context.save()
@@ -824,12 +1003,14 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(model.markPostInProgress(
             brief: brief,
             output: output,
-            date: date,
+            date: workDate,
             context: context
         ))
         XCTAssertEqual(brief.status, .developing)
         XCTAssertEqual(output.status, .draft)
-        XCTAssertEqual(output.targetDate, date)
+        XCTAssertEqual(brief.workDate, workDate)
+        XCTAssertEqual(output.targetDate, postDate)
+        XCTAssertEqual(brief.agendaDate, postDate)
     }
 
     func testDraftPostResumesEditorEvenIfItsOutputWasMarkedScheduled() {
@@ -943,6 +1124,8 @@ final class DomainTests: XCTestCase {
         let brief = CreativeBrief(title: "A post to reconsider", premise: "", status: .scheduled)
         brief.notes = "Keep this direction as an idea."
         brief.agendaDate = date
+        brief.workDate = date.addingTimeInterval(-86_400)
+        brief.includesWorkTime = true
         let reel = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
         reel.targetDate = date
         reel.includesTargetTime = true
@@ -967,6 +1150,8 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(brief.status, .spark)
         XCTAssertEqual(brief.ideaBankPlacement, .idea)
         XCTAssertNil(brief.agendaDate)
+        XCTAssertNil(brief.workDate)
+        XCTAssertFalse(brief.includesWorkTime)
         XCTAssertEqual(brief.notes, "Keep this direction as an idea.")
         XCTAssertEqual(reel.status, .draft)
         XCTAssertNil(reel.targetDate)
@@ -1568,6 +1753,8 @@ final class DomainTests: XCTestCase {
         original.brief.giftedProductDescription = "A camera bag"
         original.brief.moodBoardEnabled = true
         original.brief.moodBoardURLString = "https://cosmos.so/example"
+        original.brief.workDate = postDate.addingTimeInterval(-86_400)
+        original.brief.includesWorkTime = true
         original.output.caption = "Save this for your next filming day."
         original.output.publishedURLString = "https://instagram.com/p/original"
         let task = CreatorTask(
@@ -1610,6 +1797,8 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(duplicated.brief.brandNetTermsDays, 45)
         XCTAssertEqual(duplicated.brief.giftedProductDescription, "A camera bag")
         XCTAssertEqual(duplicated.brief.moodBoardURLString, "https://cosmos.so/example")
+        XCTAssertEqual(duplicated.brief.workDate, original.brief.workDate)
+        XCTAssertTrue(duplicated.brief.includesWorkTime)
         XCTAssertEqual(duplicated.brief.status, .spark)
         XCTAssertEqual(duplicated.output.caption, original.output.caption)
         XCTAssertTrue(duplicated.output.publishedURLString.isEmpty)

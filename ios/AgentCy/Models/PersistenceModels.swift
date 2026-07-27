@@ -10,6 +10,8 @@ final class CreatorWorkspace {
     var avatarImageData: Data?
     var hasCustomIdentity: Bool = false
     var primarySocialAccountID: UUID?
+    /// Newline-delimited custom post statuses. Optional for additive CloudKit migration safety.
+    var customPostStatusesRaw: String?
     var isArchived: Bool = false
     var sortOrder: Int = 0
     var createdAt: Date = Date()
@@ -37,6 +39,51 @@ final class CreatorWorkspace {
         self.createdAt = createdAt
         self.updatedAt = createdAt
     }
+
+    var customPostStatuses: [String] {
+        get {
+            var seen = Set<String>()
+            return (customPostStatusesRaw ?? "")
+                .split(separator: "\n")
+                .compactMap { CustomPostStatusPolicy.normalized(String($0)) }
+                .filter { seen.insert($0.lowercased()).inserted }
+        }
+        set {
+            var seen = Set<String>()
+            let values = newValue
+                .compactMap(CustomPostStatusPolicy.normalized)
+                .filter { seen.insert($0.lowercased()).inserted }
+            customPostStatusesRaw = values.isEmpty ? nil : values.joined(separator: "\n")
+            updatedAt = Date()
+        }
+    }
+
+    @discardableResult
+    func rememberCustomPostStatus(_ rawValue: String) -> String? {
+        guard let value = CustomPostStatusPolicy.normalized(rawValue) else { return nil }
+        if let existing = customPostStatuses.first(where: {
+            $0.localizedCaseInsensitiveCompare(value) == .orderedSame
+        }) {
+            return existing
+        }
+        customPostStatuses.append(value)
+        return value
+    }
+
+    @discardableResult
+    func forgetCustomPostStatus(_ rawValue: String) -> String? {
+        guard let value = CustomPostStatusPolicy.normalized(rawValue),
+              let existing = customPostStatuses.first(where: {
+                  $0.localizedCaseInsensitiveCompare(value) == .orderedSame
+              }) else {
+            return nil
+        }
+
+        customPostStatuses.removeAll {
+            $0.localizedCaseInsensitiveCompare(existing) == .orderedSame
+        }
+        return existing
+    }
 }
 
 @Model
@@ -54,7 +101,7 @@ final class CreatorProfile {
     var telemetryConsent: Bool = false
     var onboardingCompleted: Bool = false
     var showsHookInPostEditor: Bool = true
-    var showsBrandDealsInPostEditor: Bool = true
+    var showsBrandDealsInPostEditor: Bool = false
     var showsMoodBoardsInPostEditor: Bool = true
     var customCyQuickPrompt1: String = ""
     var customCyQuickPrompt2: String = ""
@@ -72,7 +119,7 @@ final class CreatorProfile {
         telemetryConsent: Bool = false,
         onboardingCompleted: Bool = false,
         showsHookInPostEditor: Bool = true,
-        showsBrandDealsInPostEditor: Bool = true,
+        showsBrandDealsInPostEditor: Bool = false,
         showsMoodBoardsInPostEditor: Bool = true,
         createdAt: Date = Date()
     ) {
@@ -252,9 +299,12 @@ final class CreativeBrief {
     var lifecycleHistoryText: String = ""
     var sourceRaw: String = SparkSource.text.rawValue
     var statusRaw: String = BriefStatus.spark.rawValue
+    /// A creator-defined workflow label used while a post remains active and unscheduled.
+    var customStatusLabel: String?
     /// Optional for additive CloudKit migration compatibility.
     var ideaBankPlacementRaw: String?
     var pillarID: UUID?
+    var brandPartnerID: UUID?
     var isBrandCollaboration: Bool = false
     var brandName: String = ""
     var compensationTypeRaw: String = CompensationType.paid.rawValue
@@ -268,6 +318,10 @@ final class CreativeBrief {
     var promoLinkString: String = ""
     var moodBoardEnabled: Bool = false
     var moodBoardURLString: String = ""
+    /// The creator's intended production or completion date. Publishing remains
+    /// independently scheduled through `PlatformOutput.targetDate`.
+    var workDate: Date?
+    var includesWorkTime: Bool = false
     var agendaDate: Date?
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
@@ -299,6 +353,10 @@ final class CreativeBrief {
     var status: BriefStatus {
         get { BriefStatus(rawValue: statusRaw) ?? .spark }
         set { statusRaw = newValue.rawValue }
+    }
+
+    var resolvedCustomStatusLabel: String? {
+        CustomPostStatusPolicy.normalized(customStatusLabel)
     }
 
     var ideaBankPlacement: IdeaBankPlacement? {
@@ -545,12 +603,139 @@ final class CreatorSocialAccount {
 }
 
 @Model
+final class BrandPartner {
+    var id: UUID = UUID()
+    var workspaceID: UUID?
+    var name: String = ""
+    var typeRaw: String = BrandPartnerType.brand.rawValue
+    var stageRaw: String = BrandPartnerStage.wishlist.rawValue
+    var websiteURLString: String = ""
+    var socialHandle: String = ""
+    var notes: String = ""
+    var nextFollowUpAt: Date?
+    var lastContactedAt: Date?
+    @Attribute(.externalStorage) var logoImageData: Data?
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        workspaceID: UUID? = nil,
+        name: String,
+        type: BrandPartnerType = .brand,
+        stage: BrandPartnerStage = .wishlist,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.name = name
+        self.typeRaw = type.rawValue
+        self.stageRaw = stage.rawValue
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+
+    var type: BrandPartnerType {
+        get { BrandPartnerType(rawValue: typeRaw) ?? .brand }
+        set { typeRaw = newValue.rawValue }
+    }
+
+    var stage: BrandPartnerStage {
+        get { BrandPartnerStage(rawValue: stageRaw) ?? .wishlist }
+        set { stageRaw = newValue.rawValue }
+    }
+}
+
+@Model
+final class BrandContact {
+    var id: UUID = UUID()
+    var workspaceID: UUID?
+    var brandPartnerID: UUID = UUID()
+    var name: String = ""
+    var role: String = ""
+    var email: String = ""
+    var phone: String = ""
+    var preferredChannel: String = ""
+    var socialHandle: String = ""
+    var notes: String = ""
+    var isPrimary: Bool = false
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        workspaceID: UUID? = nil,
+        brandPartnerID: UUID,
+        name: String,
+        role: String = "",
+        email: String = "",
+        isPrimary: Bool = false,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.brandPartnerID = brandPartnerID
+        self.name = name
+        self.role = role
+        self.email = email
+        self.isPrimary = isPrimary
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+}
+
+@Model
+final class BrandActivity {
+    var id: UUID = UUID()
+    var workspaceID: UUID?
+    var brandPartnerID: UUID = UUID()
+    var kindRaw: String = BrandActivityKind.reachedOut.rawValue
+    var customTitle: String = ""
+    var note: String = ""
+    var occurredAt: Date = Date()
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        workspaceID: UUID? = nil,
+        brandPartnerID: UUID,
+        kind: BrandActivityKind,
+        customTitle: String = "",
+        note: String = "",
+        occurredAt: Date = Date(),
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.brandPartnerID = brandPartnerID
+        self.kindRaw = kind.rawValue
+        self.customTitle = customTitle
+        self.note = note
+        self.occurredAt = occurredAt
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+
+    var kind: BrandActivityKind {
+        get { BrandActivityKind(rawValue: kindRaw) ?? .custom }
+        set { kindRaw = newValue.rawValue }
+    }
+
+    var title: String {
+        let trimmedCustomTitle = customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return kind == .custom && !trimmedCustomTitle.isEmpty ? trimmedCustomTitle : kind.title
+    }
+}
+
+@Model
 final class CreatorTask {
     var id: UUID = UUID()
     var workspaceID: UUID?
     var briefID: UUID?
     var pillarID: UUID?
     var platformOutputID: UUID?
+    var brandPartnerID: UUID?
     /// Makes an accepted Cy task proposal idempotent across relaunches.
     var sourceConversationMessageID: UUID?
     var parentTaskID: UUID?
@@ -1019,6 +1204,9 @@ extension CreativeBrief: WorkspaceScopedRecord {}
 extension PendingBriefProposal: WorkspaceScopedRecord {}
 extension PlatformOutput: WorkspaceScopedRecord {}
 extension CreatorSocialAccount: WorkspaceScopedRecord {}
+extension BrandPartner: WorkspaceScopedRecord {}
+extension BrandContact: WorkspaceScopedRecord {}
+extension BrandActivity: WorkspaceScopedRecord {}
 extension CreatorTask: WorkspaceScopedRecord {}
 extension Pillar: WorkspaceScopedRecord {}
 extension DailyFocusTemplateEntry: WorkspaceScopedRecord {}
@@ -1206,6 +1394,9 @@ enum AgentCySchema {
         PendingVoiceProfileProposal.self,
         PlatformOutput.self,
         CreatorSocialAccount.self,
+        BrandPartner.self,
+        BrandContact.self,
+        BrandActivity.self,
         CreatorTask.self,
         Pillar.self,
         PublishingDestination.self,

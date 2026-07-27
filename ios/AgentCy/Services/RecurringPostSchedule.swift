@@ -262,6 +262,7 @@ enum RecurringPostMaterializer {
             let occurrenceBrief = cloneBrief(
                 rootBrief,
                 occurrenceDate: occurrenceDate,
+                sourcePostDate: firstDate,
                 createdAt: Date().addingTimeInterval(Double(index) / 100)
             )
             context.insert(occurrenceBrief)
@@ -292,6 +293,7 @@ enum RecurringPostMaterializer {
     private static func cloneBrief(
         _ source: CreativeBrief,
         occurrenceDate: Date,
+        sourcePostDate: Date,
         createdAt: Date
     ) -> CreativeBrief {
         let clone = CreativeBrief(
@@ -332,6 +334,12 @@ enum RecurringPostMaterializer {
         clone.promoLinkString = source.promoLinkString
         clone.moodBoardEnabled = source.moodBoardEnabled
         clone.moodBoardURLString = source.moodBoardURLString
+        if let sourceWorkDate = source.workDate {
+            clone.workDate = occurrenceDate.addingTimeInterval(
+                sourceWorkDate.timeIntervalSince(sourcePostDate)
+            )
+            clone.includesWorkTime = source.includesWorkTime
+        }
         clone.agendaDate = occurrenceDate
         return clone
     }

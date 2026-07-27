@@ -14,6 +14,7 @@
 		1335DE39E26ECD0BF9129A89 /* PrivacyEraseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB993766D86ACF3C2BE275F /* PrivacyEraseTests.swift */; };
 		1C214971853E88CF85BD1EB7 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F6D5B8F2772B45A4725B081 /* DesignTokens.swift */; };
 		1CE9EC4536FC6249452EF451 /* PillarsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78D8460AC7ED44EB8D33E20 /* PillarsView.swift */; };
+		1F3F9E88343314AA0803AD71 /* BrandPartnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D114356B53F68FBD9C4273EF /* BrandPartnershipTests.swift */; };
 		20A4E944BE4B386CC4E50F9D /* VoiceExampleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B173D7947488D50FC476EB0 /* VoiceExampleService.swift */; };
 		251325117FB0805E6700CB4A /* SettingsSubpages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0077C3D105AB2C88C1A3BB45 /* SettingsSubpages.swift */; };
 		258DEA0997381331810985AF /* VoiceExampleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF8574EBD41FD1CECA143FD7 /* VoiceExampleTests.swift */; };
@@ -28,6 +29,7 @@
 		335FDFC5DB4C4A0241E57A15 /* HomeDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C8ED939263980C183ADC0D /* HomeDashboardView.swift */; };
 		3903D2A3E2CDD1CC34841450 /* PostEditorComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C22B6E8D45F1951E8331A963 /* PostEditorComponents.swift */; };
 		3BAE2F9A4E2906914291ABE6 /* ScheduledPostDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C26E202DB70629638DA317 /* ScheduledPostDetailView.swift */; };
+		3CCFDBD0FA72F566B9D436B7 /* BrandCabinetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A4C1F5FDF61C11E3FB14071 /* BrandCabinetView.swift */; };
 		4153A21E91401E952D1BCBF2 /* AgendaPostIdeaPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62699651BAD3691F1ABCAD72 /* AgendaPostIdeaPickerView.swift */; };
 		426BABC582AE5B46D08938BB /* IdeaBankView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE759452C2BE05FF44F2A687 /* IdeaBankView.swift */; };
 		42B7628DF1B8483EED6D3311 /* CaptureIdeaIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A093BBE992B4F9C8FB54026 /* CaptureIdeaIntent.swift */; };
@@ -96,6 +98,7 @@
 		E1B8CD8D9FBB7D6CF73489FE /* AgentCyWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5634890A78B64FFE66F89277 /* AgentCyWidgetSnapshot.swift */; };
 		E25EF23A28F475339CDFF497 /* CreativeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89294D1894CFEEEA0C73D376 /* CreativeService.swift */; };
 		E28CDD53C6912A4F597B7F37 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA6728E723904BE5D4811928 /* TodayView.swift */; };
+		E398ADCA2F82C1BED22B028D /* BrandPartnershipService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660CDF0C8A4AF913D3DFC328 /* BrandPartnershipService.swift */; };
 		E825EDFCE909109F0337DA95 /* DevelopBriefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5397F30C5D0FFA58A666EB59 /* DevelopBriefView.swift */; };
 		EB3E230A4D36BC79C9EF2C06 /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8390A3692666C8E89EF49FD4 /* ExportService.swift */; };
 		EE018BB70EDEFE1710E2F93A /* WeeklyFocusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0F814A5A4235CC5331B8BB /* WeeklyFocusView.swift */; };
@@ -169,9 +172,11 @@
 		5634890A78B64FFE66F89277 /* AgentCyWidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCyWidgetSnapshot.swift; sourceTree = "<group>"; };
 		586BA897B125643D1C632221 /* FocusAppearanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusAppearanceTests.swift; sourceTree = "<group>"; };
 		589A86FCA9D6D9C144399F95 /* WidgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetTests.swift; sourceTree = "<group>"; };
+		5A4C1F5FDF61C11E3FB14071 /* BrandCabinetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandCabinetView.swift; sourceTree = "<group>"; };
 		5F6D5B8F2772B45A4725B081 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		62699651BAD3691F1ABCAD72 /* AgendaPostIdeaPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgendaPostIdeaPickerView.swift; sourceTree = "<group>"; };
 		6408F21532954657F9497CCA /* AgentCyTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AgentCyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		660CDF0C8A4AF913D3DFC328 /* BrandPartnershipService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandPartnershipService.swift; sourceTree = "<group>"; };
 		697DF718190E3F3AF021CF11 /* ServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceTests.swift; sourceTree = "<group>"; };
 		69ACDB75C9CF91DE0A2D4A76 /* LiveContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveContractTests.swift; sourceTree = "<group>"; };
 		6B33A134F3E1676330666616 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -225,6 +230,7 @@
 		CD0F814A5A4235CC5331B8BB /* WeeklyFocusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyFocusView.swift; sourceTree = "<group>"; };
 		CDEA0469B163CE1502C499B0 /* InterVariable.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = InterVariable.ttf; sourceTree = "<group>"; };
 		CEB993766D86ACF3C2BE275F /* PrivacyEraseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyEraseTests.swift; sourceTree = "<group>"; };
+		D114356B53F68FBD9C4273EF /* BrandPartnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandPartnershipTests.swift; sourceTree = "<group>"; };
 		D1765CA8A4F80549DF895168 /* DomainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainTests.swift; sourceTree = "<group>"; };
 		D4C26E202DB70629638DA317 /* ScheduledPostDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledPostDetailView.swift; sourceTree = "<group>"; };
 		DB1F47C67E93E80C3F9D0D29 /* AgentCyApplicationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCyApplicationDelegate.swift; sourceTree = "<group>"; };
@@ -337,6 +343,7 @@
 				8E71D4926F1A6F43D2FC06A5 /* AgentOKLCHTests.swift */,
 				C31A43C956901ACA0B64E331 /* AIOperationIDRegistryTests.swift */,
 				7A82ED71F777E8E20951F02A /* APIClientTests.swift */,
+				D114356B53F68FBD9C4273EF /* BrandPartnershipTests.swift */,
 				6F2AEDB88E979EC9B6C428A2 /* CalendarSyncTests.swift */,
 				DEC7AC4FBA341418297F73C6 /* CaptureIdeaShortcutTests.swift */,
 				E5F2BAAF2A21E1C48A7A0AFB /* ContentResetTests.swift */,
@@ -382,6 +389,14 @@
 			path = Home;
 			sourceTree = "<group>";
 		};
+		823E76864152EF20D3C0C04E /* Brands */ = {
+			isa = PBXGroup;
+			children = (
+				5A4C1F5FDF61C11E3FB14071 /* BrandCabinetView.swift */,
+			);
+			path = Brands;
+			sourceTree = "<group>";
+		};
 		9670586179D43C60A4877381 /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
@@ -414,6 +429,7 @@
 				A7F74AACF17B31F38FD54D90 /* AIOperationIDRegistry.swift */,
 				FF352C2A596447D02F12F292 /* APIClient.swift */,
 				EF46C6939E196A064EFBFE6F /* APIWireModels.swift */,
+				660CDF0C8A4AF913D3DFC328 /* BrandPartnershipService.swift */,
 				8D0AC4E38E4A613C1BABA115 /* CalendarSyncService.swift */,
 				33A704F49E659941C6F99564 /* ContentResetService.swift */,
 				89294D1894CFEEEA0C73D376 /* CreativeService.swift */,
@@ -543,6 +559,7 @@
 			isa = PBXGroup;
 			children = (
 				C7357511F5951731CA296AE0 /* Agenda */,
+				823E76864152EF20D3C0C04E /* Brands */,
 				D28AD2684E236B949B54EFDB /* Brief */,
 				0C700BAC82C31D38F17E3F69 /* Capture */,
 				3F4076FAACD32CE6889173E2 /* Cy */,
@@ -738,6 +755,8 @@
 				32CEEAC2741F7D2CA0C56788 /* AppModel.swift in Sources */,
 				AE17A524DA0D2F8C22B40F4C /* AppShellView.swift in Sources */,
 				8DE73C72890D98FD77EAD45C /* AskCyView.swift in Sources */,
+				3CCFDBD0FA72F566B9D436B7 /* BrandCabinetView.swift in Sources */,
+				E398ADCA2F82C1BED22B028D /* BrandPartnershipService.swift in Sources */,
 				8AFE10F6AC371361DEE7648F /* CalendarSyncService.swift in Sources */,
 				42B7628DF1B8483EED6D3311 /* CaptureIdeaIntent.swift in Sources */,
 				8BC0D0F55BBE5A6A8CFF4E75 /* CaptureIdeaShortcutSettingsView.swift in Sources */,
@@ -799,6 +818,7 @@
 				C759610EB926E81C658FC557 /* AIOperationIDRegistryTests.swift in Sources */,
 				82922D2A8BDFE92BD7D5F378 /* APIClientTests.swift in Sources */,
 				3001A6BC0F5C15D5EAAF10FE /* AgentOKLCHTests.swift in Sources */,
+				1F3F9E88343314AA0803AD71 /* BrandPartnershipTests.swift in Sources */,
 				2611FB37A5012FFE578B971F /* CalendarSyncTests.swift in Sources */,
 				AA8C46FF2341C135532A7268 /* CaptureIdeaShortcutTests.swift in Sources */,
 				FF46BE5A29756A85F72C9474 /* ContentResetTests.swift in Sources */,

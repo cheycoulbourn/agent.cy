@@ -15,6 +15,7 @@ struct HomeDashboardView: View {
     @Query private var formats: [PublishingFormat]
     @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @Query private var allFocusOverrides: [DailyFocusOverride]
+    @Query(sort: \BrandPartner.updatedAt, order: .reverse) private var allBrandPartners: [BrandPartner]
     @State private var dashboardCards = HomeDashboardCard.defaultOrder
     @State private var hiddenDashboardCards = Set<HomeDashboardCard>()
     @State private var draggedDashboardCard: HomeDashboardCard?
@@ -32,6 +33,7 @@ struct HomeDashboardView: View {
     private var pillars: [Pillar] { scoped(allPillars) }
     private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
     private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
+    private var brandPartners: [BrandPartner] { scoped(allBrandPartners) }
 
     var body: some View {
         ScrollView {
@@ -175,7 +177,7 @@ struct HomeDashboardView: View {
     }
 
     private func dashboardCardIsRenderable(_ card: HomeDashboardCard) -> Bool {
-        true
+        card != .brandCabinet || (profiles.first?.showsBrandDealsInPostEditor ?? false)
     }
 
     private func mergingRenderableOrder(_ reorderedCards: [HomeDashboardCard]) -> [HomeDashboardCard] {
@@ -202,7 +204,79 @@ struct HomeDashboardView: View {
             pastDuePostsSection
         case .recentIdeas:
             recentIdeasSection
+        case .brandCabinet:
+            brandCabinetSection
         }
+    }
+
+    private var brandCabinetSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            HStack {
+                Text("Brand cabinet")
+                    .font(.agentTitle)
+                Spacer()
+                NavigationLink("Open") {
+                    BrandCabinetView()
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+            }
+
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+
+            let activePartners = brandPartners
+                .filter { $0.stage != .archived && $0.stage != .pastPartner }
+                .sorted {
+                    switch ($0.nextFollowUpAt, $1.nextFollowUpAt) {
+                    case let (lhs?, rhs?): lhs < rhs
+                    case (.some, .none): true
+                    case (.none, .some): false
+                    case (.none, .none): $0.updatedAt > $1.updatedAt
+                    }
+                }
+
+            if activePartners.isEmpty {
+                Text("No active partnerships yet.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .padding(.vertical, AgentSpacing.x2)
+            } else {
+                ForEach(activePartners.prefix(3)) { partner in
+                    NavigationLink {
+                        BrandPartnerDetailView(partner: partner)
+                    } label: {
+                        HStack(spacing: AgentSpacing.x3) {
+                            BrandPartnerAvatar(partner: partner, size: 34)
+                            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                Text(partner.name)
+                                    .font(.agentHeadline)
+                                    .foregroundStyle(Color.agentText)
+                                    .lineLimit(1)
+                                Text(
+                                    partner.nextFollowUpAt.map {
+                                        "Follow up \($0.formatted(.dateTime.month(.abbreviated).day()))"
+                                    } ?? partner.stage.title
+                                )
+                                .font(.agentMetadata)
+                                .foregroundStyle(
+                                    partner.nextFollowUpAt == nil ? Color.agentSecondary : Color.actionAccent
+                                )
+                            }
+                            Spacer()
+                            AgentIconView(.forward, size: 12)
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        .frame(minHeight: 48)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
     }
 
     private func reorderableDashboardCard(_ card: HomeDashboardCard) -> some View {
@@ -702,8 +776,13 @@ struct HomeDashboardView: View {
                             accent: pillarAccent(for: item.brief),
                             status: item.output.status,
                             metadata: platformLabel(for: item.output),
-                            timeText: item.output.targetDate?.formatted(.dateTime.month(.abbreviated).day()),
-                            statusTextOverride: item.brief.status == .developing ? "In progress" : "Draft",
+                            timeText: (item.brief.workDate ?? item.output.targetDate)?
+                                .formatted(.dateTime.month(.abbreviated).day()),
+                            statusTextOverride: CustomPostStatusPolicy.displayLabel(
+                                briefStatus: item.brief.status,
+                                outputStatus: item.output.status,
+                                customStatus: item.brief.customStatusLabel
+                            ),
                             destination: AnyView(
                                 ResumablePostEditorView(
                                     brief: item.brief,
@@ -1184,6 +1263,7 @@ private enum HomeDashboardCard: String, CaseIterable, Identifiable {
     case nextWeek
     case pastDuePosts
     case recentIdeas
+    case brandCabinet
 
     var id: String { rawValue }
 
@@ -1196,6 +1276,7 @@ private enum HomeDashboardCard: String, CaseIterable, Identifiable {
         case .nextWeek: "Next week"
         case .pastDuePosts: "Past-due posts"
         case .recentIdeas: "Recent ideas"
+        case .brandCabinet: "Brand cabinet"
         }
     }
 
@@ -1206,7 +1287,8 @@ private enum HomeDashboardCard: String, CaseIterable, Identifiable {
         .pastDuePosts,
         .recentIdeas,
         .weekAhead,
-        .nextWeek
+        .nextWeek,
+        .brandCabinet
     ]
 }
 

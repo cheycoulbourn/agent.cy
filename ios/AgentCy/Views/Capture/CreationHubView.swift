@@ -4,6 +4,7 @@ struct CreationHubView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showQuickCapture = false
     @State private var closeIsPulsing = false
 
@@ -177,7 +178,13 @@ struct CreationHubView: View {
         }
         .padding(AgentSpacing.x5)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
-        .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
+        .agentSurfaceChrome(
+            cornerRadius: AgentRadius.panel,
+            borderColor: colorScheme == .dark
+                ? Color.agentPureWhite.opacity(0.16)
+                : Color.agentPureBlack.opacity(0.10),
+            role: .walkthrough
+        )
     }
 
     private var cyAction: some View {

@@ -31,7 +31,7 @@ enum AgentRadius {
     static let control: CGFloat = 8
     static let panel: CGFloat = 16
     static let floating: CGFloat = 28
-    static let dashboard: CGFloat = 28
+    static let dashboard: CGFloat = 20
 }
 
 /// Semantic icons for agent.cy. The artwork is curated from the creator's
@@ -212,6 +212,7 @@ struct AgentToolbarIconButton: View {
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
+        .frame(width: 44, height: 44)
         .glassEffect(.clear.interactive(), in: .circle)
         .overlay {
             Circle()
@@ -497,6 +498,9 @@ struct AgentAddActionRow: View {
 
 struct AgentBlockAddActionButton: View {
     let title: String
+    var background: Color = .agentCanvas
+    var foreground: Color = .agentSecondary
+    var border: Color = .agentBorder
     let action: () -> Void
 
     var body: some View {
@@ -509,13 +513,13 @@ struct AgentBlockAddActionButton: View {
                         .font(.agentSubtext.weight(.medium))
                         .textCase(.uppercase)
                 }
-                .foregroundStyle(Color.agentSecondary)
+                .foregroundStyle(foreground)
                 .frame(maxWidth: .infinity, minHeight: 38, alignment: .center)
                 .padding(.horizontal, AgentSpacing.x3)
-                .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+                .background(background, in: .rect(cornerRadius: AgentRadius.control))
                 .overlay {
                     RoundedRectangle(cornerRadius: AgentRadius.control)
-                        .stroke(Color.agentBorder, lineWidth: 1)
+                        .stroke(border, lineWidth: 1)
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
@@ -1122,6 +1126,7 @@ enum AgentSurfaceRole {
     case structural
     case card
     case floating
+    case walkthrough
 }
 
 private struct AgentSurfaceChromeModifier: ViewModifier {
@@ -1164,6 +1169,8 @@ private struct AgentSurfaceChromeModifier: ViewModifier {
             Color.agentPureBlack.opacity(colorScheme == .dark ? 0.12 : 0.045)
         case .floating:
             Color.agentPureBlack.opacity(colorScheme == .dark ? 0.22 : 0.08)
+        case .walkthrough:
+            Color.agentPureBlack.opacity(colorScheme == .dark ? 0.34 : 0.14)
         }
     }
 
@@ -1172,6 +1179,7 @@ private struct AgentSurfaceChromeModifier: ViewModifier {
         case .structural: 0
         case .card: 12
         case .floating: 24
+        case .walkthrough: 28
         }
     }
 
@@ -1180,6 +1188,7 @@ private struct AgentSurfaceChromeModifier: ViewModifier {
         case .structural: 0
         case .card: 4
         case .floating: 10
+        case .walkthrough: 12
         }
     }
 
@@ -1189,15 +1198,25 @@ private struct AgentSurfaceChromeModifier: ViewModifier {
             .clear
         case .floating:
             Color.agentPureBlack.opacity(colorScheme == .dark ? 0.10 : 0.04)
+        case .walkthrough:
+            Color.agentPureBlack.opacity(colorScheme == .dark ? 0.16 : 0.06)
         }
     }
 
     private var secondaryShadowRadius: CGFloat {
-        role == .floating ? 6 : 0
+        switch role {
+        case .floating: 6
+        case .walkthrough: 8
+        case .structural, .card: 0
+        }
     }
 
     private var secondaryShadowOffset: CGFloat {
-        role == .floating ? 2 : 0
+        switch role {
+        case .floating: 2
+        case .walkthrough: 3
+        case .structural, .card: 0
+        }
     }
 }
 

@@ -12,6 +12,18 @@ final class ContentResetTests: XCTestCase {
         let brief = CreativeBrief(title: "A post", premise: "Draft")
         let output = PlatformOutput(briefID: brief.id)
         let destination = PublishingDestination(name: "Instagram")
+        let partner = BrandPartner(name: "Studio North", stage: .workingTogether)
+        let contact = BrandContact(
+            brandPartnerID: partner.id,
+            name: "Maya Chen",
+            email: "maya@example.com",
+            isPrimary: true
+        )
+        let activity = BrandActivity(
+            brandPartnerID: partner.id,
+            kind: .reachedOut,
+            note: "Sent an introduction"
+        )
         let globalThread = ConversationThread(contextKind: .none, title: "Cy")
         let pillarThread = ConversationThread(contextKind: .pillar, contextID: pillar.id, title: "Pillar ideas")
         let briefThread = ConversationThread(briefID: brief.id, contextKind: .brief, contextID: brief.id, title: "Post chat")
@@ -24,6 +36,9 @@ final class ContentResetTests: XCTestCase {
         context.insert(brief)
         context.insert(output)
         context.insert(destination)
+        context.insert(partner)
+        context.insert(contact)
+        context.insert(activity)
         context.insert(CreatorTask(briefID: brief.id, pillarID: pillar.id, platformOutputID: output.id, title: "Film"))
         context.insert(PendingBriefProposal(briefID: brief.id, payloadJSON: "{}"))
         context.insert(PendingWeekProposal(weekStart: Date(), payloadJSON: "{}", sourceFingerprint: "test"))
@@ -55,6 +70,9 @@ final class ContentResetTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorProfile>()).map(\.id), [profile.id])
         XCTAssertEqual(try context.fetch(FetchDescriptor<Pillar>()).map(\.id), [pillar.id])
         XCTAssertEqual(try context.fetch(FetchDescriptor<PublishingDestination>()).map(\.id), [destination.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<BrandPartner>()).map(\.id), [partner.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<BrandContact>()).map(\.id), [contact.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<BrandActivity>()).map(\.id), [activity.id])
         XCTAssertEqual(try context.fetch(FetchDescriptor<ReminderSettings>()).count, 1)
         XCTAssertEqual(try context.fetch(FetchDescriptor<SubscriptionState>()).count, 1)
         XCTAssertEqual(

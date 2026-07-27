@@ -512,7 +512,8 @@ final class AppModel {
             assistanceMode: .collaborate,
             adultConfirmed: draft.adultConfirmed,
             telemetryConsent: draft.telemetryConsent,
-            onboardingCompleted: true
+            onboardingCompleted: true,
+            showsBrandDealsInPostEditor: draft.brandPartnershipsEnabled
         )
         profile.appearance = draft.appearance ?? .system
         profile.vibePalette = draft.vibePalette
@@ -937,6 +938,7 @@ final class AppModel {
         )
         copy.workspaceID = brief.workspaceID ?? resolvedWorkspaceID(context: context)
         copy.ideaBankPlacement = .post
+        copy.customStatusLabel = brief.resolvedCustomStatusLabel
         copy.notes = brief.notes
         copy.scriptEnabled = brief.scriptEnabled
         copy.audience = brief.audience
@@ -967,6 +969,8 @@ final class AppModel {
         copy.promoLinkString = brief.promoLinkString
         copy.moodBoardEnabled = brief.moodBoardEnabled
         copy.moodBoardURLString = brief.moodBoardURLString
+        copy.workDate = brief.workDate
+        copy.includesWorkTime = brief.includesWorkTime
         copy.agendaDate = brief.agendaDate
         context.insert(copy)
 
@@ -1090,7 +1094,10 @@ final class AppModel {
         ))) ?? []
         let now = Date()
         brief.status = .spark
+        brief.customStatusLabel = nil
         brief.ideaBankPlacement = .idea
+        brief.workDate = nil
+        brief.includesWorkTime = false
         brief.agendaDate = nil
         brief.archivedAt = nil
         brief.updatedAt = now
@@ -1794,6 +1801,7 @@ final class AppModel {
         guard brief.status != .archived, output.briefID == brief.id else { return false }
 
         let now = Date()
+        brief.customStatusLabel = nil
         brief.ideaBankPlacement = .post
         output.status = .draft
         output.postedAt = nil
@@ -1842,21 +1850,21 @@ final class AppModel {
 
         let workDate = RecurringPostSchedule.normalizedTargetDate(
             date,
-            includesTime: output.includesTargetTime
+            includesTime: brief.includesWorkTime
         )
+        brief.customStatusLabel = nil
         brief.ideaBankPlacement = .post
-        let previousDate = output.targetDate
+        let previousWorkDate = brief.workDate
         if brief.status != .developing {
             brief.status = .developing
             brief.appendLifecycleStatus(.developing, at: Date())
         }
         output.status = .draft
-        output.targetDate = workDate
-        brief.agendaDate = workDate
+        brief.workDate = workDate
         brief.updatedAt = Date()
         rescheduleLinkedTasks(
             for: output,
-            from: previousDate,
+            from: previousWorkDate ?? output.targetDate,
             to: workDate,
             context: context
         )
@@ -1864,7 +1872,7 @@ final class AppModel {
         do {
             try context.save()
             queueCalendarSync(context: context)
-            notice = .info("Added to your agenda as In progress.")
+            notice = .info("Marked In progress.")
             return true
         } catch {
             context.rollback()
@@ -1880,6 +1888,7 @@ final class AppModel {
             return
         }
         let previousDate = output.targetDate
+        brief.customStatusLabel = nil
         brief.ideaBankPlacement = .post
         if [.spark, .developing].contains(brief.status), output.status == .draft {
             rescheduleLinkedTasks(
@@ -1957,6 +1966,16 @@ final class AppModel {
     }
 
     @discardableResult
+    func scheduleSinglePost(output: PlatformOutput, date: Date, context: ModelContext) -> Bool {
+        output.recurrence = .none
+        output.recurrenceWeekdays = []
+        output.recurrenceMonthDay = nil
+        output.recurrenceEndDate = nil
+        output.seriesRootOutputID = nil
+        return schedulePostSeries(output: output, date: date, context: context)
+    }
+
+    @discardableResult
     func schedulePostSeries(output: PlatformOutput, date: Date, context: ModelContext) -> Bool {
         guard can(.schedule, context: context) else { return false }
         guard let brief = brief(id: output.briefID, context: context) else {
@@ -1968,6 +1987,7 @@ final class AppModel {
             date,
             includesTime: output.includesTargetTime
         )
+        brief.customStatusLabel = nil
         brief.ideaBankPlacement = .post
         let previousDate = output.targetDate
         if brief.status == .spark || brief.status == .developing {
@@ -2018,9 +2038,119 @@ final class AppModel {
             notice = .info("Finish this post before updating its posting progress.")
             return
         }
+        brief.customStatusLabel = nil
         BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
         try? context.save()
         queueCalendarSync(context: context)
+    }
+
+    @discardableResult
+    func applyCustomPostStatus(
+        _ rawValue: String,
+        to brief: CreativeBrief,
+        output: PlatformOutput,
+        context: ModelContext
+    ) -> Bool {
+        guard brief.status != .archived,
+              output.briefID == brief.id,
+              output.status != .posted,
+              let status = CustomPostStatusPolicy.normalized(rawValue) else {
+            notice = .info("That custom status could not be applied.")
+            return false
+        }
+
+        let workspaceID = resolvedWorkspaceID(context: context)
+        let workspace = ((try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? [])
+            .first { $0.id == workspaceID && !$0.isArchived }
+        if let workspace {
+            _ = workspace.rememberCustomPostStatus(status)
+        }
+
+        let now = Date()
+        brief.customStatusLabel = status
+        brief.ideaBankPlacement = .post
+        if brief.status != .developing {
+            brief.status = .developing
+            brief.appendLifecycleStatus(.developing, at: now)
+        }
+        output.status = .draft
+        output.postedAt = nil
+        brief.updatedAt = now
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            notice = .info("Status changed to \(status).")
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That custom status could not be saved.")
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteCustomPostStatus(
+        _ rawValue: String,
+        context: ModelContext
+    ) -> Bool {
+        guard let status = CustomPostStatusPolicy.normalized(rawValue),
+              let workspaceID = resolvedWorkspaceID(context: context) else {
+            notice = .info("That custom status could not be deleted.")
+            return false
+        }
+
+        let workspaces = (try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
+        guard let workspace = workspaces.first(where: {
+            $0.id == workspaceID && !$0.isArchived
+        }),
+        workspace.forgetCustomPostStatus(status) != nil else {
+            notice = .info("That custom status is no longer available.")
+            return false
+        }
+
+        let briefs = ((try? context.fetch(FetchDescriptor<CreativeBrief>())) ?? []).filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: workspaceID,
+                workspaces: workspaces
+            ) &&
+            $0.resolvedCustomStatusLabel?.localizedCaseInsensitiveCompare(status) == .orderedSame
+        }
+        let now = Date()
+
+        for brief in briefs {
+            brief.customStatusLabel = nil
+            guard brief.status != .archived, brief.status != .posted else { continue }
+
+            if brief.status != .developing {
+                brief.status = .developing
+                brief.appendLifecycleStatus(.developing, at: now)
+            }
+            brief.ideaBankPlacement = .post
+            brief.updatedAt = now
+
+            for output in outputs(for: brief, context: context) where output.status != .posted {
+                output.status = .draft
+                output.postedAt = nil
+            }
+        }
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            if briefs.isEmpty {
+                notice = .info("\(status) was deleted.")
+            } else {
+                let noun = briefs.count == 1 ? "post" : "posts"
+                notice = .info("\(status) was deleted. \(briefs.count) \(noun) moved to In progress.")
+            }
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("That custom status could not be deleted.")
+            return false
+        }
     }
 
     func toggleTask(_ task: CreatorTask, context: ModelContext) {

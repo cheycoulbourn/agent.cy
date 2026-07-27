@@ -884,8 +884,8 @@ private struct PillarPaperSurface<Content: View>: View {
             .padding(.bottom, bottomPadding)
             .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
             .background(Color.agentSurface)
-            .clipShape(.rect(cornerRadius: 28))
-            .agentSurfaceChrome(cornerRadius: 28)
+            .clipShape(.rect(cornerRadius: AgentRadius.dashboard))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
     }
 }
 

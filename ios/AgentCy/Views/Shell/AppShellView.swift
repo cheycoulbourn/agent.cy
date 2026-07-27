@@ -58,6 +58,7 @@ struct AppShellView: View {
                     .padding(.top, AgentSpacing.x2)
                     .padding(.bottom, AgentSpacing.x3)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .zIndex(model.walkthroughStep == nil ? 10 : 13)
                 }
 
                 if !isKeyboardVisible, let undo = appModel.taskCompletionUndo {
@@ -69,6 +70,12 @@ struct AppShellView: View {
                             removal: .opacity
                         ))
                         .zIndex(5)
+                }
+
+                if !isKeyboardVisible, model.walkthroughStep != nil {
+                    WalkthroughBackdrop()
+                        .transition(.opacity)
+                        .zIndex(11)
                 }
 
                 if !isKeyboardVisible, let walkthroughStep = model.walkthroughStep {
@@ -97,7 +104,7 @@ struct AppShellView: View {
                                 removal: .offset(y: -12).combined(with: .opacity)
                             )
                     )
-                    .zIndex(12)
+                    .zIndex(14)
                 }
 
             }
@@ -405,6 +412,18 @@ private extension AppWalkthroughStep {
     var prefersTopPlacement: Bool { self == .cy }
 }
 
+private struct WalkthroughBackdrop: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Color.agentPureBlack
+            .opacity(colorScheme == .dark ? 0.42 : 0.16)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 private struct WalkthroughGuideCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -457,9 +476,9 @@ private struct WalkthroughGuideCard: View {
                     .foregroundStyle(Color.agentText)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(AgentSpacing.x3)
+            .padding(.horizontal, AgentSpacing.x3)
+            .padding(.vertical, AgentSpacing.x1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.agentCanvas.opacity(colorScheme == .dark ? 0.44 : 0.72), in: .rect(cornerRadius: 12))
 
             Button(action: primaryAction) {
                 HStack(spacing: AgentSpacing.x2) {
@@ -475,7 +494,13 @@ private struct WalkthroughGuideCard: View {
         .padding(AgentSpacing.x4)
         .frame(maxWidth: 440)
         .background(Color.agentSurface, in: .rect(cornerRadius: 28))
-        .agentSurfaceChrome(cornerRadius: 28, role: .floating)
+        .agentSurfaceChrome(
+            cornerRadius: 28,
+            borderColor: colorScheme == .dark
+                ? Color.agentPureWhite.opacity(0.16)
+                : Color.agentPureBlack.opacity(0.10),
+            role: .walkthrough
+        )
         .onAppear {
             if reduceMotion {
                 contentIsVisible = true

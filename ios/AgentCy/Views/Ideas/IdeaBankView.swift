@@ -365,7 +365,7 @@ struct IdeaBankView: View {
     }
 
     private func saveIdea() {
-        appModel.quickCapturePillarID = nil
+        appModel.quickCapturePillarID = selectedFilter.pillarID
         appModel.setQuickCaptureMode(.idea)
         appModel.presentedSheet = .quickCapture
     }
@@ -462,6 +462,13 @@ struct IdeaBankView: View {
         case .pillar:
             return "No ideas saved under \(selectedFilterTitle)."
         }
+    }
+}
+
+private extension IdeaBankFilter {
+    var pillarID: UUID? {
+        guard case .pillar(let pillarID) = self else { return nil }
+        return pillarID
     }
 }
 

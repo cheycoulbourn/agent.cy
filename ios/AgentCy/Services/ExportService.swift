@@ -34,10 +34,13 @@ struct LocalExportService: ExportServicing {
         let focusDayDetails = try context.fetch(FetchDescriptor<DailyFocusDayDetail>())
         let weekProposals = try context.fetch(FetchDescriptor<PendingWeekProposal>())
         let attachments = try context.fetch(FetchDescriptor<CreatorAttachment>())
+        let brandPartners = try context.fetch(FetchDescriptor<BrandPartner>())
+        let brandContacts = try context.fetch(FetchDescriptor<BrandContact>())
+        let brandActivities = try context.fetch(FetchDescriptor<BrandActivity>())
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 12,
+            "schemaVersion": 15,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -85,6 +88,7 @@ struct LocalExportService: ExportServicing {
                     "source": brief.source.rawValue,
                     "status": brief.status.rawValue,
                     "brandCollaboration": brief.isBrandCollaboration,
+                    "brandPartnerID": brief.brandPartnerID?.uuidString ?? NSNull(),
                     "brandName": brief.brandName,
                     "compensationType": brief.compensationType.rawValue,
                     "compensationAmount": brief.compensationAmount ?? NSNull(),
@@ -94,6 +98,8 @@ struct LocalExportService: ExportServicing {
                     "giftedProduct": brief.giftedProductDescription,
                     "moodBoardEnabled": brief.moodBoardEnabled,
                     "moodBoardURL": brief.moodBoardURLString,
+                    "workDate": brief.workDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "includesWorkTime": brief.includesWorkTime,
                     "agendaDate": brief.agendaDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "lifecycleHistory": brief.lifecycleHistory.map {
                         [
@@ -159,6 +165,7 @@ struct LocalExportService: ExportServicing {
                 [
                     "id": task.id.uuidString,
                     "briefID": task.briefID?.uuidString ?? NSNull(),
+                    "brandPartnerID": task.brandPartnerID?.uuidString ?? NSNull(),
                     "parentTaskID": task.parentTaskID?.uuidString ?? NSNull(),
                     "title": task.title,
                     "kind": task.kind.rawValue,
@@ -242,13 +249,66 @@ struct LocalExportService: ExportServicing {
             }
             ,"pendingWeekProposals": weekProposals.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "status": $0.statusRaw, "payloadJSON": $0.payloadJSON] as [String: Any] }
             ,"attachments": attachments.map { ["id": $0.id.uuidString, "briefID": $0.briefID.uuidString, "platformOutputID": $0.platformOutputID?.uuidString ?? NSNull(), "ownerKind": $0.ownerKind.rawValue, "fileName": $0.fileName, "kind": $0.kind.rawValue, "contentType": $0.uniformTypeIdentifier, "byteCount": $0.byteCount] as [String: Any] }
+            ,"brandPartners": brandPartners.map {
+                [
+                    "id": $0.id.uuidString,
+                    "workspaceID": $0.workspaceID?.uuidString ?? NSNull(),
+                    "name": $0.name,
+                    "type": $0.type.rawValue,
+                    "stage": $0.stage.rawValue,
+                    "website": $0.websiteURLString,
+                    "socialHandle": $0.socialHandle,
+                    "notes": $0.notes,
+                    "nextFollowUpAt": $0.nextFollowUpAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "lastContactedAt": $0.lastContactedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+                ] as [String: Any]
+            }
+            ,"brandContacts": brandContacts.map {
+                [
+                    "id": $0.id.uuidString,
+                    "workspaceID": $0.workspaceID?.uuidString ?? NSNull(),
+                    "brandPartnerID": $0.brandPartnerID.uuidString,
+                    "name": $0.name,
+                    "role": $0.role,
+                    "email": $0.email,
+                    "phone": $0.phone,
+                    "preferredChannel": $0.preferredChannel,
+                    "socialHandle": $0.socialHandle,
+                    "notes": $0.notes,
+                    "isPrimary": $0.isPrimary
+                ] as [String: Any]
+            }
+            ,"brandActivities": brandActivities.map {
+                [
+                    "id": $0.id.uuidString,
+                    "workspaceID": $0.workspaceID?.uuidString ?? NSNull(),
+                    "brandPartnerID": $0.brandPartnerID.uuidString,
+                    "kind": $0.kind.rawValue,
+                    "title": $0.title,
+                    "note": $0.note,
+                    "occurredAt": ISO8601DateFormatter().string(from: $0.occurredAt),
+                    "createdAt": ISO8601DateFormatter().string(from: $0.createdAt),
+                    "updatedAt": ISO8601DateFormatter().string(from: $0.updatedAt)
+                ] as [String: Any]
+            }
         ]
 
         let json = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         let markdown = makeMarkdown(briefs: briefs, outputs: outputs, tasks: tasks)
         var entries: [StoredZIP.Entry] = [
             .init(path: "agentcy-export.json", data: json),
-            .init(path: "posts.md", data: Data(markdown.utf8))
+            .init(path: "posts.md", data: Data(markdown.utf8)),
+            .init(
+                path: "brand-cabinet.md",
+                data: Data(
+                    makeBrandMarkdown(
+                        partners: brandPartners,
+                        contacts: brandContacts,
+                        activities: brandActivities,
+                        briefs: briefs
+                    ).utf8
+                )
+            )
         ]
         for attachment in attachments {
             if let data = attachment.cloudData {
@@ -311,6 +371,71 @@ struct LocalExportService: ExportServicing {
             if !briefTasks.isEmpty {
                 lines += ["### Tasks"] + briefTasks + [""]
             }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func makeBrandMarkdown(
+        partners: [BrandPartner],
+        contacts: [BrandContact],
+        activities: [BrandActivity],
+        briefs: [CreativeBrief]
+    ) -> String {
+        var lines = [
+            "# agent.cy brand cabinet",
+            "",
+            "Exported \(Date().formatted(date: .long, time: .shortened))",
+            ""
+        ]
+        for partner in partners.sorted(by: {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }) {
+            lines += [
+                "## \(partner.name)",
+                "",
+                "**Stage:** \(partner.stage.title)  ",
+                "**Type:** \(partner.type.title)  "
+            ]
+            if let followUp = partner.nextFollowUpAt {
+                lines.append("**Next follow-up:** \(followUp.formatted(date: .long, time: .omitted))  ")
+            }
+            if !partner.websiteURLString.isEmpty {
+                lines.append("**Website:** \(partner.websiteURLString)  ")
+            }
+            if !partner.socialHandle.isEmpty {
+                lines.append("**Social:** \(partner.socialHandle)  ")
+            }
+
+            let partnerActivities = activities
+                .filter { $0.brandPartnerID == partner.id }
+                .sorted { $0.occurredAt > $1.occurredAt }
+            if !partnerActivities.isEmpty {
+                lines += ["", "### Activity"]
+                lines += partnerActivities.map { activity in
+                    let note = activity.note.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return "- \(activity.occurredAt.formatted(date: .long, time: .omitted)) · \(activity.title)"
+                        + (note.isEmpty ? "" : " — \(note)")
+                }
+            }
+
+            let partnerContacts = contacts.filter { $0.brandPartnerID == partner.id }
+            if !partnerContacts.isEmpty {
+                lines += ["", "### Contacts"]
+                lines += partnerContacts.map { contact in
+                    let details = [contact.role, contact.email, contact.phone].filter { !$0.isEmpty }
+                    return "- \(contact.name)\(details.isEmpty ? "" : " · \(details.joined(separator: " · "))")"
+                }
+            }
+
+            let linkedPosts = briefs.filter { $0.brandPartnerID == partner.id }
+            if !linkedPosts.isEmpty {
+                lines += ["", "### Linked posts"]
+                lines += linkedPosts.map { "- \($0.title) · \($0.status.title)" }
+            }
+            if !partner.notes.isEmpty {
+                lines += ["", "### Notes", partner.notes]
+            }
+            lines.append("")
         }
         return lines.joined(separator: "\n")
     }
@@ -409,6 +534,9 @@ enum PostMarkdownExporter {
         lines.append("- **Status:** \(overallStatus(brief: brief, outputs: relatedOutputs))")
         if let pillar, !clean(pillar.name).isEmpty {
             lines.append("- **Pillar:** \(clean(pillar.name))")
+        }
+        if let workDate = brief.workDate {
+            lines.append("- **Work date:** \(dateLabel(workDate, includesTime: brief.includesWorkTime))")
         }
         if brief.durationSeconds > 0 {
             lines.append("- **Duration:** \(durationLabel(brief.durationSeconds))")

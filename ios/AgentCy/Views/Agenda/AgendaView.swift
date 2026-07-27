@@ -17,11 +17,83 @@ private enum AgendaDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum AgendaListPillarFilter: Hashable {
+    case all
+    case unfiled
+    case pillar(UUID)
+}
+
+private enum AgendaListStandardStatus: String, CaseIterable, Hashable {
+    case draft
+    case inProgress
+    case scheduled
+    case posted
+
+    var title: String {
+        switch self {
+        case .draft: "Draft"
+        case .inProgress: "In progress"
+        case .scheduled: "Scheduled"
+        case .posted: "Posted"
+        }
+    }
+}
+
+private enum AgendaListStatusFilter: Hashable {
+    case all
+    case standard(AgendaListStandardStatus)
+    case custom(String)
+}
+
+private enum AgendaPostOccurrenceKind: String, Hashable {
+    case work
+    case post
+
+    var label: String {
+        switch self {
+        case .work: "Work date"
+        case .post: "Post date"
+        }
+    }
+
+    var sortOrder: Int {
+        switch self {
+        case .work: 0
+        case .post: 1
+        }
+    }
+}
+
+private struct AgendaPostOccurrence: Identifiable {
+    let output: PlatformOutput
+    let date: Date
+    let kind: AgendaPostOccurrenceKind
+
+    var id: String {
+        "\(output.id.uuidString)-\(kind.rawValue)-\(date.timeIntervalSinceReferenceDate)"
+    }
+}
+
 private struct AgendaOutputDayGroup: Identifiable {
     let day: Date
-    let outputs: [PlatformOutput]
+    let occurrences: [AgendaPostOccurrence]
 
     var id: Date { day }
+}
+
+private struct AgendaRenderSnapshot {
+    let briefByID: [UUID: CreativeBrief]
+    let occurrences: [AgendaPostOccurrence]
+    let occurrencesByDay: [Date: [AgendaPostOccurrence]]
+    let tasksByDay: [Date: [CreatorTask]]
+
+    func occurrences(on day: Date, calendar: Calendar = .current) -> [AgendaPostOccurrence] {
+        occurrencesByDay[calendar.startOfDay(for: day)] ?? []
+    }
+
+    func tasks(on day: Date, calendar: Calendar = .current) -> [CreatorTask] {
+        tasksByDay[calendar.startOfDay(for: day)] ?? []
+    }
 }
 
 private enum AgendaLayout {
@@ -52,6 +124,9 @@ struct AgendaView: View {
     @State private var deepLinkedBriefOpensEditor = false
     @State private var displayMode: AgendaDisplayMode = .week
     @State private var calendarMonth = Date()
+    @State private var listPillarFilter: AgendaListPillarFilter = .all
+    @State private var listStatusFilter: AgendaListStatusFilter = .all
+    @State private var isListPillarFilterPresented = false
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
@@ -93,6 +168,8 @@ struct AgendaView: View {
     }
 
     var body: some View {
+        let snapshot = makeRenderSnapshot()
+
         GeometryReader { proxy in
             VStack(alignment: .leading, spacing: 0) {
                 if showsHeader {
@@ -119,12 +196,12 @@ struct AgendaView: View {
                         } content: {
                             VStack(spacing: 0) {
                                 ForEach(weekDays, id: \.self) { day in
-                                    weekRow(day)
+                                    weekRow(day, snapshot: snapshot)
                                 }
                             }
                         }
                     case .calendar:
-                        calendarAgendaView
+                        calendarAgendaView(snapshot: snapshot)
                     case .list:
                         agendaListView
                     }
@@ -314,13 +391,16 @@ struct AgendaView: View {
         .accessibilityAddTraits(isToday ? .isSelected : [])
     }
 
-    private var calendarAgendaView: some View {
-        ScrollView {
+    private func calendarAgendaView(snapshot: AgendaRenderSnapshot) -> some View {
+        let selectedOccurrences = snapshot.occurrences(on: selectedDay)
+        let selectedTasks = snapshot.tasks(on: selectedDay)
+
+        return ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x5) {
                 AgentInsetSurface {
                     VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                         calendarMonthHeader
-                        calendarMonthGrid
+                        calendarMonthGrid(snapshot: snapshot)
                     }
                 }
 
@@ -331,25 +411,24 @@ struct AgendaView: View {
                                 .dateTime.weekday(.wide).month(.abbreviated).day()
                             ),
                             trailing: AgendaDayPresentation.postCountLabel(
-                                outputs(on: selectedDay).count
+                                selectedOccurrences.count
                             )
                         )
 
-                        let selectedOutputs = outputs(on: selectedDay)
-                        if selectedOutputs.isEmpty {
+                        if selectedOccurrences.isEmpty {
                             Text("No posts planned.")
                                 .font(.agentBody)
                                 .foregroundStyle(Color.agentSecondary)
                                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                         } else {
                             VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                                ForEach(selectedOutputs) { output in
-                                    if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
+                                ForEach(selectedOccurrences) { occurrence in
+                                    if let brief = snapshot.briefByID[occurrence.output.briefID] {
                                         agendaPostCard(
-                                            output: output,
+                                            occurrence: occurrence,
                                             brief: brief,
                                             day: selectedDay,
-                                            dayTasks: tasks(on: selectedDay)
+                                            dayTasks: selectedTasks
                                         )
                                     }
                                 }
@@ -403,13 +482,15 @@ struct AgendaView: View {
         .accessibilityLabel(amount < 0 ? "Previous month" : "Next month")
     }
 
-    private var calendarMonthGrid: some View {
-        VStack(spacing: AgentSpacing.x2) {
+    private func calendarMonthGrid(snapshot: AgendaRenderSnapshot) -> some View {
+        let pillarHexByWeekday = calendarPillarHexByWeekday()
+
+        return VStack(spacing: AgentSpacing.x2) {
             LazyVGrid(
                 columns: Array(repeating: GridItem(.flexible(), spacing: AgentSpacing.x1), count: 7),
                 spacing: AgentSpacing.x2
             ) {
-                ForEach(calendarWeekdaySymbols, id: \.self) { symbol in
+                ForEach(Array(calendarWeekdaySymbols.enumerated()), id: \.offset) { _, symbol in
                     Text(symbol)
                         .font(.agentMetadata)
                         .foregroundStyle(Color.agentSecondary)
@@ -418,19 +499,28 @@ struct AgendaView: View {
                 }
 
                 ForEach(calendarMonthDays, id: \.self) { day in
-                    calendarMonthCell(day)
+                    calendarMonthCell(
+                        day,
+                        postCount: snapshot.occurrences(on: day).count,
+                        pillarHex: PillarWeekday(
+                            rawValue: Calendar.current.component(.weekday, from: day)
+                        ).flatMap { pillarHexByWeekday[$0] }
+                    )
                 }
             }
         }
     }
 
-    private func calendarMonthCell(_ day: Date) -> some View {
+    private func calendarMonthCell(
+        _ day: Date,
+        postCount: Int,
+        pillarHex: String?
+    ) -> some View {
         let calendar = Calendar.current
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
         let isToday = calendar.isDateInToday(day)
         let isCurrentMonth = calendar.isDate(day, equalTo: calendarMonthStart, toGranularity: .month)
-        let postCount = outputs(on: day).count
-        let dotColor = pillarHex(on: day).map {
+        let dotColor = pillarHex.map {
             Color(agentHex: AgendaPillarDotPresentation.displayedHex(storedHex: $0))
         }
 
@@ -493,13 +583,19 @@ struct AgendaView: View {
     private var agendaListView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                agendaListFilters
+
                 if upcomingAgendaGroups.isEmpty && pastAgendaGroups.isEmpty {
                     AgentInsetSurface {
                         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                            Text("No scheduled posts yet.")
+                            Text(hasActiveListFilter ? "No posts match these filters." : "No scheduled posts yet.")
                                 .font(.agentTitle)
                                 .foregroundStyle(Color.agentText)
-                            Text("Posts with a date will appear here.")
+                            Text(
+                                hasActiveListFilter
+                                    ? "Try another pillar or status."
+                                    : "Posts with a date will appear here."
+                            )
                                 .font(.agentBody)
                                 .foregroundStyle(Color.agentSecondary)
                         }
@@ -515,6 +611,151 @@ struct AgendaView: View {
         .scrollIndicators(.hidden)
     }
 
+    private var agendaListFilters: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            Button {
+                isListPillarFilterPresented = true
+            } label: {
+                agendaListFilterLabel(
+                    category: "Pillar",
+                    value: selectedListPillarTitle,
+                    color: selectedListPillarColor
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Filter by pillar")
+            .accessibilityValue(selectedListPillarTitle)
+            .popover(isPresented: $isListPillarFilterPresented) {
+                agendaListPillarFilterPopover
+                    .presentationCompactAdaptation(.popover)
+                    .presentationBackground(.ultraThinMaterial)
+                    .presentationCornerRadius(24)
+            }
+
+            Menu {
+                Picker("Status", selection: $listStatusFilter) {
+                    Text("All statuses")
+                        .tag(AgendaListStatusFilter.all)
+
+                    ForEach(AgendaListStandardStatus.allCases, id: \.self) { status in
+                        Text(status.title)
+                            .tag(AgendaListStatusFilter.standard(status))
+                    }
+
+                    ForEach(availableListCustomStatuses, id: \.self) { status in
+                        Text(status)
+                            .tag(AgendaListStatusFilter.custom(status))
+                    }
+                }
+            } label: {
+                agendaListFilterLabel(
+                    category: "Status",
+                    value: selectedListStatusTitle
+                )
+            }
+            .accessibilityLabel("Filter by status")
+            .accessibilityValue(selectedListStatusTitle)
+        }
+    }
+
+    private var agendaListPillarFilterPopover: some View {
+        VStack(spacing: 0) {
+            agendaListPillarFilterRow(
+                title: "All pillars",
+                filter: .all,
+                color: nil
+            )
+            agendaListPillarFilterRow(
+                title: "No pillar",
+                filter: .unfiled,
+                color: nil
+            )
+
+            ForEach(availableListPillars) { pillar in
+                agendaListPillarFilterRow(
+                    title: pillar.name,
+                    filter: .pillar(pillar.id),
+                    color: Color(agentHex: pillar.resolvedColorHex(in: pillars))
+                )
+            }
+        }
+        .padding(.vertical, AgentSpacing.x2)
+        .frame(width: 248)
+    }
+
+    private func agendaListPillarFilterRow(
+        title: String,
+        filter: AgendaListPillarFilter,
+        color: Color?
+    ) -> some View {
+        Button {
+            listPillarFilter = filter
+            isListPillarFilterPresented = false
+        } label: {
+            HStack(spacing: AgentSpacing.x3) {
+                if let color {
+                    PillarColorMark(color: color, diameter: 12)
+                } else {
+                    Circle()
+                        .stroke(Color.agentSecondary.opacity(0.7), lineWidth: 1)
+                        .frame(width: 12, height: 12)
+                }
+
+                Text(title)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(1)
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                if listPillarFilter == filter {
+                    AgentIconView(.check, size: 13)
+                        .foregroundStyle(Color.agentText)
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func agendaListFilterLabel(
+        category: String,
+        value: String,
+        color: Color? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+            Text(category.uppercased())
+                .font(.agentMetadata)
+                .foregroundStyle(Color.agentSecondary)
+
+            HStack(spacing: AgentSpacing.x2) {
+                if let color {
+                    PillarColorMark(color: color, diameter: 9)
+                }
+
+                Text(value)
+                    .font(.agentSubtext.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                AgentIconView(.expand, size: 10)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+        }
+        .padding(.horizontal, AgentSpacing.x4)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.control)
+                .stroke(Color.agentHairline, lineWidth: 1)
+        }
+        .contentShape(.rect(cornerRadius: AgentRadius.control))
+    }
+
     @ViewBuilder
     private func agendaListSection(
         title: String,
@@ -526,7 +767,7 @@ struct AgendaView: View {
                     SectionRuleHeader(
                         title: title,
                         trailing: AgendaDayPresentation.postCountLabel(
-                            groups.reduce(0) { $0 + $1.outputs.count }
+                            groups.reduce(0) { $0 + $1.occurrences.count }
                         )
                     )
 
@@ -553,10 +794,12 @@ struct AgendaView: View {
                             }
                             .buttonStyle(.plain)
 
-                            ForEach(group.outputs) { output in
-                                if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
+                            ForEach(group.occurrences) { occurrence in
+                                if let brief = activeBriefs.first(where: {
+                                    $0.id == occurrence.output.briefID
+                                }) {
                                     agendaPostCard(
-                                        output: output,
+                                        occurrence: occurrence,
                                         brief: brief,
                                         day: group.day,
                                         dayTasks: tasks(on: group.day)
@@ -571,9 +814,10 @@ struct AgendaView: View {
     }
 
     @ViewBuilder
-    private func weekRow(_ day: Date) -> some View {
-        let dayOutputs = outputs(on: day)
-        let dayTasks = tasks(on: day)
+    private func weekRow(_ day: Date, snapshot: AgendaRenderSnapshot) -> some View {
+        let dayOccurrences = snapshot.occurrences(on: day)
+        let dayOutputs = dayOccurrences.map(\.output)
+        let dayTasks = snapshot.tasks(on: day)
         let dayFocus = focus(on: day)
 
         if AgendaDayPresentation.shouldCompact(
@@ -581,7 +825,7 @@ struct AgendaView: View {
             outputs: dayOutputs.map { output in
                 AgendaOutputState(
                     outputStatus: output.status,
-                    briefStatus: activeBriefs.first(where: { $0.id == output.briefID })?.status
+                    briefStatus: snapshot.briefByID[output.briefID]?.status
                 )
             },
             now: Date()
@@ -598,9 +842,14 @@ struct AgendaView: View {
                     focus: dayFocus
                 )
 
-                ForEach(dayOutputs) { output in
-                    if let brief = activeBriefs.first(where: { $0.id == output.briefID }) {
-                        agendaPostCard(output: output, brief: brief, day: day, dayTasks: dayTasks)
+                ForEach(dayOccurrences) { occurrence in
+                    if let brief = snapshot.briefByID[occurrence.output.briefID] {
+                        agendaPostCard(
+                            occurrence: occurrence,
+                            brief: brief,
+                            day: day,
+                            dayTasks: dayTasks
+                        )
                     }
                 }
             }
@@ -719,34 +968,86 @@ struct AgendaView: View {
         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
     }
 
-    private func agendaPostCard(output: PlatformOutput, brief: CreativeBrief, day: Date, dayTasks: [CreatorTask]) -> some View {
+    private func agendaPostCard(
+        occurrence: AgendaPostOccurrence,
+        brief: CreativeBrief,
+        day: Date,
+        dayTasks: [CreatorTask]
+    ) -> some View {
+        let output = occurrence.output
         let section = TodayOutputPresentation.section(
             outputStatus: output.status,
             briefStatus: brief.status
         )
         let displaysAsDraft = section != .goingLive
-        let overdue = section == .goingLive && AgendaDayPresentation.isOverdue(
-            targetDate: output.targetDate,
+        let overdue = occurrence.kind == .post &&
+            section == .goingLive &&
+            AgendaDayPresentation.isOverdue(
+            targetDate: occurrence.date,
             status: output.status,
             now: Date()
         )
         let accent = pillarAccent(for: brief)
         let firstTaskDate = firstTaskDate(for: output, dayTasks: dayTasks)
-        let displayStatus: PlatformOutputStatus = displaysAsDraft ? .draft : output.status
-        let displayTime = firstTaskDate ?? (output.includesTargetTime ? output.targetDate : nil)
-        let statusText = overdue ? "Missed" : (section == .inProgress ? "In progress" : nil)
+        let isScheduledDraftOccurrence = occurrence.kind == .post && displaysAsDraft
+        let displayStatus: PlatformOutputStatus = if isScheduledDraftOccurrence {
+            .scheduled
+        } else if displaysAsDraft {
+            .draft
+        } else {
+            output.status
+        }
+        let displayTime: Date? = switch occurrence.kind {
+        case .work:
+            brief.includesWorkTime ? occurrence.date : nil
+        case .post:
+            firstTaskDate ?? (output.includesTargetTime ? occurrence.date : nil)
+        }
+        let statusText: String
+        if overdue {
+            statusText = "Missed"
+        } else if isScheduledDraftOccurrence {
+            statusText = "Scheduled draft"
+        } else {
+            statusText = CustomPostStatusPolicy.displayLabel(
+                briefStatus: brief.status,
+                outputStatus: output.status,
+                customStatus: brief.customStatusLabel
+            )
+        }
+        let metadata = "\(occurrence.kind.label) · \(platformLabel(for: output))"
 
         return AgentPostCard(
             title: outputTitle(output, brief: brief),
             pillar: pillarName(for: brief),
             accent: accent,
             status: displayStatus,
-            metadata: platformLabel(for: output),
+            metadata: metadata,
             timeText: displayTime?.formatted(date: .omitted, time: .shortened),
             statusTextOverride: statusText,
-            destination: AnyView(PostOutputDetailView(brief: brief, output: output)),
+            destination: postDestination(brief: brief, output: output),
             footerActionTitle: overdue ? "Reschedule" : nil,
             footerAction: overdue ? { reschedulingOutput = output } : nil
+        )
+    }
+
+    private func postDestination(
+        brief: CreativeBrief,
+        output: PlatformOutput
+    ) -> AnyView {
+        if PostOutputDetailPolicy.usesFinalizedView(
+            outputStatus: output.status,
+            targetDate: output.targetDate
+        ) {
+            return AnyView(PostOutputDetailView(brief: brief, output: output))
+        }
+
+        return AnyView(
+            ResumablePostEditorView(
+                brief: brief,
+                output: output,
+                onSpark: {}
+            )
         )
     }
 
@@ -847,50 +1148,204 @@ struct AgendaView: View {
             calendar.date(byAdding: .day, value: $0, to: gridStart)
         }
     }
-    private var datedAgendaOutputs: [PlatformOutput] {
-        outputs
+    private func makeRenderSnapshot() -> AgendaRenderSnapshot {
+        let calendar = Calendar.current
+        let activeBriefs = briefs.filter { $0.status != .archived }
+        let briefByID = Dictionary(uniqueKeysWithValues: activeBriefs.map { ($0.id, $0) })
+        let activeBriefIDs = Set(briefByID.keys)
+        let occurrences = outputs
             .filter {
-                $0.targetDate != nil &&
-                    AgendaContentVisibility.includesOutput(
-                        briefID: $0.briefID,
-                        activeBriefIDs: activeBriefIDs
+                AgendaContentVisibility.includesOutput(
+                    briefID: $0.briefID,
+                    activeBriefIDs: activeBriefIDs
+                )
+            }
+            .flatMap { output -> [AgendaPostOccurrence] in
+                guard let brief = briefByID[output.briefID] else {
+                    return []
+                }
+
+                var occurrences: [AgendaPostOccurrence] = []
+                let isActiveWork = output.status == .draft &&
+                    brief.status != .scheduled &&
+                    brief.status != .posted
+
+                if isActiveWork, let workDate = brief.workDate {
+                    occurrences.append(
+                        AgendaPostOccurrence(
+                            output: output,
+                            date: workDate,
+                            kind: .work
+                        )
                     )
+                }
+
+                if let postDate = output.targetDate {
+                    occurrences.append(
+                        AgendaPostOccurrence(
+                            output: output,
+                            date: postDate,
+                            kind: .post
+                        )
+                    )
+                }
+
+                return occurrences
             }
             .sorted {
-                let lhsDate = $0.targetDate ?? .distantFuture
-                let rhsDate = $1.targetDate ?? .distantFuture
-                if lhsDate != rhsDate { return lhsDate < rhsDate }
-                return $0.createdAt < $1.createdAt
+                agendaOccurrencePrecedes(
+                    $0,
+                    $1,
+                    briefByID: briefByID
+                )
             }
+
+        let occurrencesByDay = Dictionary(grouping: occurrences) {
+            calendar.startOfDay(for: $0.date)
+        }
+        let tasksByDay = Dictionary(grouping: tasks.filter {
+            $0.parentTaskID == nil &&
+                !$0.isSkipped &&
+                TaskCollectionPolicy.collection(
+                    briefID: $0.briefID,
+                    platformOutputID: $0.platformOutputID
+                ) == .myTasks &&
+                $0.targetDate != nil
+        }) {
+            calendar.startOfDay(for: $0.targetDate ?? .distantFuture)
+        }.mapValues {
+            $0.sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
+        }
+
+        return AgendaRenderSnapshot(
+            briefByID: briefByID,
+            occurrences: occurrences,
+            occurrencesByDay: occurrencesByDay,
+            tasksByDay: tasksByDay
+        )
+    }
+
+    private var datedAgendaOccurrences: [AgendaPostOccurrence] {
+        makeRenderSnapshot().occurrences
     }
     private var upcomingAgendaGroups: [AgendaOutputDayGroup] {
-        agendaOutputGroups
+        filteredListAgendaOutputGroups
             .filter { $0.day >= Calendar.current.startOfDay(for: Date()) }
             .sorted { $0.day < $1.day }
     }
     private var pastAgendaGroups: [AgendaOutputDayGroup] {
-        agendaOutputGroups
+        filteredListAgendaOutputGroups
             .filter { $0.day < Calendar.current.startOfDay(for: Date()) }
             .sorted { $0.day > $1.day }
     }
-    private var agendaOutputGroups: [AgendaOutputDayGroup] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: datedAgendaOutputs) {
-            calendar.startOfDay(for: $0.targetDate ?? .distantFuture)
+    private var filteredListAgendaOccurrences: [AgendaPostOccurrence] {
+        datedAgendaOccurrences.filter { occurrence in
+            let output = occurrence.output
+            guard let brief = activeBriefs.first(where: { $0.id == output.briefID }) else {
+                return false
+            }
+
+            let matchesPillar: Bool
+            switch listPillarFilter {
+            case .all:
+                matchesPillar = true
+            case .unfiled:
+                matchesPillar = brief.pillarID == nil
+            case .pillar(let pillarID):
+                matchesPillar = brief.pillarID == pillarID
+            }
+
+            let matchesStatus: Bool
+            switch listStatusFilter {
+            case .all:
+                matchesStatus = true
+            case .standard(let status):
+                switch status {
+                case .draft:
+                    matchesStatus = output.status == .draft &&
+                        brief.status != .developing &&
+                        brief.resolvedCustomStatusLabel == nil
+                case .inProgress:
+                    matchesStatus = output.status == .draft &&
+                        brief.status == .developing
+                case .scheduled:
+                    matchesStatus = output.status == .scheduled ||
+                        brief.status == .scheduled
+                case .posted:
+                    matchesStatus = output.status == .posted ||
+                        brief.status == .posted
+                }
+            case .custom(let status):
+                matchesStatus = brief.resolvedCustomStatusLabel?
+                    .localizedCaseInsensitiveCompare(status) == .orderedSame
+            }
+
+            return matchesPillar && matchesStatus
         }
-        return grouped.map { day, dayOutputs in
+    }
+    private var filteredListAgendaOutputGroups: [AgendaOutputDayGroup] {
+        let calendar = Calendar.current
+        let briefByID = Dictionary(
+            uniqueKeysWithValues: activeBriefs.map { ($0.id, $0) }
+        )
+        let grouped = Dictionary(grouping: filteredListAgendaOccurrences) {
+            calendar.startOfDay(for: $0.date)
+        }
+        return grouped.map { day, dayOccurrences in
             AgendaOutputDayGroup(
                 day: day,
-                outputs: dayOutputs.sorted { lhs, rhs in
-                    AgendaOutputOrdering.precedes(
-                        lhs,
-                        briefStatus: activeBriefs.first(where: { $0.id == lhs.briefID })?.status,
-                        rhs,
-                        briefStatus: activeBriefs.first(where: { $0.id == rhs.briefID })?.status
+                occurrences: dayOccurrences.sorted {
+                    agendaOccurrencePrecedes(
+                        $0,
+                        $1,
+                        briefByID: briefByID
                     )
                 }
             )
         }
+    }
+    private var availableListPillars: [Pillar] {
+        pillars
+            .filter { !$0.isArchived }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+    private var availableListCustomStatuses: [String] {
+        var seen = Set<String>()
+        return activeBriefs
+            .compactMap(\.resolvedCustomStatusLabel)
+            .filter { seen.insert($0.lowercased()).inserted }
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+    private var selectedListPillarTitle: String {
+        switch listPillarFilter {
+        case .all:
+            "All"
+        case .unfiled:
+            "No pillar"
+        case .pillar(let pillarID):
+            availableListPillars.first(where: { $0.id == pillarID })?.name ?? "All"
+        }
+    }
+    private var selectedListPillarColor: Color? {
+        guard case .pillar(let pillarID) = listPillarFilter,
+              let pillar = availableListPillars.first(where: { $0.id == pillarID })
+        else {
+            return nil
+        }
+        return Color(agentHex: pillar.resolvedColorHex(in: pillars))
+    }
+    private var selectedListStatusTitle: String {
+        switch listStatusFilter {
+        case .all:
+            "All"
+        case .standard(let status):
+            status.title
+        case .custom(let status):
+            status
+        }
+    }
+    private var hasActiveListFilter: Bool {
+        listPillarFilter != .all || listStatusFilter != .all
     }
     private func shiftCalendarMonth(_ amount: Int) {
         guard let newMonth = Calendar.current.date(
@@ -904,16 +1359,23 @@ struct AgendaView: View {
             selectedDay = newMonth
         }
     }
-    private func outputs(on day: Date) -> [PlatformOutput] {
-        outputs.filter { output in output.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } == true && activeBriefs.contains { $0.id == output.briefID } }
-            .sorted { lhs, rhs in
-                AgendaOutputOrdering.precedes(
-                    lhs,
-                    briefStatus: activeBriefs.first(where: { $0.id == lhs.briefID })?.status,
-                    rhs,
-                    briefStatus: activeBriefs.first(where: { $0.id == rhs.briefID })?.status
-                )
-            }
+    private func agendaOccurrencePrecedes(
+        _ lhs: AgendaPostOccurrence,
+        _ rhs: AgendaPostOccurrence,
+        briefByID: [UUID: CreativeBrief]
+    ) -> Bool {
+        if lhs.date != rhs.date {
+            return lhs.date < rhs.date
+        }
+        if lhs.kind.sortOrder != rhs.kind.sortOrder {
+            return lhs.kind.sortOrder < rhs.kind.sortOrder
+        }
+        return AgendaOutputOrdering.precedes(
+            lhs.output,
+            briefStatus: briefByID[lhs.output.briefID]?.status,
+            rhs.output,
+            briefStatus: briefByID[rhs.output.briefID]?.status
+        )
     }
     private func tasks(on day: Date) -> [CreatorTask] {
         tasks.filter {
@@ -941,6 +1403,16 @@ struct AgendaView: View {
                   !$0.isArchived && $0.resolvedWeekdays(in: pillars).contains(weekday)
               }) else { return nil }
         return pillar.resolvedColorHex(in: pillars)
+    }
+
+    private func calendarPillarHexByWeekday() -> [PillarWeekday: String] {
+        var result: [PillarWeekday: String] = [:]
+        for pillar in pillars where !pillar.isArchived {
+            for weekday in pillar.resolvedWeekdays(in: pillars) where result[weekday] == nil {
+                result[weekday] = pillar.resolvedColorHex(in: pillars)
+            }
+        }
+        return result
     }
 
     private func accountLabel(for output: PlatformOutput) -> String? {

@@ -57,14 +57,19 @@ struct RootView: View {
             appModel.removeLegacySimplifyPrefixes(context: context)
             try? FocusTaskRecurrenceService.reconcile(context: context)
             let repairedPostTasks = (try? PostTaskScheduleRepairService.reconcileOnce(context: context)) ?? 0
+            let removedAccidentalSeriesPosts =
+                (try? AccidentalRecurringPostRepairService.reconcileOnce(context: context)) ?? 0
             await appModel.refreshInstallationCredentialStatus(context: context)
             DevelopmentSubscriptionAccess.applyLocalCyPro(context: context)
             appModel.applyPendingWidgetTaskCompletions(context: context)
             WidgetSnapshotService.refresh(context: context)
             appModel.refreshCalendarSync(context: context)
             try? MCPBridgeService.sync(context: context)
-            if repairedPostTasks > 0 {
+            if repairedPostTasks > 0 || removedAccidentalSeriesPosts > 0 {
                 await appModel.refreshReminderSchedule(context: context)
+            }
+            if removedAccidentalSeriesPosts > 0 {
+                appModel.notice = .info("Removed \(removedAccidentalSeriesPosts) accidental repeat posts.")
             }
             handlePendingNotificationRoute()
         }

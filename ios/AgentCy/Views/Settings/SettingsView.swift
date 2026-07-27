@@ -86,6 +86,16 @@ struct SettingsView: View {
                             } label: {
                                 SettingsIndexRow(title: "Destinations & formats", value: "\(activeDestinationCount)")
                             }
+                            if let profile = profiles.first {
+                                NavigationLink {
+                                    BrandPartnershipSettingsView(profile: profile)
+                                } label: {
+                                    SettingsIndexRow(
+                                        title: "Brand partnerships",
+                                        value: profile.showsBrandDealsInPostEditor ? "Enabled" : "Off"
+                                    )
+                                }
+                            }
                             NavigationLink {
                                 CalendarIntegrationSettingsView()
                             } label: {
@@ -246,7 +256,8 @@ struct SettingsView: View {
                         goal: profile.goal,
                         vibePalette: profile.vibePalette,
                         appearance: profile.appearance,
-                        aiProvider: LocalCyPreferences.isEnabled ? .claudeOrCodex : .agentCy
+                        aiProvider: LocalCyPreferences.isEnabled ? .claudeOrCodex : .agentCy,
+                        brandPartnershipsEnabled: profile.showsBrandDealsInPostEditor
                     )
                 )
             }
@@ -290,7 +301,6 @@ struct SettingsView: View {
     private func enabledPostSectionCount(for profile: CreatorProfile) -> Int {
         [
             profile.showsHookInPostEditor,
-            profile.showsBrandDealsInPostEditor,
             profile.showsMoodBoardsInPostEditor,
         ].filter { $0 }.count
     }

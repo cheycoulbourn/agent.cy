@@ -486,6 +486,19 @@ struct OnboardingView: View {
             .tracking(0.7)
             .textCase(.uppercase)
             .foregroundStyle(Color.agentSecondary)
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                Toggle("Do you work with brands?", isOn: $draft.brandPartnershipsEnabled)
+                    .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
+                    .tint(Color.actionAccent)
+                Text("Optional. Turn this on to keep partners, follow-ups, and collaboration posts together.")
+                    .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(AgentSpacing.x4)
+            .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+            .agentSurfaceChrome(cornerRadius: 14)
         }
     }
 

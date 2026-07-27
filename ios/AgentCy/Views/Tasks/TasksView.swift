@@ -1,6 +1,7 @@
 import SwiftData
 import SwiftUI
 import UIKit
+import Observation
 
 struct TaskNavigationRoute: Hashable {
     let taskID: UUID
@@ -1311,6 +1312,71 @@ struct TaskRow: View {
     }
 }
 
+@MainActor
+@Observable
+private final class TaskTextDraft {
+    var title: String
+    var notes: String
+
+    init(title: String, notes: String) {
+        self.title = title
+        self.notes = notes
+    }
+}
+
+private struct TaskTitleDraftField: View {
+    @Bindable var draft: TaskTextDraft
+
+    var body: some View {
+        TextField("What's the task?", text: $draft.title, axis: .vertical)
+            .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
+            .tracking(-0.56)
+            .lineLimit(1...3)
+    }
+}
+
+private struct TaskNotesDraftField: View {
+    @Bindable var draft: TaskTextDraft
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AgentInputHeader(title: "Notes", isEditing: isFocused) {
+                isFocused = false
+            }
+            TextEditor(text: $draft.notes)
+                .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 132)
+                .padding(16)
+                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                }
+                .focused($isFocused)
+        }
+    }
+}
+
+private struct TaskSaveToolbarButton: View {
+    @Bindable var draft: TaskTextDraft
+    let action: () -> Void
+
+    private var isEnabled: Bool {
+        !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        AgentToolbarIconButton(
+            title: "Save task",
+            icon: .check,
+            isEnabled: isEnabled,
+            action: action
+        )
+    }
+}
+
 struct TaskDetailView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
@@ -1327,8 +1393,14 @@ struct TaskDetailView: View {
     @State private var showDueDateEditor = false
     @State private var originalFocusTemplateSignature: String?
     @State private var newSubtaskFocused = false
-    @FocusState private var notesAreFocused: Bool
+    @State private var textDraft: TaskTextDraft
+    @State private var showTaskOptions = false
     private static let subtaskComposerID = "task-detail-subtask-composer"
+
+    init(task: CreatorTask) {
+        self.task = task
+        _textDraft = State(initialValue: TaskTextDraft(title: task.title, notes: task.notes))
+    }
 
     private var subtasks: [CreatorTask] { allTasks.filter { $0.parentTaskID == task.id }.sorted { $0.sortOrder < $1.sortOrder } }
     private var completedSubtasks: [CreatorTask] { subtasks.filter(\.isCompleted) }
@@ -1359,10 +1431,7 @@ struct TaskDetailView: View {
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 MetaLabel(task.isCompleted ? "Completed task" : "Task")
 
-                TextField("What's the task?", text: $task.title, axis: .vertical)
-                    .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
-                    .tracking(-0.56)
-                    .lineLimit(1...3)
+                TaskTitleDraftField(draft: textDraft)
 
                 if isOverdueMyTask {
                     overdueActions
@@ -1376,22 +1445,7 @@ struct TaskDetailView: View {
                         .foregroundStyle(Color.agentSecondary)
                 }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    AgentInputHeader(title: "Notes", isEditing: notesAreFocused) {
-                        notesAreFocused = false
-                    }
-                    TextEditor(text: $task.notes)
-                        .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 132)
-                        .padding(16)
-                        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
-                        }
-                        .focused($notesAreFocused)
-                }
+                TaskNotesDraftField(draft: textDraft)
 
                 if let linkedBrief {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
@@ -1480,44 +1534,29 @@ struct TaskDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: saveAndDismiss) {
-                    AgentIconView(.check, size: 15)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .tint(Color.agentSurface)
-                .disabled(task.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(task.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-                .accessibilityLabel("Save task")
+                TaskSaveToolbarButton(draft: textDraft, action: saveAndDismiss)
             }
-
-            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+            .sharedBackgroundVisibility(.hidden)
 
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    if !completedSubtasks.isEmpty {
-                        Button(showCompletedSubtasks ? "Hide completed subtasks" : "Show completed subtasks") {
-                            showCompletedSubtasks.toggle()
-                        }
-                    }
-                    Button("Duplicate task") { duplicate() }
-                    Button("Delete task", role: .destructive) { confirmDelete = true }
-                } label: {
-                    AgentIconView(.more, size: 14)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 18, height: 18)
+                AgentToolbarIconButton(title: "Task options", icon: .more) {
+                    showTaskOptions = true
                 }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .tint(Color.agentSurface)
-                .accessibilityLabel("Task options")
             }
+            .sharedBackgroundVisibility(.hidden)
+        }
+        .confirmationDialog("Task options", isPresented: $showTaskOptions, titleVisibility: .hidden) {
+            if !completedSubtasks.isEmpty {
+                Button(showCompletedSubtasks ? "Hide completed subtasks" : "Show completed subtasks") {
+                    showCompletedSubtasks.toggle()
+                }
+            }
+            Button("Duplicate task") { duplicate() }
+            Button("Delete task", role: .destructive) { confirmDelete = true }
+            Button("Cancel", role: .cancel) {}
         }
         .onDisappear {
+            commitTextDraft()
             if task.focusTaskTemplateID != nil,
                originalFocusTemplateSignature.map({ $0 != focusTemplateSignature }) == true {
                 task.isFocusTemplateCustomized = true
@@ -1707,14 +1746,25 @@ struct TaskDetailView: View {
     }
 
     private func saveAndDismiss() {
+        commitTextDraft()
         try? context.save()
         appModel.queueCalendarSync(context: context)
         dismiss()
     }
 
     private func duplicate() {
+        commitTextDraft()
         context.insert(CreatorTask(briefID: task.briefID, pillarID: task.pillarID, platformOutputID: task.platformOutputID, title: "\(task.title) copy", kind: task.kind, lane: task.lane, priority: task.priority.normalized, notes: task.notes, targetDate: task.targetDate, includesTargetTime: task.includesTargetTime, dailyFocusDate: task.dailyFocusDate, dailyFocusTitle: task.dailyFocusTitle, dailyFocusTemplateEntryID: task.dailyFocusTemplateEntryID))
         try? context.save()
+    }
+
+    private func commitTextDraft() {
+        if task.title != textDraft.title {
+            task.title = textDraft.title
+        }
+        if task.notes != textDraft.notes {
+            task.notes = textDraft.notes
+        }
     }
 
     private var focusTemplateSignature: String {
