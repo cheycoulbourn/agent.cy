@@ -245,12 +245,15 @@ struct MCPBridgePostSnapshot: Codable {
     let markdown: String
     let outputs: [MCPBridgeOutputSnapshot]
     let tasks: [MCPBridgeTaskSnapshot]
+    let seriesId: UUID?
+    let episodeNumber: Int?
+    let episodeLabel: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, title, premise, notes, status, pillarId, workDate, includesWorkTime
         case durationSeconds, hook
         case firstFrameText, script, ending, callToAction, createdAt, updatedAt
-        case markdown, outputs, tasks
+        case markdown, outputs, tasks, seriesId, episodeNumber, episodeLabel
     }
 
     func encode(to encoder: Encoder) throws {
@@ -274,7 +277,47 @@ struct MCPBridgePostSnapshot: Codable {
         try container.encode(markdown, forKey: .markdown)
         try container.encode(outputs, forKey: .outputs)
         try container.encode(tasks, forKey: .tasks)
+        try container.encodeOptional(seriesId, forKey: .seriesId)
+        try container.encodeOptional(episodeNumber, forKey: .episodeNumber)
+        try container.encodeOptional(episodeLabel, forKey: .episodeLabel)
     }
+}
+
+struct MCPBridgeSeriesSnapshot: Codable {
+    let id: UUID
+    let name: String
+    let pillarId: UUID?
+    let state: String
+    let defaultPlatform: String?
+    let defaultDestinationId: UUID?
+    let defaultFormatId: UUID?
+    let defaultSocialAccountId: UUID?
+    let defaultDurationSeconds: Int?
+    let cadence: String
+    let cadenceWeekdays: [Int]
+    let cadenceMonthDay: Int?
+    let cadenceEndDate: Date?
+    let cadenceIncludesTime: Bool
+    let taskTemplate: [MCPBridgeSeriesTaskTemplateSnapshot]
+}
+
+struct MCPBridgeSeriesTaskTemplateSnapshot: Codable {
+    let id: UUID
+    let title: String
+    let notes: String
+    let kind: String
+    let priority: String
+    let estimatedMinutes: Int?
+    let sortOrder: Int
+}
+
+struct MCPBridgeEpisodeSlotSnapshot: Codable {
+    let id: UUID
+    let seriesId: UUID
+    let plannedDate: Date
+    let includesTime: Bool
+    let status: String
+    let convertedPostId: UUID?
 }
 
 struct MCPBridgeWorkspaceSnapshot: Codable {
@@ -286,9 +329,12 @@ struct MCPBridgeWorkspaceSnapshot: Codable {
     let pillars: [MCPBridgePillarSnapshot]
     let posts: [MCPBridgePostSnapshot]
     let tasks: [MCPBridgeTaskSnapshot]
+    let series: [MCPBridgeSeriesSnapshot]
+    let episodeSlots: [MCPBridgeEpisodeSlotSnapshot]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, generatedAt, workspaceId, workspaceName, profile, pillars, posts, tasks
+        case series, episodeSlots
     }
 
     func encode(to encoder: Encoder) throws {
@@ -301,6 +347,8 @@ struct MCPBridgeWorkspaceSnapshot: Codable {
         try container.encode(pillars, forKey: .pillars)
         try container.encode(posts, forKey: .posts)
         try container.encode(tasks, forKey: .tasks)
+        try container.encode(series, forKey: .series)
+        try container.encode(episodeSlots, forKey: .episodeSlots)
     }
 }
 
@@ -609,6 +657,12 @@ enum MCPBridgeService {
             !$0.isSkipped &&
                 WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
         }
+        let series = try context.fetch(FetchDescriptor<ContentSeries>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
+        let episodeSlots = try context.fetch(FetchDescriptor<SeriesEpisodeSlot>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
         let destinations = try context.fetch(FetchDescriptor<PublishingDestination>())
         let formats = try context.fetch(FetchDescriptor<PublishingFormat>())
         let accounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>()).filter {
@@ -689,7 +743,49 @@ enum MCPBridgeService {
                         publishedUrl: output.publishedURLString
                     )
                 },
-                tasks: postTasks.map(MCPBridgeTaskSnapshot.init)
+                tasks: postTasks.map(MCPBridgeTaskSnapshot.init),
+                seriesId: brief.seriesID,
+                episodeNumber: brief.episodeNumber,
+                episodeLabel: brief.episodeLabel.isEmpty ? nil : brief.episodeLabel
+            )
+        }
+        let seriesSnapshots = series.map { item in
+            MCPBridgeSeriesSnapshot(
+                id: item.id,
+                name: item.name,
+                pillarId: item.pillarID,
+                state: item.state.rawValue,
+                defaultPlatform: item.defaultPlatform?.rawValue,
+                defaultDestinationId: item.defaultDestinationID,
+                defaultFormatId: item.defaultFormatID,
+                defaultSocialAccountId: item.defaultSocialAccountID,
+                defaultDurationSeconds: item.defaultDurationSeconds,
+                cadence: item.cadence.rawValue,
+                cadenceWeekdays: item.cadenceWeekdays.map(\.rawValue).sorted(),
+                cadenceMonthDay: item.cadenceMonthDay,
+                cadenceEndDate: item.cadenceEndDate,
+                cadenceIncludesTime: item.cadenceIncludesTime,
+                taskTemplate: item.taskTemplate.map { template in
+                    MCPBridgeSeriesTaskTemplateSnapshot(
+                        id: template.id,
+                        title: template.title,
+                        notes: template.notes,
+                        kind: template.kind.rawValue,
+                        priority: template.priority.rawValue,
+                        estimatedMinutes: template.estimatedMinutes,
+                        sortOrder: template.sortOrder
+                    )
+                }
+            )
+        }
+        let episodeSlotSnapshots = episodeSlots.map { slot in
+            MCPBridgeEpisodeSlotSnapshot(
+                id: slot.id,
+                seriesId: slot.seriesID,
+                plannedDate: slot.plannedDate,
+                includesTime: slot.includesTime,
+                status: slot.status.rawValue,
+                convertedPostId: slot.convertedBriefID
             )
         }
         return MCPBridgeWorkspaceSnapshot(
@@ -700,7 +796,9 @@ enum MCPBridgeService {
             profile: profile,
             pillars: pillarSnapshots,
             posts: postSnapshots,
-            tasks: taskSnapshots
+            tasks: taskSnapshots,
+            series: seriesSnapshots,
+            episodeSlots: episodeSlotSnapshots
         )
     }
 
@@ -822,12 +920,15 @@ enum MCPBridgeService {
             _ = PostTaskReschedulePolicy.alignOpenTasks(
                 postTasks,
                 to: output,
-                on: targetDate
+                on: brief.workDate ?? targetDate
             )
         case "addTask":
             let title = try requiredTitle(request.payload.title)
             let postID = request.payload.postId
-            if let postID, try fetchBrief(postID, context: context, workspaceID: workspaceID, workspaces: workspaces) == nil {
+            let linkedBrief = try postID.flatMap {
+                try fetchBrief($0, context: context, workspaceID: workspaceID, workspaces: workspaces)
+            }
+            if postID != nil, linkedBrief == nil {
                 throw MCPBridgeError.missingRecord("The linked post no longer exists.")
             }
             let pillarID = try validatedPillarID(request.payload.pillarId, context: context, workspaceID: workspaceID, workspaces: workspaces)
@@ -847,6 +948,7 @@ enum MCPBridgeService {
                 includesTime: taskIncludesTime,
                 briefID: postID,
                 outputID: request.payload.outputId,
+                workDate: linkedBrief?.workDate,
                 outputs: try context.fetch(FetchDescriptor<PlatformOutput>())
             )
             let task = CreatorTask(

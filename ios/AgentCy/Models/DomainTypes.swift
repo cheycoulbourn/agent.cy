@@ -101,14 +101,43 @@ enum CustomPostStatusPolicy {
         return String(collapsed.prefix(maximumLength))
     }
 
+    static func comparisonKey(_ rawValue: String?) -> String? {
+        guard let normalized = normalized(rawValue) else { return nil }
+        let folded = normalized.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+        let invisibleScalars = CharacterSet(
+            charactersIn: "\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}"
+        )
+        let comparableScalars = folded.unicodeScalars.filter { scalar in
+            !CharacterSet.whitespacesAndNewlines.contains(scalar) &&
+                !CharacterSet.controlCharacters.contains(scalar) &&
+                !invisibleScalars.contains(scalar)
+        }
+        let key = String(String.UnicodeScalarView(comparableScalars)).lowercased()
+        return key.isEmpty ? nil : key
+    }
+
+    static func matches(_ lhs: String?, _ rhs: String?) -> Bool {
+        guard let lhsKey = comparisonKey(lhs),
+              let rhsKey = comparisonKey(rhs)
+        else {
+            return false
+        }
+        return lhsKey == rhsKey
+    }
+
     static func displayLabel(
         briefStatus: BriefStatus,
         outputStatus: PlatformOutputStatus,
-        customStatus: String?
+        customStatus: String?,
+        ideaBankPlacement: IdeaBankPlacement?
     ) -> String {
         if outputStatus == .posted || briefStatus == .posted { return "Posted" }
         if outputStatus == .scheduled || briefStatus == .scheduled { return "Scheduled" }
         if let customStatus = normalized(customStatus) { return customStatus }
+        if ideaBankPlacement == .idea { return "Idea" }
         if briefStatus == .developing { return "In progress" }
         return "Draft"
     }
@@ -118,13 +147,15 @@ enum ContinueWorkingPostPolicy {
     static func includes(
         briefStatus: BriefStatus,
         outputStatus: PlatformOutputStatus,
-        customStatus: String?
+        customStatus: String?,
+        ideaBankPlacement: IdeaBankPlacement?
     ) -> Bool {
         guard briefStatus != .archived,
               briefStatus != .scheduled,
               briefStatus != .posted,
               outputStatus != .scheduled,
-              outputStatus != .posted else {
+              outputStatus != .posted,
+              ideaBankPlacement != .idea else {
             return false
         }
 
@@ -138,7 +169,8 @@ enum ContinueWorkingPostPolicy {
     static func displayLabel(
         briefStatus: BriefStatus,
         outputStatus: PlatformOutputStatus,
-        customStatus: String?
+        customStatus: String?,
+        ideaBankPlacement: IdeaBankPlacement?
     ) -> String {
         if let customStatus = CustomPostStatusPolicy.normalized(customStatus),
            outputStatus != .scheduled,
@@ -151,7 +183,8 @@ enum ContinueWorkingPostPolicy {
         return CustomPostStatusPolicy.displayLabel(
             briefStatus: briefStatus,
             outputStatus: outputStatus,
-            customStatus: customStatus
+            customStatus: customStatus,
+            ideaBankPlacement: ideaBankPlacement
         )
     }
 }
@@ -478,6 +511,66 @@ enum PostRecurrenceFrequency: String, CaseIterable, Codable, Identifiable, Senda
         case .weekly: "Weekly"
         case .monthly: "Monthly"
         }
+    }
+}
+
+enum ContentSeriesState: String, CaseIterable, Codable, Identifiable, Sendable {
+    case active
+    case paused
+    case archived
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .active: "Active"
+        case .paused: "Paused"
+        case .archived: "Archived"
+        }
+    }
+}
+
+enum SeriesEpisodeSlotStatus: String, CaseIterable, Codable, Identifiable, Sendable {
+    case open
+    case converted
+    case skipped
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .open: "Episode needed"
+        case .converted: "Episode created"
+        case .skipped: "Skipped"
+        }
+    }
+}
+
+struct SeriesTaskTemplateItem: Codable, Equatable, Identifiable, Sendable {
+    var id: UUID
+    var title: String
+    var notes: String
+    var kind: CreatorTaskKind
+    var priority: TaskPriority
+    var estimatedMinutes: Int?
+    var sortOrder: Int
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        notes: String = "",
+        kind: CreatorTaskKind = .planning,
+        priority: TaskPriority = .none,
+        estimatedMinutes: Int? = nil,
+        sortOrder: Int = 0
+    ) {
+        self.id = id
+        self.title = title
+        self.notes = notes
+        self.kind = kind
+        self.priority = priority
+        self.estimatedMinutes = estimatedMinutes
+        self.sortOrder = sortOrder
     }
 }
 

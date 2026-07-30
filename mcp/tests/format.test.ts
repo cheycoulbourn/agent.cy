@@ -27,6 +27,7 @@ const post = {
   notes: "",
   status: "scheduled" as const,
   pillarId: null,
+  includesWorkTime: false,
   durationSeconds: 60,
   hook: "",
   firstFrameText: "",
@@ -55,6 +56,8 @@ describe("MCP date formatting", () => {
       workspaceName: null,
       profile: null,
       pillars: [],
+      series: [],
+      episodeSlots: [],
       posts: [post],
       tasks: [],
     }, new Date("2026-07-20T00:00:00"), 1);

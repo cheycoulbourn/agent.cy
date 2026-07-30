@@ -9,6 +9,7 @@ private enum PostDraftSetupPicker: String, Identifiable {
     case platform
     case format
     case status
+    case series
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ private enum PostDraftSetupPicker: String, Identifiable {
         case .platform: "Choose a platform"
         case .format: "Choose a format"
         case .status: "Choose a status"
+        case .series: "Choose a series"
         }
     }
 }
@@ -42,11 +44,6 @@ private enum PostWorkflowStatus: String, CaseIterable, Identifiable {
     }
 }
 
-private enum RecurringScheduleIntent {
-    case schedule
-    case markPosted
-}
-
 struct ResumablePostEditorView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
@@ -60,6 +57,7 @@ struct ResumablePostEditorView: View {
     @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
     @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
     @Query(sort: \BrandPartner.name) private var allBrandPartners: [BrandPartner]
+    @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var profiles: [CreatorProfile]
     @Query private var attachments: [CreatorAttachment]
@@ -101,11 +99,16 @@ struct ResumablePostEditorView: View {
     @State private var customStatusDraft = ""
     @State private var customStatusPendingDeletion: String?
     @State private var confirmDeleteCustomStatus = false
-    @State private var recurringScheduleIntent: RecurringScheduleIntent?
-    @State private var confirmRecurringSchedule = false
+    @State private var seriesEnabled: Bool
+    @State private var isAddingSeries = false
+    @State private var showSeriesPlanner = false
+    @State private var showSeriesDetail = false
+    @State private var showEpisodeScheduledConfirmation = false
+    @State private var newSeriesName = ""
     @State private var isKeyboardVisible = false
     @State private var draftNotes: String
     @FocusState private var customStatusFieldFocused: Bool
+    @FocusState private var newSeriesNameFieldFocused: Bool
     private var pillars: [Pillar] {
         allPillars.filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: brief.workspaceID ?? appModel.activeWorkspaceID, workspaces: workspaces)
@@ -115,6 +118,20 @@ struct ResumablePostEditorView: View {
         allSocialAccounts.filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: brief.workspaceID ?? appModel.activeWorkspaceID, workspaces: workspaces)
         }
+    }
+    private var seriesRecords: [ContentSeries] {
+        allSeries.filter {
+            $0.state != .archived &&
+                WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: brief.workspaceID ?? appModel.activeWorkspaceID,
+                    workspaces: workspaces
+                )
+        }
+    }
+    private var selectedSeries: ContentSeries? {
+        guard let seriesID = brief.seriesID else { return nil }
+        return seriesRecords.first(where: { $0.id == seriesID })
     }
 
     init(
@@ -157,6 +174,7 @@ struct ResumablePostEditorView: View {
         _hasWorkDate = State(initialValue: existingWorkDate != nil)
         _showMorePostDetails = State(initialValue: Self.hasMorePostDetails(output))
         _draftNotes = State(initialValue: brief.notes)
+        _seriesEnabled = State(initialValue: brief.seriesID != nil)
     }
 
     var body: some View {
@@ -176,7 +194,7 @@ struct ResumablePostEditorView: View {
         .sheet(isPresented: $showWorkDatePicker, onDismiss: finishWorkDateSelection) {
             workDatePickerSheet
         }
-        .sheet(item: $activeSetupPicker) { picker in
+        .sheet(item: $activeSetupPicker, onDismiss: finishSetupPickerPresentation) { picker in
             postSetupPickerSheet(picker)
                 .presentationDetents([.height(postSetupPickerHeight(for: picker))])
                 .presentationDragIndicator(.visible)
@@ -185,6 +203,19 @@ struct ResumablePostEditorView: View {
         .sheet(isPresented: $showTaskComposer) {
             PostDraftTaskComposer(brief: brief, output: output, defaultDate: defaultTaskDate)
                 .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $showSeriesPlanner) {
+            if let selectedSeries {
+                SeriesPlannerView(
+                    series: selectedSeries,
+                    suggestedStartDate: targetDate
+                )
+            }
+        }
+        .sheet(isPresented: $showSeriesDetail) {
+            if let selectedSeries {
+                SeriesDetailView(series: selectedSeries)
+            }
         }
         .toolbar {
             if isEditingFinalizedPost || isReviewEditing {
@@ -269,21 +300,17 @@ struct ResumablePostEditorView: View {
         } message: {
             Text("Posts using this status return to In progress. Their dates and content stay unchanged.")
         }
-        .alert(
-            "Schedule \(recurringSeriesCount) posts?",
-            isPresented: $confirmRecurringSchedule
-        ) {
-            Button("Schedule one post") {
-                completeRecurringSchedule(includeSeries: false)
+        .alert("Episode scheduled", isPresented: $showEpisodeScheduledConfirmation) {
+            if selectedSeries != nil {
+                Button("Plan future episodes") {
+                    showSeriesPlanner = true
+                }
             }
-            Button("Schedule full series") {
-                completeRecurringSchedule(includeSeries: true)
-            }
-            Button("Cancel", role: .cancel) {
-                recurringScheduleIntent = nil
+            Button("Done") {
+                openWeeklyAgenda()
             }
         } message: {
-            Text("This post repeats \(output.recurrence.title.lowercased()). Choose whether to schedule this post once or create the full series.")
+            Text("This episode is scheduled for \(targetDate.formatted(.dateTime.month(.abbreviated).day())). Future episodes are only created when you plan them.")
         }
         .onDisappear {
             if PostDraftExitPersistencePolicy.shouldPersist(
@@ -341,7 +368,7 @@ struct ResumablePostEditorView: View {
             }
 
             postCopySection
-            recurrenceSection
+            seriesSection
 
             if showsBrandDealsSection {
                 collaborationSection
@@ -574,9 +601,25 @@ struct ResumablePostEditorView: View {
 
     private func presentSetupPicker(_ picker: PostDraftSetupPicker) {
         AgentKeyboard.dismiss()
+        if picker != .status {
+            isAddingCustomStatus = false
+            customStatusDraft = ""
+        }
+        if picker != .series {
+            isAddingSeries = false
+            newSeriesName = ""
+        }
+        activeSetupPicker = picker
+    }
+
+    private func finishSetupPickerPresentation() {
         isAddingCustomStatus = false
         customStatusDraft = ""
-        activeSetupPicker = picker
+        isAddingSeries = false
+        newSeriesName = ""
+        if seriesEnabled, brief.seriesID == nil {
+            seriesEnabled = false
+        }
     }
 
     private func chooseSetupOption(_ update: () -> Void) {
@@ -678,6 +721,41 @@ struct ResumablePostEditorView: View {
                                 Text("+")
                                     .font(.agentHeadline)
                                 Text("Add custom status")
+                                    .font(.agentBody)
+                            }
+                            .foregroundStyle(Color.agentText)
+                            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                case .series:
+                    if isAddingSeries {
+                        seriesComposer
+                    } else {
+                        ForEach(Array(seriesRecords.enumerated()), id: \.element.id) { index, series in
+                            if index > 0 { setupPickerDivider() }
+                            setupPickerChoice(
+                                title: series.name,
+                                isSelected: brief.seriesID == series.id
+                            ) {
+                                assignSeries(series)
+                            }
+                        }
+
+                        if !seriesRecords.isEmpty {
+                            setupPickerDivider()
+                        }
+                        Button {
+                            newSeriesName = ""
+                            isAddingSeries = true
+                            newSeriesNameFieldFocused = true
+                        } label: {
+                            HStack(spacing: AgentSpacing.x3) {
+                                Text("+")
+                                    .font(.agentHeadline)
+                                Text("Create new series")
                                     .font(.agentBody)
                             }
                             .foregroundStyle(Color.agentText)
@@ -831,6 +909,38 @@ struct ResumablePostEditorView: View {
         .padding(.vertical, AgentSpacing.x4)
     }
 
+    private var seriesComposer: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            Text("Name this series")
+                .font(.agentHeadline)
+                .foregroundStyle(Color.agentText)
+
+            Text("A series keeps related episodes together without copying their content.")
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+
+            TextField("", text: $newSeriesName)
+                .font(.agentBody)
+                .foregroundStyle(Color.agentText)
+                .textInputAutocapitalization(.words)
+                .submitLabel(.done)
+                .focused($newSeriesNameFieldFocused)
+                .onSubmit(createSeries)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(minHeight: 52)
+                .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.control)
+                        .stroke(Color.agentHairline, lineWidth: 1)
+                }
+
+            Button("Create series", action: createSeries)
+                .buttonStyle(AgentPrimaryButtonStyle())
+                .disabled(newSeriesName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(.vertical, AgentSpacing.x4)
+    }
+
     private func setupPickerDivider() -> some View {
         Rectangle()
             .fill(Color.agentHairline)
@@ -853,6 +963,9 @@ struct ResumablePostEditorView: View {
         case .status:
             if isAddingCustomStatus { return 300 }
             optionCount = PostWorkflowStatus.allCases.count + customStatusOptions.count + 1
+        case .series:
+            if isAddingSeries { return 330 }
+            optionCount = seriesRecords.count + 1
         }
         return min(560, max(220, CGFloat(optionCount * 55) + 112))
     }
@@ -876,14 +989,15 @@ struct ResumablePostEditorView: View {
         if output.status == .posted || brief.status == .posted { return .posted }
         if output.status == .scheduled || brief.status == .scheduled { return .scheduled }
         if brief.status == .developing { return .inProgress }
-        if brief.status == .spark, isAlreadyInIdeaBank { return .idea }
+        if IdeaBankPlacementPolicy.includes(brief) { return .idea }
         return .draft
     }
     private var displayedWorkflowStatus: String {
         CustomPostStatusPolicy.displayLabel(
             briefStatus: brief.status,
             outputStatus: output.status,
-            customStatus: brief.customStatusLabel
+            customStatus: brief.customStatusLabel,
+            ideaBankPlacement: brief.ideaBankPlacement
         )
     }
     private var activeWorkspace: CreatorWorkspace? {
@@ -1179,124 +1293,100 @@ struct ResumablePostEditorView: View {
         }
     }
 
-    private var recurrenceSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            SectionRuleHeader(title: "Series & recurrence")
+    private var seriesSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            SectionRuleHeader(title: "Series")
 
-            VStack(spacing: 0) {
-                TextField("Series name (optional)", text: $output.seriesName)
-                    .font(.agentBody)
-                    .padding(.horizontal, AgentSpacing.x4)
-                    .frame(minHeight: 54)
-
-                Divider().overlay(Color.agentHairline)
-
-                Picker("Repeats", selection: Binding(
-                    get: { output.recurrence },
-                    set: { setRecurrence($0) }
-                )) {
-                    ForEach(PostRecurrenceFrequency.allCases) { frequency in
-                        Text(frequency.title).tag(frequency)
-                    }
-                }
-                .pickerStyle(.menu)
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(minHeight: 54)
-            }
-            .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.agentBorder, lineWidth: 1)
-            }
-
-            if output.recurrence == .weekly {
-                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    MetaLabel("Repeat on")
-                    HStack(spacing: AgentSpacing.x2) {
-                        ForEach(PillarWeekday.mondayFirst) { weekday in
-                            Button {
-                                var selection = output.recurrenceWeekdays
-                                if selection.contains(weekday) { selection.remove(weekday) }
-                                else { selection.insert(weekday) }
-                                output.recurrenceWeekdays = selection
-                            } label: {
-                                Text(weekday.letter)
-                                    .font(.agentMetadata)
-                                    .foregroundStyle(output.recurrenceWeekdays.contains(weekday) ? Color.onAccent : Color.agentText)
-                                    .frame(maxWidth: .infinity, minHeight: 42)
-                                    .background(
-                                        output.recurrenceWeekdays.contains(weekday) ? Color.actionAccent : Color.agentSurface,
-                                        in: .circle
-                                    )
-                                    .overlay {
-                                        Circle().stroke(Color.agentBorder, lineWidth: 1)
-                                    }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(weekday.title)
-                            .accessibilityAddTraits(output.recurrenceWeekdays.contains(weekday) ? .isSelected : [])
-                        }
-                    }
-                }
-            } else if output.recurrence == .monthly {
-                HStack {
-                    Text("Repeat on day")
-                        .font(.agentBody)
-                    Spacer()
-                    Picker("Day of month", selection: Binding(
-                        get: { output.recurrenceMonthDay ?? Calendar.current.component(.day, from: targetDate) },
-                        set: { output.recurrenceMonthDay = $0 }
-                    )) {
-                        ForEach(1...31, id: \.self) { day in
-                            Text("\(day)").tag(day)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(minHeight: 52)
-                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.agentBorder, lineWidth: 1)
-                }
-            }
-
-            if output.recurrence != .none {
-                VStack(spacing: 0) {
-                    Toggle("End date", isOn: recurrenceEndDateEnabled)
-                        .font(.agentBody)
-                        .tint(Color.actionAccent)
-                        .padding(.horizontal, AgentSpacing.x4)
-                        .frame(minHeight: 54)
-
-                    if output.recurrenceEndDate != nil {
-                        Divider().overlay(Color.agentHairline)
-                        DatePicker(
-                            "Ends",
-                            selection: recurrenceEndDateBinding,
-                            in: Calendar.current.startOfDay(for: targetDate)...,
-                            displayedComponents: .date
-                        )
-                        .font(.agentBody)
-                        .padding(.horizontal, AgentSpacing.x4)
-                        .frame(minHeight: 54)
+            Toggle("Part of a series", isOn: Binding(
+                get: { seriesEnabled },
+                set: { enabled in
+                    seriesEnabled = enabled
+                    if enabled {
+                        isAddingSeries = seriesRecords.isEmpty
+                        presentSetupPicker(.series)
                     } else {
-                        Divider().overlay(Color.agentHairline)
-                        Text("No end date · schedules the next 12 posts")
-                            .font(.agentSubtext)
-                            .foregroundStyle(Color.agentSecondary)
-                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                            .padding(.horizontal, AgentSpacing.x4)
+                        detachFromSeries()
                     }
                 }
-                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.agentBorder, lineWidth: 1)
+            ))
+            .font(.agentBody.weight(.semibold))
+            .tint(Color.actionAccent)
+            .frame(minHeight: 44)
+
+            if seriesEnabled {
+                Button {
+                    isAddingSeries = seriesRecords.isEmpty
+                    presentSetupPicker(.series)
+                } label: {
+                    HStack(spacing: AgentSpacing.x3) {
+                        MetaLabel("Series")
+                        Spacer()
+                        Text(seriesSelectionLabel)
+                            .font(.agentBody)
+                            .foregroundStyle(selectedSeries == nil ? Color.agentSecondary : Color.agentText)
+                            .lineLimit(1)
+                        AgentIconView(.forward, size: 12)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                    .frame(minHeight: 52)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Series")
+                .accessibilityValue(seriesSelectionLabel)
+
+                if selectedSeries != nil {
+                    PostEditorTextField(
+                        label: "Episode name",
+                        text: $brief.episodeLabel,
+                        axis: .horizontal,
+                        minimumHeight: 52
+                    )
+
+                    PostEditorTextField(
+                        label: "Episode number",
+                        text: Binding(
+                            get: { brief.episodeNumber.map(String.init) ?? "" },
+                            set: { brief.episodeNumber = Int($0.filter(\.isNumber)) }
+                        ),
+                        axis: .horizontal,
+                        minimumHeight: 52,
+                        keyboardType: .numberPad
+                    )
+
+                    HStack(spacing: AgentSpacing.x3) {
+                        seriesActionButton("View series") {
+                            showSeriesDetail = true
+                        }
+                        seriesActionButton("Plan future episodes") {
+                            showSeriesPlanner = true
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private var seriesSelectionLabel: String {
+        if let selectedSeries {
+            return selectedSeries.name
+        }
+        return brief.seriesID == nil ? "Choose a series" : "Series unavailable"
+    }
+
+    private func seriesActionButton(
+        _ title: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.actionAccent)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
     }
 
     private var mediaSection: some View {
@@ -1699,11 +1789,6 @@ struct ResumablePostEditorView: View {
 
         persistChanges(commitSuggestedTargetDate: true)
         if output.status != .scheduled {
-            if output.recurrence != .none {
-                recurringScheduleIntent = .markPosted
-                confirmRecurringSchedule = true
-                return
-            }
             guard appModel.scheduleSinglePost(output: output, date: targetDate, context: context) else { return }
         }
         appModel.togglePosted(output: output, context: context)
@@ -1742,43 +1827,11 @@ struct ResumablePostEditorView: View {
         }
 
         persistChanges(commitSuggestedTargetDate: true)
-        if output.recurrence != .none {
-            recurringScheduleIntent = .schedule
-            confirmRecurringSchedule = true
-            return
-        }
         guard appModel.scheduleSinglePost(output: output, date: targetDate, context: context) else { return }
-        openWeeklyAgenda()
-    }
-
-    private var recurringSeriesCount: Int {
-        1 + RecurringPostSchedule.futureDates(
-            after: targetDate,
-            frequency: output.recurrence,
-            weekdays: output.recurrenceWeekdays,
-            monthDay: output.recurrenceMonthDay,
-            endDate: output.recurrenceEndDate,
-            includesTime: output.includesTargetTime
-        ).count
-    }
-
-    private func completeRecurringSchedule(includeSeries: Bool) {
-        guard let intent = recurringScheduleIntent else { return }
-        recurringScheduleIntent = nil
-
-        let scheduled = if includeSeries {
-            appModel.schedulePostSeries(output: output, date: targetDate, context: context)
+        if brief.seriesID != nil {
+            showEpisodeScheduledConfirmation = true
         } else {
-            appModel.scheduleSinglePost(output: output, date: targetDate, context: context)
-        }
-        guard scheduled else { return }
-
-        switch intent {
-        case .schedule:
             openWeeklyAgenda()
-        case .markPosted:
-            appModel.togglePosted(output: output, context: context)
-            if output.status == .posted { openWeeklyAgenda() }
         }
     }
 
@@ -1948,55 +2001,672 @@ struct ResumablePostEditorView: View {
         return targetDate
     }
 
-    private var recurrenceEndDateEnabled: Binding<Bool> {
-        Binding(
-            get: { output.recurrenceEndDate != nil },
-            set: { enabled in
-                output.recurrenceEndDate = enabled ? defaultRecurrenceEndDate : nil
-            }
+    private func assignSeries(_ series: ContentSeries) {
+        brief.seriesID = series.id
+        output.seriesName = series.name
+        brief.updatedAt = Date()
+        seriesEnabled = true
+        try? context.save()
+    }
+
+    private func detachFromSeries() {
+        brief.seriesID = nil
+        brief.episodeNumber = nil
+        brief.episodeLabel = ""
+        output.seriesName = ""
+        brief.updatedAt = Date()
+        try? context.save()
+    }
+
+    private func createSeries() {
+        let name = newSeriesName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let series = ContentSeries(
+            workspaceID: brief.workspaceID ?? appModel.activeWorkspaceID,
+            name: name,
+            pillarID: brief.pillarID,
+            platform: output.platform,
+            destinationID: output.destinationID,
+            formatID: output.formatID,
+            socialAccountID: output.socialAccountID,
+            durationSeconds: output.durationSeconds
         )
-    }
-
-    private var recurrenceEndDateBinding: Binding<Date> {
-        Binding(
-            get: { output.recurrenceEndDate ?? defaultRecurrenceEndDate },
-            set: { output.recurrenceEndDate = $0 }
-        )
-    }
-
-    private var defaultRecurrenceEndDate: Date {
-        let calendar = Calendar.current
-        switch output.recurrence {
-        case .daily:
-            return calendar.date(byAdding: .day, value: 30, to: targetDate) ?? targetDate
-        case .weekly:
-            return calendar.date(byAdding: .weekOfYear, value: 12, to: targetDate) ?? targetDate
-        case .monthly:
-            return calendar.date(byAdding: .month, value: 12, to: targetDate) ?? targetDate
-        case .none:
-            return targetDate
-        }
-    }
-
-    private func setRecurrence(_ recurrence: PostRecurrenceFrequency) {
-        output.recurrence = recurrence
-        switch recurrence {
-        case .weekly where output.recurrenceWeekdays.isEmpty:
-            if let weekday = PillarWeekday(rawValue: Calendar.current.component(.weekday, from: targetDate)) {
-                output.recurrenceWeekdays = [weekday]
-            }
-        case .monthly where output.recurrenceMonthDay == nil:
-            output.recurrenceMonthDay = Calendar.current.component(.day, from: targetDate)
-        case .none:
-            output.recurrenceEndDate = nil
-        default:
-            break
-        }
+        context.insert(series)
+        assignSeries(series)
+        newSeriesName = ""
+        isAddingSeries = false
+        activeSetupPicker = nil
     }
 
     private static func hasMorePostDetails(_ output: PlatformOutput) -> Bool {
         [output.openingAdjustment, output.titleOverride, output.editChanges]
             .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+}
+
+private struct SeriesPlannerView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    @Bindable var series: ContentSeries
+
+    @State private var frequency: PostRecurrenceFrequency
+    @State private var weekdays: Set<PillarWeekday>
+    @State private var monthDay: Int
+    @State private var firstDate: Date
+    @State private var includesTime: Bool
+    @State private var usesEndDate: Bool
+    @State private var endDate: Date
+    @State private var plannedCount = 6
+    @State private var notice: String?
+
+    init(series: ContentSeries, suggestedStartDate: Date) {
+        self.series = series
+        let initialFrequency = series.cadence == .none ? PostRecurrenceFrequency.weekly : series.cadence
+        let initialEnd = series.cadenceEndDate
+            ?? Calendar.current.date(byAdding: .month, value: 3, to: suggestedStartDate)
+            ?? suggestedStartDate
+        _frequency = State(initialValue: initialFrequency)
+        _weekdays = State(initialValue: series.cadenceWeekdays)
+        _monthDay = State(initialValue: series.cadenceMonthDay ?? Calendar.current.component(.day, from: suggestedStartDate))
+        _firstDate = State(initialValue: suggestedStartDate)
+        _includesTime = State(initialValue: series.cadenceIncludesTime)
+        _usesEndDate = State(initialValue: series.cadenceEndDate != nil)
+        _endDate = State(initialValue: initialEnd)
+    }
+
+    private var preview: [Date] {
+        SeriesEpisodePlanner.previewDates(
+            startingAt: firstDate,
+            frequency: frequency,
+            weekdays: weekdays,
+            monthDay: monthDay,
+            endDate: usesEndDate ? endDate : nil,
+            count: plannedCount
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                        MetaLabel("Series planner")
+                        Text(series.name)
+                            .font(.agentTitle)
+                        Text("Choose the cadence. This creates empty episode slots, not duplicate posts.")
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+
+                    VStack(spacing: 0) {
+                        Picker("Cadence", selection: $frequency) {
+                            ForEach(PostRecurrenceFrequency.allCases.filter { $0 != .none }) { cadence in
+                                Text(cadence.title).tag(cadence)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+
+                        Divider().overlay(Color.agentHairline)
+
+                        DatePicker(
+                            "First episode",
+                            selection: $firstDate,
+                            displayedComponents: includesTime ? [.date, .hourAndMinute] : [.date]
+                        )
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+
+                        Divider().overlay(Color.agentHairline)
+
+                        Toggle("Include a time", isOn: $includesTime)
+                            .tint(Color.actionAccent)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                    }
+                    .font(.agentBody)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+
+                    if frequency == .weekly {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                            MetaLabel("Repeat on")
+                            HStack(spacing: AgentSpacing.x2) {
+                                ForEach(PillarWeekday.mondayFirst) { weekday in
+                                    Button {
+                                        if weekdays.contains(weekday) { weekdays.remove(weekday) }
+                                        else { weekdays.insert(weekday) }
+                                    } label: {
+                                        Text(weekday.letter)
+                                            .font(.agentMetadata)
+                                            .foregroundStyle(weekdays.contains(weekday) ? Color.onAccent : Color.agentText)
+                                            .frame(maxWidth: .infinity, minHeight: 42)
+                                            .background(
+                                                weekdays.contains(weekday) ? Color.actionAccent : Color.agentSurface,
+                                                in: .circle
+                                            )
+                                            .overlay(Circle().stroke(Color.agentBorder, lineWidth: 1))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    } else if frequency == .monthly {
+                        HStack {
+                            Text("Day of month")
+                            Spacer()
+                            Picker("Day of month", selection: $monthDay) {
+                                ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                        .font(.agentBody)
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+                        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AgentRadius.control)
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                    }
+
+                    VStack(spacing: 0) {
+                        Toggle("End date", isOn: $usesEndDate)
+                            .tint(Color.actionAccent)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+
+                        if usesEndDate {
+                            Divider().overlay(Color.agentHairline)
+                            DatePicker(
+                                "Ends",
+                                selection: $endDate,
+                                in: Calendar.current.startOfDay(for: firstDate)...,
+                                displayedComponents: .date
+                            )
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                        } else {
+                            Divider().overlay(Color.agentHairline)
+                            Stepper("Plan \(plannedCount) episodes", value: $plannedCount, in: 1...24)
+                                .padding(.horizontal, AgentSpacing.x4)
+                                .frame(minHeight: 52)
+                        }
+                    }
+                    .font(.agentBody)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        SectionRuleHeader(title: "Preview", trailing: "\(preview.count)")
+                        ForEach(Array(preview.enumerated()), id: \.offset) { index, date in
+                            HStack {
+                                Text("Episode \(index + 1)")
+                                    .font(.agentBody.weight(.semibold))
+                                Spacer()
+                                Text(date.formatted(
+                                    includesTime
+                                        ? .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
+                                        : .dateTime.weekday(.abbreviated).month(.abbreviated).day()
+                                ))
+                                .font(.agentSubtext)
+                                .foregroundStyle(Color.agentSecondary)
+                            }
+                            .padding(.vertical, AgentSpacing.x3)
+                            if index < preview.count - 1 {
+                                Divider().overlay(Color.agentHairline)
+                            }
+                        }
+                    }
+
+                    if let notice {
+                        Text(notice)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.cyAccent)
+                    }
+
+                    Button(action: planEpisodes) {
+                        Text("Plan \(preview.count) episode\(preview.count == 1 ? "" : "s")")
+                            .font(.agentBody.weight(.semibold))
+                            .foregroundStyle(Color.onAccent)
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .background(Color.actionAccent, in: .capsule)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(preview.isEmpty || (frequency == .weekly && weekdays.isEmpty))
+                }
+                .padding(AgentLayout.pageMargin)
+            }
+            .background(Color.agentCanvas)
+            .navigationTitle("Plan future episodes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func planEpisodes() {
+        series.cadence = frequency
+        series.cadenceWeekdays = weekdays
+        series.cadenceMonthDay = frequency == .monthly ? monthDay : nil
+        series.cadenceEndDate = usesEndDate ? endDate : nil
+        do {
+            let created = try SeriesEpisodePlanner.plan(
+                series: series,
+                dates: preview,
+                includesTime: includesTime,
+                context: context
+            )
+            notice = created.isEmpty
+                ? "Those episode slots are already planned."
+                : "\(created.count) episode slot\(created.count == 1 ? "" : "s") added."
+        } catch {
+            notice = "The episode slots could not be planned. Your post is unchanged."
+        }
+    }
+}
+
+private struct SeriesDetailView: View {
+    private enum EpisodeGroup {
+        case draft
+        case scheduled
+        case posted
+    }
+
+    private struct EpisodeItem: Identifiable {
+        let brief: CreativeBrief
+        let output: PlatformOutput?
+        let group: EpisodeGroup
+        let date: Date?
+
+        var id: UUID { brief.id }
+
+        var supportingText: String? {
+            let trimmedLabel = brief.episodeLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let number = brief.episodeNumber, !trimmedLabel.isEmpty {
+                return "Episode \(number) · \(trimmedLabel)"
+            }
+            if let number = brief.episodeNumber {
+                return "Episode \(number)"
+            }
+            return trimmedLabel.isEmpty ? nil : trimmedLabel
+        }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    @Bindable var series: ContentSeries
+    @Query(sort: \SeriesEpisodeSlot.plannedDate) private var allSlots: [SeriesEpisodeSlot]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query private var allOutputs: [PlatformOutput]
+    @State private var showPlanner = false
+    @State private var selectedSlot: SeriesEpisodeSlot?
+    @State private var confirmRemoveFutureSlots = false
+    @State private var confirmArchive = false
+
+    private var slots: [SeriesEpisodeSlot] {
+        allSlots.filter { $0.seriesID == series.id && $0.workspaceID == series.workspaceID }
+    }
+    private var episodes: [CreativeBrief] {
+        allBriefs.filter { $0.seriesID == series.id && $0.workspaceID == series.workspaceID }
+    }
+
+    private var openSlots: [SeriesEpisodeSlot] {
+        slots
+            .filter { $0.status == .open }
+            .sorted { $0.plannedDate < $1.plannedDate }
+    }
+
+    private var episodeItems: [EpisodeItem] {
+        episodes.map { brief in
+            let output = allOutputs.first(where: { $0.briefID == brief.id })
+            let group: EpisodeGroup
+            switch output?.status {
+            case .posted:
+                group = .posted
+            case .scheduled:
+                group = .scheduled
+            default:
+                group = .draft
+            }
+            return EpisodeItem(
+                brief: brief,
+                output: output,
+                group: group,
+                date: output?.postedAt ?? output?.targetDate ?? brief.workDate
+            )
+        }
+        .sorted {
+            switch ($0.date, $1.date) {
+            case let (.some(lhs), .some(rhs)): lhs < rhs
+            case (.some, .none): true
+            case (.none, .some): false
+            case (.none, .none): $0.brief.updatedAt > $1.brief.updatedAt
+            }
+        }
+    }
+
+    private var futureOpenSlotCount: Int {
+        let today = Calendar.current.startOfDay(for: Date())
+        return openSlots.filter { $0.plannedDate >= today }.count
+    }
+
+    private var summaryText: String {
+        let episodeText = "\(episodes.count) episode\(episodes.count == 1 ? "" : "s")"
+        guard !openSlots.isEmpty else { return episodeText }
+        return "\(episodeText) · \(openSlots.count) date\(openSlots.count == 1 ? "" : "s") to fill"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        MetaLabel("\(series.state.title) series")
+                        Text(series.name)
+                            .font(.agentTitle)
+                            .foregroundStyle(Color.agentText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(summaryText)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+
+                    Button {
+                        showPlanner = true
+                    } label: {
+                        HStack(spacing: AgentSpacing.x2) {
+                            AgentIconView(.add, size: 13)
+                            Text("Plan future episodes")
+                                .font(.agentBody.weight(.semibold))
+                        }
+                        .foregroundStyle(Color.onAccent)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(Color.actionAccent, in: .capsule)
+                    }
+                    .buttonStyle(.plain)
+
+                    slotSection(
+                        title: "Upcoming episodes",
+                        slots: openSlots,
+                        emptyMessage: "No episode dates are waiting to be filled."
+                    )
+                    episodeSection(
+                        "Draft episodes",
+                        items: episodeItems.filter { $0.group == .draft },
+                        emptyMessage: "No draft episodes."
+                    )
+                    episodeSection(
+                        "Scheduled episodes",
+                        items: episodeItems.filter { $0.group == .scheduled },
+                        emptyMessage: "No episodes are scheduled."
+                    )
+                    episodeSection(
+                        "Posted episodes",
+                        items: episodeItems.filter { $0.group == .posted },
+                        emptyMessage: "Nothing has been posted yet."
+                    )
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        SectionRuleHeader(title: "Series settings")
+
+                        managementAction(
+                            title: series.state == .paused ? "Resume series" : "Pause series",
+                            detail: series.state == .paused
+                                ? "Make this series active again."
+                                : "Keep every episode and stop planning new ones."
+                        ) {
+                            series.state = series.state == .paused ? .active : .paused
+                            try? context.save()
+                        }
+
+                        Divider().overlay(Color.agentHairline)
+
+                        managementAction(
+                            title: "Remove future empty slots",
+                            detail: futureOpenSlotCount == 0
+                                ? "There are no future empty slots."
+                                : "Keep every episode and remove \(futureOpenSlotCount) unfilled date\(futureOpenSlotCount == 1 ? "" : "s").",
+                            isDestructive: true,
+                            isEnabled: futureOpenSlotCount > 0
+                        ) {
+                            confirmRemoveFutureSlots = true
+                        }
+
+                        Divider().overlay(Color.agentHairline)
+
+                        managementAction(
+                            title: "Archive series",
+                            detail: "Hide the series and keep its episodes.",
+                            isDestructive: true
+                        ) {
+                            confirmArchive = true
+                        }
+                    }
+                    .padding(AgentSpacing.x5)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                    .agentSurfaceChrome(cornerRadius: AgentRadius.panel, role: .card)
+                }
+                .padding(AgentLayout.pageMargin)
+            }
+            .background(Color.agentCanvas)
+            .navigationTitle("Series")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    AgentToolbarIconButton(title: "Close", icon: .close) {
+                        dismiss()
+                    }
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
+            .sheet(isPresented: $showPlanner) {
+                SeriesPlannerView(series: series, suggestedStartDate: Date())
+            }
+            .sheet(item: $selectedSlot) { slot in
+                EpisodeSlotActionsView(slot: slot) { _ in
+                    selectedSlot = nil
+                }
+            }
+            .alert("Remove future empty slots?", isPresented: $confirmRemoveFutureSlots) {
+                Button("Remove slots", role: .destructive) {
+                    let today = Calendar.current.startOfDay(for: Date())
+                    slots
+                        .filter { $0.status == .open && $0.plannedDate >= today }
+                        .forEach(context.delete)
+                    try? context.save()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Existing episodes stay in place. Only future slots that have not become posts are removed.")
+            }
+            .alert("Archive this series?", isPresented: $confirmArchive) {
+                Button("Archive series", role: .destructive) {
+                    series.state = .archived
+                    try? context.save()
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The series will be hidden. Its existing episodes will stay available.")
+            }
+        }
+    }
+
+    private func slotSection(
+        title: String,
+        slots: [SeriesEpisodeSlot],
+        emptyMessage: String
+    ) -> some View {
+        sectionCard(title: title, count: slots.count) {
+            if slots.isEmpty {
+                emptySection(message: emptyMessage)
+            } else {
+                ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
+                    Button {
+                        selectedSlot = slot
+                    } label: {
+                        episodeRow(
+                            title: "Episode needed",
+                            supportingText: slot.includesTime ? "Time selected" : nil,
+                            date: slot.plannedDate,
+                            showsChevron: true
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if index < slots.count - 1 {
+                        Divider().overlay(Color.agentHairline)
+                    }
+                }
+            }
+        }
+    }
+
+    private func episodeSection(
+        _ title: String,
+        items: [EpisodeItem],
+        emptyMessage: String
+    ) -> some View {
+        sectionCard(title: title, count: items.count) {
+            if items.isEmpty {
+                emptySection(message: emptyMessage)
+            } else {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    if let output = item.output {
+                        NavigationLink {
+                            PostOutputDetailView(brief: item.brief, output: output)
+                        } label: {
+                            episodeRow(
+                                title: item.brief.title,
+                                supportingText: item.supportingText,
+                                date: item.date,
+                                showsChevron: true
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        episodeRow(
+                            title: item.brief.title,
+                            supportingText: item.supportingText,
+                            date: item.date,
+                            showsChevron: false
+                        )
+                    }
+
+                    if index < items.count - 1 {
+                        Divider().overlay(Color.agentHairline)
+                    }
+                }
+            }
+        }
+    }
+
+    private func sectionCard<Content: View>(
+        title: String,
+        count: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionRuleHeader(title: title, trailing: "\(count)")
+            content()
+        }
+        .padding(AgentSpacing.x5)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .agentSurfaceChrome(cornerRadius: AgentRadius.panel, role: .card)
+    }
+
+    private func emptySection(message: String) -> some View {
+        Text(message)
+            .font(.agentSubtext)
+            .foregroundStyle(Color.agentSecondary)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .padding(.top, AgentSpacing.x2)
+    }
+
+    private func episodeRow(
+        title: String,
+        supportingText: String?,
+        date: Date?,
+        showsChevron: Bool
+    ) -> some View {
+        HStack(alignment: .center, spacing: AgentSpacing.x3) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                Text(title)
+                    .font(.agentBody.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let supportingText {
+                    Text(supportingText)
+                        .font(.agentMetadata)
+                        .foregroundStyle(Color.agentSecondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: AgentSpacing.x3)
+
+            VStack(alignment: .trailing, spacing: AgentSpacing.x2) {
+                Text(date.map {
+                    $0.formatted(.dateTime.month(.abbreviated).day())
+                } ?? "No date")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .monospacedDigit()
+
+                if showsChevron {
+                    AgentIconView(.forward, size: 12)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+        .contentShape(.rect)
+    }
+
+    private func managementAction(
+        title: String,
+        detail: String,
+        isDestructive: Bool = false,
+        isEnabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: AgentSpacing.x3) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(title)
+                        .font(.agentBody.weight(.semibold))
+                    Text(detail)
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                AgentIconView(.forward, size: 12)
+                    .foregroundStyle(isDestructive ? Color.agentDestructive : Color.agentSecondary)
+            }
+            .foregroundStyle(isDestructive ? Color.agentDestructive : Color.agentText)
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.45)
     }
 }
 
@@ -2710,6 +3380,7 @@ struct PostDraftTaskComposer: View {
             includesTime: includeDate && includesTime,
             briefID: brief.id,
             outputID: output.id,
+            workDate: brief.workDate,
             outputs: [output]
         )
         let task = CreatorTask(

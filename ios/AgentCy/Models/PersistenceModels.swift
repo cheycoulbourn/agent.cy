@@ -304,6 +304,10 @@ final class CreativeBrief {
     /// Optional for additive CloudKit migration compatibility.
     var ideaBankPlacementRaw: String?
     var pillarID: UUID?
+    /// First-class series membership. Optional for additive CloudKit migration safety.
+    var seriesID: UUID?
+    var episodeNumber: Int?
+    var episodeLabel: String = ""
     var brandPartnerID: UUID?
     var isBrandCollaboration: Bool = false
     var brandName: String = ""
@@ -399,6 +403,159 @@ final class CreativeBrief {
 
     private static func lifecycleLine(status: BriefStatus, date: Date) -> String {
         "\(ISO8601DateFormatter().string(from: date))|\(status.rawValue)"
+    }
+}
+
+@Model
+final class ContentSeries {
+    var id: UUID = UUID()
+    var workspaceID: UUID?
+    var name: String = ""
+    var pillarID: UUID?
+    var stateRaw: String = ContentSeriesState.active.rawValue
+    var defaultPlatformRaw: String = ""
+    var defaultDestinationID: UUID?
+    var defaultFormatID: UUID?
+    var defaultSocialAccountID: UUID?
+    var defaultDurationSeconds: Int?
+    var cadenceRaw: String = PostRecurrenceFrequency.none.rawValue
+    var cadenceWeekdaysRaw: String = ""
+    var cadenceMonthDay: Int?
+    var cadenceEndDate: Date?
+    var cadenceIncludesTime: Bool = false
+    var taskTemplateJSON: String = ""
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+    var archivedAt: Date?
+
+    init(
+        id: UUID = UUID(),
+        workspaceID: UUID? = nil,
+        name: String,
+        pillarID: UUID? = nil,
+        state: ContentSeriesState = .active,
+        platform: CreatorPlatform? = nil,
+        destinationID: UUID? = nil,
+        formatID: UUID? = nil,
+        socialAccountID: UUID? = nil,
+        durationSeconds: Int? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.name = name
+        self.pillarID = pillarID
+        self.stateRaw = state.rawValue
+        self.defaultPlatformRaw = platform?.rawValue ?? ""
+        self.defaultDestinationID = destinationID
+        self.defaultFormatID = formatID
+        self.defaultSocialAccountID = socialAccountID
+        self.defaultDurationSeconds = durationSeconds
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+
+    var state: ContentSeriesState {
+        get { ContentSeriesState(rawValue: stateRaw) ?? .active }
+        set {
+            stateRaw = newValue.rawValue
+            archivedAt = newValue == .archived ? (archivedAt ?? Date()) : nil
+            updatedAt = Date()
+        }
+    }
+
+    var defaultPlatform: CreatorPlatform? {
+        get { CreatorPlatform(rawValue: defaultPlatformRaw) }
+        set {
+            defaultPlatformRaw = newValue?.rawValue ?? ""
+            updatedAt = Date()
+        }
+    }
+
+    var cadence: PostRecurrenceFrequency {
+        get { PostRecurrenceFrequency(rawValue: cadenceRaw) ?? .none }
+        set {
+            cadenceRaw = newValue.rawValue
+            if newValue != .weekly { cadenceWeekdaysRaw = "" }
+            if newValue != .monthly { cadenceMonthDay = nil }
+            updatedAt = Date()
+        }
+    }
+
+    var cadenceWeekdays: Set<PillarWeekday> {
+        get {
+            Set(cadenceWeekdaysRaw.split(separator: ",").compactMap { value in
+                Int(value).flatMap(PillarWeekday.init(rawValue:))
+            })
+        }
+        set {
+            cadenceWeekdaysRaw = newValue
+                .map(\.rawValue)
+                .sorted()
+                .map(String.init)
+                .joined(separator: ",")
+            updatedAt = Date()
+        }
+    }
+
+    var taskTemplate: [SeriesTaskTemplateItem] {
+        get {
+            guard let data = taskTemplateJSON.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode(
+                    [SeriesTaskTemplateItem].self,
+                    from: data
+                  ) else {
+                return []
+            }
+            return decoded.sorted { $0.sortOrder < $1.sortOrder }
+        }
+        set {
+            taskTemplateJSON = (try? JSONEncoder().encode(newValue))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            updatedAt = Date()
+        }
+    }
+}
+
+@Model
+final class SeriesEpisodeSlot {
+    var id: UUID = UUID()
+    var workspaceID: UUID?
+    var seriesID: UUID = UUID()
+    var plannedDate: Date = Date()
+    var includesTime: Bool = false
+    var statusRaw: String = SeriesEpisodeSlotStatus.open.rawValue
+    var convertedBriefID: UUID?
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        workspaceID: UUID? = nil,
+        seriesID: UUID,
+        plannedDate: Date,
+        includesTime: Bool = false,
+        status: SeriesEpisodeSlotStatus = .open,
+        convertedBriefID: UUID? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.seriesID = seriesID
+        self.plannedDate = plannedDate
+        self.includesTime = includesTime
+        self.statusRaw = status.rawValue
+        self.convertedBriefID = convertedBriefID
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+
+    var status: SeriesEpisodeSlotStatus {
+        get { SeriesEpisodeSlotStatus(rawValue: statusRaw) ?? .open }
+        set {
+            statusRaw = newValue.rawValue
+            updatedAt = Date()
+        }
     }
 }
 
@@ -1201,6 +1358,8 @@ final class ConversationThread {
 }
 
 extension CreativeBrief: WorkspaceScopedRecord {}
+extension ContentSeries: WorkspaceScopedRecord {}
+extension SeriesEpisodeSlot: WorkspaceScopedRecord {}
 extension PendingBriefProposal: WorkspaceScopedRecord {}
 extension PlatformOutput: WorkspaceScopedRecord {}
 extension CreatorSocialAccount: WorkspaceScopedRecord {}
@@ -1390,6 +1549,8 @@ enum AgentCySchema {
         VoiceExample.self,
         VoiceProfile.self,
         CreativeBrief.self,
+        ContentSeries.self,
+        SeriesEpisodeSlot.self,
         PendingBriefProposal.self,
         PendingVoiceProfileProposal.self,
         PlatformOutput.self,

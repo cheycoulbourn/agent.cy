@@ -315,24 +315,15 @@ struct ScheduledPostDetailView: View {
         } message: {
             Text("You can find it later under Archived in the Idea Bank.")
         }
-        .alert("Delete this post?", isPresented: $confirmDelete) {
-            if PostSeriesDeletionPolicy.isPartOfSeries(output) {
-                Button("Delete this post", role: .destructive) {
-                    deletePost(scope: .thisPost)
-                }
-                Button("Delete this and future posts", role: .destructive) {
-                    deletePost(scope: .thisAndFuture)
-                }
-            } else {
-                Button("Delete post", role: .destructive) {
-                    deletePost(scope: .thisPost)
-                }
+        .alert(brief.seriesID == nil ? "Delete this post?" : "Delete this episode?", isPresented: $confirmDelete) {
+            Button(brief.seriesID == nil ? "Delete post" : "Delete this episode", role: .destructive) {
+                deletePost(scope: .thisPost)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(PostSeriesDeletionPolicy.isPartOfSeries(output)
-                ? "Past posts stay in place. Linked tasks for every deleted post are also removed."
-                : "This also removes the post's linked tasks.")
+            Text(brief.seriesID == nil
+                ? "This also removes the post's linked tasks."
+                : "This removes only this episode and its linked tasks. The series and future empty slots stay in place.")
         }
         .onDisappear {
             if output.status == .posted { savePublishedLink() }

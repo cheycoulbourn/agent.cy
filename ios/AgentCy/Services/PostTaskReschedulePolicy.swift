@@ -10,8 +10,8 @@ enum PostTaskReschedulePolicy {
         taskOutputID == outputID || (taskOutputID == nil && taskBriefID == briefID)
     }
 
-    /// Keep a linked task on its post's scheduled day while preserving the
-    /// task's own time of day when it has one.
+    /// Keep a linked task on its post's preferred work day while preserving
+    /// the task's own time of day when it has one.
     static func alignedDate(
         _ taskDate: Date?,
         to postDate: Date,
@@ -55,18 +55,20 @@ enum PostTaskReschedulePolicy {
         includesTime: Bool,
         briefID: UUID?,
         outputID: UUID?,
+        workDate: Date? = nil,
         outputs: [PlatformOutput],
         calendar: Calendar = .current
     ) -> Date? {
-        guard let postDate = scheduledPostDate(
+        let preferredDate = workDate ?? scheduledPostDate(
             briefID: briefID,
             outputID: outputID,
             outputs: outputs
-        ) else { return requestedDate }
+        )
+        guard let preferredDate else { return requestedDate }
 
         return alignedDate(
             requestedDate,
-            to: postDate,
+            to: preferredDate,
             includesTime: includesTime,
             calendar: calendar
         )

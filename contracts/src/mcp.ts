@@ -88,6 +88,8 @@ export const McpBridgePostSchema = z
     notes: z.string().max(20_000),
     status: BriefStatusSchema,
     pillarId: NullableUuidSchema,
+    workDate: IsoDateTimeSchema.nullish(),
+    includesWorkTime: z.boolean().default(false),
     durationSeconds: z.number().int().nonnegative().max(86_400),
     hook: z.string().max(10_000),
     firstFrameText: z.string().max(5_000),
@@ -99,6 +101,52 @@ export const McpBridgePostSchema = z
     markdown: z.string().max(250_000),
     outputs: z.array(McpBridgeOutputSchema).max(100),
     tasks: z.array(McpBridgeTaskSchema).max(500),
+    seriesId: NullableUuidSchema,
+    episodeNumber: z.number().int().positive().nullish(),
+    episodeLabel: z.string().max(160).nullish(),
+  })
+  .strict();
+
+export const McpBridgeSeriesTaskTemplateSchema = z
+  .object({
+    id: z.uuid(),
+    title: z.string().trim().min(1).max(500),
+    notes: z.string().max(10_000),
+    kind: TaskKindSchema,
+    priority: z.enum(["none", "low", "medium", "high", "urgent"]),
+    estimatedMinutes: z.number().int().positive().max(10_000).nullish(),
+    sortOrder: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const McpBridgeSeriesSchema = z
+  .object({
+    id: z.uuid(),
+    name: z.string().trim().min(1).max(160),
+    pillarId: NullableUuidSchema,
+    state: z.enum(["active", "paused", "archived"]),
+    defaultPlatform: PlatformSchema.nullish(),
+    defaultDestinationId: NullableUuidSchema,
+    defaultFormatId: NullableUuidSchema,
+    defaultSocialAccountId: NullableUuidSchema,
+    defaultDurationSeconds: z.number().int().positive().max(86_400).nullish(),
+    cadence: z.enum(["none", "daily", "weekly", "monthly"]),
+    cadenceWeekdays: z.array(z.number().int().min(1).max(7)).max(7),
+    cadenceMonthDay: z.number().int().min(1).max(31).nullish(),
+    cadenceEndDate: IsoDateTimeSchema.nullish(),
+    cadenceIncludesTime: z.boolean(),
+    taskTemplate: z.array(McpBridgeSeriesTaskTemplateSchema).max(100),
+  })
+  .strict();
+
+export const McpBridgeEpisodeSlotSchema = z
+  .object({
+    id: z.uuid(),
+    seriesId: z.uuid(),
+    plannedDate: IsoDateTimeSchema,
+    includesTime: z.boolean(),
+    status: z.enum(["open", "converted", "skipped"]),
+    convertedPostId: NullableUuidSchema,
   })
   .strict();
 
@@ -120,6 +168,8 @@ export const McpBridgeSnapshotSchema = z
     pillars: z.array(McpBridgePillarSchema).max(100),
     posts: z.array(McpBridgePostSchema).max(5_000),
     tasks: z.array(McpBridgeTaskSchema).max(10_000),
+    series: z.array(McpBridgeSeriesSchema).max(1_000).default([]),
+    episodeSlots: z.array(McpBridgeEpisodeSlotSchema).max(20_000).default([]),
   })
   .strict();
 
@@ -266,5 +316,7 @@ export const McpBridgeReceiptSchema = z
 export type McpBridgeSnapshot = z.infer<typeof McpBridgeSnapshotSchema>;
 export type McpBridgePost = z.infer<typeof McpBridgePostSchema>;
 export type McpBridgeTask = z.infer<typeof McpBridgeTaskSchema>;
+export type McpBridgeSeries = z.infer<typeof McpBridgeSeriesSchema>;
+export type McpBridgeEpisodeSlot = z.infer<typeof McpBridgeEpisodeSlotSchema>;
 export type McpBridgeChangeRequest = z.infer<typeof McpBridgeChangeRequestSchema>;
 export type McpBridgeReceipt = z.infer<typeof McpBridgeReceiptSchema>;

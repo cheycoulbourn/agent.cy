@@ -29,6 +29,8 @@ struct LocalExportService: ExportServicing {
         let destinations = try context.fetch(FetchDescriptor<PublishingDestination>())
         let formats = try context.fetch(FetchDescriptor<PublishingFormat>())
         let socialAccounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>())
+        let contentSeries = try context.fetch(FetchDescriptor<ContentSeries>())
+        let episodeSlots = try context.fetch(FetchDescriptor<SeriesEpisodeSlot>())
         let focusTemplates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())
         let focusOverrides = try context.fetch(FetchDescriptor<DailyFocusOverride>())
         let focusDayDetails = try context.fetch(FetchDescriptor<DailyFocusDayDetail>())
@@ -40,7 +42,7 @@ struct LocalExportService: ExportServicing {
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 15,
+            "schemaVersion": 16,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -98,6 +100,9 @@ struct LocalExportService: ExportServicing {
                     "giftedProduct": brief.giftedProductDescription,
                     "moodBoardEnabled": brief.moodBoardEnabled,
                     "moodBoardURL": brief.moodBoardURLString,
+                    "seriesID": brief.seriesID?.uuidString ?? NSNull(),
+                    "episodeNumber": brief.episodeNumber ?? NSNull(),
+                    "episodeLabel": brief.episodeLabel,
                     "workDate": brief.workDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "includesWorkTime": brief.includesWorkTime,
                     "agendaDate": brief.agendaDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
@@ -200,6 +205,52 @@ struct LocalExportService: ExportServicing {
                     "isArchived": $0.isArchived
                 ] as [String: Any]
             },
+            "contentSeries": contentSeries.map { series in
+                [
+                    "id": series.id.uuidString,
+                    "workspaceID": series.workspaceID?.uuidString ?? NSNull(),
+                    "name": series.name,
+                    "pillarID": series.pillarID?.uuidString ?? NSNull(),
+                    "state": series.state.rawValue,
+                    "defaultPlatform": series.defaultPlatform?.rawValue ?? NSNull(),
+                    "defaultDestinationID": series.defaultDestinationID?.uuidString ?? NSNull(),
+                    "defaultFormatID": series.defaultFormatID?.uuidString ?? NSNull(),
+                    "defaultSocialAccountID": series.defaultSocialAccountID?.uuidString ?? NSNull(),
+                    "defaultDurationSeconds": series.defaultDurationSeconds ?? NSNull(),
+                    "cadence": series.cadence.rawValue,
+                    "cadenceWeekdays": series.cadenceWeekdays.map(\.rawValue).sorted(),
+                    "cadenceMonthDay": series.cadenceMonthDay ?? NSNull(),
+                    "cadenceEndDate": series.cadenceEndDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "cadenceIncludesTime": series.cadenceIncludesTime,
+                    "taskTemplate": series.taskTemplate.map { item in
+                        [
+                            "id": item.id.uuidString,
+                            "title": item.title,
+                            "notes": item.notes,
+                            "kind": item.kind.rawValue,
+                            "priority": item.priority.rawValue,
+                            "estimatedMinutes": item.estimatedMinutes ?? NSNull(),
+                            "sortOrder": item.sortOrder
+                        ] as [String: Any]
+                    },
+                    "createdAt": ISO8601DateFormatter().string(from: series.createdAt),
+                    "updatedAt": ISO8601DateFormatter().string(from: series.updatedAt),
+                    "archivedAt": series.archivedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+                ] as [String: Any]
+            },
+            "seriesEpisodeSlots": episodeSlots.map { slot in
+                [
+                    "id": slot.id.uuidString,
+                    "workspaceID": slot.workspaceID?.uuidString ?? NSNull(),
+                    "seriesID": slot.seriesID.uuidString,
+                    "plannedDate": ISO8601DateFormatter().string(from: slot.plannedDate),
+                    "includesTime": slot.includesTime,
+                    "status": slot.status.rawValue,
+                    "convertedBriefID": slot.convertedBriefID?.uuidString ?? NSNull(),
+                    "createdAt": ISO8601DateFormatter().string(from: slot.createdAt),
+                    "updatedAt": ISO8601DateFormatter().string(from: slot.updatedAt)
+                ] as [String: Any]
+            },
             "rhythmTemplates": rhythmTemplates.map { ["id": $0.id.uuidString, "name": $0.name, "entries": $0.entriesText, "isActive": $0.isActive] as [String: Any] },
             "weekPlans": weekPlans.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "rhythmEntries": $0.rhythmEntriesText, "notes": $0.notes] },
             "conversationThreads": threads.map { ["id": $0.id.uuidString, "briefID": $0.briefID?.uuidString ?? NSNull(), "title": $0.title, "turnCount": $0.turnCount] as [String: Any] },
@@ -299,6 +350,10 @@ struct LocalExportService: ExportServicing {
             .init(path: "agentcy-export.json", data: json),
             .init(path: "posts.md", data: Data(markdown.utf8)),
             .init(
+                path: "series.md",
+                data: Data(makeSeriesMarkdown(series: contentSeries, slots: episodeSlots, briefs: briefs).utf8)
+            ),
+            .init(
                 path: "brand-cabinet.md",
                 data: Data(
                     makeBrandMarkdown(
@@ -371,6 +426,61 @@ struct LocalExportService: ExportServicing {
             if !briefTasks.isEmpty {
                 lines += ["### Tasks"] + briefTasks + [""]
             }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func makeSeriesMarkdown(
+        series: [ContentSeries],
+        slots: [SeriesEpisodeSlot],
+        briefs: [CreativeBrief]
+    ) -> String {
+        var lines = ["# agent.cy series export", "", "Exported \(Date().formatted(date: .long, time: .shortened))", ""]
+        for item in series.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            let itemSlots = slots
+                .filter { $0.seriesID == item.id }
+                .sorted { $0.plannedDate < $1.plannedDate }
+            let episodes = briefs
+                .filter { $0.seriesID == item.id }
+                .sorted {
+                    if let left = $0.episodeNumber, let right = $1.episodeNumber, left != right {
+                        return left < right
+                    }
+                    return $0.createdAt < $1.createdAt
+                }
+            lines += [
+                "## \(item.name)",
+                "",
+                "**State:** \(item.state.title)  ",
+                "**Cadence:** \(item.cadence.title)",
+                "",
+                "### Episodes"
+            ]
+            if episodes.isEmpty {
+                lines.append("- None")
+            } else {
+                for episode in episodes {
+                    let number = episode.episodeNumber.map { "Episode \($0): " } ?? ""
+                    let label = episode.episodeLabel.isEmpty ? episode.title : episode.episodeLabel
+                    lines.append("- \(number)\(label) — \(episode.status.title)")
+                }
+            }
+            lines += ["", "### Planned episode slots"]
+            if itemSlots.isEmpty {
+                lines.append("- None")
+            } else {
+                for slot in itemSlots {
+                    let timeStyle: Date.FormatStyle.TimeStyle = slot.includesTime ? .shortened : .omitted
+                    lines.append("- \(slot.plannedDate.formatted(date: .abbreviated, time: timeStyle)) — \(slot.status.title)")
+                }
+            }
+            lines += ["", "### Task template"]
+            if item.taskTemplate.isEmpty {
+                lines.append("- None")
+            } else {
+                lines += item.taskTemplate.map { "- \($0.title)" }
+            }
+            lines.append("")
         }
         return lines.joined(separator: "\n")
     }

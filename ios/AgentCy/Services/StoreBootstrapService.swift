@@ -76,6 +76,7 @@ enum StoreBootstrapService {
         try migrateTasks(context: context)
         try migratePillars(context: context)
         try migrateCreatorWorkspaces(context: context)
+        try SeriesMigrationService.run(context: context)
         try migrateDailyFocusCopy(context: context)
         try context.save()
     }

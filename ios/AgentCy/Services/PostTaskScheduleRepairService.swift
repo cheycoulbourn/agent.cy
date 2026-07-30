@@ -3,11 +3,11 @@ import SwiftData
 
 @MainActor
 enum PostTaskScheduleRepairService {
-    static let migrationKey = "agentcy.postTaskScheduleRepair.allPostTasks.v2"
+    static let migrationKey = "agentcy.postTaskScheduleRepair.workDateFirst.v3"
 
-    /// Repairs post tasks that were left on an old day or without a due date.
-    /// This deliberately runs once so later creator edits are never overwritten
-    /// during app launch.
+    /// Moves automatically dated post tasks from the posting day to the work
+    /// day. Posts without a work day retain the posting-day fallback. This
+    /// deliberately runs once so later creator edits are never overwritten.
     @discardableResult
     static func reconcileOnce(
         context: ModelContext,
@@ -19,6 +19,8 @@ enum PostTaskScheduleRepairService {
         let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
         let outputByID = Dictionary(uniqueKeysWithValues: outputs.map { ($0.id, $0) })
         let outputsByBriefID = Dictionary(grouping: outputs, by: \.briefID)
+        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
+        let briefByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
         var repairedCount = 0
 
@@ -29,27 +31,35 @@ enum PostTaskScheduleRepairService {
                         .filter { $0.status == .scheduled && $0.targetDate != nil }
                         .min { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
                 }
-            guard let output,
-                  output.status != .posted,
-                  let postDate = output.targetDate
-            else { continue }
+            guard let output, output.status != .posted else { continue }
 
-            let taskIsOnPostDay = task.targetDate.map {
-                calendar.isDate($0, inSameDayAs: postDate)
+            let brief = briefByID[output.briefID]
+            let postDate = output.targetDate
+            guard let preferredDate = brief?.workDate ?? postDate else { continue }
+
+            let taskIsOnPreferredDay = task.targetDate.map {
+                calendar.isDate($0, inSameDayAs: preferredDate)
             } ?? false
-            let focusIsOnPostDay = task.dailyFocusDate.map {
-                calendar.isDate($0, inSameDayAs: postDate)
+            let focusIsOnPreferredDay = task.dailyFocusDate.map {
+                calendar.isDate($0, inSameDayAs: preferredDate)
             } ?? true
-            guard !taskIsOnPostDay || !focusIsOnPostDay else { continue }
+            guard !taskIsOnPreferredDay || !focusIsOnPreferredDay else { continue }
+
+            if brief?.workDate != nil, let taskDate = task.targetDate {
+                let wasAutomaticallyOnPostDay = postDate.map {
+                    calendar.isDate(taskDate, inSameDayAs: $0)
+                } ?? false
+                guard wasAutomaticallyOnPostDay else { continue }
+            }
 
             task.targetDate = PostTaskReschedulePolicy.alignedDate(
                 task.targetDate,
-                to: postDate,
+                to: preferredDate,
                 includesTime: task.includesTargetTime,
                 calendar: calendar
             )
             if task.dailyFocusDate != nil {
-                task.dailyFocusDate = calendar.startOfDay(for: postDate)
+                task.dailyFocusDate = calendar.startOfDay(for: preferredDate)
             }
             repairedCount += 1
         }

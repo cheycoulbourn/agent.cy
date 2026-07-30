@@ -138,6 +138,76 @@ export function createAgentCyMcpServer(workspace = new AgentCyWorkspace()): McpS
   );
 
   server.registerTool(
+    "list_series",
+    {
+      title: "List content series",
+      description: "List agent.cy series with cadence, state, episode counts, and open planning slots.",
+      inputSchema: {
+        state: z.enum(["active", "paused", "archived"]).optional(),
+      },
+    },
+    async ({ state }) => {
+      try {
+        const snapshot = workspace.readSnapshot();
+        const items = snapshot.series.filter((series) => !state || series.state === state);
+        const text = items.length === 0
+          ? "No series match this filter."
+          : items.map((series) => {
+              const episodeCount = snapshot.posts.filter((post) => post.seriesId === series.id).length;
+              const openSlotCount = snapshot.episodeSlots.filter(
+                (slot) => slot.seriesId === series.id && slot.status === "open",
+              ).length;
+              return [
+                `- ${series.name} (${series.state})`,
+                `  ID: ${series.id}`,
+                `  Cadence: ${series.cadence}`,
+                `  Episodes: ${episodeCount}`,
+                `  Open slots: ${openSlotCount}`,
+              ].join("\n");
+            }).join("\n");
+        return textResult(text);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_episode_slots",
+    {
+      title: "List planned episode slots",
+      description: "List empty, converted, or skipped series planning slots. Slots are planning objects, not scheduled posts.",
+      inputSchema: {
+        seriesId: z.string().uuid().optional(),
+        status: z.enum(["open", "converted", "skipped"]).optional(),
+        limit: z.number().int().min(1).max(200).default(50),
+      },
+    },
+    async ({ seriesId, status, limit }) => {
+      try {
+        const snapshot = workspace.readSnapshot();
+        const seriesById = new Map(snapshot.series.map((series) => [series.id, series.name]));
+        const slots = snapshot.episodeSlots
+          .filter((slot) => !seriesId || slot.seriesId === seriesId)
+          .filter((slot) => !status || slot.status === status)
+          .sort((left, right) => left.plannedDate.localeCompare(right.plannedDate))
+          .slice(0, limit);
+        const text = slots.length === 0
+          ? "No episode slots match this filter."
+          : slots.map((slot) => [
+              `- ${seriesById.get(slot.seriesId) ?? "Unknown series"} — ${slot.status}`,
+              `  Slot ID: ${slot.id}`,
+              `  Planned: ${slot.plannedDate}`,
+              slot.convertedPostId ? `  Converted post: ${slot.convertedPostId}` : undefined,
+            ].filter(Boolean).join("\n")).join("\n");
+        return textResult(text);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     "get_agenda",
     {
       title: "Read the agenda",

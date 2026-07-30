@@ -884,7 +884,7 @@ final class AppModel {
             ? durationSeconds
             : platform.format.defaultDuration
         let brief = CreativeBrief(title: "", premise: "", source: .text, status: .spark)
-        let workspaceID = resolvedWorkspaceID(context: context)
+        let workspaceID = brief.workspaceID ?? resolvedWorkspaceID(context: context)
         brief.workspaceID = workspaceID
         brief.ideaBankPlacement = .post
         brief.pillarID = pillarID
@@ -1235,11 +1235,13 @@ final class AppModel {
             notice = .error("Give the task a clear next action.")
             return nil
         }
+        let linkedBrief = briefID.flatMap { brief(id: $0, context: context) }
         let resolvedTargetDate = PostTaskReschedulePolicy.resolvedDueDate(
             requestedDate: targetDate,
             includesTime: includesTargetTime,
             briefID: briefID,
             outputID: platformOutputID,
+            workDate: linkedBrief?.workDate,
             outputs: (try? context.fetch(FetchDescriptor<PlatformOutput>())) ?? []
         )
         let task = CreatorTask(
@@ -1942,7 +1944,15 @@ final class AppModel {
         }
 
         let allTasks = (try? context.fetch(FetchDescriptor<CreatorTask>())) ?? []
-        PostTaskReschedulePolicy.clearOpenTaskDates(allTasks, for: output)
+        if let workDate = brief.workDate {
+            PostTaskReschedulePolicy.alignOpenTasks(
+                allTasks,
+                to: output,
+                on: workDate
+            )
+        } else {
+            PostTaskReschedulePolicy.clearOpenTaskDates(allTasks, for: output)
+        }
         output.targetDate = nil
         output.includesTargetTime = false
         output.recurrence = .none
@@ -2016,24 +2026,17 @@ final class AppModel {
         )
         brief.agendaDate = scheduledDate
         BriefLifecycle.synchronize(brief, outputs: outputs(for: brief, context: context))
+        // Recurrence is retained as legacy metadata until existing series are
+        // migrated, but scheduling never materializes future posts. Future
+        // planning is represented by SeriesEpisodeSlot records instead.
+        output.seriesRootOutputID = nil
 
         do {
             try context.save()
-            let futureCount = try RecurringPostMaterializer.createFutureOccurrences(
-                rootBrief: brief,
-                rootOutput: output,
-                firstDate: scheduledDate,
-                context: context
-            )
-            try context.save()
-            if futureCount > 0 {
-                let total = futureCount + 1
-                notice = .info("Scheduled \(total) posts in this series.")
-            }
             queueCalendarSync(context: context)
             return output.status == .scheduled
         } catch {
-            presentCreatorError(error, action: "The recurring posts")
+            presentCreatorError(error, action: "The post")
             queueCalendarSync(context: context)
             return output.status == .scheduled
         }
@@ -2579,13 +2582,17 @@ final class AppModel {
         to newDate: Date?,
         context: ModelContext
     ) -> Int {
-        guard let newDate else { return 0 }
+        let preferredDate =
+            brief(id: output.briefID, context: context)?.workDate
+            ?? newDate
+            ?? output.targetDate
+        guard let preferredDate else { return 0 }
 
         let allTasks = (try? context.fetch(FetchDescriptor<CreatorTask>())) ?? []
         return PostTaskReschedulePolicy.alignOpenTasks(
             allTasks,
             to: output,
-            on: newDate
+            on: preferredDate
         )
     }
 

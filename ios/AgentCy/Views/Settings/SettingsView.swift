@@ -11,11 +11,13 @@ struct SettingsView: View {
     @Query(sort: \CreatorSocialAccount.sortOrder) private var socialAccounts: [CreatorSocialAccount]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var reminders: [ReminderSettings]
+    @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @AppStorage(CalendarIntegrationPreferences.selectedCalendarTitleKey) private var calendarTitle = ""
     @AppStorage(CalendarIntegrationPreferences.syncScheduledPostsKey) private var syncCalendarPosts = false
     @AppStorage(CalendarIntegrationPreferences.syncTasksKey) private var syncCalendarTasks = false
     @State private var showAddAccount = false
     @State private var showOnboardingPreview = false
+    @State private var showWeeklyFocusEditor = false
     @State private var reviewTestMessage: String?
 
     var body: some View {
@@ -68,6 +70,19 @@ struct SettingsView: View {
                                 }
                                 .buttonStyle(.plain)
                             }
+                        }
+
+                        SettingsIndexSection(title: "Planning") {
+                            Button {
+                                showWeeklyFocusEditor = true
+                            } label: {
+                                SettingsIndexRow(
+                                    title: "Weekly focus",
+                                    value: weeklyFocusSummary,
+                                    isLast: true
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
 
                         SettingsIndexSection(title: "Publishing") {
@@ -247,6 +262,9 @@ struct SettingsView: View {
                 SocialAccountEditorView(profile: profile, initialIdentity: activeIdentity)
             }
         }
+        .sheet(isPresented: $showWeeklyFocusEditor) {
+            WeeklyFocusSetupView()
+        }
         .fullScreenCover(isPresented: $showOnboardingPreview) {
             if let profile = profiles.first {
                 OnboardingView(
@@ -274,6 +292,24 @@ struct SettingsView: View {
 
     private var activeDestinationCount: Int {
         destinations.filter { !$0.isArchived }.count
+    }
+
+    private var weeklyFocusSummary: String {
+        let focusCount = PillarWeekday.mondayFirst.filter { day in
+            activeFocusTemplates.contains { $0.weekday == day && $0.isActive }
+        }.count
+        let restCount = PillarWeekday.mondayFirst.count - focusCount
+        return "\(focusCount) focus · \(restCount) rest"
+    }
+
+    private var activeFocusTemplates: [DailyFocusTemplateEntry] {
+        allFocusTemplates.filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            )
+        }
     }
 
     private func sendReviewPostTest() {

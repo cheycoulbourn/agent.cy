@@ -82,6 +82,13 @@ private struct AgendaOutputDayGroup: Identifiable {
     var id: Date { day }
 }
 
+private struct AgendaUndatedPost: Identifiable {
+    let output: PlatformOutput
+    let brief: CreativeBrief
+
+    var id: UUID { output.id }
+}
+
 private struct AgendaRenderSnapshot {
     let briefByID: [UUID: CreativeBrief]
     let occurrences: [AgendaPostOccurrence]
@@ -106,10 +113,13 @@ struct AgendaView: View {
     @Binding var selectedDay: Date
     let showsHeader: Bool
     @Environment(AppModel.self) private var appModel
+    @Environment(\.modelContext) private var context
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
     @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
+    @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
+    @Query(sort: \SeriesEpisodeSlot.plannedDate) private var allEpisodeSlots: [SeriesEpisodeSlot]
     @Query private var destinations: [PublishingDestination]
     @Query private var formats: [PublishingFormat]
     @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
@@ -123,16 +133,24 @@ struct AgendaView: View {
     @State private var focusedDay: AgendaDaySelection?
     @State private var deepLinkedBrief: CreativeBrief?
     @State private var deepLinkedBriefOpensEditor = false
+    @State private var selectedEpisodeSlot: SeriesEpisodeSlot?
     @State private var displayMode: AgendaDisplayMode = .week
     @State private var calendarMonth = Date()
     @State private var listPillarFilter: AgendaListPillarFilter = .all
     @State private var listStatusFilter: AgendaListStatusFilter = .all
     @State private var isListPillarFilterPresented = false
+    @State private var isListStatusFilterPresented = false
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
     private var tasks: [CreatorTask] { scoped(allTasks) }
     private var pillars: [Pillar] { scoped(allPillars) }
+    private var seriesRecords: [ContentSeries] {
+        scoped(allSeries).filter { $0.state != .archived }
+    }
+    private var episodeSlots: [SeriesEpisodeSlot] {
+        scoped(allEpisodeSlots).filter { $0.status == .open }
+    }
     private var socialAccounts: [CreatorSocialAccount] { scoped(allSocialAccounts) }
     private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
     private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
@@ -158,7 +176,12 @@ struct AgendaView: View {
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
     private var activeBriefIDs: Set<UUID> { Set(activeBriefs.map(\.id)) }
     private var activeWorkspace: CreatorWorkspace? {
-        guard let activeWorkspaceID = appModel.activeWorkspaceID else { return nil }
+        guard let activeWorkspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        ) else {
+            return nil
+        }
         return workspaces.first(where: { $0.id == activeWorkspaceID && !$0.isArchived })
     }
 
@@ -219,6 +242,12 @@ struct AgendaView: View {
         .sheet(item: $reschedulingOutput) { output in
             PostRescheduleSheet(output: output)
         }
+        .sheet(item: $selectedEpisodeSlot) { slot in
+            EpisodeSlotActionsView(slot: slot) { result in
+                deepLinkedBriefOpensEditor = true
+                deepLinkedBrief = result.brief
+            }
+        }
         .navigationDestination(item: $focusedDay) { selection in
             DayAgendaView(day: selection.day)
         }
@@ -255,11 +284,13 @@ struct AgendaView: View {
             focusedDay = nil
             deepLinkedBrief = nil
             deepLinkedBriefOpensEditor = false
+            selectedEpisodeSlot = nil
         }
         .onChange(of: appModel.requestedOpenPostsList, initial: true) { _, request in
             guard request > 0 else { return }
             displayMode = .list
             listStatusFilter = .open
+            appModel.requestedOpenPostsList = 0
         }
         .onChange(of: appModel.widgetBriefID, initial: true) { _, id in
             guard let id, let brief = activeBriefs.first(where: { $0.id == id }) else { return }
@@ -404,6 +435,7 @@ struct AgendaView: View {
     private func calendarAgendaView(snapshot: AgendaRenderSnapshot) -> some View {
         let selectedOccurrences = snapshot.occurrences(on: selectedDay)
         let selectedTasks = snapshot.tasks(on: selectedDay)
+        let selectedSlots = episodeSlots(on: selectedDay)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x5) {
@@ -425,7 +457,7 @@ struct AgendaView: View {
                             )
                         )
 
-                        if selectedOccurrences.isEmpty {
+                        if selectedOccurrences.isEmpty && selectedSlots.isEmpty {
                             Text("No posts planned.")
                                 .font(.agentBody)
                                 .foregroundStyle(Color.agentSecondary)
@@ -441,6 +473,10 @@ struct AgendaView: View {
                                             dayTasks: selectedTasks
                                         )
                                     }
+                                }
+
+                                ForEach(selectedSlots) { slot in
+                                    episodeSlotCard(slot)
                                 }
                             }
                         }
@@ -595,30 +631,65 @@ struct AgendaView: View {
             VStack(alignment: .leading, spacing: AgentSpacing.x5) {
                 agendaListFilters
 
-                if upcomingAgendaGroups.isEmpty && pastAgendaGroups.isEmpty {
-                    AgentInsetSurface {
-                        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                            Text(hasActiveListFilter ? "No posts match these filters." : "No scheduled posts yet.")
-                                .font(.agentTitle)
-                                .foregroundStyle(Color.agentText)
-                            Text(
-                                hasActiveListFilter
-                                    ? "Try another pillar or status."
-                                    : "Posts with a date will appear here."
-                            )
-                                .font(.agentBody)
-                                .foregroundStyle(Color.agentSecondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
-                    }
+                if upcomingAgendaGroups.isEmpty &&
+                    pastAgendaGroups.isEmpty &&
+                    filteredUndatedListPosts.isEmpty {
+                    agendaListEmptyState
                 } else {
                     agendaListSection(title: "Upcoming", groups: upcomingAgendaGroups)
                     agendaListSection(title: "Past", groups: pastAgendaGroups)
+                    agendaUndatedListSection
                 }
             }
             .agentBottomNavigationClearance()
         }
         .scrollIndicators(.hidden)
+    }
+
+    private var agendaListEmptyState: some View {
+        AgentInsetSurface {
+            VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    Text(hasActiveListFilter ? "Nothing fits this view yet." : "Your next post can start here.")
+                        .font(.agentTitle)
+                        .foregroundStyle(Color.agentText)
+
+                    Text(
+                        hasActiveListFilter
+                            ? "Start a post for this view, or save an idea to shape later."
+                            : "Create a post for your calendar, or save an idea to shape later."
+                    )
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: AgentSpacing.x3) {
+                    AgentBlockAddActionButton(
+                        title: "Start a post",
+                        background: .actionAccent,
+                        foreground: .onAccent,
+                        border: .clear,
+                        action: { presentListEmptyStateCapture(.post) }
+                    )
+
+                    AgentBlockAddActionButton(
+                        title: "Save an idea",
+                        action: { presentListEmptyStateCapture(.idea) }
+                    )
+                }
+
+                if hasActiveListFilter {
+                    Button("Clear filters", action: clearAgendaListFilters)
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(minHeight: 44)
+                        .contentShape(.rect)
+                        .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var agendaListFilters: some View {
@@ -642,32 +713,23 @@ struct AgendaView: View {
                     .presentationCornerRadius(24)
             }
 
-            Menu {
-                Picker("Status", selection: $listStatusFilter) {
-                    Text("All statuses")
-                        .tag(AgendaListStatusFilter.all)
-
-                    Text("Open posts")
-                        .tag(AgendaListStatusFilter.open)
-
-                    ForEach(AgendaListStandardStatus.allCases, id: \.self) { status in
-                        Text(status.title)
-                            .tag(AgendaListStatusFilter.standard(status))
-                    }
-
-                    ForEach(availableListCustomStatuses, id: \.self) { status in
-                        Text(status)
-                            .tag(AgendaListStatusFilter.custom(status))
-                    }
-                }
+            Button {
+                isListStatusFilterPresented = true
             } label: {
                 agendaListFilterLabel(
                     category: "Status",
                     value: selectedListStatusTitle
                 )
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Filter by status")
             .accessibilityValue(selectedListStatusTitle)
+            .popover(isPresented: $isListStatusFilterPresented) {
+                agendaListStatusFilterPopover
+                    .presentationCompactAdaptation(.popover)
+                    .presentationBackground(.ultraThinMaterial)
+                    .presentationCornerRadius(24)
+            }
         }
     }
 
@@ -731,6 +793,77 @@ struct AgendaView: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+    }
+
+    private var agendaListStatusFilterPopover: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                agendaListStatusFilterRow(
+                    title: "All statuses",
+                    filter: .all
+                )
+                agendaListStatusFilterRow(
+                    title: "Open posts",
+                    filter: .open
+                )
+
+                ForEach(AgendaListStandardStatus.allCases, id: \.self) { status in
+                    agendaListStatusFilterRow(
+                        title: status.title,
+                        filter: .standard(status)
+                    )
+                }
+
+                if !availableListCustomStatuses.isEmpty {
+                    Rectangle()
+                        .fill(Color.agentHairline)
+                        .frame(height: 1)
+                        .padding(.horizontal, AgentSpacing.x4)
+
+                    ForEach(availableListCustomStatuses, id: \.self) { status in
+                        agendaListStatusFilterRow(
+                            title: status,
+                            filter: .custom(
+                                CustomPostStatusPolicy.comparisonKey(status) ?? status.lowercased()
+                            )
+                        )
+                    }
+                }
+            }
+            .padding(.vertical, AgentSpacing.x2)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 248)
+        .frame(maxHeight: 440)
+    }
+
+    private func agendaListStatusFilterRow(
+        title: String,
+        filter: AgendaListStatusFilter
+    ) -> some View {
+        Button {
+            listStatusFilter = filter
+            isListStatusFilterPresented = false
+        } label: {
+            HStack(spacing: AgentSpacing.x3) {
+                Text(title)
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(1)
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                if listStatusFilter == filter {
+                    AgentIconView(.check, size: 13)
+                        .foregroundStyle(Color.agentText)
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(listStatusFilter == filter ? .isSelected : [])
     }
 
     private func agendaListFilterLabel(
@@ -811,15 +944,57 @@ struct AgendaView: View {
                                 if let brief = activeBriefs.first(where: {
                                     $0.id == occurrence.output.briefID
                                 }) {
+                                    let statusOverride = listStatusOverride(for: brief)
                                     agendaPostCard(
                                         occurrence: occurrence,
                                         brief: brief,
                                         day: group.day,
-                                        dayTasks: tasks(on: group.day)
+                                        dayTasks: tasks(on: group.day),
+                                        statusTextOverride: statusOverride?.text,
+                                        displayStatusOverride: statusOverride?.status
                                     )
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var agendaUndatedListSection: some View {
+        if !filteredUndatedListPosts.isEmpty {
+            AgentInsetSurface {
+                VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                    SectionRuleHeader(
+                        title: "No date",
+                        trailing: AgendaDayPresentation.postCountLabel(
+                            filteredUndatedListPosts.count
+                        )
+                    )
+
+                    ForEach(filteredUndatedListPosts) { item in
+                        let statusOverride = listStatusOverride(for: item.brief)
+                        AgentPostCard(
+                            title: outputTitle(item.output, brief: item.brief),
+                            pillar: pillarName(for: item.brief),
+                            accent: pillarAccent(for: item.brief),
+                            status: statusOverride?.status ?? item.output.status,
+                            metadata: platformLabel(for: item.output),
+                            timeText: nil,
+                            statusTextOverride: statusOverride?.text ??
+                                CustomPostStatusPolicy.displayLabel(
+                                    briefStatus: item.brief.status,
+                                    outputStatus: item.output.status,
+                                    customStatus: item.brief.resolvedCustomStatusLabel,
+                                    ideaBankPlacement: item.brief.ideaBankPlacement
+                                ),
+                            destination: postDestination(
+                                brief: item.brief,
+                                output: item.output
+                            )
+                        )
                     }
                 }
             }
@@ -832,8 +1007,9 @@ struct AgendaView: View {
         let dayOutputs = dayOccurrences.map(\.output)
         let dayTasks = snapshot.tasks(on: day)
         let dayFocus = focus(on: day)
+        let dayEpisodeSlots = episodeSlots(on: day)
 
-        if AgendaDayPresentation.shouldCompact(
+        if dayEpisodeSlots.isEmpty && AgendaDayPresentation.shouldCompact(
             day: day,
             outputs: dayOutputs.map { output in
                 AgendaOutputState(
@@ -865,6 +1041,10 @@ struct AgendaView: View {
                         )
                     }
                 }
+
+                ForEach(dayEpisodeSlots) { slot in
+                    episodeSlotCard(slot)
+                }
             }
             .foregroundStyle(Color.agentText)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -872,6 +1052,23 @@ struct AgendaView: View {
             .overlay(alignment: .bottom) {
                 Rectangle().fill(Color.agentHairline).frame(height: 1)
             }
+        }
+    }
+
+    private func episodeSlots(on day: Date) -> [SeriesEpisodeSlot] {
+        episodeSlots.filter { Calendar.current.isDate($0.plannedDate, inSameDayAs: day) }
+    }
+
+    @ViewBuilder
+    private func episodeSlotCard(_ slot: SeriesEpisodeSlot) -> some View {
+        if let series = seriesRecords.first(where: { $0.id == slot.seriesID }) {
+            Button {
+                selectedEpisodeSlot = slot
+            } label: {
+                EpisodeNeededCard(slot: slot, series: series)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens options for this planned series episode")
         }
     }
 
@@ -985,7 +1182,9 @@ struct AgendaView: View {
         occurrence: AgendaPostOccurrence,
         brief: CreativeBrief,
         day: Date,
-        dayTasks: [CreatorTask]
+        dayTasks: [CreatorTask],
+        statusTextOverride: String? = nil,
+        displayStatusOverride: PlatformOutputStatus? = nil
     ) -> some View {
         let output = occurrence.output
         let section = TodayOutputPresentation.section(
@@ -1003,13 +1202,14 @@ struct AgendaView: View {
         let accent = pillarAccent(for: brief)
         let firstTaskDate = firstTaskDate(for: output, dayTasks: dayTasks)
         let isScheduledDraftOccurrence = occurrence.kind == .post && displaysAsDraft
-        let displayStatus: PlatformOutputStatus = if isScheduledDraftOccurrence {
+        let inferredDisplayStatus: PlatformOutputStatus = if isScheduledDraftOccurrence {
             .scheduled
         } else if displaysAsDraft {
             .draft
         } else {
             output.status
         }
+        let displayStatus = displayStatusOverride ?? inferredDisplayStatus
         let displayTime: Date? = switch occurrence.kind {
         case .work:
             brief.includesWorkTime ? occurrence.date : nil
@@ -1017,7 +1217,9 @@ struct AgendaView: View {
             firstTaskDate ?? (output.includesTargetTime ? occurrence.date : nil)
         }
         let statusText: String
-        if overdue {
+        if let statusTextOverride {
+            statusText = statusTextOverride
+        } else if overdue {
             statusText = "Missed"
         } else if isScheduledDraftOccurrence {
             statusText = "Scheduled draft"
@@ -1025,7 +1227,8 @@ struct AgendaView: View {
             statusText = CustomPostStatusPolicy.displayLabel(
                 briefStatus: brief.status,
                 outputStatus: output.status,
-                customStatus: brief.customStatusLabel
+                customStatus: brief.customStatusLabel,
+                ideaBankPlacement: brief.ideaBankPlacement
             )
         }
         let metadata = "\(occurrence.kind.label) · \(platformLabel(for: output))"
@@ -1252,55 +1455,134 @@ struct AgendaView: View {
             .sorted { $0.day > $1.day }
     }
     private var filteredListAgendaOccurrences: [AgendaPostOccurrence] {
-        datedAgendaOccurrences.filter { occurrence in
-            let output = occurrence.output
-            guard let brief = activeBriefs.first(where: { $0.id == output.briefID }) else {
-                return false
-            }
+        let briefByID = Dictionary(uniqueKeysWithValues: activeBriefs.map { ($0.id, $0) })
+        let occurrencesByOutputID = Dictionary(
+            grouping: datedAgendaOccurrences,
+            by: { $0.output.id }
+        )
 
-            let matchesPillar: Bool
-            switch listPillarFilter {
-            case .all:
-                matchesPillar = true
-            case .unfiled:
-                matchesPillar = brief.pillarID == nil
-            case .pillar(let pillarID):
-                matchesPillar = brief.pillarID == pillarID
-            }
-
-            let matchesStatus: Bool
-            switch listStatusFilter {
-            case .all:
-                matchesStatus = true
-            case .open:
-                matchesStatus = ContinueWorkingPostPolicy.includes(
-                    briefStatus: brief.status,
-                    outputStatus: output.status,
-                    customStatus: brief.resolvedCustomStatusLabel
-                )
-            case .standard(let status):
-                switch status {
-                case .draft:
-                    matchesStatus = output.status == .draft &&
-                        brief.status != .developing &&
-                        brief.resolvedCustomStatusLabel == nil
-                case .inProgress:
-                    matchesStatus = output.status == .draft &&
-                        brief.status == .developing &&
-                        brief.resolvedCustomStatusLabel == nil
-                case .scheduled:
-                    matchesStatus = output.status == .scheduled ||
-                        brief.status == .scheduled
-                case .posted:
-                    matchesStatus = output.status == .posted ||
-                        brief.status == .posted
+        return outputs
+            .compactMap { output -> [AgendaPostOccurrence]? in
+                guard let brief = briefByID[output.briefID],
+                      matchesListFilters(brief: brief, output: output) else {
+                    return nil
                 }
-            case .custom(let status):
-                matchesStatus = brief.resolvedCustomStatusLabel?
-                    .localizedCaseInsensitiveCompare(status) == .orderedSame
-            }
 
-            return matchesPillar && matchesStatus
+                let candidates = occurrencesByOutputID[output.id] ?? []
+                switch listStatusFilter {
+                case .all:
+                    return candidates
+                case .standard(.scheduled), .standard(.posted):
+                    return candidates.first(where: { $0.kind == .post }).map { [$0] } ?? []
+                case .open, .standard(.draft), .standard(.inProgress), .custom:
+                    if let workOccurrence = candidates.first(where: { $0.kind == .work }) {
+                        return [workOccurrence]
+                    }
+                    if let postOccurrence = candidates.first(where: { $0.kind == .post }) {
+                        return [postOccurrence]
+                    }
+                    return []
+                }
+            }
+            .flatMap { $0 }
+            .sorted {
+                agendaOccurrencePrecedes(
+                    $0,
+                    $1,
+                    briefByID: briefByID
+                )
+            }
+    }
+    private var filteredUndatedListPosts: [AgendaUndatedPost] {
+        guard !listStatusRequiresPostDate else { return [] }
+
+        let briefByID = Dictionary(uniqueKeysWithValues: activeBriefs.map { ($0.id, $0) })
+        let datedOutputIDs = Set(datedAgendaOccurrences.map(\.output.id))
+        return outputs
+            .compactMap { output in
+                guard !datedOutputIDs.contains(output.id),
+                      let brief = briefByID[output.briefID],
+                      matchesListFilters(brief: brief, output: output) else {
+                    return nil
+                }
+                return AgendaUndatedPost(output: output, brief: brief)
+            }
+            .sorted {
+                if $0.brief.updatedAt != $1.brief.updatedAt {
+                    return $0.brief.updatedAt > $1.brief.updatedAt
+                }
+                return $0.brief.title.localizedCaseInsensitiveCompare($1.brief.title) == .orderedAscending
+            }
+    }
+    private var listStatusRequiresPostDate: Bool {
+        switch listStatusFilter {
+        case .standard(.scheduled), .standard(.posted):
+            true
+        default:
+            false
+        }
+    }
+    private func matchesListFilters(
+        brief: CreativeBrief,
+        output: PlatformOutput
+    ) -> Bool {
+        guard !IdeaBankPlacementPolicy.includes(brief) else { return false }
+
+        let matchesPillar: Bool
+        switch listPillarFilter {
+        case .all:
+            matchesPillar = true
+        case .unfiled:
+            matchesPillar = brief.pillarID == nil
+        case .pillar(let pillarID):
+            matchesPillar = brief.pillarID == pillarID
+        }
+
+        let matchesStatus: Bool
+        switch listStatusFilter {
+        case .all:
+            matchesStatus = true
+        case .open:
+            matchesStatus = ContinueWorkingPostPolicy.includes(
+                briefStatus: brief.status,
+                outputStatus: output.status,
+                customStatus: brief.resolvedCustomStatusLabel,
+                ideaBankPlacement: brief.ideaBankPlacement
+            )
+        case .standard(let status):
+            switch status {
+            case .draft:
+                matchesStatus = output.status == .draft &&
+                    brief.status != .developing &&
+                    brief.resolvedCustomStatusLabel == nil
+            case .inProgress:
+                matchesStatus = output.status == .draft &&
+                    brief.status == .developing &&
+                    brief.resolvedCustomStatusLabel == nil
+            case .scheduled:
+                matchesStatus = output.status == .scheduled ||
+                    brief.status == .scheduled
+            case .posted:
+                matchesStatus = output.status == .posted ||
+                    brief.status == .posted
+            }
+        case .custom(let statusKey):
+            matchesStatus = CustomPostStatusPolicy.comparisonKey(
+                brief.resolvedCustomStatusLabel
+            ) == statusKey
+        }
+
+        return matchesPillar && matchesStatus
+    }
+    private func listStatusOverride(
+        for brief: CreativeBrief
+    ) -> (text: String, status: PlatformOutputStatus)? {
+        switch listStatusFilter {
+        case .custom, .open:
+            guard let customStatus = brief.resolvedCustomStatusLabel else { return nil }
+            return (customStatus, .draft)
+        default:
+            return nil
         }
     }
     private var filteredListAgendaOutputGroups: [AgendaOutputDayGroup] {
@@ -1335,7 +1617,12 @@ struct AgendaView: View {
         values.append(contentsOf: activeBriefs.compactMap(\.resolvedCustomStatusLabel))
         return values
             .compactMap(CustomPostStatusPolicy.normalized)
-            .filter { seen.insert($0.lowercased()).inserted }
+            .filter { status in
+                guard let key = CustomPostStatusPolicy.comparisonKey(status) else {
+                    return false
+                }
+                return seen.insert(key).inserted
+            }
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
     private var selectedListPillarTitle: String {
@@ -1364,12 +1651,30 @@ struct AgendaView: View {
             "Open posts"
         case .standard(let status):
             status.title
-        case .custom(let status):
-            status
+        case .custom(let statusKey):
+            availableListCustomStatuses.first {
+                CustomPostStatusPolicy.comparisonKey($0) == statusKey
+            } ?? "Custom"
         }
     }
     private var hasActiveListFilter: Bool {
         listPillarFilter != .all || listStatusFilter != .all
+    }
+    private func presentListEmptyStateCapture(_ mode: QuickCaptureLaunchMode) {
+        appModel.quickCaptureTargetDate = nil
+        if case .pillar(let pillarID) = listPillarFilter {
+            appModel.quickCapturePillarID = pillarID
+        } else {
+            appModel.quickCapturePillarID = nil
+        }
+        appModel.setQuickCaptureMode(mode)
+        appModel.presentedSheet = .quickCapture
+    }
+    private func clearAgendaListFilters() {
+        withAnimation(.snappy(duration: 0.2)) {
+            listPillarFilter = .all
+            listStatusFilter = .all
+        }
     }
     private func shiftCalendarMonth(_ amount: Int) {
         guard let newMonth = Calendar.current.date(
@@ -1647,6 +1952,275 @@ private struct AgendaDaySelection: Identifiable, Hashable {
     var id: Date { Calendar.current.startOfDay(for: day) }
 }
 
+private struct EpisodeNeededCard: View {
+    let slot: SeriesEpisodeSlot
+    let series: ContentSeries
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                Text(series.name)
+                    .font(.agentMetadata)
+                    .textCase(.uppercase)
+                    .foregroundStyle(Color.agentSecondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: AgentSpacing.x2)
+
+                Text("Episode needed")
+                    .font(.agentMetadata)
+                    .textCase(.uppercase)
+                    .foregroundStyle(Color.actionAccent)
+            }
+
+            HStack(spacing: AgentSpacing.x3) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text("Plan this episode")
+                        .font(.agentBody.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+
+                    Text(plannedDateText)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                }
+
+                Spacer(minLength: AgentSpacing.x3)
+                AgentIconView(.forward, size: 14)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(AgentSpacing.x5)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.dashboard, style: .continuous)
+                .stroke(
+                    Color.actionAccent.opacity(0.42),
+                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])
+                )
+        }
+    }
+
+    private var plannedDateText: String {
+        if slot.includesTime {
+            return slot.plannedDate.formatted(
+                .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
+            )
+        }
+        return slot.plannedDate.formatted(
+            .dateTime.weekday(.abbreviated).month(.abbreviated).day()
+        )
+    }
+}
+
+struct EpisodeSlotActionsView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    let slot: SeriesEpisodeSlot
+    let onConverted: (SeriesEpisodePlanner.ConversionResult) -> Void
+    @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+    @State private var showsIdeas = false
+    @State private var errorMessage: String?
+
+    private var series: ContentSeries? {
+        allSeries.first {
+            $0.id == slot.seriesID &&
+                WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: appModel.activeWorkspaceID,
+                    workspaces: workspaces
+                )
+        }
+    }
+
+    private var savedIdeas: [CreativeBrief] {
+        allBriefs.filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID,
+                workspaces: workspaces
+            ) &&
+                IdeaBankPlacementPolicy.includes($0)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    if let series {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                            MetaLabel(series.name)
+                            Text("Plan this episode")
+                                .font(.agentTitle)
+                            Text(plannedDateText)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                        }
+
+                        if showsIdeas {
+                            SectionRuleHeader(title: "Idea Bank", trailing: "\(savedIdeas.count)")
+                            if savedIdeas.isEmpty {
+                                Text("No saved ideas yet.")
+                                    .font(.agentSubtext)
+                                    .foregroundStyle(Color.agentSecondary)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(savedIdeas) { idea in
+                                        Button {
+                                            convert(idea: idea, series: series)
+                                        } label: {
+                                            HStack(spacing: AgentSpacing.x3) {
+                                                Text(idea.title)
+                                                    .font(.agentBody.weight(.medium))
+                                                    .foregroundStyle(Color.agentText)
+                                                    .multilineTextAlignment(.leading)
+                                                Spacer()
+                                                AgentIconView(.forward, size: 13)
+                                                    .foregroundStyle(Color.agentSecondary)
+                                            }
+                                            .frame(minHeight: 52)
+                                            .contentShape(.rect)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        } else {
+                            VStack(spacing: AgentSpacing.x3) {
+                                episodeAction("Create new episode") {
+                                    convertNew(series: series)
+                                }
+                                episodeAction("Use an Idea Bank idea") {
+                                    showsIdeas = true
+                                }
+                                episodeAction("Duplicate previous episode") {
+                                    duplicatePrevious(series: series)
+                                }
+                            }
+
+                            Button("Skip this slot", role: .destructive) {
+                                skip()
+                            }
+                            .font(.agentSubtext.weight(.semibold))
+                            .frame(minHeight: 44)
+                        }
+
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(.agentSubtext)
+                                .foregroundStyle(Color.agentDestructive)
+                        }
+                    } else {
+                        Text("This series is no longer available.")
+                            .font(.agentBody)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                }
+                .padding(AgentLayout.pageMargin)
+            }
+            .background(Color.agentCanvas)
+            .navigationTitle(showsIdeas ? "Choose an idea" : "Episode")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(showsIdeas ? "Back" : "Close") {
+                        if showsIdeas {
+                            showsIdeas = false
+                        } else {
+                            dismiss()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func episodeAction(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                    .font(.agentBody.weight(.semibold))
+                Spacer()
+                AgentIconView(.forward, size: 13)
+            }
+            .foregroundStyle(Color.agentText)
+            .frame(minHeight: 52)
+            .padding(.horizontal, AgentSpacing.x4)
+            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.control, role: .card)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var plannedDateText: String {
+        if slot.includesTime {
+            return slot.plannedDate.formatted(
+                .dateTime.weekday(.wide).month(.wide).day().hour().minute()
+            )
+        }
+        return slot.plannedDate.formatted(
+            .dateTime.weekday(.wide).month(.wide).day()
+        )
+    }
+
+    private func convertNew(series: ContentSeries) {
+        perform {
+            try SeriesEpisodePlanner.convert(slot: slot, series: series, context: context)
+        }
+    }
+
+    private func convert(idea: CreativeBrief, series: ContentSeries) {
+        let output = allOutputs.first(where: { $0.briefID == idea.id })
+        perform {
+            try SeriesEpisodePlanner.convert(
+                slot: slot,
+                series: series,
+                using: idea,
+                output: output,
+                context: context
+            )
+        }
+    }
+
+    private func duplicatePrevious(series: ContentSeries) {
+        perform {
+            try SeriesEpisodePlanner.duplicatePreviousEpisode(
+                into: slot,
+                series: series,
+                context: context
+            )
+        }
+    }
+
+    private func perform(
+        _ operation: () throws -> SeriesEpisodePlanner.ConversionResult
+    ) {
+        do {
+            let result = try operation()
+            onConverted(result)
+            dismiss()
+        } catch SeriesEpisodePlannerError.noPreviousEpisode {
+            errorMessage = "Create the first episode before duplicating a previous one."
+        } catch {
+            errorMessage = "This episode could not be created. Your plan is unchanged."
+        }
+    }
+
+    private func skip() {
+        do {
+            try SeriesEpisodePlanner.skip(slot, context: context)
+            dismiss()
+        } catch {
+            errorMessage = "This episode could not be skipped. Your plan is unchanged."
+        }
+    }
+}
+
 struct DayAgendaView: View {
     let day: Date
     @Environment(AppModel.self) private var appModel
@@ -1661,6 +2235,8 @@ struct DayAgendaView: View {
     @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
     @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @Query private var allFocusOverrides: [DailyFocusOverride]
+    @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
+    @Query(sort: \SeriesEpisodeSlot.plannedDate) private var allEpisodeSlots: [SeriesEpisodeSlot]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var isChoosingPost = false
     @State private var draftPillarID: UUID?
@@ -1672,6 +2248,8 @@ struct DayAgendaView: View {
     @State private var showPostTaskPicker = false
     @State private var isPillarPickerPresented = false
     @State private var confirmsPillarAfterPickerDismissal = false
+    @State private var selectedEpisodeSlot: SeriesEpisodeSlot?
+    @State private var convertedEpisodeBrief: CreativeBrief?
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
@@ -1680,6 +2258,14 @@ struct DayAgendaView: View {
     private var socialAccounts: [CreatorSocialAccount] { scoped(allSocialAccounts) }
     private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
     private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
+    private var seriesRecords: [ContentSeries] {
+        scoped(allSeries).filter { $0.state != .archived }
+    }
+    private var episodeSlots: [SeriesEpisodeSlot] {
+        scoped(allEpisodeSlots).filter {
+            $0.status == .open && Calendar.current.isDate($0.plannedDate, inSameDayAs: day)
+        }
+    }
 
     private func scoped<T>(_ values: [T]) -> [T] where T: WorkspaceScopedRecord {
         values.filter {
@@ -1822,8 +2408,24 @@ struct DayAgendaView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(Color.agentCanvas)
         }
+        .sheet(item: $selectedEpisodeSlot) { slot in
+            EpisodeSlotActionsView(slot: slot) { result in
+                convertedEpisodeBrief = result.brief
+            }
+        }
         .navigationDestination(isPresented: $isChoosingPost) {
             AgendaPostIdeaPickerView(day: day)
+        }
+        .navigationDestination(item: $convertedEpisodeBrief) { brief in
+            if let output = outputs.first(where: { $0.briefID == brief.id }) {
+                ResumablePostEditorView(brief: brief, output: output, onSpark: {})
+                    .navigationTitle("Edit post")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .agentScreen()
+                    .agentKeyboardDismissal()
+            } else {
+                IdeaPostDraftView(brief: brief)
+            }
         }
         .alert(pillarConfirmationTitle, isPresented: $showPillarOverwriteConfirmation) {
             Button("Cancel", role: .cancel) {
@@ -2140,7 +2742,7 @@ struct DayAgendaView: View {
 
     private var postsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if dayOutputs.isEmpty {
+            if dayOutputs.isEmpty && episodeSlots.isEmpty {
                 Text("No posts planned.").font(.agentSubtext).foregroundStyle(Color.agentSecondary).padding(.vertical, AgentSpacing.x4)
             } else {
                 VStack(spacing: AgentSpacing.x3) {
@@ -2157,6 +2759,16 @@ struct DayAgendaView: View {
                                         ? output.targetDate?.formatted(date: .omitted, time: .shortened)
                                         : nil
                                 )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    ForEach(episodeSlots) { slot in
+                        if let series = seriesRecords.first(where: { $0.id == slot.seriesID }) {
+                            Button {
+                                selectedEpisodeSlot = slot
+                            } label: {
+                                EpisodeNeededCard(slot: slot, series: series)
                             }
                             .buttonStyle(.plain)
                         }

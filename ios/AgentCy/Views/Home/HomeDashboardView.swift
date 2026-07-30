@@ -23,6 +23,7 @@ struct HomeDashboardView: View {
     @State private var dashboardDragOriginFrame: CGRect?
     @State private var dashboardDragCompensationY: CGFloat = 0
     @State private var isArrangingDashboard = false
+    @State private var showsWeeklyFocusEditor = false
     @State private var arrangeFeedback = 0
     @AppStorage("agentcy.homeDashboardCardOrderByWorkspace") private var storedDashboardCardOrders = ""
     @AppStorage("agentcy.homeDashboardHiddenCardsByWorkspace") private var storedHiddenDashboardCards = ""
@@ -44,6 +45,7 @@ struct HomeDashboardView: View {
                     reorderableDashboardCard(card)
                 }
 
+                weeklyFocusEditorSection
                 dashboardCustomizationFooter
             }
             .padding(.horizontal, AgentLayout.pageMargin)
@@ -64,7 +66,48 @@ struct HomeDashboardView: View {
             finishArrangingDashboard()
             restoreDashboardCardOrder()
         }
+        .sheet(isPresented: $showsWeeklyFocusEditor) {
+            WeeklyFocusSetupView()
+        }
         .sensoryFeedback(.selection, trigger: arrangeFeedback)
+    }
+
+    private var weeklyFocusEditorSection: some View {
+        Button {
+            showsWeeklyFocusEditor = true
+        } label: {
+            HStack(spacing: AgentSpacing.x3) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text("Weekly focus")
+                        .font(.agentTitle)
+                    Text(weeklyFocusSummary)
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                Text("Edit")
+                    .font(.agentSubtext.weight(.semibold))
+                AgentIconView(.forward, size: 12)
+            }
+            .foregroundStyle(Color.agentText)
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 80)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+        .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
+        .accessibilityHint("Opens the recurring weekly focus editor")
+    }
+
+    private var weeklyFocusSummary: String {
+        let focusCount = PillarWeekday.mondayFirst.filter { day in
+            focusTemplates.contains { $0.weekday == day && $0.isActive }
+        }.count
+        let restCount = PillarWeekday.mondayFirst.count - focusCount
+        return "\(focusCount) focus \(focusCount == 1 ? "day" : "days") · \(restCount) rest \(restCount == 1 ? "day" : "days")"
     }
 
     private var dashboardCustomizationFooter: some View {
@@ -793,7 +836,8 @@ struct HomeDashboardView: View {
                             statusTextOverride: ContinueWorkingPostPolicy.displayLabel(
                                 briefStatus: item.brief.status,
                                 outputStatus: item.output.status,
-                                customStatus: item.brief.resolvedCustomStatusLabel
+                                customStatus: item.brief.resolvedCustomStatusLabel,
+                                ideaBankPlacement: item.brief.ideaBankPlacement
                             ),
                             destination: AnyView(
                                 ResumablePostEditorView(
@@ -971,7 +1015,8 @@ struct HomeDashboardView: View {
                   ContinueWorkingPostPolicy.includes(
                     briefStatus: brief.status,
                     outputStatus: output.status,
-                    customStatus: brief.resolvedCustomStatusLabel
+                    customStatus: brief.resolvedCustomStatusLabel,
+                    ideaBankPlacement: brief.ideaBankPlacement
                   ),
                   !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return nil }

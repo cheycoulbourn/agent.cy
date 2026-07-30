@@ -97,7 +97,14 @@ final class WidgetTests: XCTestCase {
     func testSnapshotContainsFocusNextPostIdeaAndProductionWork() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
-        let now = Date()
+        let now = try XCTUnwrap(
+            Calendar.current.date(
+                bySettingHour: 12,
+                minute: 0,
+                second: 0,
+                of: Date()
+            )
+        )
         let weekday = try XCTUnwrap(PillarWeekday(rawValue: Calendar.current.component(.weekday, from: now)))
 
         let profile = CreatorProfile(name: "Chey")
