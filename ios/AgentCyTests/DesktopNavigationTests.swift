@@ -17,19 +17,36 @@ final class DesktopNavigationTests: XCTestCase {
             ]
         )
         XCTAssertEqual(DesktopNavigationPolicy.defaultDestination, .plan)
+        XCTAssertEqual(DesktopNavigationDestination.plan.title, "Agenda")
         XCTAssertTrue(
             DesktopNavigationPolicy.sidebarSections
                 .flatMap(\.destinations)
                 .contains(.tasks),
             "Tasks is a primary desktop destination and must remain visible in the sidebar."
         )
+        XCTAssertTrue(
+            DesktopNavigationPolicy.sidebarSections
+                .flatMap(\.destinations)
+                .contains(.pillars),
+            "Pillars must remain visible in the menu sidebar."
+        )
+        XCTAssertTrue(
+            DesktopNavigationPolicy.sidebarSections
+                .flatMap(\.destinations)
+                .contains(.savedPosts),
+            "Saved Posts must remain visible in the menu sidebar."
+        )
+    }
+
+    func testAgendaListDefaultsToOpenPosts() {
+        XCTAssertEqual(AgendaListStatusFilter.defaultFilter, .open)
     }
 
     func testDesktopLayoutKeepsUtilityRailForWideWindows() {
         let metrics = DesktopLayoutPolicy.metrics(forWindowWidth: 1_440)
 
         XCTAssertEqual(metrics.leadingSidebarWidth, 220)
-        XCTAssertEqual(metrics.utilitySidebarWidth, 320)
+        XCTAssertEqual(metrics.utilitySidebarWidth, 344)
         XCTAssertEqual(metrics.contentMaximumWidth, 1_040)
         XCTAssertEqual(metrics.contentHorizontalPadding, 32)
         XCTAssertTrue(metrics.showsUtilitySidebar)
@@ -79,20 +96,26 @@ final class DesktopNavigationTests: XCTestCase {
     }
 
     func testDesktopUtilityWidgetVisibilityRoundTripsInStableOrder() {
-        let hiddenWidgets: Set<DesktopUtilityWidget> = [.savedPosts, .tasks]
+        let hiddenWidgets: Set<DesktopUtilityWidget> = [.upcomingPosts, .tasks]
         let storageValue = DesktopUtilityWidgetVisibilityPolicy.storageValue(for: hiddenWidgets)
 
-        XCTAssertEqual(storageValue, "tasks,savedPosts")
+        XCTAssertEqual(storageValue, "tasks,upcomingPosts")
         XCTAssertEqual(
             DesktopUtilityWidgetVisibilityPolicy.hiddenWidgets(from: storageValue),
             hiddenWidgets
+        )
+        XCTAssertEqual(
+            DesktopUtilityWidgetVisibilityPolicy.hiddenWidgets(
+                from: "tasks,savedPosts,pillars"
+            ),
+            [.tasks]
         )
     }
 
     func testDesktopUtilitySidebarOffersFocusedPlanningAndLibraryWidgets() {
         XCTAssertEqual(
             DesktopUtilityWidget.allCases,
-            [.tasks, .upcomingPosts, .ideas, .savedPosts, .pillars]
+            [.tasks, .upcomingPosts, .ideas]
         )
         XCTAssertEqual(DesktopUtilityWidgetContentPolicy.ideaPreviewLimit, 3)
     }
@@ -100,21 +123,21 @@ final class DesktopNavigationTests: XCTestCase {
     func testDesktopUtilityWidgetOrderRestoresSavedOrderAndAddsNewWidgets() {
         XCTAssertEqual(
             DesktopUtilityWidgetOrderPolicy.orderedWidgets(
-                from: "savedPosts,tasks,ideas"
+                from: "savedPosts,pillars,tasks,ideas"
             ),
-            [.savedPosts, .tasks, .ideas, .upcomingPosts, .pillars]
+            [.tasks, .ideas, .upcomingPosts]
         )
     }
 
     func testDesktopUtilityWidgetOrderRemovesDuplicatesAndRoundTrips() {
-        let widgets: [DesktopUtilityWidget] = [.pillars, .tasks, .savedPosts, .ideas, .upcomingPosts]
+        let widgets: [DesktopUtilityWidget] = [.ideas, .tasks, .upcomingPosts]
         let stored = DesktopUtilityWidgetOrderPolicy.storageValue(for: widgets)
 
-        XCTAssertEqual(stored, "pillars,tasks,savedPosts,ideas,upcomingPosts")
+        XCTAssertEqual(stored, "ideas,tasks,upcomingPosts")
         XCTAssertEqual(DesktopUtilityWidgetOrderPolicy.orderedWidgets(from: stored), widgets)
         XCTAssertEqual(
             DesktopUtilityWidgetOrderPolicy.orderedWidgets(from: "tasks,tasks"),
-            [.tasks, .upcomingPosts, .ideas, .savedPosts, .pillars]
+            [.tasks, .upcomingPosts, .ideas]
         )
     }
 
@@ -159,7 +182,6 @@ final class DesktopNavigationTests: XCTestCase {
 
     func testSavedPostsUsesTheExternalReferenceIcon() {
         XCTAssertEqual(DesktopNavigationDestination.savedPosts.icon, .link)
-        XCTAssertEqual(DesktopUtilityWidget.savedPosts.icon, .link)
         XCTAssertNotEqual(DesktopNavigationDestination.savedPosts.icon, DesktopNavigationDestination.ideaBank.icon)
     }
 

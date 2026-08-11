@@ -49,9 +49,6 @@ struct RootView: View {
             destinationView
             #endif
         }
-        .onChange(of: profiles.first?.appearanceRaw, initial: true) { _, rawValue in
-            appModel.appearancePreference = rawValue.flatMap { AppearancePreference(rawValue: $0) } ?? .system
-        }
         .onChange(of: appModel.appearancePreference, initial: true) { _, preference in
             AgentAppearanceController.apply(preference)
         }

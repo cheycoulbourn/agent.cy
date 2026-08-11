@@ -51,9 +51,16 @@ struct SettingsView: View {
                                     SettingsIndexRow(title: "How Cy helps", value: profile.assistanceMode.title)
                                 }
                                 NavigationLink {
-                                    AppearanceSettingsView(profile: profile)
+                                    AppearanceSettingsView(
+                                        profile: profile,
+                                        deviceAppearance: appModel.appearancePreference
+                                    )
                                 } label: {
-                                    SettingsIndexRow(title: "Appearance", value: profile.appearance.title, isLast: true)
+                                    SettingsIndexRow(
+                                        title: "Appearance",
+                                        value: appModel.appearancePreference.title,
+                                        isLast: true
+                                    )
                                 }
                             }
 
@@ -299,7 +306,7 @@ struct SettingsView: View {
                         name: activeIdentity.name,
                         goal: profile.goal,
                         vibePalette: profile.vibePalette,
-                        appearance: profile.appearance,
+                        appearance: appModel.appearancePreference,
                         aiProvider: LocalCyPreferences.isEnabled ? .claudeOrCodex : .agentCy,
                         brandPartnershipsEnabled: profile.showsBrandDealsInPostEditor
                     )

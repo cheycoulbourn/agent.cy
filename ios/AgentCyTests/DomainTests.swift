@@ -5,6 +5,47 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testDeviceAppearanceMigratesLegacyPreferenceOnce() {
+        let suiteName = "DeviceAppearancePreferencesTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertEqual(DeviceAppearancePreferences.load(defaults: defaults, legacyFallback: .dark), .dark)
+
+        defaults.set(AppearancePreference.light.rawValue, forKey: DeviceAppearancePreferences.storageKey)
+        XCTAssertEqual(DeviceAppearancePreferences.load(defaults: defaults, legacyFallback: .dark), .light)
+    }
+
+    func testDeviceAppearanceRepairsMalformedStoredValue() {
+        let suiteName = "DeviceAppearancePreferencesTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("sepia", forKey: DeviceAppearancePreferences.storageKey)
+
+        XCTAssertEqual(DeviceAppearancePreferences.load(defaults: defaults, legacyFallback: .system), .system)
+        XCTAssertEqual(
+            defaults.string(forKey: DeviceAppearancePreferences.storageKey),
+            AppearancePreference.system.rawValue
+        )
+    }
+
+    func testDeviceAppearancePersistsIndependentlyPerDefaultsStore() {
+        let phoneSuiteName = "DeviceAppearancePreferencesTests.phone.\(UUID().uuidString)"
+        let desktopSuiteName = "DeviceAppearancePreferencesTests.desktop.\(UUID().uuidString)"
+        let phoneDefaults = UserDefaults(suiteName: phoneSuiteName)!
+        let desktopDefaults = UserDefaults(suiteName: desktopSuiteName)!
+        defer {
+            phoneDefaults.removePersistentDomain(forName: phoneSuiteName)
+            desktopDefaults.removePersistentDomain(forName: desktopSuiteName)
+        }
+
+        DeviceAppearancePreferences.save(.dark, defaults: phoneDefaults)
+        DeviceAppearancePreferences.save(.light, defaults: desktopDefaults)
+
+        XCTAssertEqual(DeviceAppearancePreferences.load(defaults: phoneDefaults), .dark)
+        XCTAssertEqual(DeviceAppearancePreferences.load(defaults: desktopDefaults), .light)
+    }
+
     func testDuplicateSafeIndexKeepsTheFirstCloudSyncedValue() {
         let id = UUID()
 
@@ -3901,6 +3942,100 @@ final class DomainTests: XCTestCase {
         XCTAssertFalse(WorkspaceScope.includes(nil, activeWorkspaceID: second.id, workspaces: [first, second]))
         XCTAssertTrue(WorkspaceScope.includes(second.id, activeWorkspaceID: second.id, workspaces: [first, second]))
         XCTAssertFalse(WorkspaceScope.includes(first.id, activeWorkspaceID: second.id, workspaces: [first, second]))
+    }
+
+    func testControlCenterTaskCompletionImmediatelyRemovesTaskFromWhatsNext() throws {
+        let profileID = UUID()
+        let workspace = CreatorWorkspace(profileID: profileID, name: "Primary", sortOrder: 0)
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let model = AppModel(reminderService: PreviewReminderService())
+        let task = CreatorTask(title: "Follow up")
+        task.workspaceID = workspace.id
+        task.targetDate = Date()
+        context.insert(task)
+        try context.save()
+
+        XCTAssertTrue(DesktopUtilityTaskPolicy.includes(
+            task,
+            archivedBriefIDs: [],
+            activeWorkspaceID: workspace.id,
+            workspaces: [workspace]
+        ))
+
+        model.toggleTask(task, context: context)
+
+        XCTAssertTrue(task.isCompleted)
+        XCTAssertFalse(DesktopUtilityTaskPolicy.includes(
+            task,
+            archivedBriefIDs: [],
+            activeWorkspaceID: workspace.id,
+            workspaces: [workspace]
+        ))
+    }
+
+    func testControlCenterTaskPolicyExcludesChildrenSkippedArchivedAndOtherAccounts() {
+        let profileID = UUID()
+        let first = CreatorWorkspace(profileID: profileID, name: "Primary", sortOrder: 0)
+        let second = CreatorWorkspace(profileID: profileID, name: "Second", sortOrder: 1)
+        let archivedBriefID = UUID()
+
+        let child = CreatorTask(parentTaskID: UUID(), title: "Child")
+        child.workspaceID = first.id
+        let skipped = CreatorTask(title: "Skipped")
+        skipped.workspaceID = first.id
+        skipped.isSkipped = true
+        let archived = CreatorTask(briefID: archivedBriefID, title: "Archived post task")
+        archived.workspaceID = first.id
+        let otherAccount = CreatorTask(title: "Other account")
+        otherAccount.workspaceID = second.id
+
+        for task in [child, skipped, archived, otherAccount] {
+            task.targetDate = Date()
+            XCTAssertFalse(DesktopUtilityTaskPolicy.includes(
+                task,
+                archivedBriefIDs: [archivedBriefID],
+                activeWorkspaceID: first.id,
+                workspaces: [first, second]
+            ))
+        }
+    }
+
+    func testControlCenterTaskPolicyOnlyIncludesTasksDueToday() {
+        let profileID = UUID()
+        let workspace = CreatorWorkspace(profileID: profileID, name: "Primary", sortOrder: 0)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let today = Date(timeIntervalSince1970: 1_786_426_800)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+
+        let dueToday = CreatorTask(title: "Due today")
+        dueToday.workspaceID = workspace.id
+        dueToday.targetDate = today
+        let dueTomorrow = CreatorTask(title: "Due tomorrow")
+        dueTomorrow.workspaceID = workspace.id
+        dueTomorrow.targetDate = tomorrow
+        let unscheduled = CreatorTask(title: "No due date")
+        unscheduled.workspaceID = workspace.id
+
+        XCTAssertTrue(DesktopUtilityTaskPolicy.includes(
+            dueToday,
+            archivedBriefIDs: [],
+            activeWorkspaceID: workspace.id,
+            workspaces: [workspace],
+            referenceDate: today,
+            calendar: calendar
+        ))
+        for task in [dueTomorrow, unscheduled] {
+            XCTAssertFalse(DesktopUtilityTaskPolicy.includes(
+                task,
+                archivedBriefIDs: [],
+                activeWorkspaceID: workspace.id,
+                workspaces: [workspace],
+                referenceDate: today,
+                calendar: calendar
+            ))
+        }
     }
 
     func testActiveCreatorIdentityChangesWithWorkspace() {

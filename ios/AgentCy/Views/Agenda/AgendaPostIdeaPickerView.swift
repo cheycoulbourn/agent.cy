@@ -4,6 +4,7 @@ import SwiftUI
 struct AgendaPostIdeaPickerView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query private var profiles: [CreatorProfile]
@@ -34,78 +35,99 @@ struct AgendaPostIdeaPickerView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-                EditorialHeader(
-                    kicker: day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()),
-                    title: "Schedule a post.",
-                    subtitle: "Start a new post for this day or choose a saved idea."
-                )
+        VStack(spacing: 0) {
+#if targetEnvironment(macCatalyst)
+            desktopNavigationHeader
+#endif
 
-                AgentInsetSurface {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Button(action: startNewPost) {
-                            HStack(spacing: AgentSpacing.x3) {
-                                AgentIconView(.add, size: 16)
-                                    .frame(width: 22, height: 22)
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                    EditorialHeader(
+                        kicker: day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()),
+                        title: "Schedule a post.",
+                        subtitle: "Start a new post for this day or choose a saved idea."
+                    )
 
-                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                    Text("New post")
-                                        .font(.paperInter(size: 19, weight: .semibold, relativeTo: .headline))
-                                        .tracking(-0.3)
-                                    Text("Open a clean post draft for this day.")
-                                        .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                    AgentInsetSurface(role: .structural) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button(action: startNewPost) {
+                                HStack(spacing: AgentSpacing.x3) {
+                                    AgentIconView(.add, size: 16)
+                                        .frame(width: 22, height: 22)
+
+                                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                        Text("New post")
+                                            .font(.paperInter(size: 19, weight: .semibold, relativeTo: .headline))
+                                            .tracking(-0.3)
+                                        Text("Open a clean post draft for this day.")
+                                            .font(.paperInter(size: 14, weight: .regular, relativeTo: .subheadline))
+                                            .foregroundStyle(Color.agentSecondary)
+                                    }
+
+                                    Spacer(minLength: AgentSpacing.x2)
+                                    AgentIconView(.arrowRight, size: 13)
                                         .foregroundStyle(Color.agentSecondary)
                                 }
-
-                                Spacer(minLength: AgentSpacing.x2)
-                                AgentIconView(.arrowRight, size: 13)
-                                    .foregroundStyle(Color.agentSecondary)
+                                .foregroundStyle(Color.agentText)
+                                .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+                                .contentShape(.rect)
                             }
-                            .foregroundStyle(Color.agentText)
-                            .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
-                            .contentShape(.rect)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityHint("Opens a new post editor for the selected day")
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens a new post editor for the selected day")
 
-                        SectionRuleHeader(title: "Idea Bank", trailing: "\(ideas.count)")
-                            .padding(.top, AgentSpacing.x4)
+                            SectionRuleHeader(title: "Idea Bank", trailing: "\(ideas.count)")
+                                .padding(.top, AgentSpacing.x4)
 
-                        if ideas.isEmpty {
-                            Text("No saved ideas yet. Start a new post above.")
-                                .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
-                                .foregroundStyle(Color.agentSecondary)
-                                .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
-                        } else {
-                            ForEach(Array(ideas.enumerated()), id: \.element.id) { index, brief in
-                                Button {
-                                    openIdea(brief)
-                                } label: {
-                                    AgendaIdeaBankRow(
-                                        brief: brief,
-                                        pillar: activePillars.first { $0.id == brief.pillarID },
-                                        showsDivider: index < ideas.count - 1
-                                    )
+                            if ideas.isEmpty {
+                                Text("No saved ideas yet. Start a new post above.")
+                                    .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
+                                    .foregroundStyle(Color.agentSecondary)
+                                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+                            } else {
+                                ForEach(Array(ideas.enumerated()), id: \.element.id) { index, brief in
+                                    Button {
+                                        openIdea(brief)
+                                    } label: {
+                                        AgendaIdeaBankRow(
+                                            brief: brief,
+                                            pillar: activePillars.first { $0.id == brief.pillarID },
+                                            showsDivider: index < ideas.count - 1
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityHint("Opens this idea in the post editor for the selected day")
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityHint("Opens this idea in the post editor for the selected day")
                             }
                         }
                     }
                 }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x6)
+                .agentBottomNavigationClearance(additional: AgentSpacing.x3)
             }
-            .padding(.horizontal, AgentLayout.pageMargin)
-            .padding(.top, AgentSpacing.x6)
-            .agentBottomNavigationClearance(additional: AgentSpacing.x3)
         }
+#if targetEnvironment(macCatalyst)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+#else
         .navigationTitle("Schedule post")
         .navigationBarTitleDisplayMode(.inline)
+#endif
         .navigationDestination(item: $editorRoute) { route in
             AgendaPostEditorDestination(route: route)
         }
         .agentScreen()
     }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopNavigationHeader: some View {
+        AgentDesktopDetailRail(title: "Schedule post", backAction: dismiss.callAsFunction) {
+            Color.clear
+                .frame(width: 44, height: 44)
+                .accessibilityHidden(true)
+        }
+    }
+#endif
 
     private func startNewPost() {
         let platform = profiles.first?.selectedPlatforms.first ?? .instagramReels

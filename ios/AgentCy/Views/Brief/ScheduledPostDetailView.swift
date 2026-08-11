@@ -317,52 +317,15 @@ struct ScheduledPostDetailView: View {
 
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
-        ZStack {
-            HStack(spacing: AgentSpacing.x3) {
-                Button(action: { dismiss() }) {
-                    AgentIconView(.back, size: 18)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 44, height: 44)
-                        .background(Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.agentBorder, lineWidth: 1)
-                                .allowsHitTesting(false)
-                        }
-                        .contentShape(.circle)
-                }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityLabel("Back")
-
-                Spacer(minLength: 0)
-
-                Menu {
-                    postOptionsMenuContent
-                } label: {
-                    AgentIconView(.more, size: 17)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 44, height: 44)
-                        .background(Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.agentBorder, lineWidth: 1)
-                                .allowsHitTesting(false)
-                        }
-                        .contentShape(.circle)
-                }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityLabel("Post options")
+        AgentDesktopDetailRail(title: pageTitle, backAction: dismiss.callAsFunction) {
+            Menu {
+                postOptionsMenuContent
+            } label: {
+                AgentDesktopDetailIconLabel(icon: .more)
             }
-
-            Text(pageTitle)
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.agentText)
-                .allowsHitTesting(false)
+            .buttonStyle(AgentPressButtonStyle())
+            .accessibilityLabel("Post options")
         }
-        .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x6)
-        .padding(.bottom, AgentSpacing.x4)
-        .background(Color.agentCanvas)
     }
 #endif
 

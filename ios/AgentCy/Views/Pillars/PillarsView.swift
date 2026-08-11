@@ -360,35 +360,41 @@ struct PillarDetailView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    detailHeader
-                        .reportAgentViewHeight()
+        VStack(spacing: 0) {
+#if targetEnvironment(macCatalyst)
+            desktopDetailRail
+#endif
 
-                    PillarPaperSurface(
-                        minimumHeight: AgentScrollableSurfacePolicy.minimumHeight(
-                            viewportHeight: proxy.size.height,
-                            headerHeight: headerHeight
-                        ),
-                        topPadding: 28,
-                        bottomPadding: AgentScrollableSurfacePolicy.bottomPadding(mobile: 150),
-                        gap: 28
-                    ) {
-                        VStack(alignment: .leading, spacing: 28) {
-                            descriptionSection
-                            if isEditing { colorSection }
-                            daysPicker
-                            PillarStatsRow(
-                                values: [ideas.count, scheduled.count, posted.count],
-                                labels: ["Ideas", "Scheduled", "Posted"]
-                            )
-                            contentTabs
-                            contentList
-                            if isEditing { deleteButton }
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        detailHeader
+                            .reportAgentViewHeight()
+
+                        PillarPaperSurface(
+                            minimumHeight: AgentScrollableSurfacePolicy.minimumHeight(
+                                viewportHeight: proxy.size.height,
+                                headerHeight: headerHeight
+                            ),
+                            topPadding: 28,
+                            bottomPadding: AgentScrollableSurfacePolicy.bottomPadding(mobile: 150),
+                            gap: 28
+                        ) {
+                            VStack(alignment: .leading, spacing: 28) {
+                                descriptionSection
+                                if isEditing { colorSection }
+                                daysPicker
+                                PillarStatsRow(
+                                    values: [ideas.count, scheduled.count, posted.count],
+                                    labels: ["Ideas", "Scheduled", "Posted"]
+                                )
+                                contentTabs
+                                contentList
+                                if isEditing { deleteButton }
+                            }
                         }
+                        .padding(.horizontal, AgentLayout.dashboardGutter)
                     }
-                    .padding(.horizontal, AgentLayout.dashboardGutter)
                 }
             }
         }
@@ -407,6 +413,7 @@ struct PillarDetailView: View {
 
     private var detailHeader: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+#if !targetEnvironment(macCatalyst)
             HStack {
                 Button { dismiss() } label: {
                     HStack(spacing: AgentSpacing.x2) {
@@ -445,6 +452,7 @@ struct PillarDetailView: View {
                     .accessibilityLabel("Edit \(pillar.name)")
                 }
             }
+#endif
 
             PaperPillarMeta(isAnchor ? "Anchor pillar" : "Secondary pillar")
 
@@ -469,6 +477,30 @@ struct PillarDetailView: View {
         .padding(.top, AgentSpacing.x4)
         .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopDetailRail: some View {
+        AgentDesktopDetailRail(title: "Pillar", backAction: dismiss.callAsFunction) {
+            HStack(spacing: AgentSpacing.x2) {
+                if isEditing {
+                    AgentDesktopDetailIconButton(title: "Cancel editing", icon: .close) {
+                        cancelEditing()
+                    }
+                    AgentDesktopDetailIconButton(
+                        title: "Save pillar",
+                        icon: .check,
+                        isEnabled: canSaveEdits,
+                        action: saveEdits
+                    )
+                } else {
+                    AgentDesktopDetailIconButton(title: "Edit \(pillar.name)", icon: .pencil) {
+                        beginEditing()
+                    }
+                }
+            }
+        }
+    }
+#endif
 
     @ViewBuilder
     private var descriptionSection: some View {

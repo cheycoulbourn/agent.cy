@@ -60,9 +60,9 @@ struct AgentCyApp: App {
             requiresInstallationInvite: requiresInstallationInvite,
             allowsOfflinePrivacyErase: !liveAI
         )
-        if let profile = try? container.mainContext.fetch(FetchDescriptor<CreatorProfile>()).first {
-            model.appearancePreference = AppearancePreference(rawValue: profile.appearanceRaw) ?? .system
-        }
+        let legacyAppearance = (try? container.mainContext.fetch(FetchDescriptor<CreatorProfile>()).first?.appearance)
+            ?? .system
+        model.appearancePreference = DeviceAppearancePreferences.load(legacyFallback: legacyAppearance)
         let workspaces = (try? container.mainContext.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
         model.activeWorkspaceID = WorkspaceScope.activeWorkspaceID(
             preferredID: CreatorWorkspacePreferences.activeWorkspaceID,

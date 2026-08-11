@@ -15,7 +15,7 @@ enum DesktopNavigationDestination: String, CaseIterable, Identifiable, Hashable,
     var title: String {
         switch self {
         case .home: "Home"
-        case .plan: "Plan"
+        case .plan: "Agenda"
         case .feed: "Feed"
         case .tasks: "Tasks"
         case .ideaBank: "Idea Bank"
@@ -104,7 +104,7 @@ enum DesktopLayoutPolicy {
         let showsUtilityRail = width >= utilityRailBreakpoint
         return DesktopLayoutMetrics(
             leadingSidebarWidth: showsUtilityRail ? 220 : 208,
-            utilitySidebarWidth: showsUtilityRail ? 320 : 0,
+            utilitySidebarWidth: showsUtilityRail ? 344 : 0,
             contentMaximumWidth: showsUtilityRail ? 1_040 : 960,
             contentHorizontalPadding: showsUtilityRail ? 32 : 24
         )
@@ -144,8 +144,6 @@ enum DesktopUtilityWidget: String, CaseIterable, Identifiable, Sendable {
     case tasks
     case upcomingPosts
     case ideas
-    case savedPosts
-    case pillars
 
     var id: String { rawValue }
 
@@ -154,8 +152,6 @@ enum DesktopUtilityWidget: String, CaseIterable, Identifiable, Sendable {
         case .tasks: "Tasks"
         case .upcomingPosts: "Upcoming Posts"
         case .ideas: "Idea Bank"
-        case .savedPosts: "Saved Posts"
-        case .pillars: "Pillars"
         }
     }
 
@@ -164,8 +160,6 @@ enum DesktopUtilityWidget: String, CaseIterable, Identifiable, Sendable {
         case .tasks: .tasks
         case .upcomingPosts: .calendar
         case .ideas: .idea
-        case .savedPosts: .link
-        case .pillars: .pillars
         }
     }
 }
@@ -202,4 +196,29 @@ enum DesktopUtilityWidgetOrderPolicy {
 
 enum DesktopUtilityWidgetContentPolicy {
     static let ideaPreviewLimit = 3
+}
+
+enum DesktopUtilityTaskPolicy {
+    static func includes(
+        _ task: CreatorTask,
+        archivedBriefIDs: Set<UUID>,
+        activeWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace],
+        referenceDate: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard let dueDate = task.targetDate,
+              calendar.isDate(dueDate, inSameDayAs: referenceDate) else {
+            return false
+        }
+        return task.parentTaskID == nil &&
+            !task.isCompleted &&
+            !task.isSkipped &&
+            task.briefID.map { !archivedBriefIDs.contains($0) } != false &&
+            WorkspaceScope.includes(
+                task.workspaceID,
+                activeWorkspaceID: activeWorkspaceID,
+                workspaces: workspaces
+            )
+    }
 }

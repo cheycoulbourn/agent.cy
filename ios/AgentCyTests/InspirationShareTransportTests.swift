@@ -3,6 +3,21 @@ import XCTest
 @testable import AgentCy
 
 final class InspirationShareTransportTests: XCTestCase {
+    func testSavedPostTitleNormalizationRequiresContentAndKeepsAReadableTitle() {
+        XCTAssertNil(InspirationSavedPostTitlePolicy.normalized(nil))
+        XCTAssertNil(InspirationSavedPostTitlePolicy.normalized("  \n  "))
+        XCTAssertEqual(
+            InspirationSavedPostTitlePolicy.normalized("  A   better\nfilming setup  "),
+            "A better filming setup"
+        )
+
+        let longTitle = String(repeating: "a", count: 200)
+        XCTAssertEqual(
+            InspirationSavedPostTitlePolicy.normalized(longTitle)?.count,
+            InspirationSavedPostTitlePolicy.maximumLength
+        )
+    }
+
     func testCreatorSnapshotPreservesPillarColorsAndDecodesOlderSnapshots() throws {
         let pillarID = UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
         let creatorContext = Data("{}".utf8)

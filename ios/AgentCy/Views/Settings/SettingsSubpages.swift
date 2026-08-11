@@ -1084,13 +1084,15 @@ struct AppearanceSettingsView: View {
     @Bindable var profile: CreatorProfile
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+    private let initialAppearance: AppearancePreference
     @State private var draftAppearance: AppearancePreference
     @State private var draftPalette: CreatorVibePalette?
     @State private var didSave = false
 
-    init(profile: CreatorProfile) {
+    init(profile: CreatorProfile, deviceAppearance: AppearancePreference) {
         self.profile = profile
-        _draftAppearance = State(initialValue: profile.appearance)
+        initialAppearance = deviceAppearance
+        _draftAppearance = State(initialValue: deviceAppearance)
         _draftPalette = State(initialValue: profile.vibePalette)
     }
 
@@ -1098,7 +1100,7 @@ struct AppearanceSettingsView: View {
         SettingsPageShell(
             kicker: "Display",
             title: "Appearance",
-            subtitle: "Choose your display mode and pillar color palette."
+            subtitle: "Choose this device’s display mode and your account’s pillar colors."
         ) {
             VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
@@ -1128,6 +1130,11 @@ struct AppearanceSettingsView: View {
                             .buttonStyle(.plain)
                         }
                     }
+
+                    Text("Light, dark, and system apply only to this device.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
@@ -1148,7 +1155,7 @@ struct AppearanceSettingsView: View {
                         }
                     }
 
-                    Text("Choosing a palette recolors up to five existing pillars for this account. If you have more than five, their current colors stay unchanged. Custom colors remain available.")
+                    Text("Pillar colors sync across every device for this account. Choosing a palette recolors up to five existing pillars; additional and custom colors stay unchanged.")
                         .font(.agentSubtext)
                         .foregroundStyle(Color.agentSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1165,11 +1172,12 @@ struct AppearanceSettingsView: View {
                     action: saveAndDismiss
                 )
             }
+            .sharedBackgroundVisibility(.hidden)
         }
         .onDisappear {
             guard !didSave else { return }
-            appModel.appearancePreference = profile.appearance
-            AgentAppearanceController.apply(profile.appearance)
+            appModel.appearancePreference = initialAppearance
+            AgentAppearanceController.apply(initialAppearance)
         }
     }
 
@@ -1226,17 +1234,17 @@ struct AppearanceSettingsView: View {
     }
 
     private var hasChanges: Bool {
-        draftAppearance != profile.appearance || draftPalette != profile.vibePalette
+        draftAppearance != initialAppearance || draftPalette != profile.vibePalette
     }
 
     private func saveAndDismiss() {
-        profile.appearance = draftAppearance
         profile.vibePalette = draftPalette
         if let draftPalette {
             PillarPaletteAssignment.apply(draftPalette, to: activeWorkspacePillars)
         }
         do {
             try context.save()
+            DeviceAppearancePreferences.save(draftAppearance)
             appModel.appearancePreference = draftAppearance
             AgentAppearanceController.apply(draftAppearance)
             WidgetSnapshotService.refresh(context: context)

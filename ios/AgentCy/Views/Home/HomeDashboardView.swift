@@ -50,7 +50,7 @@ struct HomeDashboardView: View {
                 dashboardCustomizationFooter
             }
             .padding(.horizontal, AgentLayout.pageMargin)
-            .padding(.top, AgentLayout.pageTopPadding)
+            .padding(.top, homePageTopPadding)
             .agentBottomNavigationClearance()
         }
         .scrollDismissesKeyboard(.interactively)
@@ -67,6 +67,14 @@ struct HomeDashboardView: View {
             WeeklyFocusSetupView()
         }
         .sensoryFeedback(.selection, trigger: arrangeFeedback)
+    }
+
+    private var homePageTopPadding: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        AgentLayout.pageTopPadding + AgentSpacing.x4
+        #else
+        AgentLayout.pageTopPadding
+        #endif
     }
 
     private var weeklyFocusEditorSection: some View {

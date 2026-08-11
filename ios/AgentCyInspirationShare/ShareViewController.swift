@@ -170,6 +170,7 @@ private final class InspirationShareViewModel: ObservableObject {
     @Published var shapeResult: ShareInspirationShapeResult?
     @Published var suggestedPillarName: String?
     @Published var suggestedPillarColorHex: String?
+    @Published var saveTitle = ""
     @Published var progressTitle = "Preparing the post"
     @Published var progressDetail = "Reading the link and anything the platform shared with agent.cy."
     @Published var errorMessage: String?
@@ -221,6 +222,9 @@ private final class InspirationShareViewModel: ObservableObject {
             )
             suggestedPillarName = suggestedPillar?.name
             suggestedPillarColorHex = suggestedPillar?.colorHex
+            if normalizedSaveTitle == nil {
+                saveTitle = shaped.result.idea.title
+            }
             preparedEnvelope = InspirationShareEnvelope(
                 id: captureID,
                 workspaceHintID: InspirationWorkspaceHintStore.load(
@@ -250,7 +254,12 @@ private final class InspirationShareViewModel: ObservableObject {
     }
 
     func saveAnalyzedPost(mode: InspirationSaveMode) {
-        guard var envelope = preparedEnvelope else { return }
+        guard var envelope = preparedEnvelope,
+              let normalizedSaveTitle else {
+            errorMessage = "Add a title before saving this post."
+            return
+        }
+        envelope.sourceTitle = normalizedSaveTitle
         envelope.saveMode = mode
         do {
             try InspirationImportQueueStore().enqueue(envelope)
@@ -265,6 +274,10 @@ private final class InspirationShareViewModel: ObservableObject {
 
     func saveLinkOnly() {
         guard let url else { return }
+        guard let normalizedSaveTitle else {
+            errorMessage = "Add a title before saving this post."
+            return
+        }
         do {
             let envelope = InspirationShareEnvelope(
                 id: captureID,
@@ -276,6 +289,7 @@ private final class InspirationShareViewModel: ObservableObject {
                 canonicalURLString: url.absoluteString,
                 platform: InspirationLinkCanonicalizer.platform(for: url),
                 sourceCaption: sourceCaption,
+                sourceTitle: normalizedSaveTitle,
                 sharedVideoFilename: sharedVideoFilename,
                 sharedThumbnailFilename: sharedThumbnailFilename
             )
@@ -292,6 +306,14 @@ private final class InspirationShareViewModel: ObservableObject {
         guard !hasQueuedEnvelope, let store = try? InspirationSharedAssetStore() else { return }
         store.remove(filename: sharedVideoFilename)
         store.remove(filename: sharedThumbnailFilename)
+    }
+
+    var canSave: Bool {
+        normalizedSaveTitle != nil
+    }
+
+    private var normalizedSaveTitle: String? {
+        InspirationSavedPostTitlePolicy.normalized(saveTitle)
     }
 
     private func acquireThumbnail(from extraction: ShareExtraction) async {
@@ -395,6 +417,9 @@ private struct InspirationShareView: View {
     @ObservedObject var model: InspirationShareViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @FocusState private var isTitleFocused: Bool
+    @AccessibilityFocusState private var isTitleAccessibilityFocused: Bool
+    @State private var titleValidationMessage: String?
     let close: () -> Void
 
     var body: some View {
@@ -484,6 +509,8 @@ private struct InspirationShareView: View {
                         }
                     }
 
+                    savedPostTitleField
+
                     VStack(alignment: .leading, spacing: ShareSpacing.x3) {
                         outcomeRow("Understand the post’s actual message", icon: "text.alignleft")
                         outcomeRow("Pull the creator, caption, and video evidence", icon: "play.rectangle")
@@ -507,6 +534,7 @@ private struct InspirationShareView: View {
                 .buttonStyle(SharePrimaryButtonStyle())
 
                 Button("Save post link without analyzing") {
+                    guard validateSaveTitle() else { return }
                     model.saveLinkOnly()
                 }
                 .buttonStyle(ShareSecondaryButtonStyle())
@@ -616,7 +644,10 @@ private struct InspirationShareView: View {
                         }
                     }
 
+                    savedPostTitleField
+
                     Button {
+                        guard validateSaveTitle() else { return }
                         model.saveAnalyzedPost(mode: .withRemix)
                     } label: {
                         Label("Save post + remix", systemImage: "arrow.down.circle.fill")
@@ -625,6 +656,7 @@ private struct InspirationShareView: View {
                     .padding(.top, ShareSpacing.x2)
 
                     Button("Save original only") {
+                        guard validateSaveTitle() else { return }
                         model.saveAnalyzedPost(mode: .originalOnly)
                     }
                     .buttonStyle(ShareSecondaryButtonStyle())
@@ -632,6 +664,70 @@ private struct InspirationShareView: View {
             }
             .padding(ShareSpacing.x5)
         }
+    }
+
+    private var savedPostTitleField: some View {
+        SharePanel {
+            VStack(alignment: .leading, spacing: ShareSpacing.x3) {
+                ShareMetaLabel("Saved post title")
+                TextField("Give this post a title", text: $model.saveTitle)
+                    .font(.shareBodyStrong)
+                    .textInputAutocapitalization(.sentences)
+                    .submitLabel(.done)
+                    .focused($isTitleFocused)
+                    .padding(.horizontal, ShareSpacing.x4)
+                    .frame(minHeight: 48)
+                    .background(Color.shareCanvas, in: .rect(cornerRadius: ShareRadius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: ShareRadius.control)
+                            .stroke(
+                                isTitleFocused ? Color.shareCy : Color.shareBorder,
+                                lineWidth: isTitleFocused ? 1.5 : 1
+                            )
+                    }
+                    .onSubmit { isTitleFocused = false }
+                    .onChange(of: model.saveTitle) { _, title in
+                        guard title.count > InspirationSavedPostTitlePolicy.maximumLength else { return }
+                        model.saveTitle = String(
+                            title.prefix(InspirationSavedPostTitlePolicy.maximumLength)
+                        )
+                    }
+                    .onChange(of: model.canSave) { _, canSave in
+                        if canSave { titleValidationMessage = nil }
+                    }
+                    .accessibilityLabel("Saved post title, required")
+                    .accessibilityHint(titleFieldAccessibilityHint)
+                    .accessibilityFocused($isTitleAccessibilityFocused)
+
+                Text(titleFieldHelperText)
+                    .font(.shareCaption)
+                    .foregroundStyle(titleValidationMessage == nil ? Color.shareSecondary : Color.shareCy)
+                    .accessibilityLabel(titleFieldHelperText)
+            }
+        }
+    }
+
+    private var titleFieldHelperText: String {
+        if let titleValidationMessage { return titleValidationMessage }
+        return model.canSave ? "You can change this later." : "Required before saving."
+    }
+
+    private var titleFieldAccessibilityHint: String {
+        titleValidationMessage ?? "Enter the title to use in Saved Posts."
+    }
+
+    @discardableResult
+    private func validateSaveTitle() -> Bool {
+        guard model.canSave else {
+            let message = "Add a title before saving this post."
+            titleValidationMessage = message
+            isTitleFocused = true
+            isTitleAccessibilityFocused = true
+            UIAccessibility.post(notification: .announcement, argument: message)
+            return false
+        }
+        titleValidationMessage = nil
+        return true
     }
 
     private func savedView(title: String, message: String) -> some View {

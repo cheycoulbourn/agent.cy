@@ -221,6 +221,19 @@ enum InspirationShareCandidateResolver {
     }
 }
 
+enum InspirationSavedPostTitlePolicy {
+    static let maximumLength = 160
+
+    static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let collapsed = value
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        return String(collapsed.prefix(maximumLength))
+    }
+}
+
 struct InspirationShareEnvelope: Codable, Equatable, Sendable {
     static let currentSchemaVersion = 3
     static let readableSchemaVersions = 1...currentSchemaVersion

@@ -144,12 +144,18 @@ struct AppShellView: View {
         .task {
             await appModel.refreshAccess(context: modelContext)
             await appModel.refreshReminderSchedule(context: modelContext)
-            appModel.importPendingInspiration(context: modelContext)
+            appModel.importPendingInspiration(
+                context: modelContext,
+                presentsImportedSource: false
+            )
             openRequestedTaskIfNeeded()
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
-            appModel.importPendingInspiration(context: modelContext)
+            appModel.importPendingInspiration(
+                context: modelContext,
+                presentsImportedSource: false
+            )
             presentedMCPRequestIDs = []
             while !Task.isCancelled {
                 presentMCPApprovalsIfNeeded()

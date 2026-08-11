@@ -323,43 +323,9 @@ struct ResumablePostEditorView: View {
 
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
-        ZStack {
-            HStack(spacing: AgentSpacing.x3) {
-                Button(action: { dismiss() }) {
-                    AgentIconView(.back, size: 18)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 44, height: 44)
-                        .background(Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.agentBorder, lineWidth: 1)
-                                .allowsHitTesting(false)
-                        }
-                        .contentShape(.circle)
-                }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityLabel("Back")
-
-                Spacer(minLength: 0)
-
-                desktopEditorActionControl
-                    .frame(width: 44, height: 44)
-            }
-
-            Text("Edit post")
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.agentText)
-                .allowsHitTesting(false)
-        }
-        .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x6)
-        .padding(.bottom, AgentSpacing.x4)
-        .background(Color.agentCanvas)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.agentHairline)
-                .frame(height: 1)
-                .allowsHitTesting(false)
+        AgentDesktopDetailRail(title: "Edit post", backAction: dismiss.callAsFunction) {
+            desktopEditorActionControl
+                .frame(width: 44, height: 44)
         }
     }
 #endif
@@ -410,54 +376,27 @@ struct ResumablePostEditorView: View {
     @ViewBuilder
     private var desktopEditorActionControl: some View {
         if isEditingFinalizedPost || isReviewEditing {
-            Button(action: saveDraft) {
-                AgentIconView(.check, size: 15)
-                    .foregroundStyle(Color.agentText)
-                    .frame(width: 44, height: 44)
-                    .background(Color.agentSurface, in: .circle)
-                    .overlay {
-                        Circle()
-                            .stroke(Color.agentBorder, lineWidth: 1)
-                            .allowsHitTesting(false)
-                    }
-                    .contentShape(.circle)
-            }
-            .buttonStyle(AgentPressButtonStyle())
-            .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-            .accessibilityLabel("Save changes")
+            AgentDesktopDetailIconButton(
+                title: "Save changes",
+                icon: .check,
+                isEnabled: !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                action: saveDraft
+            )
         } else if canManageDraft {
             if canDeleteAsEmptyDraft {
-                Button(role: .destructive) {
+                AgentDesktopDetailIconButton(
+                    title: "Delete empty draft",
+                    icon: .trash,
+                    foreground: .agentDestructive,
+                    role: .destructive
+                ) {
                     confirmDeleteDraft = true
-                } label: {
-                    AgentIconView(.trash, size: 16)
-                        .foregroundStyle(Color.agentDestructive)
-                        .frame(width: 44, height: 44)
-                        .background(Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.agentBorder, lineWidth: 1)
-                                .allowsHitTesting(false)
-                        }
-                        .contentShape(.circle)
                 }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityLabel("Delete empty draft")
             } else {
                 Menu {
                     draftOptionsMenuContent
                 } label: {
-                    AgentIconView(.more, size: 17)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 44, height: 44)
-                        .background(Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.agentBorder, lineWidth: 1)
-                                .allowsHitTesting(false)
-                        }
-                        .contentShape(.circle)
+                    AgentDesktopDetailIconLabel(icon: .more)
                 }
                 .buttonStyle(AgentPressButtonStyle())
                 .accessibilityLabel("Draft options")

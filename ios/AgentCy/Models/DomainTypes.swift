@@ -980,6 +980,30 @@ enum AppearancePreference: String, CaseIterable, Codable, Identifiable, Sendable
     var title: String { rawValue.capitalized }
 }
 
+enum DeviceAppearancePreferences {
+    static let storageKey = "agentcy.deviceAppearancePreference"
+
+    static func load(
+        defaults: UserDefaults = .standard,
+        legacyFallback: AppearancePreference = .system
+    ) -> AppearancePreference {
+        if let rawValue = defaults.string(forKey: storageKey),
+           let preference = AppearancePreference(rawValue: rawValue) {
+            return preference
+        }
+
+        defaults.set(legacyFallback.rawValue, forKey: storageKey)
+        return legacyFallback
+    }
+
+    static func save(
+        _ preference: AppearancePreference,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(preference.rawValue, forKey: storageKey)
+    }
+}
+
 enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
     case grayscale
     case pastel

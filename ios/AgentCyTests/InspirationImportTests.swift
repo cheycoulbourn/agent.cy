@@ -5,6 +5,42 @@ import XCTest
 
 @MainActor
 final class InspirationImportTests: XCTestCase {
+    func testMobileImportStoresTheSavedPostWithoutForcingItsReviewOpen() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let queue = InspirationImportQueueStore(
+            rootDirectoryURL: root,
+            appliesFileProtection: false
+        )
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let workspace = CreatorWorkspace(profileID: UUID(), name: "Current")
+        context.insert(workspace)
+        try context.save()
+        try queue.enqueue(InspirationShareEnvelope(
+            workspaceHintID: workspace.id,
+            canonicalURLString: "https://www.instagram.com/reel/SILENT/",
+            platform: .instagram,
+            sourceTitle: "A title I chose"
+        ))
+        let model = AppModel(reminderService: PreviewReminderService())
+        model.activeWorkspaceID = workspace.id
+
+        let result = model.importPendingInspiration(
+            context: context,
+            coordinator: InspirationImportCoordinator(queueStore: queue),
+            presentsImportedSource: false
+        )
+
+        XCTAssertEqual(result?.importedSourceIDs.count, 1)
+        XCTAssertNil(model.inspirationReviewRoute)
+        XCTAssertEqual(model.selectedTab, .home)
+        let source = try XCTUnwrap(context.fetch(FetchDescriptor<InspirationSource>()).first)
+        XCTAssertEqual(source.sourceTitle, "A title I chose")
+        XCTAssertEqual(try queue.pending(), [])
+    }
+
     func testOriginalOnlyEnvelopeImportsAnalysisWithoutSavingTheRemix() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

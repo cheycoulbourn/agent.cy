@@ -23,7 +23,7 @@ private enum AgendaListPillarFilter: Hashable {
     case pillar(UUID)
 }
 
-private enum AgendaListStandardStatus: String, CaseIterable, Hashable {
+enum AgendaListStandardStatus: String, CaseIterable, Hashable {
     case draft
     case inProgress
     case scheduled
@@ -39,11 +39,13 @@ private enum AgendaListStandardStatus: String, CaseIterable, Hashable {
     }
 }
 
-private enum AgendaListStatusFilter: Hashable {
+enum AgendaListStatusFilter: Hashable {
     case all
     case open
     case standard(AgendaListStandardStatus)
     case custom(String)
+
+    static let defaultFilter: Self = .open
 }
 
 private enum AgendaPostOccurrenceKind: String, Hashable {
@@ -137,7 +139,7 @@ struct AgendaView: View {
     @State private var displayMode: AgendaDisplayMode = .week
     @State private var calendarMonth = Date()
     @State private var listPillarFilter: AgendaListPillarFilter = .all
-    @State private var listStatusFilter: AgendaListStatusFilter = .all
+    @State private var listStatusFilter: AgendaListStatusFilter = .defaultFilter
     @State private var isListPillarFilterPresented = false
     @State private var isListStatusFilterPresented = false
 
@@ -1676,7 +1678,7 @@ struct AgendaView: View {
         }
     }
     private var hasActiveListFilter: Bool {
-        listPillarFilter != .all || listStatusFilter != .all
+        listPillarFilter != .all || listStatusFilter != .defaultFilter
     }
     private func presentListEmptyStateCapture(_ mode: QuickCaptureLaunchMode) {
         appModel.quickCaptureTargetDate = nil
@@ -1691,7 +1693,7 @@ struct AgendaView: View {
     private func clearAgendaListFilters() {
         withAnimation(.snappy(duration: 0.2)) {
             listPillarFilter = .all
-            listStatusFilter = .all
+            listStatusFilter = .defaultFilter
         }
     }
     private func shiftCalendarMonth(_ amount: Int) {
@@ -2514,52 +2516,22 @@ struct DayAgendaView: View {
 
 #if targetEnvironment(macCatalyst)
     private var desktopDayNavigationHeader: some View {
-        ZStack {
-            HStack(spacing: AgentSpacing.x3) {
-                desktopDayHeaderButton(title: "Back", icon: .back, action: dismiss.callAsFunction)
-
-                Spacer(minLength: AgentSpacing.x4)
-
-                if AgendaDayPresentation.showsSaveControl(day: day, now: Date(), hasChanges: hasDayChanges) {
-                    desktopDayHeaderButton(title: "Save day", icon: .check, action: saveAndDismiss)
-                } else {
-                    Color.clear
-                        .frame(width: 44, height: 44)
-                        .accessibilityHidden(true)
-                }
+        AgentDesktopDetailRail(
+            title: day.formatted(.dateTime.weekday(.wide)),
+            backAction: dismiss.callAsFunction
+        ) {
+            if AgendaDayPresentation.showsSaveControl(day: day, now: Date(), hasChanges: hasDayChanges) {
+                AgentDesktopDetailIconButton(
+                    title: "Save day",
+                    icon: .check,
+                    action: saveAndDismiss
+                )
+            } else {
+                Color.clear
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
             }
-
-            Text(day.formatted(.dateTime.weekday(.wide)))
-                .font(.agentHeadline)
-                .foregroundStyle(Color.agentText)
-                .lineLimit(1)
         }
-        .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x2)
-        .frame(minHeight: 60)
-        .background(Color.agentCanvas)
-    }
-
-    private func desktopDayHeaderButton(
-        title: String,
-        icon: AgentIcon,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            AgentIconView(icon, size: 15)
-                .foregroundStyle(Color.agentText)
-                .frame(width: 38, height: 38)
-                .background(Color.agentSurface, in: .circle)
-                .overlay {
-                    Circle()
-                        .stroke(Color.agentBorder, lineWidth: 0.75)
-                        .allowsHitTesting(false)
-                }
-                .frame(width: 44, height: 44)
-                .contentShape(.circle)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
     }
 #endif
 

@@ -618,7 +618,6 @@ final class AppModel {
             onboardingCompleted: true,
             showsBrandDealsInPostEditor: draft.brandPartnershipsEnabled
         )
-        profile.appearance = draft.appearance ?? .system
         profile.vibePalette = draft.vibePalette
         profile.selectedDestinationIDs = selectedDestinations.sorted { $0.uuidString < $1.uuidString }
         context.insert(profile)
@@ -704,7 +703,8 @@ final class AppModel {
 
         do {
             try context.save()
-            appearancePreference = profile.appearance
+            appearancePreference = draft.appearance ?? .system
+            DeviceAppearancePreferences.save(appearancePreference)
             LocalCyPreferences.isEnabled = draft.aiProvider == .claudeOrCodex
             if MCPBridgePreferences.isConnected {
                 try? MCPBridgeService.sync(context: context, workspaceID: workspace.id)
@@ -813,15 +813,34 @@ final class AppModel {
     }
 
     @discardableResult
-    func importPendingInspiration(context: ModelContext) -> InspirationImportResult? {
-        guard let coordinator = try? InspirationImportCoordinator(),
-              let result = try? coordinator.importPending(
+    func importPendingInspiration(
+        context: ModelContext,
+        presentsImportedSource: Bool = true
+    ) -> InspirationImportResult? {
+        guard let coordinator = try? InspirationImportCoordinator() else {
+            return nil
+        }
+        return importPendingInspiration(
+            context: context,
+            coordinator: coordinator,
+            presentsImportedSource: presentsImportedSource
+        )
+    }
+
+    @discardableResult
+    func importPendingInspiration(
+        context: ModelContext,
+        coordinator: InspirationImportCoordinator,
+        presentsImportedSource: Bool
+    ) -> InspirationImportResult? {
+        guard let result = try? coordinator.importPending(
                   context: context,
                   preferredWorkspaceID: resolvedWorkspaceID(context: context)
               ) else {
             return nil
         }
-        guard inspirationReviewRoute == nil,
+        guard presentsImportedSource,
+              inspirationReviewRoute == nil,
               presentedSheet == nil,
               let sourceID = (result.importedSourceIDs + result.reopenedSourceIDs).first else {
             return result

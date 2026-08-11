@@ -1530,6 +1530,13 @@ struct TaskDetailView: View {
                 scrollSubtaskComposerIntoView(using: proxy)
             }
         }
+#if targetEnvironment(macCatalyst)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            desktopDetailRail
+        }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+#else
         .navigationTitle("Task")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1545,6 +1552,7 @@ struct TaskDetailView: View {
             }
             .sharedBackgroundVisibility(.hidden)
         }
+#endif
         .confirmationDialog("Task options", isPresented: $showTaskOptions, titleVisibility: .hidden) {
             if !completedSubtasks.isEmpty {
                 Button(showCompletedSubtasks ? "Hide completed subtasks" : "Show completed subtasks") {
@@ -1580,6 +1588,25 @@ struct TaskDetailView: View {
         .agentScreen()
         .agentKeyboardDismissal()
     }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopDetailRail: some View {
+        AgentDesktopDetailRail(title: "Task", backAction: dismiss.callAsFunction) {
+            HStack(spacing: AgentSpacing.x2) {
+                AgentDesktopDetailIconButton(
+                    title: "Save task",
+                    icon: .check,
+                    isEnabled: !textDraft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    action: saveAndDismiss
+                )
+
+                AgentDesktopDetailIconButton(title: "Task options", icon: .more) {
+                    showTaskOptions = true
+                }
+            }
+        }
+    }
+#endif
 
     private var overdueActions: some View {
         HStack(spacing: AgentSpacing.x2) {

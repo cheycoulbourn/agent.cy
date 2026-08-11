@@ -11,8 +11,6 @@ struct DesktopAppShellView: View {
     @Query(sort: \CreatorTask.createdAt, order: .reverse) private var allTasks: [CreatorTask]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var allOutputs: [PlatformOutput]
-    @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
-    @Query(sort: \InspirationSource.updatedAt, order: .reverse) private var allInspirationSources: [InspirationSource]
     @State private var selection: DesktopNavigationDestination? = DesktopNavigationPolicy.defaultDestination
     @State private var homePath = NavigationPath()
     @State private var planPath = NavigationPath()
@@ -82,15 +80,16 @@ struct DesktopAppShellView: View {
         } message: {
             Text(appModel.notice?.message ?? "")
         }
-        .overlay(alignment: .bottomTrailing) {
-            VStack(alignment: .trailing, spacing: AgentSpacing.x3) {
-                if let undo = appModel.taskCompletionUndo {
-                    taskCompletionUndoToast(undo)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-
-                cyFloatingButton
+        .overlay(alignment: .top) {
+            if let undo = appModel.taskCompletionUndo {
+                taskCompletionUndoToast(undo)
+                    .padding(.top, AgentSpacing.x5)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(2)
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            cyFloatingButton
             .padding(AgentSpacing.x6)
         }
         .agentScreen()
@@ -282,7 +281,10 @@ struct DesktopAppShellView: View {
                         .foregroundStyle(Color.agentSecondary)
                 }
                 Spacer(minLength: 0)
-                AgentIconView(.sliders, size: 16)
+                Image(systemName: "gearshape")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 16, height: 16)
                     .foregroundStyle(Color.agentSecondary)
             }
             .frame(minHeight: 44)
@@ -345,6 +347,8 @@ struct DesktopAppShellView: View {
             }
             .font(.agentDesktopUtilityAction)
             .foregroundStyle(Color.actionAccent)
+            .frame(minWidth: 40, minHeight: 40)
+            .contentShape(.rect)
             .buttonStyle(.plain)
             .accessibilityHint(
                 isEditingUtilitySidebar
@@ -412,6 +416,8 @@ struct DesktopAppShellView: View {
                 .foregroundStyle(Color.agentSecondary)
                 .frame(width: 28, height: 28)
                 .background(Color.agentSurface, in: .circle)
+                .frame(width: 40, height: 40)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
@@ -459,15 +465,11 @@ struct DesktopAppShellView: View {
             upcomingPostsWidget
         case .ideas:
             ideasWidget
-        case .savedPosts:
-            savedPostsWidget
-        case .pillars:
-            pillarsWidget
         }
     }
 
     private var taskWidget: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                     MetaLabel("Tasks")
@@ -475,44 +477,48 @@ struct DesktopAppShellView: View {
                         .font(.agentDesktopUtilityTitle)
                 }
                 Spacer(minLength: AgentSpacing.x2)
-                Button("View all") { openTasks() }
+                Text("\(utilityTasks.count)")
                     .font(.agentDesktopUtilityAction)
-                    .buttonStyle(.plain)
+                    .monospacedDigit()
+                    .foregroundStyle(Color.agentSecondary)
             }
 
-            Rectangle().fill(Color.agentHairline).frame(height: 1)
-
             if utilityTasks.isEmpty {
-                Text("You’re clear for now.")
+                Text("No tasks due today.")
                     .font(.agentDesktopUtilityBody)
                     .foregroundStyle(Color.agentSecondary)
-                    .padding(.vertical, AgentSpacing.x2)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(utilityTasks.prefix(5).enumerated()), id: \.element.id) { index, task in
-                        Button { openTask(task.id) } label: {
-                            HStack(alignment: .top, spacing: AgentSpacing.x3) {
-                                Circle()
-                                    .stroke(Color.agentSecondary, lineWidth: 1)
-                                    .frame(width: 13, height: 13)
-                                    .padding(.top, 3)
-                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                                    Text(utilityTitle(for: task))
-                                        .font(.agentDesktopUtilityBodyEmphasis)
-                                        .foregroundStyle(Color.agentText)
-                                        .lineLimit(2)
-                                    if let date = utilityDate(for: task) {
-                                        Text(date)
-                                            .font(.agentDesktopUtilityMetadata)
-                                            .foregroundStyle(Color.agentSecondary)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(alignment: .center, spacing: AgentSpacing.x2) {
+                            AgentTaskCheckbox(
+                                isCompleted: task.isCompleted,
+                                color: .agentSecondary,
+                                accessibilityLabel: "Complete \(utilityTitle(for: task))"
+                            ) {
+                                completeUtilityTask(task)
                             }
-                            .padding(.vertical, AgentSpacing.x3)
-                            .contentShape(.rect)
+                            .frame(width: 28, height: 44, alignment: .leading)
+                            .accessibilityHint("Marks this task complete")
+
+                            Button { openTask(task.id) } label: {
+                                Text(utilityTitle(for: task))
+                                    .font(.agentDesktopUtilityBody)
+                                    .fontWeight(.regular)
+                                    .foregroundStyle(Color.agentText)
+                                    .lineLimit(2)
+                                    .frame(
+                                        maxWidth: .infinity,
+                                        minHeight: 44,
+                                        alignment: .leading
+                                    )
+                                    .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens task details")
                         }
-                        .buttonStyle(.plain)
+                        .frame(minHeight: 44)
 
                         if index < min(utilityTasks.count, 5) - 1 {
                             Rectangle().fill(Color.agentHairline).frame(height: 1)
@@ -520,56 +526,25 @@ struct DesktopAppShellView: View {
                     }
                 }
             }
+
+            utilityWidgetViewAllFooter(
+                accessibilityLabel: "View all tasks",
+                action: openTasks
+            )
         }
-        .padding(AgentSpacing.x4)
-        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.panel))
+        .utilityWidgetCard()
     }
 
-    private var savedPostsWidget: some View {
-        Button {
-            selection = .savedPosts
-        } label: {
-            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                HStack {
-                    MetaLabel("Saved Posts")
-                    Spacer()
-                    Text("\(accountSavedPosts.count)")
-                        .font(.agentDesktopUtilityAction)
-                        .monospacedDigit()
-                        .foregroundStyle(Color.agentSecondary)
-                }
-
-                if let latest = accountSavedPosts.first {
-                    Text(SavedPostPresentation.title(for: latest))
-                        .font(.agentDesktopUtilityTitle)
-                        .foregroundStyle(Color.agentText)
-                        .lineLimit(2)
-                    HStack(spacing: AgentSpacing.x2) {
-                        Text("Latest reference")
-                            .font(.agentDesktopUtilityMetadata)
-                            .foregroundStyle(Color.agentSecondary)
-                        Spacer()
-                        AgentIconView(.arrowRight, size: 12)
-                            .foregroundStyle(Color.actionAccent)
-                    }
-                } else {
-                    Text("Posts you save on iPhone will appear here.")
-                        .font(.agentDesktopUtilityBody)
-                        .foregroundStyle(Color.agentSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(AgentSpacing.x4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.panel))
-            .contentShape(.rect(cornerRadius: AgentRadius.panel))
+    private func completeUtilityTask(_ task: CreatorTask) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            appModel.toggleTask(task, context: modelContext)
         }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens every saved reference in this account")
     }
 
     private var upcomingPostsWidget: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
                 MetaLabel("Upcoming Posts")
                 Spacer(minLength: AgentSpacing.x2)
@@ -577,26 +552,26 @@ struct DesktopAppShellView: View {
                     .font(.agentDesktopUtilityAction)
                     .monospacedDigit()
                     .foregroundStyle(Color.agentSecondary)
-                Button("View all", action: openPlan)
-                    .font(.agentDesktopUtilityAction)
-                    .foregroundStyle(Color.actionAccent)
-                    .buttonStyle(.plain)
             }
 
             if let output = upcomingUtilityOutputs.first,
                let brief = utilityBrief(for: output) {
                 Button { openUpcomingPost(brief.id) } label: {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    Text(brief.title)
-                        .font(.agentDesktopUtilityTitle)
-                        .foregroundStyle(Color.agentText)
-                        .lineLimit(2)
-                    utilityWidgetFooter(
-                        label: output.targetDate.map(utilityPostDate) ?? "Scheduled",
-                        accent: .actionAccent
-                    )
+                        Text(brief.title)
+                            .font(.agentDesktopUtilityTitle)
+                            .foregroundStyle(Color.agentText)
+                            .lineLimit(2)
+                        Text(output.targetDate.map(utilityPostDate) ?? "Scheduled")
+                            .font(.agentDesktopUtilityMetadata)
+                            .foregroundStyle(Color.agentSecondary)
+                            .lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: 44,
+                        alignment: .leading
+                    )
                     .contentShape(.rect)
                 }
                 .buttonStyle(AgentPressButtonStyle())
@@ -605,13 +580,19 @@ struct DesktopAppShellView: View {
                 Text("Nothing scheduled yet.")
                     .font(.agentDesktopUtilityBody)
                     .foregroundStyle(Color.agentSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
             }
+
+            utilityWidgetViewAllFooter(
+                accessibilityLabel: "View all upcoming posts",
+                action: openPlan
+            )
         }
         .utilityWidgetCard()
     }
 
     private var ideasWidget: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
                 MetaLabel("Idea Bank")
                 Spacer(minLength: AgentSpacing.x2)
@@ -619,16 +600,13 @@ struct DesktopAppShellView: View {
                     .font(.agentDesktopUtilityAction)
                     .monospacedDigit()
                     .foregroundStyle(Color.agentSecondary)
-                Button("View all", action: openIdeaBank)
-                    .font(.agentDesktopUtilityAction)
-                    .foregroundStyle(Color.actionAccent)
-                    .buttonStyle(.plain)
             }
 
             if utilityIdeas.isEmpty {
                 Text("Capture an idea to see it here.")
                     .font(.agentDesktopUtilityBody)
                     .foregroundStyle(Color.agentSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
             } else {
                 VStack(spacing: 0) {
                     ForEach(
@@ -636,17 +614,12 @@ struct DesktopAppShellView: View {
                         id: \.element.id
                     ) { index, idea in
                         Button { openUtilityIdea(idea) } label: {
-                            HStack(spacing: AgentSpacing.x2) {
-                                Text(idea.title)
-                                    .font(.agentDesktopUtilityBodyEmphasis)
-                                    .foregroundStyle(Color.agentText)
-                                    .lineLimit(2)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                AgentIconView(.arrowRight, size: 11)
-                                    .foregroundStyle(Color.actionAccent)
-                            }
-                            .padding(.vertical, AgentSpacing.x3)
-                            .contentShape(.rect)
+                            Text(idea.title)
+                                .font(.agentDesktopUtilityBodyEmphasis)
+                                .foregroundStyle(Color.agentText)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(.rect)
                         }
                         .buttonStyle(AgentPressButtonStyle())
                         .accessibilityHint("Opens this idea")
@@ -660,58 +633,38 @@ struct DesktopAppShellView: View {
                     }
                 }
             }
+
+            utilityWidgetViewAllFooter(
+                accessibilityLabel: "View all ideas",
+                action: openIdeaBank
+            )
         }
         .utilityWidgetCard()
     }
 
-    private var pillarsWidget: some View {
-        Button(action: openPillars) {
-            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                HStack {
-                    MetaLabel("Pillars")
-                    Spacer()
-                    Text("\(utilityPillars.count)")
+    private func utilityWidgetViewAllFooter(
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: AgentSpacing.x2) {
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+
+            Button(action: action) {
+                HStack(spacing: AgentSpacing.x2) {
+                    Text("View all")
                         .font(.agentDesktopUtilityAction)
-                        .monospacedDigit()
                         .foregroundStyle(Color.agentSecondary)
+                    Spacer(minLength: AgentSpacing.x2)
+                    AgentIconView(.arrowRight, size: 12)
+                        .foregroundStyle(Color.actionAccent)
                 }
-
-                if utilityPillars.isEmpty {
-                    Text("Add a pillar to shape your planning.")
-                        .font(.agentDesktopUtilityBody)
-                        .foregroundStyle(Color.agentSecondary)
-                } else {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        ForEach(utilityPillars.prefix(3)) { pillar in
-                            HStack(spacing: AgentSpacing.x2) {
-                                Circle()
-                                    .fill(Color(agentHex: pillar.resolvedColorHex(in: utilityPillars)))
-                                    .frame(width: 8, height: 8)
-                                Text(pillar.name)
-                                    .font(.agentDesktopUtilityBodyEmphasis)
-                                    .foregroundStyle(Color.agentText)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                    utilityWidgetFooter(label: "View pillars", accent: .actionAccent)
-                }
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .contentShape(.rect)
             }
-            .utilityWidgetCard()
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens your pillars")
-    }
-
-    private func utilityWidgetFooter(label: String, accent: Color) -> some View {
-        HStack(spacing: AgentSpacing.x2) {
-            Text(label)
-                .font(.agentDesktopUtilityMetadata)
-                .foregroundStyle(Color.agentSecondary)
-                .lineLimit(1)
-            Spacer(minLength: AgentSpacing.x2)
-            AgentIconView(.arrowRight, size: 12)
-                .foregroundStyle(accent)
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilityLabel)
         }
     }
 
@@ -744,15 +697,12 @@ struct DesktopAppShellView: View {
         let archivedBriefIDs = Set(allBriefs.lazy.filter { $0.status == .archived }.map(\.id))
         return allTasks
             .filter { task in
-                task.parentTaskID == nil &&
-                    !task.isCompleted &&
-                    !task.isSkipped &&
-                    task.briefID.map { !archivedBriefIDs.contains($0) } != false &&
-                    WorkspaceScope.includes(
-                        task.workspaceID,
-                        activeWorkspaceID: appModel.activeWorkspaceID,
-                        workspaces: workspaces
-                    )
+                DesktopUtilityTaskPolicy.includes(
+                    task,
+                    archivedBriefIDs: archivedBriefIDs,
+                    activeWorkspaceID: appModel.activeWorkspaceID,
+                    workspaces: workspaces
+                )
             }
             .sorted {
                 let lhs = $0.targetDate ?? $0.dailyFocusDate ?? .distantFuture
@@ -760,15 +710,6 @@ struct DesktopAppShellView: View {
                 if lhs != rhs { return lhs < rhs }
                 return $0.createdAt < $1.createdAt
             }
-    }
-
-    private var accountSavedPosts: [InspirationSource] {
-        allInspirationSources.filter {
-            SavedPostsScopePolicy.includes(
-                recordWorkspaceID: $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID
-            )
-        }
     }
 
     private var utilityIdeas: [CreativeBrief] {
@@ -779,16 +720,6 @@ struct DesktopAppShellView: View {
                 workspaces: workspaces
             ) && IdeaBankPlacementPolicy.includes(brief) &&
                 !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-
-    private var utilityPillars: [Pillar] {
-        allPillars.filter { pillar in
-            !pillar.isArchived && WorkspaceScope.includes(
-                pillar.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
         }
     }
 
@@ -862,13 +793,6 @@ struct DesktopAppShellView: View {
         storedUtilityWidgetOrder = DesktopUtilityWidgetOrderPolicy.storageValue(for: widgets)
     }
 
-    private func utilityDate(for task: CreatorTask) -> String? {
-        guard let date = task.targetDate ?? task.dailyFocusDate else { return nil }
-        if Calendar.current.isDateInToday(date) { return "Today" }
-        if Calendar.current.isDateInTomorrow(date) { return "Tomorrow" }
-        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
-    }
-
     private func utilityTitle(for task: CreatorTask) -> String {
         let title = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty ? "Untitled task" : title
@@ -900,11 +824,6 @@ struct DesktopAppShellView: View {
     private func openUtilityIdea(_ idea: CreativeBrief) {
         ideaBankPath = NavigationPath()
         appModel.openIdea(idea, developsPost: false, context: modelContext)
-    }
-
-    private func openPillars() {
-        selection = .pillars
-        appModel.selectedTab = .pillars
     }
 
     private func openTask(_ taskID: UUID) {

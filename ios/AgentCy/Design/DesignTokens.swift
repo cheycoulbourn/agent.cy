@@ -236,6 +236,88 @@ struct AgentToolbarIconButton: View {
     }
 }
 
+/// Shared desktop drill-down chrome. Keeping the navigation rail outside the
+/// system toolbar prevents Catalyst from adding a scrolling material shadow,
+/// and gives tasks, posts, and agenda days the same geometry.
+struct AgentDesktopDetailRail<Trailing: View>: View {
+    let title: String
+    let backAction: () -> Void
+    private let trailing: Trailing
+
+    init(
+        title: String,
+        backAction: @escaping () -> Void,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.title = title
+        self.backAction = backAction
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: AgentSpacing.x3) {
+                AgentDesktopDetailIconButton(
+                    title: "Back",
+                    icon: .back,
+                    action: backAction
+                )
+
+                Spacer(minLength: 0)
+
+                trailing
+            }
+
+            Text(title)
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .lineLimit(1)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x6)
+        .padding(.bottom, AgentSpacing.x4)
+        .background(Color.agentCanvas)
+    }
+}
+
+struct AgentDesktopDetailIconButton: View {
+    let title: String
+    let icon: AgentIcon
+    var foreground: Color = .agentText
+    var isEnabled = true
+    var role: ButtonRole? = nil
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: role, action: action) {
+            AgentDesktopDetailIconLabel(icon: icon, foreground: foreground)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.42)
+        .accessibilityLabel(title)
+    }
+}
+
+struct AgentDesktopDetailIconLabel: View {
+    let icon: AgentIcon
+    var foreground: Color = .agentText
+
+    var body: some View {
+        AgentIconView(icon, size: icon == .back ? 18 : 16)
+            .foregroundStyle(foreground)
+            .frame(width: 44, height: 44)
+            .background(Color.agentSurface, in: .circle)
+            .overlay {
+                Circle()
+                    .stroke(Color.agentBorder, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(.circle)
+    }
+}
+
 extension Color {
     static let agentPureBlack = Color(uiColor: AgentColorPalette.pureBlack.uiColor)
     static let agentPureWhite = Color(uiColor: AgentColorPalette.pureWhite.uiColor)
@@ -621,12 +703,27 @@ struct AgentTaskCheckbox: View {
         Button(action: action) {
             AgentTaskCheckboxMark(isCompleted: isCompleted, color: color)
                 .frame(width: 20, height: 44, alignment: .leading)
-                // Keep a full-size touch target without making the visible
-                // checkbox consume 44 points of horizontal row layout.
-                .contentShape(Rectangle().inset(by: -12))
+                // Expand only horizontally. Expanding vertically makes the
+                // target collide with checkboxes in adjacent 44-point rows.
+                .contentShape(AgentHorizontalHitArea(horizontalExpansion: 12))
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct AgentHorizontalHitArea: Shape {
+    let horizontalExpansion: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        Path(
+            CGRect(
+                x: rect.minX - horizontalExpansion,
+                y: rect.minY,
+                width: rect.width + (horizontalExpansion * 2),
+                height: rect.height
+            )
+        )
     }
 }
 
@@ -1041,14 +1138,23 @@ struct AgentViewHeightPreferenceKey: PreferenceKey {
 }
 
 struct AgentInsetSurface<Content: View>: View {
+    let role: AgentSurfaceRole
     @ViewBuilder let content: Content
+
+    init(
+        role: AgentSurfaceRole = .card,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.role = role
+        self.content = content()
+    }
 
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AgentLayout.pageMargin)
             .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
-            .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
+            .agentSurfaceChrome(cornerRadius: AgentRadius.panel, role: role)
     }
 }
 

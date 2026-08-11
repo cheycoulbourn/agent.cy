@@ -823,32 +823,35 @@ struct AskCyView: View {
             #if targetEnvironment(macCatalyst)
             if showsCloseButton {
                 Button(action: dismiss.callAsFunction) {
-                    HStack(spacing: AgentSpacing.x2) {
-                        Text("ESC")
-                            .font(.agentMetadata)
-                            .foregroundStyle(Color.agentSecondary)
-                        AgentIconView(.close, size: 13)
-                            .foregroundStyle(Color.agentText)
-                    }
-                    .padding(.horizontal, AgentSpacing.x3)
-                    .frame(minHeight: 40)
-                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AgentRadius.control)
-                            .stroke(Color.agentBorder, lineWidth: 1)
-                    }
+                    AgentIconView(.close, size: 17)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.circle)
                 }
-                .buttonStyle(AgentPressButtonStyle())
+                .buttonStyle(.plain)
+                .frame(width: 44, height: 44)
+                .glassEffect(.clear.interactive(), in: .circle)
+                .overlay {
+                    Circle()
+                        .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                }
+                .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Close Cy")
                 .accessibilityHint("Press Escape to close")
+            } else {
+                ProfileSettingsButton(
+                    identity: activeIdentity,
+                    action: { appModel.presentedSheet = .settings }
+                )
             }
-            #endif
-
+            #else
             ProfileSettingsButton(
                 identity: activeIdentity,
                 action: { appModel.presentedSheet = .settings }
             )
+            #endif
         }
         .frame(height: 44)
     }
