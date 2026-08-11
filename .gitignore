@@ -17,6 +17,7 @@ coverage/
 DerivedData/
 build/
 ios/build-device/
+.codex-build/
 *.xcuserstate
 xcuserdata/
 *.xccheckout

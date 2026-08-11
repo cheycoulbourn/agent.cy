@@ -20,6 +20,15 @@ enum AgentLayout {
     static let dashboardGutter: CGFloat = AgentSpacing.x3
     /// Consistent distance from the final line of a page header to its first primary surface.
     static let pageHeaderToContentSpacing: CGFloat = AgentSpacing.x8
+    /// Desktop pages begin closer to the title bar because they do not need the
+    /// same status-bar breathing room as the iPhone shell.
+    static var pageTopPadding: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        AgentSpacing.x4
+        #else
+        AgentSpacing.x8
+        #endif
+    }
     /// Standard vertical gap between a section's metadata heading and its primary content.
     static let sectionHeadingSpacing: CGFloat = AgentSpacing.x2
     /// Clears the floating bottom navigation without each screen inventing its own inset.
@@ -71,6 +80,7 @@ enum AgentIcon: String, CaseIterable, Sendable {
     case duplicate = "agent-icon-duplicate"
     case terminal = "agent-icon-terminal"
     case image = "agent-icon-image"
+    case instagramCamera = "agent-icon-instagram-camera"
     case video = "agent-icon-video"
     case microphone = "agent-icon-microphone"
     case profile = "agent-icon-profile"
@@ -235,6 +245,8 @@ extension Color {
     static let agentSecondary = adaptive(light: AgentColorPalette.secondaryLight, dark: AgentColorPalette.secondaryDark)
     static let agentBorder = adaptive(light: AgentColorPalette.borderLight, dark: AgentColorPalette.borderDark)
     static let agentHairline = adaptive(light: AgentColorPalette.hairlineLight, dark: AgentColorPalette.hairlineDark)
+    static let agentSelectionFill = agentText.opacity(0.055)
+    static let agentSelectionIndicator = agentSecondary.opacity(0.52)
     static let agentFocusControl = adaptive(light: AgentColorPalette.focusLight, dark: AgentColorPalette.focusDark)
     static let actionAccent = adaptive(light: AgentColorPalette.inkLight, dark: AgentColorPalette.inkDark)
     static let cyAccent = Color(uiColor: AgentColorPalette.cy.uiColor)
@@ -409,6 +421,62 @@ extension Font {
         }
         return .system(size: 11, weight: .medium, design: .default)
     }
+
+    static var agentDesktopUtilityTitle: Font {
+        agentInter(
+            size: DesktopTypographyScale.utilityTitle,
+            weight: .semibold,
+            relativeTo: .headline
+        )
+    }
+
+    static var agentDesktopQuickAction: Font {
+        agentInter(
+            size: DesktopTypographyScale.quickAction,
+            weight: .semibold,
+            relativeTo: .body
+        )
+    }
+
+    static var agentDesktopNavigation: Font {
+        agentInter(
+            size: DesktopTypographyScale.navigation,
+            weight: .medium,
+            relativeTo: .body
+        )
+    }
+
+    static var agentDesktopUtilityBody: Font {
+        agentInter(
+            size: DesktopTypographyScale.utilityBody,
+            weight: .regular,
+            relativeTo: .body
+        )
+    }
+
+    static var agentDesktopUtilityBodyEmphasis: Font {
+        agentInter(
+            size: DesktopTypographyScale.utilityBody,
+            weight: .semibold,
+            relativeTo: .body
+        )
+    }
+
+    static var agentDesktopUtilityAction: Font {
+        agentInter(
+            size: DesktopTypographyScale.utilityAction,
+            weight: .semibold,
+            relativeTo: .caption
+        )
+    }
+
+    static var agentDesktopUtilityMetadata: Font {
+        agentInter(
+            size: DesktopTypographyScale.utilityMetadata,
+            weight: .medium,
+            relativeTo: .caption
+        )
+    }
 }
 
 struct AgentPrimaryButtonStyle: ButtonStyle {
@@ -461,6 +529,20 @@ struct AgentSecondaryButtonStyle: ButtonStyle {
             .background(Color.agentSurface, in: .capsule)
             .overlay(Capsule().strokeBorder(Color.agentBorder, lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.42)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Shared press feedback for quiet rows, icon buttons, and desktop navigation.
+/// It keeps interaction feedback consistent without adding a second visual style.
+struct AgentPressButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -579,28 +661,6 @@ struct AgentTaskCheckboxPlaceholder: View {
     }
 }
 
-struct AgentCompactPrimaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var background: Color = .actionAccent
-    var foreground: Color = .onAccent
-    var border: Color = .clear
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.agentHeadline)
-            .padding(.horizontal, AgentSpacing.x4)
-            .frame(minHeight: 44)
-            .foregroundStyle(foreground)
-            .background(background, in: .capsule)
-            .overlay(Capsule().stroke(border, lineWidth: 1))
-            .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
 struct AgentCompactSecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -613,39 +673,6 @@ struct AgentCompactSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.agentText)
             .background(Color.agentSurface, in: .capsule)
             .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
-            .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-struct AgentIconPrimaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.agentHeadline)
-            .frame(width: 48, height: 48)
-            .foregroundStyle(Color.onAccent)
-            .background(Color.actionAccent, in: .circle)
-            .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-struct AgentCyFloatingButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.agentInter(size: 21, weight: .semibold, relativeTo: .title3))
-            .frame(width: 56, height: 56)
-            .foregroundStyle(Color.onCyAccent)
-            .background(Color.cyAccent, in: .circle)
-            .shadow(color: Color.agentPureBlack.opacity(0.22), radius: 12, y: 5)
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
@@ -677,14 +704,14 @@ struct PillarMenuChoiceLabel: View {
     }
 
     private var swatchImage: UIImage {
-        let diameter: CGFloat = 14
+        let diameter: CGFloat = 10
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: diameter, height: diameter))
         let image = renderer.image { context in
             UIColor(Color(agentHex: colorHex)).setFill()
-            let swatchRect = CGRect(x: 0.75, y: 0.75, width: diameter - 1.5, height: diameter - 1.5)
+            let swatchRect = CGRect(x: 0.5, y: 0.5, width: diameter - 1, height: diameter - 1)
             context.cgContext.fillEllipse(in: swatchRect)
             UIColor.label.withAlphaComponent(0.38).setStroke()
-            context.cgContext.setLineWidth(1)
+            context.cgContext.setLineWidth(0.7)
             context.cgContext.strokeEllipse(in: swatchRect)
         }
         return image.withRenderingMode(.alwaysOriginal)
@@ -692,13 +719,15 @@ struct PillarMenuChoiceLabel: View {
 }
 
 struct EditorialHeader: View {
-    let kicker: String
+    let kicker: String?
     let title: String
     var subtitle: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            MetaLabel(kicker)
+            if let kicker, !kicker.isEmpty {
+                MetaLabel(kicker)
+            }
             Text(title)
                 .font(.agentDisplay)
                 .tracking(-0.64)
@@ -845,114 +874,6 @@ enum CyVoiceHeading: String, CaseIterable, Sendable {
     }
 }
 
-struct CyVoiceAction {
-    let title: String
-    var isEnabled = true
-    let action: () -> Void
-
-    init(_ title: String, isEnabled: Bool = true, action: @escaping () -> Void) {
-        self.title = title
-        self.isEnabled = isEnabled
-        self.action = action
-    }
-}
-
-struct CyVoiceCard: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let heading: CyVoiceHeading
-    let title: String
-    var message: String?
-    var primaryAction: CyVoiceAction?
-    var secondaryAction: CyVoiceAction?
-    var dismissAction: (() -> Void)?
-
-    private let foreground = Color(uiColor: AgentColorPalette.inkDark.uiColor)
-    private let secondary = Color(uiColor: AgentColorPalette.secondaryDark.uiColor)
-
-    private var background: Color {
-        Color(uiColor: (colorScheme == .dark ? AgentColorPalette.cyPanel : AgentColorPalette.surfaceDark).uiColor)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: AgentSpacing.x2) {
-                CyAsterisk()
-                Text(heading.rawValue.uppercased())
-                    .font(.agentMetadata)
-                    .tracking(1.4)
-                    .foregroundStyle(Color.cyAccent)
-                    .accessibilityLabel(heading.rawValue)
-                Spacer(minLength: 0)
-                if let dismissAction {
-                    Button(action: dismissAction) {
-                        AgentIconView(.close, size: 13)
-                            .frame(width: 44, height: 44)
-                            .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(secondary)
-                    .accessibilityLabel("Dismiss Cy suggestion")
-                    .padding(.trailing, -14)
-                    .padding(.vertical, -14)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.agentTitle)
-                    .tracking(-0.2)
-                    .foregroundStyle(foreground)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let message, !message.isEmpty {
-                    Text(message)
-                        .font(.agentBody)
-                        .foregroundStyle(secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            if let primaryAction {
-                Button(action: primaryAction.action) {
-                    HStack(spacing: AgentSpacing.x2) {
-                        Text(primaryAction.title)
-                        AgentIconView(.arrowRight, size: 13)
-                    }
-                    .font(.agentBody.weight(.semibold))
-                    .foregroundStyle(background)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .padding(.horizontal, AgentSpacing.x4)
-                    .background(foreground, in: .capsule)
-                }
-                .buttonStyle(.plain)
-                .disabled(!primaryAction.isEnabled)
-                .opacity(primaryAction.isEnabled ? 1 : 0.48)
-            }
-
-            if let secondaryAction {
-                Button(action: secondaryAction.action) {
-                    HStack(spacing: 6) {
-                        Text(secondaryAction.title)
-                        AgentIconView(.arrowRight, size: 12)
-                    }
-                    .font(.agentSubtext)
-                    .foregroundStyle(foreground)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .disabled(!secondaryAction.isEnabled)
-            }
-        }
-        .padding(AgentSpacing.x6)
-        .background(background, in: .rect(cornerRadius: 20))
-        .agentSurfaceChrome(
-            cornerRadius: 20,
-            borderColor: Color.cyAccent.opacity(colorScheme == .dark ? 0.42 : 0.18)
-        )
-        .accessibilityElement(children: .contain)
-    }
-}
-
 struct CyAsterisk: View {
     var color: Color = .cyAccent
     var size: CGFloat = 14
@@ -1068,19 +989,6 @@ struct CyCallout<Content: View>: View {
     }
 }
 
-struct EditorialRow<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        content
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(.vertical, AgentSpacing.x3)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Color.agentBorder.opacity(0.7)).frame(height: 1)
-            }
-    }
-}
-
 struct AgentDashboardSurface<Content: View>: View {
     let minimumHeight: CGFloat?
     @ViewBuilder let content: Content
@@ -1100,6 +1008,28 @@ struct AgentDashboardSurface<Content: View>: View {
             .background(Color.agentSurface)
             .clipShape(.rect(cornerRadius: AgentRadius.dashboard))
             .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard, role: .structural)
+    }
+}
+
+enum AgentScrollableSurfacePolicy {
+    static func minimumHeight(
+        viewportHeight: CGFloat,
+        headerHeight: CGFloat,
+        mobileAdjustment: CGFloat = 0
+    ) -> CGFloat? {
+        #if targetEnvironment(macCatalyst)
+        nil
+        #else
+        max(0, viewportHeight - headerHeight + mobileAdjustment)
+        #endif
+    }
+
+    static func bottomPadding(mobile: CGFloat) -> CGFloat {
+        #if targetEnvironment(macCatalyst)
+        AgentSpacing.x8
+        #else
+        mobile
+        #endif
     }
 }
 
@@ -1224,7 +1154,11 @@ private struct AgentBottomNavigationClearanceModifier: ViewModifier {
     let additional: CGFloat
 
     func body(content: Content) -> some View {
+        #if targetEnvironment(macCatalyst)
+        content.padding(.bottom, AgentSpacing.x8 + additional)
+        #else
         content.padding(.bottom, AgentLayout.bottomNavigationClearance + additional)
+        #endif
     }
 }
 

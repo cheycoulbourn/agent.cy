@@ -14,7 +14,17 @@ enum LocalCyPreferences {
     }
 
     static var isEnabledAndConnected: Bool {
-        isEnabled && MCPBridgePreferences.isConnected
+        shouldAttemptLocal(
+            isEnabled: isEnabled,
+            hasBridgeCredential: MCPBridgePreferences.isConnected
+        )
+    }
+
+    static func shouldAttemptLocal(
+        isEnabled: Bool,
+        hasBridgeCredential: Bool
+    ) -> Bool {
+        isEnabled && hasBridgeCredential
     }
 }
 
@@ -84,6 +94,15 @@ private struct LocalCyResponseEnvelope<Result: Decodable>: Decodable {
 actor LocalCyAIClient {
     static let shared = LocalCyAIClient()
 
+    func isAvailable() async -> Bool {
+        guard LocalCyPreferences.isEnabledAndConnected else { return false }
+        if let connection = try? connectionConfig(),
+           await isDirectlyReachable(connection) {
+            return true
+        }
+        return (try? runtimeStatus()?.isRecentlyAvailable) == true
+    }
+
     func perform<Request: AIRequestIdentifying, Result: Decodable & Sendable>(
         operation: AIOperation,
         request body: Request,
@@ -131,9 +150,7 @@ actor LocalCyAIClient {
     }
 
     func isRemoteAvailable() async -> Bool {
-        guard LocalCyPreferences.isEnabledAndConnected,
-              let connection = try? connectionConfig() else { return false }
-        return await isDirectlyReachable(connection)
+        await isAvailable()
     }
 
     private func performQueued<Request: Encodable, Result: Decodable & Sendable>(
@@ -143,11 +160,19 @@ actor LocalCyAIClient {
         result: Result.Type,
         onPhase: (@Sendable (AIProgressPhase) async -> Void)?
     ) async throws -> Result {
+        // Operation IDs may be retried. Remove both halves of an older
+        // exchange first so a stale failure cannot be mistaken for the new
+        // request, then clean up regardless of how this attempt finishes.
+        try? removeExchangeFiles(requestID: requestID)
+        defer { try? removeExchangeFiles(requestID: requestID) }
         try write(envelope, requestID: requestID)
         await onPhase?(.accepted)
         await onPhase?(.generating)
 
-        let deadline = Date().addingTimeInterval(180)
+        // A local bridge is an optimization, not a reason to strand Cy. If a
+        // configured Mac stops answering, hand the same request to hosted Cy
+        // quickly enough that the creator can keep working on the phone.
+        let deadline = Date().addingTimeInterval(10)
         do {
             while Date() < deadline {
                 try Task.checkCancellation()
@@ -155,7 +180,6 @@ actor LocalCyAIClient {
                     requestID: requestID,
                     operation: operation
                 ) {
-                    try removeExchangeFiles(requestID: requestID)
                     let result = try validatedResult(
                         response,
                         requestID: requestID,
@@ -167,7 +191,6 @@ actor LocalCyAIClient {
                 try await Task.sleep(for: .milliseconds(650))
             }
         } catch {
-            if error is CancellationError { try? removeRequest(requestID: requestID) }
             throw error
         }
         throw LocalCyError.timedOut
@@ -184,7 +207,7 @@ actor LocalCyAIClient {
         var request = URLRequest(url: connection.baseURL.appending(path: "v1/local-cy"))
         request.httpMethod = "POST"
         request.httpBody = try encoder.encode(envelope)
-        request.timeoutInterval = 180
+        request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(connection.token)", forHTTPHeaderField: "Authorization")
         await onPhase?(.accepted)
@@ -194,8 +217,9 @@ actor LocalCyAIClient {
               (200..<300).contains(http.statusCode) else {
             throw LocalCyDirectTransportError.unavailable
         }
-        let envelope = try decoder.decode(LocalCyResponseEnvelope<Result>.self, from: data)
-        let value = try validatedResult(envelope, requestID: requestID, operation: operation)
+        let responseEnvelope = try decoder.decode(LocalCyResponseEnvelope<Result>.self, from: data)
+        defer { try? removeExchangeFiles(requestID: requestID) }
+        let value = try validatedResult(responseEnvelope, requestID: requestID, operation: operation)
         await onPhase?(.validating)
         return value
     }

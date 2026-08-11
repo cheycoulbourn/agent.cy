@@ -23,7 +23,7 @@ actor AIOperationIDRegistry {
 
     init(
         defaultsSuiteName: String? = nil,
-        storageKey: String = "agentcy.ai.pending-operation-ids.v1",
+        storageKey: String = "agentcy.ai.pending-operation-ids.v2",
         reuseInterval: TimeInterval = 10 * 60
     ) {
         let defaults = defaultsSuiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard

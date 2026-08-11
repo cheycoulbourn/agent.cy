@@ -6,6 +6,8 @@ import {
   ComposeBriefResultSchema,
   IdeasRequestSchema,
   IdeasResultSchema,
+  InspirationShapeRequestSchema,
+  InspirationShapeResultSchema,
   ReviseBriefRequestSchema,
   ReviseBriefResultSchema,
   RhythmProposalRequestSchema,
@@ -24,6 +26,10 @@ import {
 import type {
   ComposeBriefRequest,
   ComposeBriefResult,
+  IdeasRequest,
+  IdeasResult,
+  InspirationShapeRequest,
+  InspirationShapeResult,
   Platform,
   ReviseBriefRequest,
   ReviseBriefResult,
@@ -99,6 +105,19 @@ export const operationDefinitions = [
     allowanceFor: allowance("ideas", 3),
   },
   {
+    path: "/v1/ai/inspiration/shape",
+    operation: "inspiration_shape",
+    promptVersion: "inspiration-shape.v3",
+    resultSchemaVersion: "inspiration-shape.result.v3",
+    requestSchema: InspirationShapeRequestSchema,
+    resultSchema: InspirationShapeResultSchema,
+    effort: "low",
+    maxTokens: 1_200,
+    reservationCostMicros: 20_000,
+    systemPrompt: `${sharedSystemPrompt}\nAnalyze only the supplied sourceMaterial, which was derived on the creator's device from the inputs listed in analyzedInputs. Explain the post's actual message and extract one to four non-repetitive key points grounded in caption, transcript, or on-screen text across the post. Never use thumbnail text, a person's appearance, clothing, accessories, camera framing, generic visual labels, link metadata, input availability, uncertainty, or assumptions as a summary or key point. Visual evidence may describe only the content format or category in interpreted mechanics, such as talking-head delivery, a food carousel, or a lifestyle montage; never describe a person's physical traits. If sourceMaterial does not support a content-grounded summary and key points, fail instead of inventing them. Then identify the reusable hook, structure, and payoff mechanics. Return one materially original Suggested for you concept tailored to the creator's pillars, voice profile, and relevant librarySummaries without repeating a past idea. Select the single best existing pillar by returning its exact pillarId, or null when no supplied pillar clearly fits; never invent a pillar ID. Return one to three concrete originality guardrails. Do not reproduce source wording, story details, or shot order.`,
+    allowanceFor: allowance("ideas", 3),
+  },
+  {
     path: "/v1/ai/spark/turn",
     operation: "spark_turn",
     promptVersion: "spark-turn.v1",
@@ -106,7 +125,7 @@ export const operationDefinitions = [
     requestSchema: SparkTurnRequestSchema,
     resultSchema: SparkTurnResultSchema,
     effort: "low",
-    maxTokens: 700,
+    maxTokens: 1_600,
     reservationCostMicros: 15_000,
     systemPrompt: `${sharedSystemPrompt}\nDevelop the spark through at most one focused question. Respect the assistance mode: drive waits for scoped direction, collaborate recommends one next step, and lead takes the shortest assumption-visible path.`,
     allowanceFor: allowance("sparkTurn", 8),
@@ -218,6 +237,42 @@ export function operationResultIntegrityIssue(
   request: unknown,
   result: unknown,
 ): string | null {
+  if (operation === "ideas") {
+    const ideasRequest = request as IdeasRequest;
+    const ideasResult = result as IdeasResult;
+    if (ideasResult.ideas.length !== ideasRequest.count) {
+      return `expected ${ideasRequest.count} ideas`;
+    }
+
+    const normalizedTitles = ideasResult.ideas.map((idea) =>
+      idea.title.trim().toLocaleLowerCase(),
+    );
+    if (new Set(normalizedTitles).size !== normalizedTitles.length) {
+      return "ideas must have distinct titles";
+    }
+
+    const directionIds = ideasResult.ideas.map((idea) => idea.directionId);
+    if (new Set(directionIds).size !== directionIds.length) {
+      return "ideas must have distinct direction IDs";
+    }
+    return null;
+  }
+
+  if (operation === "inspiration_shape") {
+    const inspirationRequest = request as InspirationShapeRequest;
+    const inspirationResult = result as InspirationShapeResult;
+    const suggestedPillarId = inspirationResult.suggestedPillarId;
+    if (
+      suggestedPillarId !== null &&
+      !inspirationRequest.creatorContext.pillars.some(
+        (pillar) => pillar.pillarId === suggestedPillarId,
+      )
+    ) {
+      return "suggested pillar is not in creator context";
+    }
+    return null;
+  }
+
   if (operation === "voice_profile") {
     const voiceRequest = request as VoiceProfileRequest;
     const voiceResult = result as VoiceProfileResult;

@@ -30,8 +30,9 @@ struct AppShellView: View {
                     NavigationStack(path: $homePath) { HomeDashboardView().taskNavigationDestinations() }
                         .appTabLayer(.home, selection: model.selectedTab)
                     NavigationStack(path: $planPath) {
-                        PlanView()
+                        PlanView(showsFeedShortcut: true)
                             .id(model.requestedPlanNavigationReset)
+                            .planNavigationDestinations(bottomClearance: bottomNavigationClearance)
                             .taskNavigationDestinations()
                     }
                         .appTabLayer(.today, selection: model.selectedTab)
@@ -122,6 +123,9 @@ struct AppShellView: View {
                 }
             }
         }
+        .sheet(item: $model.inspirationReviewRoute) { route in
+            InspirationReviewView(sourceID: route.id)
+        }
         .alert("agent.cy", isPresented: Binding(
             get: { appModel.notice != nil },
             set: { if !$0 { appModel.notice = nil } }
@@ -140,10 +144,12 @@ struct AppShellView: View {
         .task {
             await appModel.refreshAccess(context: modelContext)
             await appModel.refreshReminderSchedule(context: modelContext)
+            appModel.importPendingInspiration(context: modelContext)
             openRequestedTaskIfNeeded()
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
+            appModel.importPendingInspiration(context: modelContext)
             presentedMCPRequestIDs = []
             while !Task.isCancelled {
                 presentMCPApprovalsIfNeeded()

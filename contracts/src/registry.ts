@@ -7,6 +7,8 @@ import {
   ComposeBriefResultSchema,
   IdeasRequestSchema,
   IdeasResultSchema,
+  InspirationShapeRequestSchema,
+  InspirationShapeResultSchema,
   ReviseBriefRequestSchema,
   ReviseBriefResultSchema,
   RhythmProposalRequestSchema,
@@ -34,7 +36,11 @@ import {
   SseResultEventSchema,
 } from "./sse.js";
 import {
+  AppleAccountAuthorizationRequestSchema,
+  AppleAccountAuthorizationResultSchema,
   HealthResultSchema,
+  InspirationExtractRequestSchema,
+  InspirationExtractResultSchema,
   InstallationRedeemRequestSchema,
   InstallationRedeemResultSchema,
   PrivacyDeleteRequestSchema,
@@ -53,6 +59,8 @@ export const ContractSchemaRegistry = {
   VoiceProfileResult: VoiceProfileResultSchema,
   IdeasRequest: IdeasRequestSchema,
   IdeasResult: IdeasResultSchema,
+  InspirationShapeRequest: InspirationShapeRequestSchema,
+  InspirationShapeResult: InspirationShapeResultSchema,
   SparkTurnRequest: SparkTurnRequestSchema,
   SparkTurnResult: SparkTurnResultSchema,
   ComposeBriefRequest: ComposeBriefRequestSchema,
@@ -78,6 +86,8 @@ export const ContractSchemaRegistry = {
   SseDoneEvent: SseDoneEventSchema,
   InstallationRedeemRequest: InstallationRedeemRequestSchema,
   InstallationRedeemResult: InstallationRedeemResultSchema,
+  AppleAccountAuthorizationRequest: AppleAccountAuthorizationRequestSchema,
+  AppleAccountAuthorizationResult: AppleAccountAuthorizationResultSchema,
   TelemetryEventsRequest: TelemetryEventsRequestSchema,
   TelemetryEventsResult: TelemetryEventsResultSchema,
   PrivacyDeleteRequest: PrivacyDeleteRequestSchema,
@@ -85,6 +95,8 @@ export const ContractSchemaRegistry = {
   RevenueCatWebhookRequest: RevenueCatWebhookRequestSchema,
   RevenueCatWebhookResult: RevenueCatWebhookResultSchema,
   HealthResult: HealthResultSchema,
+  InspirationExtractRequest: InspirationExtractRequestSchema,
+  InspirationExtractResult: InspirationExtractResultSchema,
 } as const satisfies Readonly<Record<string, ZodType>>;
 
 export const AiEndpointRegistry = {
@@ -97,6 +109,11 @@ export const AiEndpointRegistry = {
     path: "/v1/ai/ideas",
     requestSchema: "IdeasRequest",
     resultSchema: "IdeasResult",
+  },
+  shapeInspiration: {
+    path: "/v1/ai/inspiration/shape",
+    requestSchema: "InspirationShapeRequest",
+    resultSchema: "InspirationShapeResult",
   },
   sparkTurn: {
     path: "/v1/ai/spark/turn",

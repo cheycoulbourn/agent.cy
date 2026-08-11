@@ -3,6 +3,7 @@ export * from "./ai-v2.js";
 export * from "./common.js";
 export * from "./local-cy.js";
 export * from "./mcp.js";
+export * from "./normalize-ai-result.js";
 export * from "./registry.js";
 export * from "./sse.js";
 export * from "./supporting.js";

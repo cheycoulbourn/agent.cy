@@ -7,6 +7,26 @@ struct InstallationIdentity: Codable, Equatable, Sendable {
     let access: SubscriptionAccess
     let credentialExpiresAt: Date?
     let promotionalEntitlementEndsAt: Date?
+    let accountID: UUID?
+    let appleUserID: String?
+
+    init(
+        installationID: UUID,
+        credential: String,
+        access: SubscriptionAccess,
+        credentialExpiresAt: Date?,
+        promotionalEntitlementEndsAt: Date?,
+        accountID: UUID? = nil,
+        appleUserID: String? = nil
+    ) {
+        self.installationID = installationID
+        self.credential = credential
+        self.access = access
+        self.credentialExpiresAt = credentialExpiresAt
+        self.promotionalEntitlementEndsAt = promotionalEntitlementEndsAt
+        self.accountID = accountID
+        self.appleUserID = appleUserID
+    }
 }
 
 protocol InstallationCredentialStoring: Sendable {
@@ -40,7 +60,17 @@ actor DeviceOnlyKeychainCredentialStore: InstallationCredentialStoring {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data else { throw CredentialStoreError.keychain(status) }
-        return try JSONDecoder.agentCy.decode(InstallationIdentity.self, from: data)
+        let identity = try JSONDecoder.agentCy.decode(InstallationIdentity.self, from: data)
+        #if !targetEnvironment(macCatalyst)
+        try? InspirationSharedCredentialStore.save(
+            InspirationSharedCredential(
+                installationID: identity.installationID,
+                credential: identity.credential,
+                credentialExpiresAt: identity.credentialExpiresAt
+            )
+        )
+        #endif
+        return identity
     }
 
     func save(_ identity: InstallationIdentity) throws {
@@ -51,11 +81,23 @@ actor DeviceOnlyKeychainCredentialStore: InstallationCredentialStoring {
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else { throw CredentialStoreError.keychain(status) }
+        #if !targetEnvironment(macCatalyst)
+        try InspirationSharedCredentialStore.save(
+            InspirationSharedCredential(
+                installationID: identity.installationID,
+                credential: identity.credential,
+                credentialExpiresAt: identity.credentialExpiresAt
+            )
+        )
+        #endif
     }
 
     func delete() throws {
         let status = SecItemDelete(baseQuery as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw CredentialStoreError.keychain(status) }
+        #if !targetEnvironment(macCatalyst)
+        try InspirationSharedCredentialStore.delete()
+        #endif
     }
 
     private var baseQuery: [String: Any] {
@@ -164,6 +206,126 @@ private struct InstallationRedeemResponse: Decodable {
     let promotionalEntitlementEndsAt: Date?
 }
 
+struct AppleAuthorizationMaterial: Equatable, Sendable {
+    let identityToken: String
+    let authorizationCode: String
+    let nonce: String
+    let appleUserID: String
+}
+
+private struct AppleAccountAuthorizationRequest: Encodable {
+    let identityToken: String
+    let authorizationCode: String
+    let nonce: String
+    let appBuild: String
+    let platform: String
+}
+
+private struct AppleAccountAuthorizationResponse: Decodable {
+    let accountId: UUID
+    let installationId: UUID
+    let credential: String
+    let access: SubscriptionAccess
+    let credentialExpiresAt: Date?
+    let promotionalEntitlementEndsAt: Date?
+}
+
+protocol AccountAuthorizing: Sendable {
+    func link(
+        _ material: AppleAuthorizationMaterial,
+        to identity: InstallationIdentity
+    ) async throws -> InstallationIdentity
+    func signIn(_ material: AppleAuthorizationMaterial) async throws -> InstallationIdentity
+}
+
+actor AccountAuthorizationClient: AccountAuthorizing {
+    private let baseURL: URL
+    private let session: URLSession
+    private let store: any InstallationCredentialStoring
+
+    init(
+        baseURL: URL = APIConfiguration.baseURL,
+        session: URLSession = .shared,
+        store: any InstallationCredentialStoring = DeviceOnlyKeychainCredentialStore.shared
+    ) {
+        self.baseURL = baseURL
+        self.session = session
+        self.store = store
+    }
+
+    func link(
+        _ material: AppleAuthorizationMaterial,
+        to identity: InstallationIdentity
+    ) async throws -> InstallationIdentity {
+        try await authorize(
+            material,
+            path: "/v1/accounts/apple/link",
+            bearerCredential: identity.credential
+        )
+    }
+
+    func signIn(_ material: AppleAuthorizationMaterial) async throws -> InstallationIdentity {
+        try await authorize(
+            material,
+            path: "/v1/accounts/apple/sign-in",
+            bearerCredential: nil
+        )
+    }
+
+    private func authorize(
+        _ material: AppleAuthorizationMaterial,
+        path: String,
+        bearerCredential: String?
+    ) async throws -> InstallationIdentity {
+        var request = URLRequest(url: baseURL.appending(path: path))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let bearerCredential {
+            request.setValue("Bearer \(bearerCredential)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONEncoder.agentCy.encode(
+            AppleAccountAuthorizationRequest(
+                identityToken: material.identityToken,
+                authorizationCode: material.authorizationCode,
+                nonce: material.nonce,
+                appBuild: APIConfiguration.appBuild,
+                platform: Self.platform
+            )
+        )
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            if let envelope = try? JSONDecoder.agentCy.decode(HTTPErrorEnvelope.self, from: data) {
+                throw AgentCyAPIError.server(envelope.error)
+            }
+            throw AgentCyAPIError.http((response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        let result = try JSONDecoder.agentCy.decode(
+            AppleAccountAuthorizationResponse.self,
+            from: data
+        )
+        let identity = InstallationIdentity(
+            installationID: result.installationId,
+            credential: result.credential,
+            access: result.access,
+            credentialExpiresAt: result.credentialExpiresAt,
+            promotionalEntitlementEndsAt: result.promotionalEntitlementEndsAt,
+            accountID: result.accountId,
+            appleUserID: material.appleUserID
+        )
+        try await store.save(identity)
+        return identity
+    }
+
+    private static var platform: String {
+        #if targetEnvironment(macCatalyst)
+        "macCatalyst"
+        #else
+        "ios"
+        #endif
+    }
+}
+
 private struct HTTPErrorEnvelope: Decodable {
     let error: AIWireError
 }
@@ -210,6 +372,7 @@ actor InstallationRedemptionClient {
 enum AIOperation: String, Codable, CaseIterable, Sendable {
     case voiceProfile
     case ideas
+    case shapeInspiration
     case sparkTurn
     case composeBrief
     case reviseBrief
@@ -221,6 +384,7 @@ enum AIOperation: String, Codable, CaseIterable, Sendable {
         switch self {
         case .voiceProfile: "/v1/ai/voice-profile"
         case .ideas: "/v1/ai/ideas"
+        case .shapeInspiration: "/v1/ai/inspiration/shape"
         case .sparkTurn: "/v1/ai/spark/turn"
         case .composeBrief: "/v1/ai/brief/compose"
         case .reviseBrief: "/v1/ai/brief/revise"
@@ -234,6 +398,7 @@ enum AIOperation: String, Codable, CaseIterable, Sendable {
         switch self {
         case .voiceProfile: "voice-profile.result.v1"
         case .ideas: "ideas.result.v1"
+        case .shapeInspiration: "inspiration-shape.result.v3"
         case .sparkTurn: "spark-turn.result.v1"
         case .composeBrief: "compose-brief.result.v1"
         case .reviseBrief: "revise-brief.result.v1"
@@ -252,6 +417,24 @@ enum AIProgressPhase: String, Codable, Sendable {
 
 protocol AIRequestIdentifying: Encodable, Sendable {
     var operationId: UUID { get }
+}
+
+enum AIRequestEncoding {
+    /// A local bridge and the hosted API are separate execution attempts. If
+    /// the bridge fails, hosted Cy must receive a fresh operation ID so it can
+    /// never replay a cached local failure for the same logical request.
+    static func encode<Request: AIRequestIdentifying>(
+        _ body: Request,
+        replacingOperationID operationID: UUID? = nil
+    ) throws -> Data {
+        let encoded = try JSONEncoder.agentCy.encode(body)
+        guard let operationID else { return encoded }
+        guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
+            throw AgentCyAPIError.invalidRequest("Cy could not prepare this request.")
+        }
+        object["operationId"] = operationID.uuidString.lowercased()
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+    }
 }
 
 enum AIErrorCodeWire: String, Decodable, Sendable, Equatable {
@@ -317,6 +500,7 @@ struct AIWireError: Decodable, LocalizedError, Sendable {
 enum AgentCyAPIError: LocalizedError {
     case invalidRequest(String)
     case missingCredential
+    case noAvailableProvider
     case payloadTooLarge
     case http(Int)
     case invalidStream(String)
@@ -326,6 +510,8 @@ enum AgentCyAPIError: LocalizedError {
         switch self {
         case .invalidRequest(let message): message
         case .missingCredential: "A valid installation invitation is required before live Cy requests can run."
+        case .noAvailableProvider:
+            "Cy is not connected right now. Open Claude or Codex on your Mac, or open Access in Settings to use hosted Agent Cy."
         case .payloadTooLarge: "This request is larger than the 128 KB privacy boundary. Remove unrelated context and try again."
         case .http(let status): "The agent.cy service returned HTTP \(status)."
         case .invalidStream(let message): "The Cy response stream was invalid: \(message)"
@@ -382,7 +568,13 @@ enum SSESequenceDecoder {
     private struct ErrorEnvelope: Decodable { let operationId: UUID; let error: AIWireError }
     private struct Done: Decodable { let operationId: UUID; let status: String; let completedAt: Date }
 
-    static func decode<Result: Decodable>(_ type: Result.Type, blocks: [SSEBlock], expectedOperation: AIOperation, expectedOperationID: UUID) throws -> Result {
+    static func decode<Result: Decodable>(
+        _ type: Result.Type,
+        blocks: [SSEBlock],
+        expectedOperation: AIOperation,
+        expectedOperationID: UUID,
+        expectedSchemaVersion: String? = nil
+    ) throws -> Result {
         guard blocks.count >= 4 else { throw AgentCyAPIError.invalidStream("the stream was shorter than the canonical sequence") }
         guard blocks.first?.event == "meta" else { throw AgentCyAPIError.invalidStream("meta must be first") }
         guard blocks.last?.event == "done" else { throw AgentCyAPIError.invalidStream("done must be last") }
@@ -405,8 +597,8 @@ enum SSESequenceDecoder {
                 let meta = try JSONDecoder.agentCy.decode(Meta.self, from: block.data)
                 guard meta.operationId == expectedOperationID,
                       meta.operation == expectedOperation,
-                      meta.model == "claude-sonnet-5",
-                      meta.schemaVersion == expectedOperation.resultSchemaVersion else {
+                      !meta.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      meta.schemaVersion == (expectedSchemaVersion ?? expectedOperation.resultSchemaVersion) else {
                     throw AgentCyAPIError.invalidStream("meta did not match the request contract")
                 }
             case "phase":
@@ -443,6 +635,83 @@ enum SSESequenceDecoder {
     }
 }
 
+enum CyExecutionProvider: Sendable, Equatable {
+    case localBridge
+    case hosted
+    case unmetered
+}
+
+struct CyExecution<Value: Sendable>: Sendable {
+    let value: Value
+    let provider: CyExecutionProvider
+}
+
+enum CyProviderFallbackPolicy {
+    /// Local Cy errors describe what happened on the creator's Mac, not what
+    /// the hosted API will accept. A bridge-side validation or generation
+    /// failure must therefore be allowed to fall through to hosted Cy. Only
+    /// creator cancellation/refusal and a payload that is objectively too
+    /// large should stop before the hosted attempt.
+    static func shouldTryHostedAfterLocalBridgeFailure(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return false
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return false
+        }
+        guard let apiError = error as? AgentCyAPIError else {
+            return true
+        }
+        switch apiError {
+        case .payloadTooLarge:
+            return false
+        case .server(let wireError):
+            switch wireError.code {
+            case .payloadTooLarge, .refusal, .cancelled:
+                return false
+            case .invalidInput, .installationInvalid, .entitlementRequired,
+                 .quotaExceeded, .rateLimited, .upstreamUnavailable,
+                 .generationInvalid, .maxTokens, .timeout, .conflict,
+                 .usageLimit:
+                return true
+            }
+        case .invalidRequest, .missingCredential, .noAvailableProvider,
+             .http, .invalidStream:
+            return true
+        }
+    }
+
+    static func shouldTryHosted(after error: Error) -> Bool {
+        if error is CancellationError {
+            return false
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return false
+        }
+        if error is LocalCyError {
+            return true
+        }
+        guard let apiError = error as? AgentCyAPIError else {
+            return true
+        }
+        switch apiError {
+        case .invalidRequest, .payloadTooLarge, .missingCredential, .noAvailableProvider:
+            return false
+        case .http, .invalidStream:
+            return true
+        case .server(let wireError):
+            switch wireError.code {
+            case .invalidInput, .payloadTooLarge, .refusal, .cancelled, .conflict:
+                return false
+            case .installationInvalid, .entitlementRequired, .quotaExceeded,
+                 .rateLimited, .upstreamUnavailable, .generationInvalid,
+                 .maxTokens, .timeout, .usageLimit:
+                return true
+            }
+        }
+    }
+}
+
 actor AgentCyAPIClient {
     private let baseURL: URL
     private let session: URLSession
@@ -458,19 +727,69 @@ actor AgentCyAPIClient {
         operation: AIOperation,
         request body: Request,
         result: Result.Type,
+        validateResult: (@Sendable (Result) throws -> Void)? = nil,
         onPhase: (@Sendable (AIProgressPhase) async -> Void)? = nil
     ) async throws -> Result {
-        if LocalCyPreferences.isEnabledAndConnected {
-            return try await LocalCyAIClient.shared.perform(
-                operation: operation,
-                request: body,
-                result: result,
-                onPhase: onPhase
-            )
+        let execution = try await performWithProvider(
+            operation: operation,
+            request: body,
+            result: result,
+            validateResult: validateResult,
+            onPhase: onPhase
+        )
+        return execution.value
+    }
+
+    func performWithProvider<Request: AIRequestIdentifying, Result: Decodable & Sendable>(
+        operation: AIOperation,
+        request body: Request,
+        result: Result.Type,
+        validateResult: (@Sendable (Result) throws -> Void)? = nil,
+        onPhase: (@Sendable (AIProgressPhase) async -> Void)? = nil,
+        allowsLocalBridge: Bool = true,
+        hostedResultSchemaVersion: String? = nil
+    ) async throws -> CyExecution<Result> {
+        // A creator's provider preference can migrate to a new phone, but the
+        // security-scoped bridge bookmark cannot. Only enter the local route
+        // when this device has both the preference and the bridge credential.
+        // Otherwise continue directly to hosted Cy.
+        let localPreferred = LocalCyPreferences.isEnabled
+        let localConnected = LocalCyPreferences.isEnabledAndConnected
+        var hostedOperationID = body.operationId
+        if localConnected && allowsLocalBridge {
+            do {
+                let value = try await LocalCyAIClient.shared.perform(
+                    operation: operation,
+                    request: body,
+                    result: result,
+                    onPhase: onPhase
+                )
+                try validateResult?(value)
+                return CyExecution(value: value, provider: .localBridge)
+            } catch {
+                guard CyProviderFallbackPolicy.shouldTryHostedAfterLocalBridgeFailure(error) else {
+                    throw error
+                }
+                // This is a separate execution attempt. A fresh ID prevents a
+                // failed bridge response from poisoning the hosted retry.
+                hostedOperationID = UUID()
+            }
         }
-        guard let identity = try await store.load() else { throw AgentCyAPIError.missingCredential }
-        if let expiry = identity.credentialExpiresAt, expiry <= Date() { throw AgentCyAPIError.missingCredential }
-        let data = try JSONEncoder.agentCy.encode(body)
+
+        guard let identity = try await store.load() else {
+            throw localPreferred && allowsLocalBridge
+                ? AgentCyAPIError.noAvailableProvider
+                : AgentCyAPIError.missingCredential
+        }
+        if let expiry = identity.credentialExpiresAt, expiry <= Date() {
+            throw localPreferred && allowsLocalBridge
+                ? AgentCyAPIError.noAvailableProvider
+                : AgentCyAPIError.missingCredential
+        }
+        let data = try AIRequestEncoding.encode(
+            body,
+            replacingOperationID: hostedOperationID == body.operationId ? nil : hostedOperationID
+        )
         guard data.count <= 128 * 1_024 else { throw AgentCyAPIError.payloadTooLarge }
         var request = URLRequest(url: baseURL.appending(path: operation.path))
         request.httpMethod = "POST"
@@ -501,7 +820,31 @@ actor AgentCyAPIClient {
             }
         }
         if let block = decoder.finish() { blocks.append(block) }
-        return try SSESequenceDecoder.decode(Result.self, blocks: blocks, expectedOperation: operation, expectedOperationID: body.operationId)
+        let value = try SSESequenceDecoder.decode(
+            Result.self,
+            blocks: blocks,
+            expectedOperation: operation,
+            expectedOperationID: hostedOperationID,
+            expectedSchemaVersion: hostedResultSchemaVersion
+        )
+        try validateResult?(value)
+        return CyExecution(value: value, provider: .hosted)
+    }
+
+    func performHostedCompatibility<Request: AIRequestIdentifying, Result: Decodable & Sendable>(
+        operation: AIOperation,
+        request body: Request,
+        result: Result.Type,
+        expectedResultSchemaVersion: String
+    ) async throws -> Result {
+        let execution = try await performWithProvider(
+            operation: operation,
+            request: body,
+            result: result,
+            allowsLocalBridge: false,
+            hostedResultSchemaVersion: expectedResultSchemaVersion
+        )
+        return execution.value
     }
 
     private struct PhaseProbe: Decodable { let phase: AIProgressPhase }

@@ -5,6 +5,8 @@ import {
   ComposeBriefResultSchema,
   IdeasRequestSchema,
   IdeasResultSchema,
+  InspirationShapeRequestSchema,
+  InspirationShapeResultSchema,
   ReviseBriefRequestSchema,
   ReviseBriefResultSchema,
   RhythmProposalRequestSchema,
@@ -40,6 +42,12 @@ export const localCyOperations: Readonly<Record<LocalCyOperation, LocalCyOperati
     resultSchema: IdeasResultSchema,
     effort: "low",
     instruction: "Return exactly three genuinely distinct directions. Suggest only an exact pillarId supplied in creatorContext.pillars, or null when none clearly fits.",
+  },
+  shapeInspiration: {
+    requestSchema: InspirationShapeRequestSchema,
+    resultSchema: InspirationShapeResultSchema,
+    effort: "low",
+    instruction: "Interpret only the creator-authored observation as an unverified abstract mechanic. You did not open or analyze the source post. Return one materially original creator-specific idea and one to three concrete guardrails. Never quote source wording or recreate its story or shot order.",
   },
   sparkTurn: {
     requestSchema: SparkTurnRequestSchema,

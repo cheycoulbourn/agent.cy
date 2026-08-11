@@ -8,7 +8,7 @@ The promise is **From spark to ready**.
 
 The three product jobs are:
 
-1. Ideation: capture a text spark or ask Cy for three directions grounded in the creator's own context.
+1. Ideation: capture a text spark, share a post for automatic source analysis and an editable original idea, or ask Cy for directions grounded in the creator's own context.
 2. Creation: develop one direction into a personalized video brief.
 3. Execution: schedule, produce, track, and manually publish the work without shame-based mechanics.
 
@@ -47,10 +47,11 @@ The global default can be overridden per brief, week, or task flow.
 
 ## Ideation and brief creation
 
-Two equal paths create the same Spark-backed brief:
+Three paths create the same Spark-backed brief:
 
 - Bring a spark through text.
 - Find a spark by asking Cy for three distinct directions based only on local creator summaries.
+- Share one HTTPS post link to agent.cy, describe what stood out, and shape one original idea without fetching the post or sending the URL to Cy.
 
 Unselected directions disappear unless explicitly saved. Dialogue is capped at eight turns and always offers Compose now.
 
@@ -120,7 +121,7 @@ Expired creators may finish and edit existing work, complete existing tasks, upd
 ## Explicitly deferred
 
 - Platform OAuth, analytics, and publishing.
-- Live trends and external inspiration ingestion.
+- Live trends, undocumented scraping or social-video downloading, and claims that a URL-only post was watched when no video input was provided.
 - Teams and brand-deal management.
 - iPad, Mac, Android, web, and localization.
 - General personal task management.

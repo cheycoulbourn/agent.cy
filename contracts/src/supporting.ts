@@ -30,6 +30,59 @@ export const InstallationRedeemResultSchema = z
   })
   .strict();
 
+export const AppleAccountAuthorizationRequestSchema = z
+  .object({
+    identityToken: z.string().trim().min(1).max(16_384),
+    authorizationCode: z.string().trim().min(1).max(4_096),
+    nonce: z.string().trim().min(32).max(256),
+    appBuild: AppBuildSchema,
+    platform: z.enum(["ios", "macCatalyst"]),
+  })
+  .strict();
+
+export const AppleAccountAuthorizationResultSchema = z
+  .object({
+    accountId: z.uuid(),
+    installationId: z.uuid(),
+    credential: z.string().min(32).max(512),
+    access: SubscriptionAccessSchema,
+    credentialExpiresAt: IsoDateTimeSchema.optional(),
+    promotionalEntitlementEndsAt: IsoDateTimeSchema.optional(),
+  })
+  .strict();
+
+export const InspirationExtractRequestSchema = z
+  .object({
+    canonicalUrl: z.string().trim().url().max(2_048),
+  })
+  .strict();
+
+export const InspirationMediaKindSchema = z.enum([
+  "video",
+  "image",
+  "carousel",
+  "unknown",
+]);
+
+export const InspirationExtractResultSchema = z
+  .object({
+    canonicalUrl: z.string().trim().url().max(2_048),
+    platform: z.enum(["instagram", "tiktok", "youtube", "threads", "web"]),
+    mediaKind: InspirationMediaKindSchema,
+    sourceTitle: z.string().trim().min(1).max(500).optional(),
+    creatorName: z.string().trim().min(1).max(160).optional(),
+    creatorHandle: z.string().trim().min(1).max(160).optional(),
+    caption: z.string().trim().min(1).max(20_000).optional(),
+    thumbnailUrl: z.string().trim().url().max(8_192).optional(),
+    mediaUrls: z.array(z.string().trim().url().max(8_192)).max(20),
+    durationSeconds: z.number().finite().nonnegative().max(86_400).optional(),
+    evidence: z
+      .array(z.enum(["postMetadata", "caption", "creator", "video", "carousel"]))
+      .min(1)
+      .max(5),
+  })
+  .strict();
+
 const telemetryEnvelopeShape = {
   eventId: z.uuid(),
   occurredAt: IsoDateTimeSchema,
@@ -278,6 +331,21 @@ export type InstallationRedeemRequest = z.infer<
 >;
 export type InstallationRedeemResult = z.infer<
   typeof InstallationRedeemResultSchema
+>;
+export type AppleAccountAuthorizationRequest = z.infer<
+  typeof AppleAccountAuthorizationRequestSchema
+>;
+export type AppleAccountAuthorizationResult = z.infer<
+  typeof AppleAccountAuthorizationResultSchema
+>;
+export type InspirationExtractRequest = z.infer<
+  typeof InspirationExtractRequestSchema
+>;
+export type InspirationMediaKind = z.infer<
+  typeof InspirationMediaKindSchema
+>;
+export type InspirationExtractResult = z.infer<
+  typeof InspirationExtractResultSchema
 >;
 export type TelemetryEvent = z.infer<typeof TelemetryEventSchema>;
 export type TelemetryEventsRequest = z.infer<typeof TelemetryEventsRequestSchema>;

@@ -214,38 +214,21 @@ struct ScheduledPostDetailView: View {
                 floatingPostingAction
             }
         }
+#if targetEnvironment(macCatalyst)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            desktopDetailRail
+        }
+#endif
         .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
+#if targetEnvironment(macCatalyst)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+#else
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button {
-                        showEditor = true
-                    } label: {
-                        AgentIconLabel(title: "Edit post", icon: .pencil)
-                    }
-                    Divider()
-                    Button {
-                        copyMarkdown()
-                    } label: {
-                        AgentIconLabel(title: "Copy Markdown", icon: .copy)
-                    }
-                    Button {
-                        exportMarkdown()
-                    } label: {
-                        AgentIconLabel(title: "Export Markdown", icon: .upload)
-                    }
-                    Divider()
-                    Button(role: .destructive) {
-                        confirmArchive = true
-                    } label: {
-                        AgentIconLabel(title: "Archive", icon: .archive)
-                    }
-                    Button(role: .destructive) {
-                        confirmDelete = true
-                    } label: {
-                        AgentIconLabel(title: "Delete post", icon: .trash)
-                    }
+                    postOptionsMenuContent
                 } label: {
                     AgentIconView(.more)
                         .foregroundStyle(Color.agentText)
@@ -253,6 +236,7 @@ struct ScheduledPostDetailView: View {
                 .accessibilityLabel("Post options")
             }
         }
+#endif
         .sheet(isPresented: $showEditor) {
             NavigationStack {
                 ResumablePostEditorView(
@@ -329,6 +313,88 @@ struct ScheduledPostDetailView: View {
             if output.status == .posted { savePublishedLink() }
         }
         .agentScreen()
+    }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopDetailRail: some View {
+        ZStack {
+            HStack(spacing: AgentSpacing.x3) {
+                Button(action: { dismiss() }) {
+                    AgentIconView(.back, size: 18)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 44, height: 44)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
+                        .contentShape(.circle)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Back")
+
+                Spacer(minLength: 0)
+
+                Menu {
+                    postOptionsMenuContent
+                } label: {
+                    AgentIconView(.more, size: 17)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 44, height: 44)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
+                        .contentShape(.circle)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Post options")
+            }
+
+            Text(pageTitle)
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x6)
+        .padding(.bottom, AgentSpacing.x4)
+        .background(Color.agentCanvas)
+    }
+#endif
+
+    @ViewBuilder
+    private var postOptionsMenuContent: some View {
+        Button {
+            showEditor = true
+        } label: {
+            AgentIconLabel(title: "Edit post", icon: .pencil)
+        }
+        Divider()
+        Button {
+            copyMarkdown()
+        } label: {
+            AgentIconLabel(title: "Copy Markdown", icon: .copy)
+        }
+        Button {
+            exportMarkdown()
+        } label: {
+            AgentIconLabel(title: "Export Markdown", icon: .upload)
+        }
+        Divider()
+        Button(role: .destructive) {
+            confirmArchive = true
+        } label: {
+            AgentIconLabel(title: "Archive", icon: .archive)
+        }
+        Button(role: .destructive) {
+            confirmDelete = true
+        } label: {
+            AgentIconLabel(title: "Delete post", icon: .trash)
+        }
     }
 
     private var postHeader: some View {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -62,6 +62,61 @@ describe("LocalCyHTTPServer", () => {
     const body = JSON.parse(responseText) as { status: string; result?: { assistantMessage?: string } };
     expect(body.status).toBe("succeeded");
     expect(body.result?.assistantMessage).toContain("rough note");
+    await server.stop();
+  });
+
+  it("retries an operation instead of replaying a cached retryable failure", async () => {
+    const { server, baseURL, token, workspace } = await makeServer();
+    const runtime = new LocalCyRuntime(workspace, async () => ({
+      model: "claude-sonnet-test",
+      result: {
+        assistantMessage: "This is a fresh response.",
+        suggestions: [],
+        proposedAction: null,
+      },
+    }));
+    const id = "6df34c1e-614a-4454-83a3-76c9a8784aa0";
+    workspace.ensureDirectories();
+    writeFileSync(
+      join(workspace.localCyResponsesDirectory, `${id}.json`),
+      JSON.stringify({
+        schemaVersion: LocalCySchemaVersion,
+        id,
+        operation: "chatTurn",
+        completedAt: new Date().toISOString(),
+        status: "failed",
+        error: {
+          code: "upstream_unavailable",
+          message: "Temporary provider failure.",
+          retryable: true,
+        },
+      }),
+    );
+
+    const request = fetch(`${baseURL}/v1/local-cy`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        schemaVersion: LocalCySchemaVersion,
+        id,
+        operation: "chatTurn",
+        createdAt: new Date().toISOString(),
+        workspaceId: null,
+        payload: validChatRequest(id),
+      }),
+    });
+
+    await wait(25);
+    await expect(runtime.runOnce()).resolves.toBe(1);
+    const response = await request;
+    const responseText = await response.text();
+    expect(response.status, responseText).toBe(200);
+    const body = JSON.parse(responseText) as { status: string; result?: { assistantMessage?: string } };
+    expect(body.status).toBe("succeeded");
+    expect(body.result?.assistantMessage).toBe("This is a fresh response.");
     await server.stop();
   });
 });

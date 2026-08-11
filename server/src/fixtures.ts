@@ -2,6 +2,7 @@ import type {
   ChatTurnRequest,
   ComposeBriefRequest,
   IdeasRequest,
+  InspirationShapeRequest,
   ReviseBriefRequest,
   RhythmProposalRequest,
   SparkTurnRequest,
@@ -67,6 +68,40 @@ export const developmentFixtures: Partial<Record<AiOperation, (body: unknown) =>
           assumptions: ["The topic can be narrowed to one responsible recommendation."],
         },
       ],
+    };
+  },
+  inspiration_shape: (body) => {
+    const request = as<InspirationShapeRequest>(body);
+    const suggestedPillarId = request.creatorContext.pillars[0]?.pillarId ?? null;
+    return {
+      sourceSummary: request.sourceMaterial.caption ?? request.sourceMaterial.title ?? "The post demonstrates one practical creative reset.",
+      keyPoints: [
+        "Name the tension before the practical shift.",
+        "Show one concrete change instead of a list of advice.",
+        "End with a small action the viewer can repeat.",
+      ],
+      interpretedMechanic: {
+        hookPattern: "Open with tension before naming the practical shift",
+        structurePattern: "Tension, creator-specific reset, original demonstration",
+        payoffPattern: "End with one smaller action the viewer can try",
+      },
+      originalityGuardrails: [
+        "Use a firsthand example from the creator's own process.",
+        "Do not reuse source wording, jokes, story details, or shot order.",
+      ],
+      idea: {
+        title: "The smaller reset that made starting easier",
+        premise: `Turn the observed pattern into an original lesson for ${request.creatorContext.name} about reducing creative friction.`,
+        audience: "Solo creators who postpone filming while perfecting the setup",
+        takeaway: "Make the first take easier by shrinking one setup decision.",
+        spokenHook: "The plan was not what kept me from filming.",
+        firstFrameText: "MAKE THE FIRST TAKE EASIER",
+        filmingApproach: "Use a direct-to-camera explanation plus one firsthand demonstration from the creator's own workflow.",
+        recommendedFormat: "45-second vertical video",
+        durationSeconds: 45,
+      },
+      suggestedPillarId,
+      assumptions: ["The creator has a firsthand workflow reset to demonstrate."],
     };
   },
   spark_turn: (body) => {

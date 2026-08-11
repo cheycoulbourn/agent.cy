@@ -55,10 +55,10 @@ enum WidgetSnapshotService {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
         }
 
-        let briefByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
-        let pillarByID = Dictionary(uniqueKeysWithValues: pillars.map { ($0.id, $0) })
-        let destinationByID = Dictionary(uniqueKeysWithValues: destinations.map { ($0.id, $0) })
-        let formatByID = Dictionary(uniqueKeysWithValues: formats.map { ($0.id, $0) })
+        let briefByID = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
+        let pillarByID = DuplicateSafeIndex.firstValues(pillars.map { ($0.id, $0) })
+        let destinationByID = DuplicateSafeIndex.firstValues(destinations.map { ($0.id, $0) })
+        let formatByID = DuplicateSafeIndex.firstValues(formats.map { ($0.id, $0) })
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
 

@@ -43,6 +43,22 @@ enum CreatorFacingErrorMapper {
             }
         }
 
+        if let inspiration = error as? InspirationContentAnalysisError {
+            return .init(
+                message: inspiration.errorDescription ?? "Cy needs the post's caption or video to analyze it accurately.",
+                canRetry: false,
+                requiresUpgrade: false
+            )
+        }
+
+        if let inspiration = error as? InspirationShapingError {
+            return .init(
+                message: inspiration.errorDescription ?? "Cy needs more of the post to shape an accurate idea.",
+                canRetry: inspiration == .invalidResult,
+                requiresUpgrade: false
+            )
+        }
+
         if let wire = error as? AIWireError {
             return aiPresentation(for: wire)
         }
@@ -59,7 +75,13 @@ enum CreatorFacingErrorMapper {
                 )
             case .missingCredential:
                 return .init(
-                    message: "Cy is not connected yet. Open Claude & Codex in Settings to finish setup.",
+                    message: "Cy is not connected yet. Open Claude & Codex or Access in Settings to choose how you want to use Cy.",
+                    canRetry: false,
+                    requiresUpgrade: false
+                )
+            case .noAvailableProvider:
+                return .init(
+                    message: "Cy is offline. Open Claude or Codex on your Mac, or open Access in Settings to use hosted Agent Cy.",
                     canRetry: false,
                     requiresUpgrade: false
                 )
@@ -169,15 +191,30 @@ enum CreatorFacingErrorMapper {
 
     private static func validationMessage(for error: AIWireError) -> String {
         guard let issue = error.fieldIssues?.first else {
-            return "Add the missing post details to continue."
+            return invalidPostMessage
         }
         let field = issue.path.compactMap { component -> String? in
             guard case .key(let key) = component else { return nil }
             return key
         }.last
-        guard let field else { return "Add the missing post details to continue." }
-        return "Add \(humanized(field)) to continue."
+        let visibleFields = [
+            "title": "a title",
+            "pillar": "a pillar",
+            "platform": "a platform",
+            "format": "a format",
+            "hook": "a hook",
+            "caption": "a caption",
+            "notes": "notes",
+            "callToAction": "a call to action",
+            "duration": "a duration"
+        ]
+        guard let field, let label = visibleFields[field] else {
+            return invalidPostMessage
+        }
+        return "Add \(label) to continue."
     }
+
+    private static let invalidPostMessage = "Cy couldn’t read this post yet. Your work is saved."
 
     private static func missingFieldMessage(from error: Error) -> String {
         let lowered = String(describing: error).lowercased()
@@ -188,11 +225,4 @@ enum CreatorFacingErrorMapper {
         return "Add the missing details to continue."
     }
 
-    private static func humanized(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "Id", with: "")
-            .replacingOccurrences(of: "ID", with: "")
-            .lowercased()
-    }
 }

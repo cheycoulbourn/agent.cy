@@ -10,6 +10,7 @@ The Paper redesign uses additive SwiftData evolution only. `StoreBootstrapServic
 iPhone app
   SwiftUI + SwiftData + private CloudKit mirroring
   local creator content and conversations
+  Share Extension -> private App Group import queue
         |
         | request-scoped HTTPS/SSE, scoped creator text only
         v
@@ -21,7 +22,7 @@ Fastify proxy on Railway
 Anthropic Messages API, pinned claude-sonnet-5
 ```
 
-There is no agent.cy account and no Supabase dependency.
+An agent.cy account is an optional service identity linked to a stable Sign in with Apple subject. The proxy stores only an HMAC of that subject, never the creator's Apple email or name. The first linked device must already hold an invitation-issued installation credential; every additional device receives its own revocable installation credential. Creator content still syncs only through the creator's private CloudKit database. There is no Supabase dependency.
 
 Social profiles are manual local references, not connected identities. Multiple creator-owned accounts can point at the same publishing destination, and `PlatformOutput.socialAccountID` records which account a specific post version targets. No social-platform OAuth token, platform cookie, profile scraping, or automatic publishing is introduced.
 
@@ -31,10 +32,12 @@ Calendar integration uses EventKit on the creator's iPhone. The creator grants f
 
 The optional local MCP bridge uses a creator-selected Files folder rather than proxy persistence. The app writes a versioned content snapshot without attachment bytes or credentials. A local stdio MCP server may read the snapshot and queue narrowly scoped change requests. SwiftData changes occur only after the creator approves a request in the app; the bridge never exposes deletion, publishing, archive, erase, or raw database tools.
 
+The link-first Share Extension is a separate application-extension target. It accepts one URL representation, or extracts one HTTPS URL from plain text, discards all remaining host text, canonicalizes it, and atomically writes a bounded envelope to `group.com.agentcy.app`. It does not link SwiftData, AI, EventKit, notification, or CloudKit services. The main app drains the queue on launch and active-scene transitions, revalidates every envelope, and removes a queue file only after its SwiftData transaction commits.
+
 ## Client modules
 
 - Domain: SwiftData entities, lifecycle rules, task and planning logic.
-- Features: onboarding, ideation, briefs, Today, Agenda, Tasks, anchor/branch Pillars, Spark/Your work, Cy, settings.
+- Features: onboarding, ideation, automatic shared-post analysis and Saved Posts, briefs, Today, Agenda, Tasks, anchor/branch Pillars, Spark/Your work, Cy, settings.
 - Services: AI transport, notifications, EventKit calendar sync, entitlements, telemetry, export, erasure, and installation identity.
 - DesignSystem: colors, typography, spacing, motion, components, and accessibility behavior.
 
@@ -44,7 +47,7 @@ SwiftData models use stable UUIDs, application-level deduplication, optional rel
 
 - Contracts: canonical Zod schemas and JSON Schema output formats.
 - AI: versioned prompts, Anthropic adapter, streaming result validation, and error normalization.
-- Identity: one-use invitation redemption and hashed installation credentials.
+- Identity: one-use invitation redemption, Apple account linking, and per-device hashed installation credentials.
 - Access: durable free-journey counters and RevenueCat entitlement projection.
 - Quotas: one concurrent operation, short-window limits, daily limits, and global budget controls.
 - Telemetry: consented content-free events and 30-day operational metadata.

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CreationHubView: View {
+    private let onDismiss: (() -> Void)?
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -8,35 +9,200 @@ struct CreationHubView: View {
     @State private var showQuickCapture = false
     @State private var closeIsPulsing = false
 
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                    header
+    init(onDismiss: (() -> Void)? = nil) {
+        self.onDismiss = onDismiss
+    }
 
-                    createActions
-                    cyAction
-                    if appModel.walkthroughStep == .quickAdd {
-                        quickAddWalkthroughCard
-                    }
-                }
-                .padding(.horizontal, AgentLayout.dashboardGutter)
-                .padding(.bottom, AgentSpacing.x16)
+    var body: some View {
+        #if targetEnvironment(macCatalyst)
+        Group {
+            if showQuickCapture {
+                QuickCaptureView(onExit: returnToCreationHub)
+            } else {
+                creationHubContent
+            }
+        }
+        .background(Color.agentCanvas)
+        #else
+        creationHubContent
+            .background(Color.agentCanvas.ignoresSafeArea())
+            .presentationBackground(Color.agentCanvas)
+            .sheet(isPresented: $showQuickCapture) {
+                QuickCaptureView()
+                    .environment(appModel)
+            }
+        #endif
+    }
+
+    private var creationHubContent: some View {
+        NavigationStack {
+            Group {
+                #if targetEnvironment(macCatalyst)
+                desktopContent
+                #else
+                mobileContent
+                #endif
             }
             .scrollDismissesKeyboard(.interactively)
             .toolbar(.hidden, for: .navigationBar)
             .agentDashboardScreen()
         }
-        .sheet(isPresented: $showQuickCapture) {
-            QuickCaptureView()
+        .background(Color.agentCanvas.ignoresSafeArea())
+    }
+
+    private var mobileContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                mobileHeader
+                createActions
+                cyAction
+                if appModel.walkthroughStep == .quickAdd {
+                    quickAddWalkthroughCard
+                }
+            }
+            .padding(.horizontal, AgentLayout.dashboardGutter)
+            .padding(.bottom, AgentSpacing.x16)
         }
     }
 
-    private var header: some View {
+    #if targetEnvironment(macCatalyst)
+    private var desktopContent: some View {
+        VStack(spacing: 0) {
+            desktopToolbar
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                    desktopHeading
+                    desktopCreateActions
+                    desktopCyAction
+
+                    if appModel.walkthroughStep == .quickAdd {
+                        quickAddWalkthroughCard
+                    }
+                }
+                .padding(.horizontal, AgentSpacing.x8)
+                .padding(.top, AgentSpacing.x6)
+                .padding(.bottom, AgentSpacing.x8)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .background(Color.agentCanvas)
+    }
+
+    private var desktopToolbar: some View {
+        HStack(spacing: AgentSpacing.x4) {
+            Text("Quick add")
+                .font(.agentHeadline)
+                .foregroundStyle(Color.agentText)
+
+            Spacer(minLength: AgentSpacing.x4)
+
+            AgentToolbarIconButton(title: "Close", icon: .close, action: closeCreationHub)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityHint("Closes Quick Add")
+        }
+        .padding(.leading, AgentSpacing.x8)
+        .padding(.trailing, AgentSpacing.x5)
+        .frame(height: 64)
+        .background(.ultraThinMaterial)
+        .shadow(color: Color.agentPureBlack.opacity(0.045), radius: 10, y: 5)
+        .zIndex(1)
+    }
+
+    private var desktopHeading: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            Text("What are you making?")
+                .font(.agentDisplay)
+                .tracking(-0.56)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Choose a starting point. You can change the details later.")
+                .font(.agentBody)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var desktopCreateActions: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            MetaLabel("Create")
+
+            VStack(spacing: 0) {
+                DesktopQuickActionRow(
+                    icon: .idea,
+                    title: "Idea",
+                    detail: "Capture a thought before it disappears.",
+                    showsDivider: true
+                ) { openCapture(.idea) }
+
+                DesktopQuickActionRow(
+                    icon: .calendar,
+                    title: "Post",
+                    detail: "Plan the platform, format, and publishing date.",
+                    showsDivider: true
+                ) { openCapture(.post) }
+
+                DesktopQuickActionRow(
+                    icon: .tasks,
+                    title: "Task",
+                    detail: "Add one clear next step.",
+                    showsDivider: false
+                ) { openCapture(.task) }
+            }
+            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+            .clipShape(.rect(cornerRadius: AgentRadius.panel))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.panel, role: .structural)
+        }
+    }
+
+    private var desktopCyAction: some View {
+        Button { openCapture(.cyIdeas) } label: {
+            HStack(spacing: AgentSpacing.x4) {
+                CyAsterisk(color: .cyAccent, size: 24, strokeWidth: 2)
+                    .frame(width: 44, height: 44)
+                    .background(Color.cyAccent.opacity(0.09), in: .circle)
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    HStack(spacing: AgentSpacing.x2) {
+                        Text("Find three ideas")
+                            .font(.agentHeadline)
+                        Text("WITH CY")
+                            .font(.agentMetadata)
+                            .tracking(0.7)
+                            .foregroundStyle(Color.cyAccent)
+                    }
+                    Text("Get directions grounded in your pillars and saved work.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                AgentIconView(.arrowRight, size: 13)
+                    .foregroundStyle(Color.cyAccent)
+                    .frame(width: 40, height: 40)
+            }
+            .foregroundStyle(Color.agentText)
+            .padding(.leading, AgentSpacing.x4)
+            .padding(.trailing, AgentSpacing.x3)
+            .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+            .background(Color.cyAccent.opacity(0.055), in: .rect(cornerRadius: AgentRadius.panel))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentRadius.panel)
+                    .stroke(Color.cyAccent.opacity(0.18), lineWidth: 1)
+            }
+            .contentShape(.rect(cornerRadius: AgentRadius.panel))
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityHint("Creates three personalized ideas")
+    }
+    #endif
+
+    private var mobileHeader: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
             ZStack {
                 HStack {
-                    Button { dismiss() } label: {
+                    Button { closeCreationHub() } label: {
                         AgentIconView(.close, size: 17)
                             .frame(width: 44, height: 44)
                             .foregroundStyle(
@@ -107,7 +273,27 @@ struct CreationHubView: View {
         case .task: appModel.setQuickCaptureMode(.task)
         case .cyIdeas: appModel.setQuickCaptureMode(.cyIdeas)
         }
-        showQuickCapture = true
+        setQuickCaptureVisible(true)
+    }
+
+    private func returnToCreationHub() {
+        setQuickCaptureVisible(false)
+    }
+
+    private func setQuickCaptureVisible(_ isVisible: Bool) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            showQuickCapture = isVisible
+        }
+    }
+
+    private func closeCreationHub() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
     }
 
     private var createActions: some View {
@@ -160,7 +346,7 @@ struct CreationHubView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Button {
-                dismiss()
+                closeCreationHub()
             } label: {
                 HStack(spacing: AgentSpacing.x2) {
                     Text("Close and continue")
@@ -224,7 +410,7 @@ struct CreationHubView: View {
                 }
                 .contentShape(.rect(cornerRadius: AgentRadius.control))
             }
-            .buttonStyle(QuickAddRowButtonStyle())
+            .buttonStyle(AgentPressButtonStyle())
             .accessibilityHint("Creates three personalized ideas")
         }
     }
@@ -272,18 +458,71 @@ struct CreationHubView: View {
             }
             .contentShape(.rect)
         }
-        .buttonStyle(QuickAddRowButtonStyle())
+        .buttonStyle(AgentPressButtonStyle())
         .accessibilityHint(detail)
     }
 }
 
-private struct QuickAddRowButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+#if targetEnvironment(macCatalyst)
+private struct DesktopQuickActionRow: View {
+    let icon: AgentIcon
+    let title: String
+    let detail: String
+    let showsDivider: Bool
+    let action: () -> Void
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(configuration.isPressed ? 0.72 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.992 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: AgentSpacing.x4) {
+                AgentIconView(icon, size: 18)
+                    .foregroundStyle(isHovered ? Color.cyAccent : Color.agentText)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        isHovered ? Color.cyAccent.opacity(0.09) : Color.agentCanvas,
+                        in: .rect(cornerRadius: AgentRadius.control)
+                    )
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(title)
+                        .font(.agentHeadline)
+                    Text(detail)
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                AgentIconView(.arrowRight, size: 12)
+                    .foregroundStyle(isHovered ? Color.cyAccent : Color.agentSecondary)
+                    .frame(width: 40, height: 40)
+            }
+            .foregroundStyle(Color.agentText)
+            .padding(.leading, AgentSpacing.x4)
+            .padding(.trailing, AgentSpacing.x3)
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Color.cyAccent)
+                    .frame(width: 3, height: 28)
+                    .opacity(isHovered ? 1 : 0)
+            }
+            .overlay(alignment: .bottom) {
+                if showsDivider {
+                    Rectangle()
+                        .fill(Color.agentHairline)
+                        .frame(height: 1)
+                        .padding(.leading, 72)
+                }
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.1), value: isHovered)
+        .accessibilityHint(detail)
     }
 }
+#endif

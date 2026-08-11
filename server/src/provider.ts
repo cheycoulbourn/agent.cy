@@ -116,7 +116,7 @@ export class AnthropicAiProvider implements AiProvider {
       );
       const message = await stream.finalMessage();
 
-      if (message.model !== this.model) {
+      if (!modelMatchesRequested(message.model, this.model)) {
         throw new AppError(
           "generation_invalid",
           "The configured AI model was not returned. No fallback result was accepted.",
@@ -156,6 +156,10 @@ export class AnthropicAiProvider implements AiProvider {
       throw classifyAnthropicFailure(request.operation, error);
     }
   }
+}
+
+export function modelMatchesRequested(actual: string, requested: string): boolean {
+  return actual === requested || actual.startsWith(`${requested}-`);
 }
 
 export function classifyAnthropicFailure(

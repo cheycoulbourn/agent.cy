@@ -368,7 +368,6 @@ struct DevelopBriefView: View {
     }
 
     private var postContext: String? {
-        guard output != nil else { return nil }
         let metadata = contextMetadata.joined(separator: ", ")
         return [
             "Post title: \(brief.title)",
@@ -420,7 +419,8 @@ struct DevelopBriefView: View {
     }
 
     private func send(_ suggestedPrompt: String? = nil) {
-        let text = suggestedPrompt ?? answer
+        let text = (suggestedPrompt ?? answer).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
         answer = ""
         answerIsFocused = false
         Task {

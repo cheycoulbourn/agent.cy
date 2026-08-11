@@ -36,6 +36,12 @@ Allowed events include onboarding steps, voice-example completion, app-open day,
 
 No event may contain creator text, prompts, generated content, captions, URLs, or pillar names.
 
+## Link-first inspiration validation
+
+On a signed physical-device build, verify Instagram, TikTok, YouTube/Shorts, Safari, and Notes. Record the exact `NSItemProvider` representations each host supplies. Confirm Photos movie shares remain unsupported, capture works offline, duplicate imports create no extra source or Spark, and the extension performs no network request.
+
+Inspect a saved-post shaping request and content-free logs to prove the URL, hostname, thumbnail bytes, temporary video, tags, and credentials never enter AI requests, logs, or telemetry. Confirm that only the declared device-derived title, caption, transcript, visual observations, analyzed-input markers, duration, and creator context enter the AI request. Verify VoiceOver, Accessibility Extra Extra Extra Large, Reduce Motion, speech-permission denial, low storage, extension termination, app restart, privacy erase, and workspace reset.
+
 ## Paid pilot
 
 After behavioral validation and App Store release readiness, recruit five new eligible creators. Each receives the first free brief, then a 14-day trial that renews at $8.99 per month.

@@ -8,6 +8,24 @@ private struct CyPlateItem: Identifiable {
     let title: String
 }
 
+private enum CyAvailabilityState: Equatable {
+    case localBridge
+    case hosted
+    case unavailable
+
+    var label: String {
+        switch self {
+        case .localBridge: "Local bridge"
+        case .hosted: "Hosted Cy"
+        case .unavailable: "Unavailable"
+        }
+    }
+
+    var isAvailable: Bool {
+        self != .unavailable
+    }
+}
+
 enum CyChatActionPolicy {
     static func visibleSuggestions(
         _ suggestions: [ChatSuggestionWire],
@@ -338,8 +356,10 @@ private enum BatchReviewDecision: String, Identifiable {
 
 struct AskCyView: View {
     private let bottomClearance: CGFloat
+    private let showsCloseButton: Bool
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \ConversationThread.updatedAt, order: .reverse) private var allThreads: [ConversationThread]
     @Query(sort: \ConversationMessage.createdAt) private var allMessages: [ConversationMessage]
@@ -365,7 +385,7 @@ struct AskCyView: View {
     @State private var showConversationHistory = false
     @State private var showProUpsell = false
     @State private var showProAccessDetails = false
-    @State private var remoteIsConnected = false
+    @State private var cyAvailability: CyAvailabilityState = .unavailable
     @State private var sendTask: Task<Void, Never>?
     @State private var activeSendID: UUID?
     @State private var sentToPostMessageIDs: Set<UUID> = []
@@ -383,8 +403,9 @@ struct AskCyView: View {
         }
     }
 
-    init(bottomClearance: CGFloat = 0) {
+    init(bottomClearance: CGFloat = 0, showsCloseButton: Bool = false) {
         self.bottomClearance = bottomClearance
+        self.showsCloseButton = showsCloseButton
     }
 
     private var messages: [ConversationMessage] {
@@ -437,7 +458,7 @@ struct AskCyView: View {
         .task {
             while !Task.isCancelled {
                 reloadPendingReviews()
-                await reloadRemoteStatus()
+                await reloadCyAvailability()
                 try? await Task.sleep(for: .seconds(4))
             }
         }
@@ -563,6 +584,9 @@ struct AskCyView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    if cyAvailability == .unavailable {
+                        cyUnavailableCard
+                    }
                     if messages.isEmpty {
                         opening
                     } else {
@@ -773,18 +797,18 @@ struct AskCyView: View {
                     .accessibilityHidden(true)
 
                 Circle()
-                    .fill(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
+                    .fill(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
                     .frame(width: 7, height: 7)
                     .accessibilityHidden(true)
 
-                Text(remoteIsConnected ? "Connected" : "Disconnected")
+                Text(cyAvailability.label)
                     .font(.agentMetadata)
-                    .foregroundStyle(remoteIsConnected ? Color.agentSuccess : Color.agentDestructive)
+                    .foregroundStyle(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Agent Cy, \(remoteIsConnected ? "connected" : "disconnected")")
+            .accessibilityLabel("Agent Cy, \(cyAvailability.label)")
 
             Menu {
                 Button("New conversation") { startNewThread() }
@@ -796,6 +820,31 @@ struct AskCyView: View {
                     .frame(width: 44, height: 44)
             }
 
+            #if targetEnvironment(macCatalyst)
+            if showsCloseButton {
+                Button(action: dismiss.callAsFunction) {
+                    HStack(spacing: AgentSpacing.x2) {
+                        Text("ESC")
+                            .font(.agentMetadata)
+                            .foregroundStyle(Color.agentSecondary)
+                        AgentIconView(.close, size: 13)
+                            .foregroundStyle(Color.agentText)
+                    }
+                    .padding(.horizontal, AgentSpacing.x3)
+                    .frame(minHeight: 40)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.control)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("Close Cy")
+                .accessibilityHint("Press Escape to close")
+            }
+            #endif
+
             ProfileSettingsButton(
                 identity: activeIdentity,
                 action: { appModel.presentedSheet = .settings }
@@ -805,12 +854,58 @@ struct AskCyView: View {
     }
 
     @MainActor
-    private func reloadRemoteStatus() async {
-        guard LocalCyPreferences.isEnabledAndConnected else {
-            remoteIsConnected = false
+    private func reloadCyAvailability() async {
+        if await LocalCyAIClient.shared.isAvailable() {
+            cyAvailability = .localBridge
             return
         }
-        remoteIsConnected = await LocalCyAIClient.shared.isRemoteAvailable()
+
+        guard AccessPolicy.allows(.askCy, state: subscriptions.first) else {
+            cyAvailability = .unavailable
+            return
+        }
+
+        do {
+            guard let identity = try await DeviceOnlyKeychainCredentialStore.shared.load(),
+                  !identity.credential.isEmpty,
+                  identity.credentialExpiresAt.map({ $0 > Date() }) ?? true else {
+                cyAvailability = .unavailable
+                return
+            }
+            cyAvailability = .hosted
+        } catch {
+            cyAvailability = .unavailable
+        }
+    }
+
+    private var cyUnavailableCard: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            MetaLabel("CY IS OFFLINE")
+                .foregroundStyle(Color.agentDestructive)
+
+            Text("Connect Claude or Codex on your Mac, or turn on hosted Agent Cy.")
+                .font(.agentBody)
+                .foregroundStyle(Color.agentText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                appModel.presentedSheet = .settings
+            } label: {
+                HStack(spacing: AgentSpacing.x2) {
+                    Text("Open settings")
+                        .font(.agentAddAction)
+                    Spacer()
+                    AgentIconView(.forward)
+                }
+                .foregroundStyle(Color.agentText)
+                .frame(minHeight: 44)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+        .agentSurfaceChrome(cornerRadius: 14)
     }
 
     private var opening: some View {
@@ -1750,6 +1845,8 @@ struct AskCyView: View {
         let pillarID = sourceBrief.pillarID
         guard let draft = appModel.createPostDraftFromCyResponse(
             cleanResponse,
+            suggestedTitle: sourceBrief.title,
+            sourceBrief: sourceBrief,
             pillarID: pillarID,
             context: context
         ) else { return }

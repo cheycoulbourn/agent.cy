@@ -275,6 +275,131 @@ final class VoiceProfile {
 }
 
 @Model
+final class InspirationSource {
+    var id: UUID = UUID()
+    var workspaceID: UUID?
+    var canonicalURLString: String = ""
+    var platformRaw: String = InspirationPlatform.web.rawValue
+    var creatorObservation: String = ""
+    var sourceTitle: String = ""
+    var sourceCaption: String = ""
+    var sourceTranscript: String = ""
+    var visualObservationsText: String = ""
+    var analyzedInputsText: String = ""
+    var sourceDurationSeconds: Int?
+    var sharedVideoFilename: String?
+    @Attribute(.externalStorage) var thumbnailData: Data?
+    var tagIDsText: String = ""
+    var shapePayloadJSON: String = ""
+    var statusRaw: String = InspirationStatus.pending.rawValue
+    var linkedBriefID: UUID?
+    var filmingTaskID: UUID?
+    /// The creator's selected content pillar for this saved reference and its remix.
+    var pillarID: UUID?
+    /// Optional for additive migration. Older analyzed sources include a remix.
+    var saveModeRaw: String?
+    var sourceImportID: UUID?
+    var shapeOperationID: UUID?
+    var lastErrorCode: String?
+    var lastAttemptAt: Date?
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        workspaceID: UUID? = nil,
+        canonicalURLString: String,
+        platform: InspirationPlatform,
+        creatorObservation: String = "",
+        status: InspirationStatus = .pending,
+        sourceImportID: UUID? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.canonicalURLString = canonicalURLString
+        self.platformRaw = platform.rawValue
+        self.creatorObservation = creatorObservation
+        self.statusRaw = status.rawValue
+        self.sourceImportID = sourceImportID
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+
+    var visualObservations: [String] {
+        get { visualObservationsText.split(separator: "\n").map(String.init) }
+        set { visualObservationsText = newValue.joined(separator: "\n") }
+    }
+
+    var analyzedInputs: [InspirationAnalyzedInputWire] {
+        get {
+            analyzedInputsText.split(separator: ",").compactMap {
+                InspirationAnalyzedInputWire(rawValue: String($0))
+            }
+        }
+        set {
+            analyzedInputsText = Array(Set(newValue)).sorted { $0.rawValue < $1.rawValue }
+                .map(\.rawValue)
+                .joined(separator: ",")
+        }
+    }
+
+    var tagIDs: [UUID] {
+        get { tagIDsText.split(separator: ",").compactMap { UUID(uuidString: String($0)) } }
+        set {
+            tagIDsText = Array(Set(newValue)).sorted { $0.uuidString < $1.uuidString }
+                .map(\.uuidString)
+                .joined(separator: ",")
+        }
+    }
+
+    var platform: InspirationPlatform {
+        get { InspirationPlatform(rawValue: platformRaw) ?? .web }
+        set { platformRaw = newValue.rawValue }
+    }
+
+    var saveMode: InspirationSaveMode {
+        get { saveModeRaw.flatMap(InspirationSaveMode.init(rawValue:)) ?? .withRemix }
+        set { saveModeRaw = newValue.rawValue }
+    }
+
+    var status: InspirationStatus {
+        get { InspirationStatus(rawValue: statusRaw) ?? .pending }
+        set { statusRaw = newValue.rawValue }
+    }
+}
+
+@Model
+final class InspirationTag {
+    var id: UUID = UUID()
+    var workspaceID: UUID?
+    var name: String = ""
+    var normalizedName: String = ""
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        workspaceID: UUID? = nil,
+        name: String,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.normalizedName = Self.normalize(name)
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+
+    static func normalize(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+    }
+}
+
+@Model
 final class CreativeBrief {
     var id: UUID = UUID()
     var workspaceID: UUID?
@@ -306,6 +431,8 @@ final class CreativeBrief {
     var pillarID: UUID?
     /// First-class series membership. Optional for additive CloudKit migration safety.
     var seriesID: UUID?
+    /// Private provenance link for an idea created from a saved inspiration source.
+    var inspirationSourceID: UUID?
     var episodeNumber: Int?
     var episodeLabel: String = ""
     var brandPartnerID: UUID?
@@ -1358,6 +1485,8 @@ final class ConversationThread {
 }
 
 extension CreativeBrief: WorkspaceScopedRecord {}
+extension InspirationSource: WorkspaceScopedRecord {}
+extension InspirationTag: WorkspaceScopedRecord {}
 extension ContentSeries: WorkspaceScopedRecord {}
 extension SeriesEpisodeSlot: WorkspaceScopedRecord {}
 extension PendingBriefProposal: WorkspaceScopedRecord {}
@@ -1548,6 +1677,8 @@ enum AgentCySchema {
         CreatorProfile.self,
         VoiceExample.self,
         VoiceProfile.self,
+        InspirationSource.self,
+        InspirationTag.self,
         CreativeBrief.self,
         ContentSeries.self,
         SeriesEpisodeSlot.self,

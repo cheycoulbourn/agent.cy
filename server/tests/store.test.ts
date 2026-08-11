@@ -117,6 +117,47 @@ describe("StateRepository", () => {
     ).rejects.toMatchObject({ code: "installation_invalid" } satisfies Partial<AppError>);
   });
 
+  it("links an invited installation to Apple and creates a separate credential for another device", async () => {
+    const { repository, installation } = await repositoryWithInstallation();
+
+    const account = await repository.linkInstallationToAppleAccount(
+      installation.id,
+      "hashed-apple-subject",
+      now,
+    );
+    const signedIn = await repository.createInstallationForAppleAccount(
+      "hashed-apple-subject",
+      "mac-token-hash",
+      new Date(now.getTime() + 1_000),
+    );
+
+    expect(account).toMatchObject({ access: "freeJourney" });
+    expect(signedIn.account.id).toBe(account.id);
+    expect(signedIn.installation).toMatchObject({
+      accountId: account.id,
+      access: "freeJourney",
+      tokenHash: "mac-token-hash",
+    });
+    expect(signedIn.installation.id).not.toBe(installation.id);
+    await expect(
+      repository.findActiveInstallationByTokenHash("token-hash"),
+    ).resolves.toMatchObject({ accountId: account.id });
+  });
+
+  it("does not create an installation for an Apple account that was never linked", async () => {
+    const repository = new StateRepository(new MemoryStateBackend());
+
+    await expect(
+      repository.createInstallationForAppleAccount(
+        "unknown-apple-subject",
+        "new-device-token-hash",
+        now,
+      ),
+    ).rejects.toMatchObject({
+      code: "installation_invalid",
+    } satisfies Partial<AppError>);
+  });
+
   it("rotates a verified installation hash without accepting an unrelated hash", async () => {
     const { repository, installation } = await repositoryWithInstallation();
     await expect(

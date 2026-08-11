@@ -9,6 +9,23 @@ final class NotificationPlanningTests: XCTestCase {
         return calendar
     }
 
+    @MainActor
+    func testPlanningInputToleratesDuplicateDestinationsAfterCloudSync() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let destinationID = UUID()
+        context.insert(PublishingDestination(id: destinationID, name: "Instagram"))
+        context.insert(PublishingDestination(id: destinationID, name: "Instagram"))
+        try context.save()
+
+        let input = try LocalReminderService(calendar: calendar).makePlanningInput(
+            context: context,
+            now: date(2026, 8, 10, 17)
+        )
+
+        XCTAssertTrue(input.outputs.isEmpty)
+    }
+
     func testMondayPlanningReplacesDailyAndRestDaysStayQuiet() {
         let now = date(2026, 7, 19, 7)
         let monday = date(2026, 7, 20)

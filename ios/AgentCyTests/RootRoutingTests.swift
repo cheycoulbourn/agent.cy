@@ -8,7 +8,8 @@ final class RootRoutingTests: XCTestCase {
                 hasProfile: true,
                 requiresInstallationInvite: true,
                 isInstallationCredentialStatusResolved: false,
-                hasInstallationCredential: false
+                hasInstallationCredential: false,
+                hasLinkedAccount: false
             ),
             .launch
         )
@@ -20,30 +21,46 @@ final class RootRoutingTests: XCTestCase {
                 hasProfile: false,
                 requiresInstallationInvite: true,
                 isInstallationCredentialStatusResolved: false,
-                hasInstallationCredential: false
+                hasInstallationCredential: false,
+                hasLinkedAccount: false
             ),
             .launch
         )
     }
 
-    func testResolvedCreatorRoutesToInviteOrApp() {
+    func testResolvedCreatorRoutesToAccountAccessOrApp() {
         XCTAssertEqual(
             RootDestination.resolve(
                 hasProfile: true,
                 requiresInstallationInvite: true,
                 isInstallationCredentialStatusResolved: true,
-                hasInstallationCredential: false
+                hasInstallationCredential: false,
+                hasLinkedAccount: false
             ),
-            .installationInvite
+            .accountAccess
         )
         XCTAssertEqual(
             RootDestination.resolve(
                 hasProfile: true,
                 requiresInstallationInvite: true,
                 isInstallationCredentialStatusResolved: true,
-                hasInstallationCredential: true
+                hasInstallationCredential: true,
+                hasLinkedAccount: true
             ),
             .app
+        )
+    }
+
+    func testSignedInAccountWaitsForItsSyncedProfileInsteadOfStartingOver() {
+        XCTAssertEqual(
+            RootDestination.resolve(
+                hasProfile: false,
+                requiresInstallationInvite: true,
+                isInstallationCredentialStatusResolved: true,
+                hasInstallationCredential: true,
+                hasLinkedAccount: true
+            ),
+            .restoringAccount
         )
     }
 }

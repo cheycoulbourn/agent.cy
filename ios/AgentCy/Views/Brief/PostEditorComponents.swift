@@ -57,6 +57,21 @@ enum PostDraftResumePolicy {
     }
 }
 
+enum PostDraftDeletionPolicy {
+    static func canDelete(
+        briefStatus: BriefStatus,
+        outputStatuses: [PlatformOutputStatus]
+    ) -> Bool {
+        guard briefStatus != .posted, briefStatus != .archived else { return false }
+
+        if outputStatuses.isEmpty {
+            return briefStatus == .spark || briefStatus == .developing
+        }
+
+        return outputStatuses.contains(.draft) && !outputStatuses.contains(.posted)
+    }
+}
+
 struct BriefDisclosureLabel: View {
     let title: String
     let detail: String

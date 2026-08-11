@@ -46,7 +46,13 @@ struct PillarsView: View {
                     paperHeader
                         .reportAgentViewHeight()
 
-                    PillarPaperSurface(minimumHeight: max(0, proxy.size.height - headerHeight)) {
+                    PillarPaperSurface(
+                        minimumHeight: AgentScrollableSurfacePolicy.minimumHeight(
+                            viewportHeight: proxy.size.height,
+                            headerHeight: headerHeight
+                        ),
+                        bottomPadding: AgentScrollableSurfacePolicy.bottomPadding(mobile: 140)
+                    ) {
                         if let anchor {
                             VStack(alignment: .leading, spacing: 48) {
                                 anchorHero(anchor)
@@ -131,7 +137,7 @@ struct PillarsView: View {
         }
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x8)
+        .padding(.top, AgentLayout.pageTopPadding)
         .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
 
@@ -361,9 +367,12 @@ struct PillarDetailView: View {
                         .reportAgentViewHeight()
 
                     PillarPaperSurface(
-                        minimumHeight: max(0, proxy.size.height - headerHeight),
+                        minimumHeight: AgentScrollableSurfacePolicy.minimumHeight(
+                            viewportHeight: proxy.size.height,
+                            headerHeight: headerHeight
+                        ),
                         topPadding: 28,
-                        bottomPadding: 150,
+                        bottomPadding: AgentScrollableSurfacePolicy.bottomPadding(mobile: 150),
                         gap: 28
                     ) {
                         VStack(alignment: .leading, spacing: 28) {
@@ -757,6 +766,8 @@ private struct PillarContentRow: View {
             AgentIconView(.microphone, size: 10)
         case .repurposedBrief:
             AgentIconView(.branch, size: 10)
+        case .sharedInspiration:
+            AgentIconView(.link, size: 10)
         case .text:
             AgentIconView(.ideas, size: 10)
         }
@@ -766,6 +777,7 @@ private struct PillarContentRow: View {
         case .voiceTranscript: "Captured idea"
         case .cyDirection: "Spark · From Cy"
         case .repurposedBrief: "Spark · Repurposed"
+        case .sharedInspiration: "Saved inspiration"
         case .text: "Captured by shortcut"
         }
     }
@@ -856,14 +868,14 @@ struct NewPillarView: View {
 }
 
 private struct PillarPaperSurface<Content: View>: View {
-    let minimumHeight: CGFloat
+    let minimumHeight: CGFloat?
     var topPadding: CGFloat = 32
     var bottomPadding: CGFloat = 140
     var gap: CGFloat = 40
     @ViewBuilder let content: Content
 
     init(
-        minimumHeight: CGFloat,
+        minimumHeight: CGFloat?,
         topPadding: CGFloat = 32,
         bottomPadding: CGFloat = 140,
         gap: CGFloat = 40,

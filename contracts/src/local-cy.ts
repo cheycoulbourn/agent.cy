@@ -7,6 +7,7 @@ export const LocalCySchemaVersion = 1 as const;
 export const LocalCyOperationSchema = z.enum([
   "voiceProfile",
   "ideas",
+  "shapeInspiration",
   "sparkTurn",
   "composeBrief",
   "reviseBrief",

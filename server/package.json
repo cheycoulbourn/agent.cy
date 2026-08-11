@@ -17,6 +17,7 @@
     "@agent-cy/contracts": "workspace:*",
     "@anthropic-ai/sdk": "^0.98.0",
     "fastify": "^5.6.2",
+    "jose": "^6.2.3",
     "zod": "^4.1.12"
   },
   "devDependencies": {

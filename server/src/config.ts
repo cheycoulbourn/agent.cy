@@ -12,6 +12,8 @@ export interface ServerConfig {
   readonly inviteHashSecret: string;
   /** First value signs new credentials; later values verify credentials minted before rotation. */
   readonly installationHashSecrets: readonly [string, ...string[]];
+  readonly appleSubjectHashSecret: string;
+  readonly appleClientIds: readonly [string, ...string[]];
   readonly inviteCodes: readonly string[];
   readonly pilotCompedAccess: boolean;
   readonly pilotCompedDurationDays: number;
@@ -81,11 +83,17 @@ export function loadConfig(
   const installationHashSecret =
     environment.INSTALLATION_HASH_SECRET ??
     (production ? undefined : "agent-cy-local-installation-hash-secret-only");
+  const appleSubjectHashSecret =
+    environment.APPLE_SUBJECT_HASH_SECRET ??
+    (production ? undefined : "agent-cy-local-apple-subject-hash-secret-only");
   if (!inviteHashSecret) {
     throw new Error("INVITE_HASH_SECRET is required in production");
   }
   if (!installationHashSecret) {
     throw new Error("INSTALLATION_HASH_SECRET is required in production");
+  }
+  if (!appleSubjectHashSecret) {
+    throw new Error("APPLE_SUBJECT_HASH_SECRET is required in production");
   }
   const previousInstallationHashSecrets = (
     environment.PREVIOUS_INSTALLATION_HASH_SECRETS ?? ""
@@ -101,6 +109,7 @@ export function loadConfig(
   if (production) {
     for (const [name, secret] of [
       ["INVITE_HASH_SECRET", inviteHashSecret],
+      ["APPLE_SUBJECT_HASH_SECRET", appleSubjectHashSecret],
       ...installationHashSecrets.map(
         (secret, index) => [
           index === 0
@@ -122,6 +131,22 @@ export function loadConfig(
     throw new Error(
       "INVITE_HASH_SECRET must differ from all installation hash secrets",
     );
+  }
+  if (
+    appleSubjectHashSecret === inviteHashSecret ||
+    installationHashSecrets.includes(appleSubjectHashSecret)
+  ) {
+    throw new Error(
+      "APPLE_SUBJECT_HASH_SECRET must differ from invite and installation hash secrets",
+    );
+  }
+
+  const appleClientIds = (environment.APPLE_CLIENT_IDS ?? "com.agentcy.app")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (appleClientIds.length === 0) {
+    throw new Error("APPLE_CLIENT_IDS must contain at least one client identifier");
   }
 
   const inviteCodes = (environment.INVITE_CODES ?? "")
@@ -181,6 +206,8 @@ export function loadConfig(
     dataFile: resolve(environment.DATA_FILE ?? "./data/agent-cy-state.json"),
     inviteHashSecret,
     installationHashSecrets,
+    appleSubjectHashSecret,
+    appleClientIds: appleClientIds as [string, ...string[]],
     inviteCodes,
     // The current external pilot is intentionally promotional. Set this to
     // false when the production App Store billing cohort begins.

@@ -5,6 +5,17 @@ import XCTest
 
 @MainActor
 final class DomainTests: XCTestCase {
+    func testDuplicateSafeIndexKeepsTheFirstCloudSyncedValue() {
+        let id = UUID()
+
+        let index = DuplicateSafeIndex.firstValues([
+            (id, "Phone"),
+            (id, "Mac"),
+        ])
+
+        XCTAssertEqual(index, [id: "Phone"])
+    }
+
     func testFinalizedPostNotesNeverFallBackToPremise() {
         XCTAssertEqual(
             FinalizedPostPresentation.notes("  Updated production note. \n"),
@@ -537,14 +548,17 @@ final class DomainTests: XCTestCase {
         )
         context.insert(pillar)
         let model = AppModel(reminderService: PreviewReminderService())
+        let suggestedTitle = "A gentler way to start the day"
         let response = "A realistic morning routine that makes the day feel easier."
 
         let result = try XCTUnwrap(model.createPostDraftFromCyResponse(
             response,
+            suggestedTitle: suggestedTitle,
             pillarID: pillar.id,
             context: context
         ))
 
+        XCTAssertEqual(result.brief.title, suggestedTitle)
         XCTAssertEqual(result.brief.pillarID, pillar.id)
         XCTAssertEqual(result.brief.premise, "")
         XCTAssertEqual(result.brief.notes, response)
@@ -553,6 +567,142 @@ final class DomainTests: XCTestCase {
         XCTAssertNil(result.output.targetDate)
         XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).count, 1)
         XCTAssertEqual(try context.fetch(FetchDescriptor<PlatformOutput>()).count, 1)
+    }
+
+    func testCyResponseCopiesStructuredPostFields() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let pillar = Pillar(
+            name: "Lifestyle",
+            colorHex: "55705B",
+            assignedWeekdays: [.monday]
+        )
+        context.insert(pillar)
+
+        let source = CreativeBrief(
+            title: "Old rough note",
+            premise: "A rough direction",
+            source: .cyDirection,
+            status: .developing
+        )
+        source.notes = "The creator's original thought."
+        source.pillarID = pillar.id
+        source.seriesID = UUID()
+        source.episodeNumber = 2
+        source.episodeLabel = "Episode two"
+        source.isBrandCollaboration = true
+        source.brandName = "Aest Studios"
+        source.compensationType = .paid
+        source.compensationAmount = 500
+        source.compensationCurrencyCode = "USD"
+        source.brandHasNetTerms = true
+        source.brandNetTermsDays = 30
+
+        let canonical = ReadyBriefWire(
+            briefId: source.id,
+            title: "Actual post idea",
+            premise: "The finished premise",
+            audience: "Solo creators",
+            creativeGoal: "Make the lesson useful",
+            desiredTakeaway: "Start with the rough version",
+            durationSeconds: 60,
+            spokenHook: "This is the hook Cy wrote.",
+            firstFrameText: "Start rough",
+            scriptBeats: [
+                ScriptBeatWire(
+                    order: 0,
+                    label: "Open",
+                    purpose: "Set the premise",
+                    script: "This is the finished script beat."
+                )
+            ],
+            close: "This is the finished close.",
+            ctaIntent: "Save this for your next post.",
+            filmingGuidance: FilmingGuidanceWire(
+                setup: "Window light",
+                shots: ["Wide opener", "Close detail"],
+                bRoll: ["Hands arranging the setup"],
+                delivery: "Warm and direct",
+                editing: "Use clean cuts",
+                audio: "Voiceover",
+                onScreenText: ["Start rough"]
+            ),
+            proposedTasks: [
+                ProposedTaskWire(
+                    title: "Film the B-roll",
+                    kind: .filming,
+                    notes: "Capture hands and one close detail.",
+                    estimatedMinutes: 20,
+                    isRecordingMilestone: true,
+                    order: 0
+                )
+            ],
+            assumptions: [],
+            voiceConfidence: 0.8,
+            platformVariants: [
+                PlatformVariantWire(
+                    platform: .instagramReels,
+                    caption: "This is the finished caption.",
+                    title: nil,
+                    openingAdjustment: "Open on the close detail.",
+                    ctaAdjustment: "Save this for later.",
+                    editChanges: ["Use readable captions"]
+                )
+            ]
+        )
+        source.readyBriefPayloadJSON = try XCTUnwrap(
+            String(data: JSONEncoder().encode(canonical), encoding: .utf8)
+        )
+        context.insert(source)
+
+        let sourceOutput = PlatformOutput(
+            briefID: source.id,
+            platform: .instagramReels,
+            durationSeconds: 60
+        )
+        context.insert(sourceOutput)
+        try context.save()
+
+        let model = AppModel(reminderService: PreviewReminderService())
+        let result = try XCTUnwrap(model.createPostDraftFromCyResponse(
+            "Cy's complete response.",
+            suggestedTitle: source.title,
+            sourceBrief: source,
+            pillarID: pillar.id,
+            context: context
+        ))
+
+        XCTAssertEqual(result.brief.title, "Actual post idea")
+        XCTAssertEqual(result.brief.spokenHook, "This is the hook Cy wrote.")
+        XCTAssertEqual(result.brief.scriptBeats, ["Open: This is the finished script beat."])
+        XCTAssertEqual(result.brief.close, "This is the finished close.")
+        XCTAssertEqual(result.brief.ctaIntent, "Save this for your next post.")
+        XCTAssertEqual(result.brief.seriesID, source.seriesID)
+        XCTAssertEqual(result.brief.episodeNumber, 2)
+        XCTAssertEqual(result.brief.episodeLabel, "Episode two")
+        XCTAssertTrue(result.brief.isBrandCollaboration)
+        XCTAssertEqual(result.brief.brandName, "Aest Studios")
+        XCTAssertEqual(result.brief.compensationAmount, 500)
+        XCTAssertTrue(result.brief.notes.contains("Thought notes"))
+        XCTAssertTrue(result.brief.notes.contains("The creator's original thought."))
+        XCTAssertTrue(result.brief.notes.contains("Shot list"))
+        XCTAssertTrue(result.brief.notes.contains("Wide opener"))
+        XCTAssertTrue(result.brief.notes.contains("Video notes"))
+        XCTAssertTrue(result.brief.notes.contains("Hands arranging the setup"))
+        XCTAssertEqual(result.output.caption, "This is the finished caption.")
+        XCTAssertEqual(result.output.cta, "Save this for later.")
+        XCTAssertEqual(result.output.status, .draft)
+        XCTAssertNil(result.output.targetDate)
+
+        let copiedTasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            .filter { $0.briefID == result.brief.id }
+        XCTAssertEqual(copiedTasks.count, 1)
+        XCTAssertEqual(copiedTasks.first?.title, "Film the B-roll")
+        XCTAssertEqual(copiedTasks.first?.platformOutputID, result.output.id)
+        XCTAssertEqual(copiedTasks.first?.notes, "Capture hands and one close detail.")
+        XCTAssertEqual(copiedTasks.first?.estimatedMinutes, 20)
+        XCTAssertEqual(copiedTasks.first?.isRecordingMilestoneDesignated, true)
     }
 
     func testDeletingConversationRemovesOnlyItsMessages() throws {
@@ -1452,6 +1602,66 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(
             PostDraftResumePolicy.outputStatus(briefStatus: .developing, current: .scheduled),
             .draft
+        )
+    }
+
+    func testDraftDeletionUsesOutputStateInsteadOfStaleBriefLifecycle() {
+        XCTAssertTrue(
+            PostDraftDeletionPolicy.canDelete(
+                briefStatus: .scheduled,
+                outputStatuses: [.draft]
+            )
+        )
+        XCTAssertTrue(
+            PostDraftDeletionPolicy.canDelete(
+                briefStatus: .ready,
+                outputStatuses: [.draft]
+            )
+        )
+        XCTAssertFalse(
+            PostDraftDeletionPolicy.canDelete(
+                briefStatus: .scheduled,
+                outputStatuses: [.scheduled]
+            )
+        )
+        XCTAssertFalse(
+            PostDraftDeletionPolicy.canDelete(
+                briefStatus: .posted,
+                outputStatuses: [.posted]
+            )
+        )
+        XCTAssertFalse(
+            PostDraftDeletionPolicy.canDelete(
+                briefStatus: .archived,
+                outputStatuses: [.draft]
+            )
+        )
+    }
+
+    func testAgendaDaySelectionNormalizesRepeatedRowDestinations() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let morning = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 3,
+            hour: 8
+        ))!
+        let evening = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 3,
+            hour: 20
+        ))!
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: morning)!
+
+        XCTAssertEqual(
+            AgendaDaySelection.normalizedDay(morning, calendar: calendar),
+            AgendaDaySelection.normalizedDay(evening, calendar: calendar)
+        )
+        XCTAssertNotEqual(
+            AgendaDaySelection.normalizedDay(morning, calendar: calendar),
+            AgendaDaySelection.normalizedDay(nextDay, calendar: calendar)
         )
     }
 
@@ -3190,7 +3400,8 @@ final class DomainTests: XCTestCase {
 
         await model.compose(brief: brief, context: context)
 
-        XCTAssertNotNil(model.proposal(for: brief, context: context))
+        let stagedProposal = try XCTUnwrap(model.proposal(for: brief, context: context))
+        XCTAssertEqual(stagedProposal.draft.title, "A rough spark")
         XCTAssertTrue(brief.spokenHook.isEmpty)
         XCTAssertTrue(model.outputs(for: brief, context: context).isEmpty)
         XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
@@ -3200,6 +3411,7 @@ final class DomainTests: XCTestCase {
         let relaunchedModel = AppModel(reminderService: PreviewReminderService())
         let proposal = try XCTUnwrap(relaunchedModel.proposal(for: brief, context: context))
         relaunchedModel.acceptProposal(proposal, for: brief, context: context)
+        XCTAssertEqual(brief.title, "A rough spark")
         XCTAssertFalse(brief.spokenHook.isEmpty)
         XCTAssertEqual(relaunchedModel.outputs(for: brief, context: context).count, 2)
         XCTAssertEqual(relaunchedModel.tasks(for: brief, context: context).count, 4)
@@ -3543,6 +3755,45 @@ final class DomainTests: XCTestCase {
         XCTAssertFalse(AgendaContentVisibility.includesTask(
             briefID: archivedID,
             activeBriefIDs: activeBriefIDs
+        ))
+    }
+
+    func testDayAgendaIncludesDraftPostsOnTheirWorkDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let workDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 1)))
+
+        XCTAssertTrue(AgendaDayOutputVisibility.includes(
+            outputTargetDate: nil,
+            outputStatus: .draft,
+            briefWorkDate: workDate,
+            briefStatus: .developing,
+            day: workDate,
+            calendar: calendar
+        ))
+    }
+
+    func testDayAgendaUsesPostDateForScheduledAndPostedPosts() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let workDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 1)))
+        let postDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 3)))
+
+        XCTAssertFalse(AgendaDayOutputVisibility.includes(
+            outputTargetDate: postDate,
+            outputStatus: .scheduled,
+            briefWorkDate: workDate,
+            briefStatus: .scheduled,
+            day: workDate,
+            calendar: calendar
+        ))
+        XCTAssertTrue(AgendaDayOutputVisibility.includes(
+            outputTargetDate: postDate,
+            outputStatus: .scheduled,
+            briefWorkDate: workDate,
+            briefStatus: .scheduled,
+            day: postDate,
+            calendar: calendar
         ))
     }
 

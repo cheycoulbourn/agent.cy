@@ -39,10 +39,12 @@ struct LocalExportService: ExportServicing {
         let brandPartners = try context.fetch(FetchDescriptor<BrandPartner>())
         let brandContacts = try context.fetch(FetchDescriptor<BrandContact>())
         let brandActivities = try context.fetch(FetchDescriptor<BrandActivity>())
+        let inspirationSources = try context.fetch(FetchDescriptor<InspirationSource>())
+        let inspirationTags = try context.fetch(FetchDescriptor<InspirationTag>())
 
         let object: [String: Any] = [
             "exportedAt": ISO8601DateFormatter().string(from: Date()),
-            "schemaVersion": 16,
+            "schemaVersion": 19,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
                 "name": $0.name,
@@ -88,6 +90,7 @@ struct LocalExportService: ExportServicing {
                     "assumptions": brief.assumptions,
                     "voiceConfidence": brief.voiceConfidence,
                     "source": brief.source.rawValue,
+                    "inspirationSourceID": brief.inspirationSourceID?.uuidString ?? NSNull(),
                     "status": brief.status.rawValue,
                     "brandCollaboration": brief.isBrandCollaboration,
                     "brandPartnerID": brief.brandPartnerID?.uuidString ?? NSNull(),
@@ -113,6 +116,37 @@ struct LocalExportService: ExportServicing {
                         ]
                     },
                     "readyBriefPayloadJSON": brief.readyBriefPayloadJSON
+                ] as [String: Any]
+            },
+            "inspirationSources": inspirationSources.map { source in
+                [
+                    "id": source.id.uuidString,
+                    "workspaceID": source.workspaceID?.uuidString ?? NSNull(),
+                    "canonicalURL": source.canonicalURLString,
+                    "platform": source.platform.rawValue,
+                    "creatorObservation": source.creatorObservation,
+                    "sourceTitle": source.sourceTitle,
+                    "sourceCaption": source.sourceCaption,
+                    "sourceTranscript": source.sourceTranscript,
+                    "visualObservations": source.visualObservations,
+                    "analyzedInputs": source.analyzedInputs.map(\.rawValue),
+                    "sourceDurationSeconds": source.sourceDurationSeconds ?? NSNull(),
+                    "pillarID": source.pillarID?.uuidString ?? NSNull(),
+                    "tagIDs": source.tagIDs.map(\.uuidString),
+                    "status": source.status.rawValue,
+                    "linkedBriefID": source.linkedBriefID?.uuidString ?? NSNull(),
+                    "filmingTaskID": source.filmingTaskID?.uuidString ?? NSNull(),
+                    "createdAt": ISO8601DateFormatter().string(from: source.createdAt),
+                    "updatedAt": ISO8601DateFormatter().string(from: source.updatedAt)
+                ] as [String: Any]
+            },
+            "inspirationTags": inspirationTags.map { tag in
+                [
+                    "id": tag.id.uuidString,
+                    "workspaceID": tag.workspaceID?.uuidString ?? NSNull(),
+                    "name": tag.name,
+                    "createdAt": ISO8601DateFormatter().string(from: tag.createdAt),
+                    "updatedAt": ISO8601DateFormatter().string(from: tag.updatedAt)
                 ] as [String: Any]
             },
             "pendingBriefProposals": pendingProposals.map { proposal in

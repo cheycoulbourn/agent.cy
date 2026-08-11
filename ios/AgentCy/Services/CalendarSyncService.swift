@@ -219,7 +219,7 @@ final class EventKitCalendarSyncService: CalendarSyncServicing {
         let syncPosts = defaults.bool(forKey: CalendarIntegrationPreferences.syncScheduledPostsKey)
         let syncTasks = defaults.bool(forKey: CalendarIntegrationPreferences.syncTasksKey)
         let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-        let briefsByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
+        let briefsByID = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
         let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
         var links = eventLinks()

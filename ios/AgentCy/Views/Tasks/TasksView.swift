@@ -308,7 +308,7 @@ struct TasksView: View {
         }
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x8)
+        .padding(.top, AgentLayout.pageTopPadding)
         .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
 

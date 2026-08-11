@@ -48,6 +48,8 @@
 	<string>Allow agent.cy to add scheduled posts and tasks to your chosen calendar.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Allow agent.cy to reach Local Cy on your Mac while both devices are on the same network.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Allow agent.cy to transcribe audio from a video you explicitly share so it can create an editable post idea.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>InterVariable.ttf</string>

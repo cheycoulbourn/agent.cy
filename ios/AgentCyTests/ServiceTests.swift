@@ -5,6 +5,122 @@ import XCTest
 
 @MainActor
 final class ServiceTests: XCTestCase {
+    func testSparkContextUsesVisiblePostContentWhenLegacyPremiseIsEmpty() {
+        let brief = CreativeBrief(title: "Anatomy of a rough hit rate")
+        brief.spokenHook = "The number is not the whole story."
+        brief.scriptBeatsText = "Explain the context behind the result."
+        brief.notes = "Keep this direct and evidence-led."
+        brief.ctaIntent = "Save this for your next review."
+
+        let text = SparkContextBuilder.text(
+            for: brief,
+            postContext: "Help me tighten the opening."
+        )
+
+        XCTAssertTrue(text.hasPrefix("Anatomy of a rough hit rate"))
+        XCTAssertTrue(text.contains(brief.spokenHook))
+        XCTAssertTrue(text.contains(brief.scriptBeatsText))
+        XCTAssertTrue(text.contains(brief.notes))
+        XCTAssertTrue(text.contains(brief.ctaIntent))
+        XCTAssertTrue(text.contains("Help me tighten the opening."))
+    }
+
+    func testSparkContextDeduplicatesRepeatedVisibleContent() {
+        let brief = CreativeBrief(title: "One useful line")
+        brief.premise = "One useful line"
+
+        let text = SparkContextBuilder.text(for: brief, postContext: "One useful line")
+
+        XCTAssertEqual(text, "One useful line")
+    }
+
+    func testSparkContextRespectsServerUTF16LimitWithEmoji() {
+        let brief = CreativeBrief(title: "Emoji-heavy post")
+        brief.notes = String(repeating: "😀", count: 10_100)
+
+        let text = SparkContextBuilder.text(for: brief, postContext: nil)
+
+        XCTAssertLessThanOrEqual(text.utf16.count, 20_000)
+        XCTAssertTrue(text.hasPrefix("Emoji-heavy post"))
+    }
+
+    func testAIRequestNormalizerBoundsRetainedCreatorContext() {
+        let context = CreatorContextWire(
+            name: String(repeating: "Creator😀", count: 30),
+            primaryGoal: String(repeating: "Make useful work 😀 ", count: 300),
+            selectedPlatforms: [.instagramReels, .instagramReels, .tiktok],
+            voiceExamples: [
+                VoiceExampleWire(exampleId: UUID(), order: 0, text: String(repeating: "Old voice data ", count: 2_000))
+            ],
+            voiceProfile: nil,
+            pillars: [],
+            librarySummaries: [],
+            taskSummaries: []
+        )
+
+        let normalized = AIRequestNormalizer.creatorContext(context)
+
+        XCTAssertLessThanOrEqual(normalized.name.utf16.count, 80)
+        XCTAssertLessThanOrEqual(normalized.primaryGoal.utf16.count, 2_000)
+        XCTAssertEqual(normalized.selectedPlatforms, [.instagramReels, .tiktok])
+        XCTAssertTrue(normalized.voiceExamples.isEmpty)
+        XCTAssertNil(normalized.voiceProfile)
+    }
+
+    func testAIRequestNormalizerBoundsConversationAndWorkingState() {
+        let oversized = String(repeating: "😀", count: 10_100)
+        let messages = (0..<20).map { index in
+            ConversationMessageWire(
+                messageId: UUID(),
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: oversized
+            )
+        }
+        let state = SparkDevelopmentStateWire(
+            premise: oversized,
+            audience: oversized,
+            creativeGoal: oversized,
+            proofOrStory: oversized,
+            desiredTakeaway: oversized,
+            constraints: Array(repeating: oversized, count: 12)
+        )
+
+        let normalizedMessages = AIRequestNormalizer.conversation(messages, limit: 16)
+        let normalizedState = AIRequestNormalizer.developmentState(state)
+
+        XCTAssertEqual(normalizedMessages.count, 16)
+        XCTAssertTrue(normalizedMessages.allSatisfy { $0.content.utf16.count <= 20_000 })
+        XCTAssertLessThanOrEqual(normalizedState.premise?.utf16.count ?? 0, 2_000)
+        XCTAssertEqual(normalizedState.constraints.count, 10)
+        XCTAssertTrue(normalizedState.constraints.allSatisfy { $0.utf16.count <= 2_000 })
+    }
+
+    func testInvalidHostedRequestDoesNotBlameCreatorForHiddenFields() {
+        let error = AIWireError(
+            code: .invalidInput,
+            message: "Invalid request",
+            retryable: false,
+            retryAfterSeconds: nil,
+            quotaScope: nil,
+            fieldIssues: nil
+        )
+
+        let presentation = CreatorFacingErrorMapper.presentation(for: error)
+
+        XCTAssertEqual(presentation.message, "Cy couldn’t read this post yet. Your work is saved.")
+        XCTAssertFalse(presentation.canRetry)
+    }
+
+    func testInspirationContentErrorExplainsWhatCyNeeds() {
+        let presentation = CreatorFacingErrorMapper.presentation(
+            for: InspirationContentAnalysisError.insufficientSourceContent,
+            action: "This inspiration"
+        )
+
+        XCTAssertTrue(presentation.message.contains("could not access enough of this post"))
+        XCTAssertFalse(presentation.canRetry)
+    }
+
     func testSparkDevelopmentStateEncodesEmptyFieldsAsExplicitNulls() throws {
         let state = SparkDevelopmentStateWire(
             premise: "Life lately",
@@ -150,6 +266,74 @@ final class ServiceTests: XCTestCase {
         XCTAssertNil(appModel.notice)
     }
 
+    func testFailedIdeaGenerationDoesNotConsumeFreeAllowance() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let subscription = SubscriptionState(access: .freeJourney)
+        context.insert(subscription)
+        context.insert(CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        ))
+        try context.save()
+        let appModel = AppModel(creativeService: FailedIdeasCreativeService())
+
+        _ = await appModel.findIdeaSuggestions(context: context)
+
+        XCTAssertEqual(subscription.ideationRequestsUsed, 0)
+    }
+
+    func testSuccessfulHostedIdeasConsumeAllowanceOnlyAfterSuccess() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let subscription = SubscriptionState(access: .freeJourney)
+        context.insert(subscription)
+        context.insert(CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        ))
+        try context.save()
+        let appModel = AppModel(creativeService: ProviderIdeasCreativeService(provider: .hosted))
+
+        let outcome = await appModel.findIdeaSuggestions(context: context)
+
+        guard case .success(let ideas) = outcome else {
+            return XCTFail("Expected hosted ideas to succeed")
+        }
+        XCTAssertEqual(ideas.count, 3)
+        XCTAssertEqual(subscription.ideationRequestsUsed, 1)
+    }
+
+    func testSuccessfulLocalBridgeIdeasDoNotConsumeHostedAllowance() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let subscription = SubscriptionState(access: .freeJourney)
+        context.insert(subscription)
+        context.insert(CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        ))
+        try context.save()
+        let appModel = AppModel(creativeService: ProviderIdeasCreativeService(provider: .localBridge))
+
+        let outcome = await appModel.findIdeaSuggestions(context: context)
+
+        guard case .success(let ideas) = outcome else {
+            return XCTFail("Expected local bridge ideas to succeed")
+        }
+        XCTAssertEqual(ideas.count, 3)
+        XCTAssertEqual(subscription.ideationRequestsUsed, 0)
+    }
+
     func testAskCyReceivesIncompletePostsAndCurrentTaskContext() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -226,20 +410,13 @@ final class ServiceTests: XCTestCase {
         }
     }
 
-    func testRemoteCreativeServiceRejectsOversizedVoiceEvidenceBeforeNetworkRequest() async {
-        let service = RemoteCreativeService()
+    func testAIRequestNormalizerExcludesOversizedDormantVoiceEvidence() {
         let oversized = String(repeating: "😀", count: 10_001)
         let context = creatorContext(examples: [oversized, "Second example", "Third example"])
+        let normalized = AIRequestNormalizer.creatorContext(context)
 
-        do {
-            _ = try await service.findIdeas(context: context, mode: .collaborate)
-            XCTFail("Expected local voice-evidence validation to fail")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("Example 1"))
-            XCTAssertTrue(error.localizedDescription.contains("20,000"))
-            XCTAssertTrue(error.localizedDescription.contains("UTF-16"))
-            XCTAssertFalse(error.localizedDescription.contains("app contract"))
-        }
+        XCTAssertTrue(normalized.voiceExamples.isEmpty)
+        XCTAssertNil(normalized.voiceProfile)
     }
 
     func testExportIsAReadableZipSignatureAndContainsAllEntries() throws {
@@ -878,6 +1055,54 @@ private struct NoCreditsIdeasCreativeService: CreativeServicing {
     func proposeRevision(of brief: ReadyBriefWire, localBriefID: UUID, revisionNumber: Int, scope: BriefRevisionFieldWire, instruction: String, mode: AssistanceMode, context: CreatorContextWire, baseline: BriefProposal, sourceUpdatedAt: Date, sourceTaskIDs: [UUID]) async throws -> BriefRevisionProposal { throw noCreditsError }
     func proposeVoiceProfileChange(profileID: UUID, sourceVersion: Int, sourceUpdatedAt: Date, current: VoiceProfileDraft, instruction: String, mode: AssistanceMode, context: CreatorContextWire) async throws -> VoiceProfileChangeProposal { throw noCreditsError }
     func reply(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> String { throw noCreditsError }
+}
+
+@MainActor
+private struct ProviderIdeasCreativeService: CreativeServicing {
+    let provider: CyExecutionProvider
+
+    private var ideas: [IdeaDirection] {
+        [
+            IdeaDirection(
+                title: "Start with the smallest version",
+                premise: "Show the simplest useful way to begin.",
+                opening: "You do not need the full version yet.",
+                assumption: "The creator wants a practical first step."
+            ),
+            IdeaDirection(
+                title: "Behind the decision",
+                premise: "Explain one honest creative tradeoff.",
+                opening: "I almost chose the obvious option.",
+                assumption: "The audience learns from the creator's judgment."
+            ),
+            IdeaDirection(
+                title: "What I would do first",
+                premise: "Give a grounded starting point.",
+                opening: "If I had to start again, I would begin here.",
+                assumption: "The audience needs a useful first move."
+            )
+        ]
+    }
+
+    func findIdeasExecution(
+        context: CreatorContextWire,
+        mode: AssistanceMode
+    ) async throws -> CyExecution<[IdeaDirection]> {
+        CyExecution(value: ideas, provider: provider)
+    }
+
+    func findIdeas(context: CreatorContextWire, mode: AssistanceMode) async throws -> [IdeaDirection] {
+        ideas
+    }
+
+    func extractVoiceProfile(context: CreatorContextWire, mode: AssistanceMode) async throws -> VoiceProfileExtraction { throw TestError.unused }
+    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], postContext: String?) async throws -> String { throw TestError.unused }
+    func composeProposal(from brief: CreativeBrief, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> BriefProposal { throw TestError.unused }
+    func proposeRevision(of brief: ReadyBriefWire, localBriefID: UUID, revisionNumber: Int, scope: BriefRevisionFieldWire, instruction: String, mode: AssistanceMode, context: CreatorContextWire, baseline: BriefProposal, sourceUpdatedAt: Date, sourceTaskIDs: [UUID]) async throws -> BriefRevisionProposal { throw TestError.unused }
+    func proposeVoiceProfileChange(profileID: UUID, sourceVersion: Int, sourceUpdatedAt: Date, current: VoiceProfileDraft, instruction: String, mode: AssistanceMode, context: CreatorContextWire) async throws -> VoiceProfileChangeProposal { throw TestError.unused }
+    func reply(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> String { throw TestError.unused }
+
+    private enum TestError: Error { case unused }
 }
 
 @MainActor

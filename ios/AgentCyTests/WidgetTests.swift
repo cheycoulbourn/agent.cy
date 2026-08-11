@@ -92,6 +92,11 @@ final class WidgetTests: XCTestCase {
                 XCTAssertEqual(decoded, destination)
             }
         }
+
+        let removedSavedPostURL = try XCTUnwrap(
+            URL(string: "agentcy://saved-post/00000000-0000-0000-0000-000000000001")
+        )
+        XCTAssertNil(AgentCyDeepLink(url: removedSavedPostURL))
     }
 
     func testSnapshotContainsFocusNextPostIdeaAndProductionWork() throws {
@@ -173,6 +178,31 @@ final class WidgetTests: XCTestCase {
         let snapshot = try WidgetSnapshotService.makeSnapshot(context: context, now: now)
 
         XCTAssertNil(snapshot.nextPost)
+    }
+
+    func testSnapshotToleratesDuplicatePublishingMetadataAfterCloudSync() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let now = Date(timeIntervalSince1970: 1_784_050_200)
+        let destinationID = UUID()
+        let formatID = UUID()
+        let brief = CreativeBrief(title: "Cloud-synced post", status: .scheduled)
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
+        output.destinationID = destinationID
+        output.formatID = formatID
+        output.targetDate = now
+
+        context.insert(brief)
+        context.insert(output)
+        context.insert(PublishingDestination(id: destinationID, name: "Instagram"))
+        context.insert(PublishingDestination(id: destinationID, name: "Instagram"))
+        context.insert(PublishingFormat(id: formatID, destinationID: destinationID, name: "Reel", kind: .shortVideo))
+        context.insert(PublishingFormat(id: formatID, destinationID: destinationID, name: "Reel", kind: .shortVideo))
+        try context.save()
+
+        let snapshot = try WidgetSnapshotService.makeSnapshot(context: context, now: now)
+
+        XCTAssertEqual(snapshot.nextPost?.platformLabel, "Instagram · Reel")
     }
 
     func testSnapshotDoesNotPromoteUndatedDraftIntoTodaysWidget() throws {

@@ -530,8 +530,8 @@ enum SeriesMigrationService {
         var seriesRecords = try context.fetch(FetchDescriptor<ContentSeries>())
         var result = Result()
 
-        let briefByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
-        let outputByID = Dictionary(uniqueKeysWithValues: outputs.map { ($0.id, $0) })
+        let briefByID = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
+        let outputByID = DuplicateSafeIndex.firstValues(outputs.map { ($0.id, $0) })
         let tasksByBriefID = Dictionary(grouping: tasks.compactMap { task in
             task.briefID.map { ($0, task) }
         }, by: \.0).mapValues { $0.map(\.1) }

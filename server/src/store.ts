@@ -13,6 +13,7 @@ export type SubscriptionAccess =
 export type AiOperation =
   | "voice_profile"
   | "ideas"
+  | "inspiration_shape"
   | "spark_turn"
   | "compose_brief"
   | "revise_brief"
@@ -30,12 +31,22 @@ export type AllowanceKey =
 
 export interface InstallationRecord {
   readonly id: string;
+  accountId: string | null;
   tokenHash: string | null;
   access: SubscriptionAccess;
   promotionalEntitlementEndsAt: string | null;
   readonly createdAt: string;
   deletedAt: string | null;
   allowanceCounts: Partial<Record<AllowanceKey, number>>;
+}
+
+export interface AccountRecord {
+  readonly id: string;
+  readonly appleSubjectHash: string;
+  access: SubscriptionAccess;
+  promotionalEntitlementEndsAt: string | null;
+  readonly createdAt: string;
+  deletedAt: string | null;
 }
 
 interface InviteRecord {
@@ -106,6 +117,8 @@ export interface OperationalTelemetry {
 interface PersistedState {
   readonly version: 1;
   invites: Record<string, InviteRecord>;
+  accounts: Record<string, AccountRecord>;
+  appleAccountIndex: Record<string, string>;
   installations: Record<string, InstallationRecord>;
   quotaEvents: QuotaEvent[];
   costEvents: CostEvent[];
@@ -120,6 +133,8 @@ function emptyState(): PersistedState {
   return {
     version: 1,
     invites: {},
+    accounts: {},
+    appleAccountIndex: {},
     installations: {},
     quotaEvents: [],
     costEvents: [],
@@ -267,6 +282,7 @@ export class StateRepository {
 
       const installation: InstallationRecord = {
         id: randomUUID(),
+        accountId: null,
         tokenHash,
         access,
         promotionalEntitlementEndsAt:
@@ -281,6 +297,82 @@ export class StateRepository {
       invite.installationId = installation.id;
       state.installations[installation.id] = installation;
       return structuredClone(installation);
+    });
+  }
+
+  async linkInstallationToAppleAccount(
+    installationId: string,
+    appleSubjectHash: string,
+    now: Date,
+  ): Promise<AccountRecord> {
+    return this.transact((state) => {
+      const installation = state.installations[installationId];
+      if (!installation || installation.deletedAt !== null) {
+        throw new AppError(
+          "installation_invalid",
+          "This installation is not active.",
+        );
+      }
+
+      const existingAccountId = state.appleAccountIndex[appleSubjectHash];
+      let account = existingAccountId
+        ? state.accounts[existingAccountId]
+        : undefined;
+      if (!account || account.deletedAt !== null) {
+        account = {
+          id: randomUUID(),
+          appleSubjectHash,
+          access: installation.access,
+          promotionalEntitlementEndsAt:
+            installation.promotionalEntitlementEndsAt,
+          createdAt: now.toISOString(),
+          deletedAt: null,
+        };
+        state.accounts[account.id] = account;
+        state.appleAccountIndex[appleSubjectHash] = account.id;
+      } else {
+        mergeAccountEntitlement(account, installation);
+      }
+
+      installation.accountId = account.id;
+      applyAccountEntitlementToLinkedInstallations(state, account);
+      return structuredClone(account);
+    });
+  }
+
+  async createInstallationForAppleAccount(
+    appleSubjectHash: string,
+    tokenHash: string,
+    now: Date,
+  ): Promise<{
+    readonly account: AccountRecord;
+    readonly installation: InstallationRecord;
+  }> {
+    return this.transact((state) => {
+      const accountId = state.appleAccountIndex[appleSubjectHash];
+      const account = accountId ? state.accounts[accountId] : undefined;
+      if (!account || account.deletedAt !== null) {
+        throw new AppError(
+          "installation_invalid",
+          "No agent.cy account is linked to this Apple ID yet. Link it from your signed-in iPhone first.",
+        );
+      }
+
+      const installation: InstallationRecord = {
+        id: randomUUID(),
+        accountId: account.id,
+        tokenHash,
+        access: account.access,
+        promotionalEntitlementEndsAt: account.promotionalEntitlementEndsAt,
+        createdAt: now.toISOString(),
+        deletedAt: null,
+        allowanceCounts: combinedAllowanceCounts(state, account.id),
+      };
+      state.installations[installation.id] = installation;
+      return {
+        account: structuredClone(account),
+        installation: structuredClone(installation),
+      };
     });
   }
 
@@ -517,6 +609,15 @@ export class StateRepository {
       if (!reservation) return;
       delete state.reservations[input.reservationId];
 
+      if (input.outcome !== "succeeded") {
+        const quotaEventIndex = state.quotaEvents.findIndex(
+          (event) =>
+            event.installationId === reservation.installationId &&
+            event.at === reservation.createdAt,
+        );
+        if (quotaEventIndex >= 0) state.quotaEvents.splice(quotaEventIndex, 1);
+      }
+
       if (reservation.operationKey !== null) {
         const operation = state.operations[reservation.operationKey];
         if (operation?.outcome === "inProgress") {
@@ -611,6 +712,15 @@ export class StateRepository {
           access === "comped"
             ? promotionalEntitlementEndsAt?.toISOString() ?? null
             : null;
+        if (installation.accountId) {
+          const account = state.accounts[installation.accountId];
+          if (account && account.deletedAt === null) {
+            account.access = installation.access;
+            account.promotionalEntitlementEndsAt =
+              installation.promotionalEntitlementEndsAt;
+            applyAccountEntitlementToLinkedInstallations(state, account);
+          }
+        }
       }
       rememberRevenueCatEvent(state, eventId, processedAt);
       return true;
@@ -624,6 +734,8 @@ export class StateRepository {
 
 function normalizeState(state: PersistedState): PersistedState {
   const legacyState = state as PersistedState & {
+    accounts?: Record<string, AccountRecord>;
+    appleAccountIndex?: Record<string, string>;
     operations?: Record<string, AiOperationRecord>;
     processedRevenueCatEventTimes?: Record<string, string>;
     reservations: Record<
@@ -631,17 +743,85 @@ function normalizeState(state: PersistedState): PersistedState {
       ReservationRecord & { operationKey?: string | null }
     >;
   };
+  legacyState.accounts ??= {};
+  legacyState.appleAccountIndex ??= {};
   legacyState.operations ??= {};
   legacyState.processedRevenueCatEventTimes ??= {};
   for (const installation of Object.values(legacyState.installations) as Array<
-    InstallationRecord & { promotionalEntitlementEndsAt?: string | null }
+    InstallationRecord & {
+      accountId?: string | null;
+      promotionalEntitlementEndsAt?: string | null;
+    }
   >) {
+    installation.accountId ??= null;
     installation.promotionalEntitlementEndsAt ??= null;
   }
   for (const reservation of Object.values(legacyState.reservations)) {
     reservation.operationKey ??= null;
   }
   return legacyState;
+}
+
+const ACCESS_STRENGTH: Readonly<Record<SubscriptionAccess, number>> = {
+  expired: 0,
+  freeJourney: 1,
+  trial: 2,
+  comped: 3,
+  paid: 4,
+};
+
+function mergeAccountEntitlement(
+  account: AccountRecord,
+  installation: InstallationRecord,
+): void {
+  if (ACCESS_STRENGTH[installation.access] > ACCESS_STRENGTH[account.access]) {
+    account.access = installation.access;
+    account.promotionalEntitlementEndsAt =
+      installation.promotionalEntitlementEndsAt;
+    return;
+  }
+  if (installation.access === "comped" && account.access === "comped") {
+    const accountEndsAt = account.promotionalEntitlementEndsAt
+      ? Date.parse(account.promotionalEntitlementEndsAt)
+      : Number.POSITIVE_INFINITY;
+    const installationEndsAt = installation.promotionalEntitlementEndsAt
+      ? Date.parse(installation.promotionalEntitlementEndsAt)
+      : Number.POSITIVE_INFINITY;
+    if (installationEndsAt > accountEndsAt) {
+      account.promotionalEntitlementEndsAt =
+        installation.promotionalEntitlementEndsAt;
+    }
+  }
+}
+
+function applyAccountEntitlementToLinkedInstallations(
+  state: PersistedState,
+  account: AccountRecord,
+): void {
+  for (const installation of Object.values(state.installations)) {
+    if (installation.accountId === account.id && installation.deletedAt === null) {
+      installation.access = account.access;
+      installation.promotionalEntitlementEndsAt =
+        account.promotionalEntitlementEndsAt;
+    }
+  }
+}
+
+function combinedAllowanceCounts(
+  state: PersistedState,
+  accountId: string,
+): Partial<Record<AllowanceKey, number>> {
+  const result: Partial<Record<AllowanceKey, number>> = {};
+  for (const installation of Object.values(state.installations)) {
+    if (installation.accountId !== accountId || installation.deletedAt !== null) {
+      continue;
+    }
+    for (const [key, count] of Object.entries(installation.allowanceCounts)) {
+      const allowanceKey = key as AllowanceKey;
+      result[allowanceKey] = Math.max(result[allowanceKey] ?? 0, count ?? 0);
+    }
+  }
+  return result;
 }
 
 function isCompedAccessExpired(

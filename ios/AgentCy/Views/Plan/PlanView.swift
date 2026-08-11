@@ -5,6 +5,21 @@ enum PlanMode: Sendable {
     case week
 }
 
+enum PlanNavigationRoute: Hashable, CaseIterable {
+    case socialGrid
+}
+
+extension View {
+    func planNavigationDestinations(bottomClearance: CGFloat) -> some View {
+        navigationDestination(for: PlanNavigationRoute.self) { route in
+            switch route {
+            case .socialGrid:
+                SocialGridView(presentation: .phone(bottomClearance: bottomClearance))
+            }
+        }
+    }
+}
+
 struct PlanView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -13,6 +28,11 @@ struct PlanView: View {
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
     @State private var weekOffset = 0
     @State private var isSearchingPosts = false
+    let showsFeedShortcut: Bool
+
+    init(showsFeedShortcut: Bool = false) {
+        self.showsFeedShortcut = showsFeedShortcut
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,18 +63,29 @@ struct PlanView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-            HStack(alignment: .center, spacing: AgentSpacing.x1) {
+            HStack(alignment: .center, spacing: AgentSpacing.x2) {
                 MetaLabel("Weekly agenda")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    isSearchingPosts = true
-                } label: {
-                    AgentIconView(.search, size: 16)
-                        .frame(width: 44, height: 44)
-                        .contentShape(.rect)
+
+                HStack(spacing: 0) {
+                    Button {
+                        isSearchingPosts = true
+                    } label: {
+                        planHeaderActionIcon(.search)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Search posts")
+
+                    if showsFeedShortcut {
+                        NavigationLink(value: PlanNavigationRoute.socialGrid) {
+                            planHeaderActionIcon(.instagramCamera)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open social grid")
+                        .accessibilityHint("Shows planned and live Instagram posts together")
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Search posts")
+                .frame(height: 44)
 
                 ProfileSettingsButton(
                     identity: activeIdentity,
@@ -88,9 +119,16 @@ struct PlanView: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x8)
+        .padding(.top, AgentLayout.pageTopPadding)
         .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func planHeaderActionIcon(_ icon: AgentIcon) -> some View {
+        AgentIconView(icon, size: 16)
+            .foregroundStyle(Color.agentText)
+            .frame(width: 44, height: 44)
+            .contentShape(.rect)
     }
 
     private var activeIdentity: ActiveCreatorIdentity {
@@ -365,7 +403,7 @@ struct PlanHeader<Actions: View>: View {
 
         }
         .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x8)
+        .padding(.top, AgentLayout.pageTopPadding)
         .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

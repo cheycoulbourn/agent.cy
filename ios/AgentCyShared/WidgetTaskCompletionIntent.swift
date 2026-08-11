@@ -50,7 +50,10 @@ enum WidgetTaskCompletionActionStore {
     ) throws {
         guard let defaults else { throw AgentCyWidgetTaskActionStoreError.unavailableAppGroup }
         guard !acknowledged.isEmpty else { return }
-        let acknowledgedByTask = Dictionary(uniqueKeysWithValues: acknowledged.map { ($0.taskID, $0.id) })
+        let acknowledgedByTask = Dictionary(
+            acknowledged.map { ($0.taskID, $0.id) },
+            uniquingKeysWith: { current, _ in current }
+        )
         let remaining = try pending(defaults: defaults).filter { action in
             acknowledgedByTask[action.taskID] != action.id
         }

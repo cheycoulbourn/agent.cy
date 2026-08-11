@@ -4,21 +4,25 @@ import SwiftUI
 enum RootDestination: Equatable {
     case launch
     case onboarding
-    case installationInvite
+    case accountAccess
+    case restoringAccount
     case app
 
     static func resolve(
         hasProfile: Bool,
         requiresInstallationInvite: Bool,
         isInstallationCredentialStatusResolved: Bool,
-        hasInstallationCredential: Bool
+        hasInstallationCredential: Bool,
+        hasLinkedAccount: Bool
     ) -> Self {
         if requiresInstallationInvite && !isInstallationCredentialStatusResolved {
             return .launch
         }
-        guard hasProfile else { return .onboarding }
         if requiresInstallationInvite && !hasInstallationCredential {
-            return .installationInvite
+            return .accountAccess
+        }
+        guard hasProfile else {
+            return hasLinkedAccount ? .restoringAccount : .onboarding
         }
         return .app
     }
@@ -26,8 +30,6 @@ enum RootDestination: Equatable {
 
 struct RootView: View {
     @Query private var profiles: [CreatorProfile]
-    @Query private var briefs: [CreativeBrief]
-    @Query private var outputs: [PlatformOutput]
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
 
@@ -60,6 +62,7 @@ struct RootView: View {
             let removedAccidentalSeriesPosts =
                 (try? AccidentalRecurringPostRepairService.reconcileOnce(context: context)) ?? 0
             await appModel.refreshInstallationCredentialStatus(context: context)
+            appModel.refreshInspirationShareCreatorSnapshot(context: context)
             DevelopmentSubscriptionAccess.applyLocalCyPro(context: context)
             appModel.applyPendingWidgetTaskCompletions(context: context)
             WidgetSnapshotService.refresh(context: context)
@@ -89,16 +92,22 @@ struct RootView: View {
 
     @ViewBuilder
     private var destinationView: some View {
-            switch destination {
-            case .launch:
-                Color.agentCanvas.ignoresSafeArea()
-            case .onboarding:
-                OnboardingView()
-            case .installationInvite:
-                InstallationInviteGate()
-            case .app:
-                AppShellView()
-            }
+        switch destination {
+        case .launch:
+            Color.agentCanvas.ignoresSafeArea()
+        case .onboarding:
+            OnboardingView()
+        case .accountAccess:
+            AccountAccessGate()
+        case .restoringAccount:
+            AccountRestoreView()
+        case .app:
+            #if targetEnvironment(macCatalyst)
+            DesktopAppShellView()
+            #else
+            AppShellView()
+            #endif
+        }
     }
 
     private var destination: RootDestination {
@@ -106,7 +115,8 @@ struct RootView: View {
             hasProfile: hasProfile,
             requiresInstallationInvite: appModel.requiresInstallationInvite,
             isInstallationCredentialStatusResolved: appModel.isInstallationCredentialStatusResolved,
-            hasInstallationCredential: appModel.hasInstallationCredential
+            hasInstallationCredential: appModel.hasInstallationCredential,
+            hasLinkedAccount: appModel.hasLinkedAccount
         )
     }
 
@@ -134,11 +144,11 @@ struct RootView: View {
             appModel.widgetBriefID = id
             appModel.widgetBriefOpensEditor = false
         case .quickIdea:
-            prepareQuickCapture(idea: true, post: false, task: false)
+            prepareQuickCapture(.idea)
         case .quickPost:
-            prepareQuickCapture(idea: false, post: true, task: false)
+            prepareQuickCapture(.post)
         case .quickTask:
-            prepareQuickCapture(idea: false, post: false, task: true)
+            prepareQuickCapture(.task)
         }
     }
 
@@ -172,25 +182,8 @@ struct RootView: View {
         }
     }
 
-    private func isPlannedForToday(briefID: UUID) -> Bool {
-        guard briefs.contains(where: {
-            $0.id == briefID && $0.status != .archived && $0.status != .posted
-        }) else { return false }
-        return outputs.contains { output in
-            output.briefID == briefID &&
-                output.status != .posted &&
-                output.targetDate.map(Calendar.current.isDateInToday) == true
-        }
-    }
-
-    private func prepareQuickCapture(idea: Bool, post: Bool, task: Bool) {
-        if post {
-            appModel.setQuickCaptureMode(.post)
-        } else if task {
-            appModel.setQuickCaptureMode(.task)
-        } else {
-            appModel.setQuickCaptureMode(.idea)
-        }
+    private func prepareQuickCapture(_ mode: QuickCaptureLaunchMode) {
+        appModel.setQuickCaptureMode(mode)
         appModel.quickCaptureTargetDate = nil
         appModel.quickCapturePillarID = nil
         appModel.quickCaptureTaskLane = nil
@@ -226,9 +219,10 @@ private struct PreviewScheduledPostRoot: View {
 }
 #endif
 
-private struct InstallationInviteGate: View {
+struct InstallationInviteGate: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @State private var inviteCode = ""
 
     var body: some View {
@@ -258,7 +252,11 @@ private struct InstallationInviteGate: View {
                     }
 
                     Button {
-                        Task { await appModel.redeemInstallationInvite(inviteCode, context: context) }
+                        Task {
+                            if await appModel.redeemInstallationInvite(inviteCode, context: context) {
+                                dismiss()
+                            }
+                        }
                     } label: {
                         AgentIconLabel(title: "Connect Cy", icon: .key)
                             .frame(maxWidth: .infinity)
@@ -292,6 +290,11 @@ private struct InstallationInviteGate: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .agentKeyboardDismissal()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") { dismiss() }
+            }
+        }
     }
 }
 

@@ -11,6 +11,10 @@ describe("server secret configuration", () => {
   it("uses separate safe defaults for local invitation and installation hashing", () => {
     const config = loadConfig({ NODE_ENV: "development" });
     expect(config.inviteHashSecret).not.toBe(config.installationHashSecrets[0]);
+    expect(config.appleSubjectHashSecret).not.toBe(config.inviteHashSecret);
+    expect(config.appleSubjectHashSecret).not.toBe(
+      config.installationHashSecrets[0],
+    );
     expect(config.inviteHashSecret.length).toBeGreaterThanOrEqual(32);
     expect(config.installationHashSecrets[0].length).toBeGreaterThanOrEqual(32);
   });
@@ -28,6 +32,7 @@ describe("server secret configuration", () => {
         ...production,
         INVITE_HASH_SECRET: "a".repeat(32),
         INSTALLATION_HASH_SECRET: "a".repeat(32),
+        APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
       }),
     ).toThrow("must differ");
     expect(() =>
@@ -35,6 +40,7 @@ describe("server secret configuration", () => {
         ...production,
         INVITE_HASH_SECRET: "a".repeat(32),
         INSTALLATION_HASH_SECRET: "b".repeat(32),
+        APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
         PREVIOUS_INSTALLATION_HASH_SECRETS: "short",
       }),
     ).toThrow("PREVIOUS_INSTALLATION_HASH_SECRETS[0]");
@@ -47,6 +53,7 @@ describe("server secret configuration", () => {
       ANTHROPIC_API_KEY: "test-key",
       INVITE_HASH_SECRET: "a".repeat(32),
       INSTALLATION_HASH_SECRET: "b".repeat(32),
+      APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
       REVENUECAT_ENTITLEMENT_ID: "creator_access",
     };
     expect(() => loadConfig(production)).toThrow("INVITE_CODES");
@@ -105,6 +112,7 @@ describe("server secret configuration", () => {
       ANTHROPIC_API_KEY: "test-key",
       INVITE_HASH_SECRET: "a".repeat(32),
       INSTALLATION_HASH_SECRET: "b".repeat(32),
+      APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
       INVITE_CODES: strongProductionInvite,
       REVENUECAT_ENTITLEMENT_ID: "creator_access",
     });

@@ -3,6 +3,61 @@ import XCTest
 @testable import AgentCy
 
 final class APIClientTests: XCTestCase {
+    private struct IdentifiedRequest: Codable, AIRequestIdentifying {
+        let operationId: UUID
+        let value: String
+    }
+
+    func testHostedFallbackEncodingReplacesOnlyTheOperationID() throws {
+        let originalID = UUID()
+        let hostedID = UUID()
+        let data = try AIRequestEncoding.encode(
+            IdentifiedRequest(operationId: originalID, value: "preserved"),
+            replacingOperationID: hostedID
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        XCTAssertEqual(object["operationId"] as? String, hostedID.uuidString.lowercased())
+        XCTAssertEqual(object["value"] as? String, "preserved")
+    }
+
+    func testHostedEncodingKeepsOriginalOperationIDWithoutFallback() throws {
+        let originalID = UUID()
+        let data = try AIRequestEncoding.encode(
+            IdentifiedRequest(operationId: originalID, value: "preserved")
+        )
+        let decoded = try JSONDecoder().decode(IdentifiedRequest.self, from: data)
+
+        XCTAssertEqual(decoded.operationId, originalID)
+        XCTAssertEqual(decoded.value, "preserved")
+    }
+
+    func testLocalCyIsNotAttemptedWhenPreferenceMigratesWithoutBridgeCredential() {
+        XCTAssertFalse(
+            LocalCyPreferences.shouldAttemptLocal(
+                isEnabled: true,
+                hasBridgeCredential: false
+            )
+        )
+    }
+
+    func testLocalCyIsAttemptedOnlyWhenEnabledAndConnectedOnThisDevice() {
+        XCTAssertTrue(
+            LocalCyPreferences.shouldAttemptLocal(
+                isEnabled: true,
+                hasBridgeCredential: true
+            )
+        )
+        XCTAssertFalse(
+            LocalCyPreferences.shouldAttemptLocal(
+                isEnabled: false,
+                hasBridgeCredential: true
+            )
+        )
+    }
+
     func testLocalCyStatusAllowsNormalICloudPropagationDelay() {
         let status = LocalCyRuntimeStatus(
             schemaVersion: 1,
@@ -37,7 +92,7 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(String(decoding: block.data, as: UTF8.self), "{\"phase\":\"generating\"}")
     }
 
-    func testSSESequenceRequiresVerifiedSonnetModelAndOrder() throws {
+    func testSSESequenceRequiresDeclaredModelAndCanonicalOrder() throws {
         struct ResultValue: Codable, Equatable { let value: String }
         let id = UUID()
         let blocks = [
@@ -50,7 +105,7 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(decoded, ResultValue(value: "ok"))
     }
 
-    func testSSESequenceRejectsModelReroute() {
+    func testSSESequenceAcceptsServerSelectedModel() throws {
         struct ResultValue: Codable { let value: String }
         let id = UUID()
         let blocks = [
@@ -59,7 +114,53 @@ final class APIClientTests: XCTestCase {
             block("result", ["operationId": id.uuidString, "payload": ["operation": "ideas", "result": ["value": "no"]]]),
             block("done", ["operationId": id.uuidString, "status": "succeeded", "completedAt": "2026-07-11T12:00:01Z"])
         ]
-        XCTAssertThrowsError(try SSESequenceDecoder.decode(ResultValue.self, blocks: blocks, expectedOperation: .ideas, expectedOperationID: id))
+        let decoded = try SSESequenceDecoder.decode(
+            ResultValue.self,
+            blocks: blocks,
+            expectedOperation: .ideas,
+            expectedOperationID: id
+        )
+        XCTAssertEqual(decoded.value, "no")
+    }
+
+    func testSSESequenceAcceptsExplicitLegacySchemaForHostedCompatibility() throws {
+        struct ResultValue: Codable, Equatable { let value: String }
+        let id = UUID()
+        let blocks = [
+            block("meta", ["operationId": id.uuidString, "requestId": UUID().uuidString, "operation": "shapeInspiration", "schemaVersion": "inspiration-shape.result.v1", "model": "claude-sonnet-5", "startedAt": "2026-07-11T12:00:00Z"]),
+            block("phase", ["operationId": id.uuidString, "phase": "generating"]),
+            block("result", ["operationId": id.uuidString, "payload": ["operation": "shapeInspiration", "result": ["value": "legacy"]]]),
+            block("done", ["operationId": id.uuidString, "status": "succeeded", "completedAt": "2026-07-11T12:00:01Z"])
+        ]
+
+        let decoded = try SSESequenceDecoder.decode(
+            ResultValue.self,
+            blocks: blocks,
+            expectedOperation: .shapeInspiration,
+            expectedOperationID: id,
+            expectedSchemaVersion: "inspiration-shape.result.v1"
+        )
+
+        XCTAssertEqual(decoded, ResultValue(value: "legacy"))
+    }
+
+    func testSSESequenceRejectsMissingModelIdentity() {
+        struct ResultValue: Codable { let value: String }
+        let id = UUID()
+        let blocks = [
+            block("meta", ["operationId": id.uuidString, "requestId": UUID().uuidString, "operation": "ideas", "schemaVersion": "ideas.result.v1", "model": "", "startedAt": "2026-07-11T12:00:00Z"]),
+            block("phase", ["operationId": id.uuidString, "phase": "generating"]),
+            block("result", ["operationId": id.uuidString, "payload": ["operation": "ideas", "result": ["value": "no"]]]),
+            block("done", ["operationId": id.uuidString, "status": "succeeded", "completedAt": "2026-07-11T12:00:01Z"])
+        ]
+        XCTAssertThrowsError(
+            try SSESequenceDecoder.decode(
+                ResultValue.self,
+                blocks: blocks,
+                expectedOperation: .ideas,
+                expectedOperationID: id
+            )
+        )
     }
 
     func testSSESequenceRejectsOperationIDThatDoesNotEchoRequest() {
@@ -102,6 +203,88 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(freeAllowance.requiresSubscriptionUpgrade)
         XCTAssertFalse(daily.requiresSubscriptionUpgrade)
         XCTAssertFalse(providerCredits.requiresSubscriptionUpgrade)
+    }
+
+    func testHostedFallbackRunsAfterRecoverableLocalGenerationFailures() throws {
+        let invalidGeneration = try decodeWireError(code: "generation_invalid")
+        let providerCredits = try decodeWireError(code: "upstream_unavailable", quotaScope: "providerCredits")
+
+        XCTAssertTrue(
+            CyProviderFallbackPolicy.shouldTryHosted(
+                after: AgentCyAPIError.server(invalidGeneration)
+            )
+        )
+        XCTAssertTrue(
+            CyProviderFallbackPolicy.shouldTryHosted(
+                after: AgentCyAPIError.server(providerCredits)
+            )
+        )
+        XCTAssertTrue(CyProviderFallbackPolicy.shouldTryHosted(after: LocalCyError.timedOut))
+        XCTAssertTrue(CyProviderFallbackPolicy.shouldTryHosted(after: LocalCyError.invalidResponse))
+    }
+
+    func testLocalBridgeInvalidInputFallsThroughToHostedCy() throws {
+        let invalidInput = try decodeWireError(code: "invalid_input")
+
+        XCTAssertTrue(
+            CyProviderFallbackPolicy.shouldTryHostedAfterLocalBridgeFailure(
+                AgentCyAPIError.server(invalidInput)
+            )
+        )
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHosted(
+                after: AgentCyAPIError.server(invalidInput)
+            )
+        )
+    }
+
+    func testLocalBridgeCancellationAndRefusalDoNotFallThrough() throws {
+        let refusal = try decodeWireError(code: "refusal")
+        let cancelled = try decodeWireError(code: "cancelled")
+
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHostedAfterLocalBridgeFailure(
+                AgentCyAPIError.server(refusal)
+            )
+        )
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHostedAfterLocalBridgeFailure(
+                AgentCyAPIError.server(cancelled)
+            )
+        )
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHostedAfterLocalBridgeFailure(
+                CancellationError()
+            )
+        )
+    }
+
+    func testHostedFallbackDoesNotRepeatInvalidOrCancelledRequests() throws {
+        let invalidInput = try decodeWireError(code: "invalid_input")
+        let refusal = try decodeWireError(code: "refusal")
+        let cancelled = try decodeWireError(code: "cancelled")
+
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHosted(
+                after: AgentCyAPIError.server(invalidInput)
+            )
+        )
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHosted(
+                after: AgentCyAPIError.server(refusal)
+            )
+        )
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHosted(
+                after: AgentCyAPIError.server(cancelled)
+            )
+        )
+        XCTAssertFalse(CyProviderFallbackPolicy.shouldTryHosted(after: CancellationError()))
+        XCTAssertFalse(
+            CyProviderFallbackPolicy.shouldTryHosted(
+                after: URLError(.cancelled)
+            )
+        )
     }
 
     func testSSESequenceRejectsPhaseAfterTerminalEvent() {

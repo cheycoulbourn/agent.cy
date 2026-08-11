@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import SwiftData
 
-enum AppSheet: String, Identifiable {
+enum AppSheet: String, Identifiable, Equatable {
     case creationHub
     case quickCapture
     case askCy
@@ -22,10 +22,12 @@ enum AppNotice: Equatable {
     }
 }
 
-enum RequestedSettingsPage: String, Identifiable {
+enum RequestedSettingsPage: String, Identifiable, Hashable {
     case notifications
     case access
     case mcpBridge
+    case switchAccount
+    case addAccount
 
     var id: String { rawValue }
 }
@@ -68,6 +70,10 @@ struct TaskCompletionUndoState: Identifiable, Equatable {
     var id: UUID { taskID }
 }
 
+struct InspirationReviewRoute: Identifiable, Equatable {
+    let id: UUID
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -91,6 +97,8 @@ final class AppModel {
     var widgetBriefID: UUID?
     var widgetBriefOpensEditor = false
     var requestedTaskID: UUID?
+    var requestedIdeaID: UUID?
+    var inspirationReviewRoute: InspirationReviewRoute?
     var requestedPlanMode: PlanMode?
     var requestedPlanWeekOffset: Int?
     var requestedPlanNavigationReset = 0
@@ -105,8 +113,10 @@ final class AppModel {
     var revisionProposals: [UUID: BriefRevisionProposal] = [:]
     var voiceProfileChangeProposal: VoiceProfileChangeProposal?
     var hasInstallationCredential = false
+    var hasLinkedAccount = false
     var isInstallationCredentialStatusResolved = false
     var isRedeemingInvite = false
+    var isAuthorizingAccount = false
 
     func setQuickCaptureMode(_ mode: QuickCaptureLaunchMode) {
         quickCaptureStartsWithIdeas = mode == .cyIdeas
@@ -146,24 +156,30 @@ final class AppModel {
     @ObservationIgnored let requiresInstallationInvite: Bool
 
     @ObservationIgnored private let creativeService: any CreativeServicing
+    @ObservationIgnored private let inspirationShapingService: any InspirationShapingServicing
+    @ObservationIgnored private let inspirationContentAnalysisService: any InspirationContentAnalyzing
     @ObservationIgnored private let reminderService: any ReminderServicing
     @ObservationIgnored private let calendarSyncService: any CalendarSyncServicing
     @ObservationIgnored private let subscriptionService: any SubscriptionServicing
     @ObservationIgnored private let exportService: any ExportServicing
     @ObservationIgnored private let credentialStore: any InstallationCredentialStoring
     @ObservationIgnored private let installationRedemptionClient: InstallationRedemptionClient
+    @ObservationIgnored private let accountAuthorizationClient: any AccountAuthorizing
     @ObservationIgnored private let privacyEraseCoordinator: PrivacyEraseCoordinator
     @ObservationIgnored private let contentResetService: any ContentResetServicing
     @ObservationIgnored private var taskCompletionUndoDismissTask: Task<Void, Never>?
 
     init(
         creativeService: any CreativeServicing = PreviewCreativeService(),
+        inspirationShapingService: any InspirationShapingServicing = PreviewInspirationShapingService(),
+        inspirationContentAnalysisService: any InspirationContentAnalyzing = PreviewInspirationContentAnalysisService(),
         reminderService: any ReminderServicing = LocalReminderService(),
         calendarSyncService: any CalendarSyncServicing = EventKitCalendarSyncService.shared,
         subscriptionService: any SubscriptionServicing = PreviewSubscriptionService(),
         exportService: any ExportServicing = LocalExportService(),
         credentialStore: any InstallationCredentialStoring = DeviceOnlyKeychainCredentialStore.shared,
         installationRedemptionClient: InstallationRedemptionClient? = nil,
+        accountAuthorizationClient: (any AccountAuthorizing)? = nil,
         privacyDeletionService: (any PrivacyDeletionServicing)? = nil,
         privacyEraseProgressStore: any PrivacyEraseProgressStoring = UserDefaultsPrivacyEraseProgressStore(),
         localDataEraser: any LocalCreatorDataErasing = SwiftDataLocalCreatorDataEraser(),
@@ -173,12 +189,15 @@ final class AppModel {
         allowsOfflinePrivacyErase: Bool = true
     ) {
         self.creativeService = creativeService
+        self.inspirationShapingService = inspirationShapingService
+        self.inspirationContentAnalysisService = inspirationContentAnalysisService
         self.reminderService = reminderService
         self.calendarSyncService = calendarSyncService
         self.subscriptionService = subscriptionService
         self.exportService = exportService
         self.credentialStore = credentialStore
         self.installationRedemptionClient = installationRedemptionClient ?? InstallationRedemptionClient(store: credentialStore)
+        self.accountAuthorizationClient = accountAuthorizationClient ?? AccountAuthorizationClient(store: credentialStore)
         self.requiresInstallationInvite = requiresInstallationInvite
         self.contentResetService = contentResetService
         self.privacyEraseCoordinator = PrivacyEraseCoordinator(
@@ -216,11 +235,37 @@ final class AppModel {
         widgetAgendaDay = nil
         widgetBriefID = nil
         requestedTaskID = nil
+        inspirationReviewRoute = nil
         try? FocusTaskRecurrenceService.reconcile(context: context, workspaceID: workspaceID)
         try? MCPBridgeService.sync(context: context, workspaceID: workspaceID)
         WidgetSnapshotService.refresh(context: context, workspaceID: workspaceID)
+        refreshInspirationShareCreatorSnapshot(context: context)
         queueCalendarSync(context: context)
         Task { await refreshReminderSchedule(context: context) }
+    }
+
+    func refreshInspirationShareCreatorSnapshot(context: ModelContext) {
+        guard let profile = fetchOne(CreatorProfile.self, context: context),
+              let creatorContext = creatorContextWire(profile: profile, context: context),
+              let contextJSON = try? JSONEncoder.agentCy.encode(creatorContext) else {
+            return
+        }
+        let sharedPillarIDs = Set(creatorContext.pillars.map(\.pillarId))
+        let sharedPillarColors = DuplicateSafeIndex.firstValues(
+            ((try? context.fetch(FetchDescriptor<Pillar>())) ?? [])
+                .filter { sharedPillarIDs.contains($0.id) }
+                .compactMap { pillar -> (String, String)? in
+                    guard let color = AgentOKLCH(hex: pillar.colorHex) else { return nil }
+                    return (pillar.id.uuidString.lowercased(), color.hexString)
+                }
+        )
+        try? InspirationShareCreatorSnapshotStore.save(
+            InspirationShareCreatorSnapshot(
+                assistanceMode: profile.assistanceMode.rawValue,
+                creatorContextJSON: contextJSON,
+                pillarColorHexByID: sharedPillarColors
+            )
+        )
     }
 
     func refreshInstallationCredentialStatus(context: ModelContext? = nil) async {
@@ -239,14 +284,17 @@ final class AppModel {
         do {
             guard let identity = try await credentialStore.load() else {
                 hasInstallationCredential = false
+                hasLinkedAccount = false
                 return
             }
             hasInstallationCredential = identity.credentialExpiresAt.map { $0 > Date() } ?? true
+            hasLinkedAccount = identity.accountID != nil
             if let context {
                 synchronizeSubscriptionAccess(with: identity, context: context)
             }
         } catch {
             hasInstallationCredential = false
+            hasLinkedAccount = false
             presentCreatorError(error, action: "The connection")
         }
     }
@@ -263,6 +311,7 @@ final class AppModel {
         do {
             let identity = try await installationRedemptionClient.redeem(inviteCode: code)
             hasInstallationCredential = true
+            hasLinkedAccount = identity.accountID != nil
             if let context {
                 synchronizeSubscriptionAccess(with: identity, context: context)
             }
@@ -271,6 +320,52 @@ final class AppModel {
             hasInstallationCredential = false
             presentCreatorError(error, action: "The invite")
             return false
+        }
+    }
+
+    @discardableResult
+    func authorizeAppleAccount(
+        _ material: AppleAuthorizationMaterial,
+        context: ModelContext? = nil
+    ) async -> Bool {
+        isAuthorizingAccount = true
+        defer {
+            isAuthorizingAccount = false
+            isInstallationCredentialStatusResolved = true
+        }
+        do {
+            let existingIdentity = try await credentialStore.load()
+            let identity: InstallationIdentity
+            if let existingIdentity {
+                identity = try await accountAuthorizationClient.link(
+                    material,
+                    to: existingIdentity
+                )
+            } else {
+                identity = try await accountAuthorizationClient.signIn(material)
+            }
+            hasInstallationCredential = true
+            hasLinkedAccount = identity.accountID != nil
+            if let context {
+                synchronizeSubscriptionAccess(with: identity, context: context)
+            }
+            notice = .info("Your Apple account is connected. Your local work is still here.")
+            return true
+        } catch {
+            presentCreatorError(error, action: "Sign in with Apple")
+            return false
+        }
+    }
+
+    func signOutOfAccount() async {
+        do {
+            try await credentialStore.delete()
+            hasInstallationCredential = false
+            hasLinkedAccount = false
+            isInstallationCredentialStatusResolved = true
+            notice = .info("Signed out. Your work is still stored on this device.")
+        } catch {
+            presentCreatorError(error, action: "Sign out")
         }
     }
 
@@ -382,7 +477,7 @@ final class AppModel {
     }
 
     func prepareInitialVoiceProfile(context: ModelContext) async -> InitialVoiceProfileProposal? {
-        guard can(.extractVoiceProfile, context: context) else { return nil }
+        guard await canUseCy(.extractVoiceProfile, context: context) else { return nil }
         guard let profile = fetchOne(CreatorProfile.self, context: context),
               let creatorContext = creatorContextWire(profile: profile, context: context, includeDormantVoiceData: true),
               creatorContext.voiceExamples.count >= 3 else {
@@ -717,6 +812,246 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    func importPendingInspiration(context: ModelContext) -> InspirationImportResult? {
+        guard let coordinator = try? InspirationImportCoordinator(),
+              let result = try? coordinator.importPending(
+                  context: context,
+                  preferredWorkspaceID: resolvedWorkspaceID(context: context)
+              ) else {
+            return nil
+        }
+        guard inspirationReviewRoute == nil,
+              presentedSheet == nil,
+              let sourceID = (result.importedSourceIDs + result.reopenedSourceIDs).first else {
+            return result
+        }
+        selectedTab = .ideaBank
+        inspirationReviewRoute = InspirationReviewRoute(id: sourceID)
+        return result
+    }
+
+    func openInspiration(_ source: InspirationSource) {
+        guard SavedPostsScopePolicy.includes(
+            recordWorkspaceID: source.workspaceID,
+            activeWorkspaceID: activeWorkspaceID
+        ) else { return }
+        presentedSheet = nil
+        selectedTab = .ideaBank
+        inspirationReviewRoute = InspirationReviewRoute(id: source.id)
+    }
+
+    @discardableResult
+    func analyzeInspiration(
+        _ source: InspirationSource,
+        context: ModelContext
+    ) async -> InspirationShapeResultWire? {
+        if let linkedBriefID = source.linkedBriefID,
+           brief(id: linkedBriefID, context: context) != nil {
+            return decodedInspirationResult(source)
+        }
+        if source.status == .ready, let result = decodedInspirationResult(source) {
+            return result
+        }
+        guard can(.createSpark, context: context),
+              await canUseCy(.ideate, context: context),
+              let profile = fetchOne(CreatorProfile.self, context: context),
+              let creatorContext = creatorContextWire(profile: profile, context: context) else {
+            return nil
+        }
+
+        let operationID = source.shapeOperationID ?? UUID()
+        source.shapeOperationID = operationID
+        source.status = .shaping
+        source.lastAttemptAt = Date()
+        source.lastErrorCode = nil
+        source.updatedAt = Date()
+        do {
+            try context.save()
+        } catch {
+            presentCreatorError(error, action: "This inspiration")
+            return nil
+        }
+
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let sourceMaterial: InspirationSourceMaterialWire
+            if let existing = existingSourceMaterial(source) {
+                sourceMaterial = existing
+            } else {
+                guard let url = URL(string: source.canonicalURLString) else {
+                    throw InspirationContentAnalysisError.insufficientSourceContent
+                }
+                let analysis = try await inspirationContentAnalysisService.analyze(
+                    url: url,
+                    platform: source.platform,
+                    hostCaption: source.sourceCaption,
+                    sharedVideoFilename: source.sharedVideoFilename,
+                    existingThumbnailData: source.thumbnailData
+                )
+                source.sourceTitle = analysis.title ?? ""
+                source.sourceCaption = analysis.caption ?? ""
+                source.sourceTranscript = analysis.transcript ?? ""
+                source.visualObservations = analysis.visualObservations
+                source.analyzedInputs = analysis.analyzedInputs
+                source.sourceDurationSeconds = analysis.durationSeconds
+                source.thumbnailData = analysis.thumbnailData
+                if let assetStore = try? InspirationSharedAssetStore() {
+                    assetStore.remove(filename: source.sharedVideoFilename)
+                }
+                source.sharedVideoFilename = nil
+                source.updatedAt = Date()
+                try context.save()
+                sourceMaterial = analysis.sourceMaterial
+            }
+            let result = try await inspirationShapingService.shape(
+                sourcePlatform: source.platform,
+                sourceMaterial: sourceMaterial,
+                creatorContext: creatorContext,
+                assistanceMode: profile.assistanceMode,
+                operationID: operationID
+            )
+            try InspirationShapePersistenceCoordinator.stage(
+                result,
+                on: source,
+                context: context
+            )
+            WidgetSnapshotService.refresh(context: context)
+            try? MCPBridgeService.sync(context: context)
+            return result
+        } catch {
+            source.status = .failed
+            let isSourceContentError = error is InspirationContentAnalysisError ||
+                (error as? InspirationShapingError) == .invalidSourceMaterial
+            source.lastErrorCode = isSourceContentError ? "source_content_unavailable" : "shape_failed"
+            source.updatedAt = Date()
+            try? context.save()
+            if !isSourceContentError {
+                presentCreatorError(error, action: "This inspiration")
+            }
+            return nil
+        }
+    }
+
+    func saveInspirationIdea(
+        source: InspirationSource,
+        result: InspirationShapeResultWire,
+        draft: InspirationEditableIdea,
+        context: ModelContext
+    ) -> CreativeBrief? {
+        guard can(.createSpark, context: context) else { return nil }
+        do {
+            let brief = try InspirationShapePersistenceCoordinator.save(
+                draft,
+                result: result,
+                to: source,
+                context: context
+            )
+            WidgetSnapshotService.refresh(context: context)
+            try? MCPBridgeService.sync(context: context)
+            notice = .info("Idea saved to your Idea Bank.")
+            return brief
+        } catch {
+            presentCreatorError(error, action: "This idea")
+            return nil
+        }
+    }
+
+    func saveManualInspirationIdea(
+        source: InspirationSource,
+        draft: ManualInspirationIdeaDraft,
+        context: ModelContext
+    ) -> CreativeBrief? {
+        guard can(.createSpark, context: context) else { return nil }
+        do {
+            let brief = try InspirationShapePersistenceCoordinator.saveManual(
+                draft,
+                to: source,
+                context: context
+            )
+            WidgetSnapshotService.refresh(context: context)
+            try? MCPBridgeService.sync(context: context)
+            notice = .info("Your idea was saved to the Idea Bank.")
+            return brief
+        } catch {
+            presentCreatorError(error, action: "This idea")
+            return nil
+        }
+    }
+
+    @discardableResult
+    func deleteInspiration(
+        _ source: InspirationSource,
+        context: ModelContext
+    ) -> Bool {
+        do {
+            try InspirationDeletionCoordinator.delete(source, context: context)
+            WidgetSnapshotService.refresh(context: context)
+            try? MCPBridgeService.sync(context: context)
+            notice = .info("Saved post deleted.")
+            return true
+        } catch {
+            presentCreatorError(error, action: "This saved post")
+            return false
+        }
+    }
+
+    private func decodedInspirationResult(_ source: InspirationSource) -> InspirationShapeResultWire? {
+        guard let data = source.shapePayloadJSON.data(using: .utf8) else { return nil }
+        return try? JSONDecoder.agentCy.decode(InspirationShapeResultWire.self, from: data)
+    }
+
+    private func existingSourceMaterial(_ source: InspirationSource) -> InspirationSourceMaterialWire? {
+        let material = InspirationSourceMaterialWire(
+            title: source.sourceTitle.isEmpty ? nil : source.sourceTitle,
+            caption: source.sourceCaption.isEmpty ? nil : source.sourceCaption,
+            transcript: source.sourceTranscript.isEmpty ? nil : source.sourceTranscript,
+            visualObservations: source.visualObservations,
+            analyzedInputs: source.analyzedInputs,
+            durationSeconds: source.sourceDurationSeconds
+        )
+        return (try? InspirationSourceMaterialValidator.validate(material)) == nil ? nil : material
+    }
+
+    func openIdea(_ brief: CreativeBrief, developsPost: Bool, context: ModelContext) {
+        if developsPost {
+            guard ensurePostDraft(for: brief, context: context) != nil else { return }
+        }
+        inspirationReviewRoute = nil
+        requestedIdeaID = brief.id
+        selectedTab = .ideaBank
+    }
+
+    @discardableResult
+    func scheduleInspirationFilming(
+        source: InspirationSource,
+        brief: CreativeBrief,
+        date: Date,
+        includesTime: Bool,
+        context: ModelContext
+    ) -> Bool {
+        guard can(.schedule, context: context), can(.createTask, context: context) else {
+            return false
+        }
+        do {
+            _ = try InspirationFilmingScheduler.schedule(
+                source: source,
+                brief: brief,
+                date: date,
+                includesTime: includesTime,
+                context: context
+            )
+            queueCalendarSync(context: context)
+            try? MCPBridgeService.sync(context: context)
+            notice = .info("Filming added to your schedule.")
+            return true
+        } catch {
+            presentCreatorError(error, action: "Filming")
+            return false
+        }
+    }
+
     func applyFocusReminder(
         _ details: DailyFocusDayDetail,
         focusTitle: String,
@@ -831,22 +1166,29 @@ final class AppModel {
     @discardableResult
     func createPostDraftFromCyResponse(
         _ response: String,
+        suggestedTitle: String? = nil,
+        sourceBrief: CreativeBrief? = nil,
         pillarID: UUID?,
         context: ModelContext
     ) -> (brief: CreativeBrief, output: PlatformOutput)? {
         let cleanResponse = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceProposal = sourceBrief.map { source in
+            proposal(for: source, context: context)
+                ?? storedCanonicalProposal(for: source)
+                ?? localProposal(for: source, context: context)
+        }
+        let sourceOutput = sourceBrief.flatMap { outputs(for: $0, context: context).first }
         guard !cleanResponse.isEmpty,
               let brief = createSpark(
                 text: cleanResponse,
                 source: .cyDirection,
+                title: suggestedTitle,
                 notes: cleanResponse,
                 pillarID: pillarID,
                 placement: .post,
                 context: context
               ) else { return nil }
 
-        // Cy's response belongs in the editable Notes field. Keeping premise empty
-        // avoids showing the same content twice when the draft is reopened.
         brief.premise = ""
         guard let output = ensurePostDraft(for: brief, context: context) else {
             context.delete(brief)
@@ -854,16 +1196,167 @@ final class AppModel {
             return nil
         }
 
+        var insertedTasks: [CreatorTask] = []
+        if let sourceBrief, let sourceProposal {
+            apply(sourceProposal.draft, to: brief)
+
+            let canonicalTitle = sourceProposal.canonicalBrief?.title
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let proposalTitle = sourceProposal.draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fallbackTitle = suggestedTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let sourceTitle = sourceBrief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            brief.title = [canonicalTitle, proposalTitle, fallbackTitle, sourceTitle]
+                .first(where: { !$0.isEmpty }) ?? brief.title
+            brief.premise = ""
+            brief.notes = cyPostNotes(
+                response: cleanResponse,
+                sourceBrief: sourceBrief,
+                proposal: sourceProposal
+            )
+            brief.scriptEnabled = !sourceProposal.draft.scriptBeats.allSatisfy {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            brief.pillarID = pillarID ?? sourceBrief.pillarID
+            brief.seriesID = sourceBrief.seriesID
+            brief.episodeNumber = sourceBrief.episodeNumber
+            brief.episodeLabel = sourceBrief.episodeLabel
+            brief.brandPartnerID = sourceBrief.brandPartnerID
+            brief.isBrandCollaboration = sourceBrief.isBrandCollaboration
+            brief.brandName = sourceBrief.brandName
+            brief.compensationTypeRaw = sourceBrief.compensationTypeRaw
+            brief.compensationAmount = sourceBrief.compensationAmount
+            brief.compensationCurrencyCode = sourceBrief.compensationCurrencyCode
+            brief.brandHasNetTerms = sourceBrief.brandHasNetTerms
+            brief.brandNetTermsDays = sourceBrief.brandNetTermsDays
+            brief.giftedProductDescription = sourceBrief.giftedProductDescription
+            brief.giftedEstimatedValue = sourceBrief.giftedEstimatedValue
+            brief.promoCode = sourceBrief.promoCode
+            brief.promoLinkString = sourceBrief.promoLinkString
+            brief.moodBoardEnabled = sourceBrief.moodBoardEnabled
+            brief.moodBoardURLString = sourceBrief.moodBoardURLString
+            brief.workDate = nil
+            brief.includesWorkTime = false
+            brief.agendaDate = nil
+
+            if let sourceOutput {
+                output.platform = sourceOutput.platform
+                output.destinationID = sourceOutput.destinationID
+                output.formatID = sourceOutput.formatID
+                output.socialAccountID = sourceOutput.socialAccountID
+                output.durationSeconds = sourceOutput.durationSeconds
+                output.seriesName = sourceOutput.seriesName
+            } else {
+                output.durationSeconds = sourceProposal.draft.durationSeconds
+            }
+
+            if let variant = sourceProposal.variants.first(where: { $0.platform == output.platform })
+                ?? sourceProposal.variants.first {
+                apply(variant, to: output)
+            }
+            output.status = .draft
+            output.targetDate = nil
+            output.postedAt = nil
+            output.publishedURLString = ""
+
+            let workspaceID = brief.workspaceID ?? resolvedWorkspaceID(context: context)
+            var taskKeys = Set<String>()
+            for (index, proposedTask) in sourceProposal.tasks.enumerated() {
+                let taskTitle = proposedTask.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !taskTitle.isEmpty else { continue }
+                let taskKey = "\(proposedTask.kind.rawValue)|\(taskTitle.lowercased())"
+                guard taskKeys.insert(taskKey).inserted else { continue }
+
+                let task = CreatorTask(
+                    briefID: brief.id,
+                    pillarID: brief.pillarID,
+                    platformOutputID: output.id,
+                    title: taskTitle,
+                    kind: proposedTask.kind,
+                    lane: .production,
+                    priority: .none,
+                    notes: proposedTask.notes,
+                    estimatedMinutes: proposedTask.estimatedMinutes,
+                    sortOrder: index,
+                    isRecordingMilestoneDesignated: proposedTask.isRecordingMilestone
+                )
+                task.workspaceID = workspaceID
+                context.insert(task)
+                insertedTasks.append(task)
+            }
+        }
+
         do {
             try context.save()
             return (brief, output)
         } catch {
+            insertedTasks.forEach(context.delete)
             context.delete(output)
             context.delete(brief)
             try? context.save()
             notice = .error("That post draft could not be created.")
             return nil
         }
+    }
+
+    private func storedCanonicalProposal(for brief: CreativeBrief) -> BriefProposal? {
+        guard let data = brief.readyBriefPayloadJSON.data(using: .utf8),
+              let canonical = try? JSONDecoder().decode(ReadyBriefWire.self, from: data) else {
+            return nil
+        }
+        return canonical.proposal(for: brief.id)
+    }
+
+    private func cyPostNotes(
+        response: String,
+        sourceBrief: CreativeBrief,
+        proposal: BriefProposal
+    ) -> String {
+        func cleaned(_ value: String) -> String {
+            value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        func bulletList(_ values: [String]) -> String {
+            values.map(cleaned).filter { !$0.isEmpty }.map { "• \($0)" }.joined(separator: "\n")
+        }
+
+        var sections: [String] = []
+        let thoughtNotes = cleaned(sourceBrief.notes).isEmpty ? cleaned(response) : cleaned(sourceBrief.notes)
+        if !thoughtNotes.isEmpty {
+            sections.append("Thought notes\n\(thoughtNotes)")
+        }
+
+        if let filming = proposal.canonicalBrief?.filmingGuidance {
+            let shots = bulletList(filming.shots)
+            if !shots.isEmpty {
+                sections.append("Shot list\n\(shots)")
+            }
+
+            var videoParts: [String] = []
+            let setup = cleaned(filming.setup)
+            if !setup.isEmpty { videoParts.append("Setup: \(setup)") }
+            let bRoll = bulletList(filming.bRoll)
+            if !bRoll.isEmpty { videoParts.append("B-roll:\n\(bRoll)") }
+            let delivery = cleaned(filming.delivery)
+            if !delivery.isEmpty { videoParts.append("Delivery: \(delivery)") }
+            let editing = cleaned(filming.editing)
+            if !editing.isEmpty { videoParts.append("Editing: \(editing)") }
+            let audio = cleaned(filming.audio)
+            if !audio.isEmpty { videoParts.append("Audio: \(audio)") }
+            let onScreenText = bulletList(filming.onScreenText)
+            if !onScreenText.isEmpty { videoParts.append("On-screen text:\n\(onScreenText)") }
+            if !videoParts.isEmpty {
+                sections.append("Video notes\n\(videoParts.joined(separator: "\n"))")
+            }
+        } else {
+            let filming = cleaned(proposal.draft.filmingGuidance)
+            let editing = cleaned(proposal.draft.editingGuidance)
+            let videoNotes = [filming, editing].filter { !$0.isEmpty }.joined(separator: "\n")
+            if !videoNotes.isEmpty {
+                sections.append("Video notes\n\(videoNotes)")
+            }
+        }
+
+        return sections.joined(separator: "\n\n")
     }
 
     @discardableResult
@@ -1319,16 +1812,14 @@ final class AppModel {
     }
 
     func findIdeaSuggestions(context: ModelContext) async -> IdeaSuggestionOutcome {
-        guard let state = subscriptionState(context) else {
+        let localConnected = LocalCyPreferences.isEnabledAndConnected
+        let state = subscriptionState(context)
+        guard localConnected || state == nil || AccessPolicy.allows(.ideate, state: state) else {
             return .unavailable(
-                message: "Cy access could not be confirmed.",
-                requiresUpgrade: false
-            )
-        }
-        guard LocalCyPreferences.isEnabledAndConnected || AccessPolicy.allows(.ideate, state: state) else {
-            return .unavailable(
-                message: "Your three free idea sessions have been used.",
-                requiresUpgrade: true
+                message: state == nil
+                    ? "Cy is offline. Open Claude or Codex on your Mac, or open Access in Settings to use hosted Agent Cy."
+                    : "Your three free idea sessions have been used.",
+                requiresUpgrade: state != nil
             )
         }
         guard let profile = fetchOne(CreatorProfile.self, context: context) else {
@@ -1343,14 +1834,24 @@ final class AppModel {
             guard let creatorContext = creatorContextWire(profile: profile, context: context) else {
                 throw CreativeServiceError.invalidLiveResponse("the approved creator context is incomplete")
             }
-            let ideas = try await creativeService.findIdeas(context: creatorContext, mode: profile.assistanceMode)
-            let state = subscriptionState(context)
-            if !LocalCyPreferences.isEnabledAndConnected {
-                state?.ideationRequestsUsed += 1
-                state?.updatedAt = Date()
+            let execution = try await creativeService.findIdeasExecution(
+                context: creatorContext,
+                mode: profile.assistanceMode
+            )
+            if execution.provider == .hosted, let state {
+                let previousUsage = state.ideationRequestsUsed
+                state.ideationRequestsUsed += 1
+                state.updatedAt = Date()
+                do {
+                    try context.save()
+                } catch {
+                    state.ideationRequestsUsed = previousUsage
+                    throw error
+                }
+            } else {
+                try context.save()
             }
-            try? context.save()
-            return .success(ideas)
+            return .success(execution.value)
         } catch is CancellationError {
             return .cancelled
         } catch let error as URLError where error.code == .cancelled {
@@ -1378,7 +1879,7 @@ final class AppModel {
         postContext: String? = nil,
         context: ModelContext
     ) async {
-        guard can(.sparkDialogue, context: context) else { return }
+        guard await canUseCy(.sparkDialogue, context: context) else { return }
         let cleaned = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         let thread = developmentThread(for: brief, context: context)
@@ -1386,8 +1887,6 @@ final class AppModel {
             notice = .info("You’ve reached eight turns. Build the post now or edit the idea yourself.")
             return
         }
-        context.insert(ConversationMessage(threadID: thread.id, role: .creator, text: cleaned))
-        BriefLifecycle.beginDevelopment(brief)
         isWorking = true
         defer { isWorking = false }
         do {
@@ -1395,8 +1894,15 @@ final class AppModel {
                   let creatorContext = creatorContextWire(profile: profile, context: context) else {
                 throw CreativeServiceError.invalidLiveResponse("the approved creator context is incomplete")
             }
-            let conversation = conversationWire(messages(for: thread, context: context))
-            let response = try await creativeService.nextQuestion(
+            var conversation = conversationWire(messages(for: thread, context: context))
+            conversation.append(
+                ConversationMessageWire(
+                    messageId: UUID(),
+                    role: .user,
+                    content: cleaned
+                )
+            )
+            let execution = try await creativeService.nextQuestionExecution(
                 for: brief,
                 turn: thread.turnCount,
                 answer: cleaned,
@@ -1405,17 +1911,20 @@ final class AppModel {
                 conversation: conversation,
                 postContext: postContext
             )
+            let response = execution.value
+            context.insert(ConversationMessage(threadID: thread.id, role: .creator, text: cleaned))
             context.insert(ConversationMessage(threadID: thread.id, role: .cy, text: response))
+            BriefLifecycle.beginDevelopment(brief)
             thread.turnCount += 1
             thread.updatedAt = Date()
-            try? context.save()
+            try context.save()
         } catch {
             presentCreatorError(error, action: "Cy")
         }
     }
 
     func compose(brief: CreativeBrief, context: ModelContext) async {
-        guard can(.compose, context: context) else { return }
+        guard await canUseCy(.compose, context: context) else { return }
         guard let profile = fetchOne(CreatorProfile.self, context: context) else { return }
         isWorking = true
         defer { isWorking = false }
@@ -1425,17 +1934,22 @@ final class AppModel {
             }
             let thread = developmentThread(for: brief, context: context)
             let conversation = conversationWire(messages(for: thread, context: context))
-            let proposal = try await creativeService.composeProposal(
+            let execution = try await creativeService.composeProposalExecution(
                 from: brief,
                 mode: profile.assistanceMode,
                 context: creatorContext,
                 conversation: conversation
             )
+            var proposal = execution.value
+            let sourceTitle = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sourceTitle.isEmpty {
+                proposal.draft.title = sourceTitle
+            }
             try persist(proposal: proposal, context: context)
             BriefLifecycle.beginDevelopment(brief)
             try context.save()
             briefProposals[brief.id] = proposal
-            if !LocalCyPreferences.isEnabledAndConnected,
+            if execution.provider == .hosted,
                let state = subscriptionState(context),
                state.access == .freeJourney {
                 let wasConsumed = state.freeBriefConsumed
@@ -1524,7 +2038,7 @@ final class AppModel {
         instruction: String,
         context: ModelContext
     ) async {
-        guard can(.revise, context: context) else { return }
+        guard await canUseCy(.revise, context: context) else { return }
         guard proposal(for: brief, context: context) == nil else {
             notice = .info("Review or discard the current post proposal before asking for a revision.")
             return
@@ -1552,7 +2066,7 @@ final class AppModel {
         isWorking = true
         defer { isWorking = false }
         do {
-            let revision = try await creativeService.proposeRevision(
+            let execution = try await creativeService.proposeRevisionExecution(
                 of: canonical,
                 localBriefID: brief.id,
                 revisionNumber: state.revisionRequestsUsed + 1,
@@ -1564,6 +2078,7 @@ final class AppModel {
                 sourceUpdatedAt: sourceUpdatedAt,
                 sourceTaskIDs: sourceTasks.map(\.id)
             )
+            let revision = execution.value
             guard revision.briefID == brief.id,
                   revision.sourceUpdatedAt == sourceUpdatedAt,
                   revision.requestedScope == scope,
@@ -1572,11 +2087,19 @@ final class AppModel {
                 throw CreativeServiceError.invalidLiveResponse("the revision proposal failed local integrity checks")
             }
             try persist(revision: revision, context: context)
-            if !LocalCyPreferences.isEnabledAndConnected {
+            if execution.provider == .hosted {
+                let previousUsage = state.revisionRequestsUsed
                 state.revisionRequestsUsed += 1
                 state.updatedAt = Date()
+                do {
+                    try context.save()
+                } catch {
+                    state.revisionRequestsUsed = previousUsage
+                    throw error
+                }
+            } else {
+                try context.save()
             }
-            try context.save()
             revisionProposals[brief.id] = revision
         } catch {
             presentCreatorError(error, action: "The revision")
@@ -1661,7 +2184,7 @@ final class AppModel {
     }
 
     func requestTeachCy(instruction: String, context: ModelContext) async {
-        guard can(.teachCy, context: context) else { return }
+        guard await canUseCy(.teachCy, context: context) else { return }
         guard voiceProfileProposal(context: context) == nil else {
             notice = .info("A voice-profile proposal is already waiting for your review.")
             return
@@ -1683,7 +2206,7 @@ final class AppModel {
         isWorking = true
         defer { isWorking = false }
         do {
-            let proposal = try await creativeService.proposeVoiceProfileChange(
+            let execution = try await creativeService.proposeVoiceProfileChangeExecution(
                 profileID: profile.profileID,
                 sourceVersion: profile.version,
                 sourceUpdatedAt: profile.updatedAt,
@@ -1692,6 +2215,7 @@ final class AppModel {
                 mode: creator.assistanceMode,
                 context: creatorContext
             )
+            let proposal = execution.value
             guard proposal.profileID == profile.profileID,
                   proposal.sourceVersion == profile.version,
                   proposal.sourceUpdatedAt == profile.updatedAt,
@@ -1699,11 +2223,19 @@ final class AppModel {
                 throw CreativeServiceError.invalidLiveResponse("Teach Cy did not produce a valid profile change")
             }
             try persist(voiceProposal: proposal, context: context)
-            if !LocalCyPreferences.isEnabledAndConnected {
+            if execution.provider == .hosted {
+                let previousUsage = state.teachCyUpdatesUsed
                 state.teachCyUpdatesUsed += 1
                 state.updatedAt = Date()
+                do {
+                    try context.save()
+                } catch {
+                    state.teachCyUpdatesUsed = previousUsage
+                    throw error
+                }
+            } else {
+                try context.save()
             }
-            try context.save()
             voiceProfileChangeProposal = proposal
         } catch {
             presentCreatorError(error, action: "Cy")
@@ -1783,8 +2315,7 @@ final class AppModel {
     }
 
     func allows(_ action: AccessAction, context: ModelContext) -> Bool {
-        if action.isCyGeneration, LocalCyPreferences.isEnabledAndConnected { return true }
-        return AccessPolicy.allows(action, state: subscriptionState(context))
+        AccessPolicy.allows(action, state: subscriptionState(context))
     }
 
     func approve(brief: CreativeBrief, context: ModelContext) {
@@ -2311,8 +2842,8 @@ final class AppModel {
 
             let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
             let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-            let taskByID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
-            let briefByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
+            let taskByID = DuplicateSafeIndex.firstValues(tasks.map { ($0.id, $0) })
+            let briefByID = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
             var acknowledged: [WidgetTaskCompletionAction] = []
 
             for action in actions {
@@ -2437,16 +2968,18 @@ final class AppModel {
 
     @discardableResult
     func deleteDraft(_ brief: CreativeBrief, context: ModelContext) -> Bool {
-        guard [.spark, .developing].contains(brief.status) else {
-            notice = .info("Only drafts can be deleted here.")
-            return false
-        }
-
         let briefID = brief.id
         do {
             let outputs = try context.fetch(FetchDescriptor<PlatformOutput>(
                 predicate: #Predicate { $0.briefID == briefID }
             ))
+            guard PostDraftDeletionPolicy.canDelete(
+                briefStatus: brief.status,
+                outputStatuses: outputs.map(\.status)
+            ) else {
+                notice = .info("Only draft posts can be deleted here.")
+                return false
+            }
             let tasks = try context.fetch(FetchDescriptor<CreatorTask>(
                 predicate: #Predicate { $0.briefID == briefID }
             ))
@@ -2606,7 +3139,7 @@ final class AppModel {
         about brief: CreativeBrief? = nil,
         context: ModelContext
     ) async -> ChatTurnResultWire? {
-        guard can(.askCy, context: context) else { return nil }
+        guard await canUseCy(.askCy, context: context) else { return nil }
         do {
             guard let profile = fetchOne(CreatorProfile.self, context: context),
                   let creatorContext = creatorContextWire(profile: profile, context: context) else {
@@ -3207,7 +3740,7 @@ final class AppModel {
     private func reconcileTasks(for brief: CreativeBrief, proposal: BriefRevisionProposal, context: ModelContext) {
         let existing = tasks(for: brief, context: context)
         let sourceSet = Set(proposal.sourceTaskIDs)
-        let existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+        let existingByID = DuplicateSafeIndex.firstValues(existing.map { ($0.id, $0) })
         var usedSourceIDs = Set<UUID>()
         let milestoneAlreadyEmitted = existing.contains(where: \.recordingMilestoneEmitted)
 
@@ -3360,7 +3893,6 @@ final class AppModel {
     }
 
     private func can(_ action: AccessAction, context: ModelContext) -> Bool {
-        if action.isCyGeneration, LocalCyPreferences.isEnabledAndConnected { return true }
         guard let state = subscriptionState(context) else {
             notice = .error("Access state is unavailable. New creation is paused so the free journey cannot be reset accidentally.")
             return false
@@ -3368,6 +3900,21 @@ final class AppModel {
         let allowed = AccessPolicy.allows(action, state: state)
         if !allowed {
             notice = .info("Your existing work is still yours to edit and finish. Start the trial to create something new or ask Cy.")
+        }
+        return allowed
+    }
+
+    private func canUseCy(_ action: AccessAction, context: ModelContext) async -> Bool {
+        precondition(action.isCyGeneration)
+        if LocalCyPreferences.isEnabledAndConnected { return true }
+        guard let state = subscriptionState(context) else {
+            // Let the hosted service make the authoritative entitlement
+            // decision. Restored devices can briefly have no local access row.
+            return true
+        }
+        let allowed = AccessPolicy.allows(action, state: state)
+        if !allowed {
+            notice = .info("Your existing work is still yours to edit and finish. Open Access to use hosted Agent Cy.")
         }
         return allowed
     }
@@ -3399,10 +3946,16 @@ final class AppModel {
             workspaces: workspaces,
             preferredWorkspaceID: workspaceID
         )
-        let name = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let goal = profile.goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        let selectedPlatforms = Array(Set(profile.selectedPlatforms)).sorted { $0.rawValue < $1.rawValue }
-        guard !name.isEmpty, !goal.isEmpty, !selectedPlatforms.isEmpty else { return nil }
+        let storedName = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let storedGoal = profile.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let storedPlatforms = Array(Set(profile.selectedPlatforms)).sorted { $0.rawValue < $1.rawValue }
+
+        // A newly restored device can have usable post data before every
+        // optional onboarding field has finished syncing. Spark should still
+        // be able to use that post and either provider in that state.
+        let name = storedName.isEmpty ? "Creator" : storedName
+        let goal = storedGoal.isEmpty ? "Create clear, authentic content." : storedGoal
+        let selectedPlatforms = storedPlatforms.isEmpty ? [.instagramReels] : storedPlatforms
 
         // Voice personalization is intentionally dormant in this release.
         // Only the retained, non-UI voice contract tests and future migration path
@@ -3448,7 +4001,7 @@ final class AppModel {
                     WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
             }
         let pillarRecords = Array(activePillarRecords.prefix(10))
-        let pillarByID = Dictionary(uniqueKeysWithValues: activePillarRecords.map { ($0.id, $0) })
+        let pillarByID = DuplicateSafeIndex.firstValues(activePillarRecords.map { ($0.id, $0) })
         let pillars = pillarRecords
             .map { pillar in
                 let detail = pillar.detail.trimmingCharacters(in: .whitespacesAndNewlines)

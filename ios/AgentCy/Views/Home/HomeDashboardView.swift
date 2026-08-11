@@ -1,5 +1,11 @@
 import SwiftData
 import SwiftUI
+import OSLog
+
+private let dashboardWidgetLogger = Logger(
+    subsystem: "com.agentcy.app",
+    category: "DashboardWidgets"
+)
 
 struct HomeDashboardView: View {
     @Environment(AppModel.self) private var appModel
@@ -16,17 +22,13 @@ struct HomeDashboardView: View {
     @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @Query private var allFocusOverrides: [DailyFocusOverride]
     @Query(sort: \BrandPartner.updatedAt, order: .reverse) private var allBrandPartners: [BrandPartner]
-    @State private var dashboardCards = HomeDashboardCard.defaultOrder
-    @State private var hiddenDashboardCards = Set<HomeDashboardCard>()
-    @State private var draggedDashboardCard: HomeDashboardCard?
-    @State private var dashboardCardFrames: [HomeDashboardCard: CGRect] = [:]
-    @State private var dashboardDragOriginFrame: CGRect?
-    @State private var dashboardDragCompensationY: CGFloat = 0
+    @State private var dashboardLayout = DashboardWidgetLayoutState()
     @State private var isArrangingDashboard = false
     @State private var showsWeeklyFocusEditor = false
     @State private var arrangeFeedback = 0
-    @AppStorage("agentcy.homeDashboardCardOrderByWorkspace") private var storedDashboardCardOrders = ""
-    @AppStorage("agentcy.homeDashboardHiddenCardsByWorkspace") private var storedHiddenDashboardCards = ""
+    @AppStorage("agentcy.homeDashboardWidgetPreferences") private var storedDashboardWidgetPreferences = ""
+    @AppStorage("agentcy.homeDashboardCardOrderByWorkspace") private var legacyDashboardCardOrders = ""
+    @AppStorage("agentcy.homeDashboardHiddenCardsByWorkspace") private var legacyHiddenDashboardCards = ""
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
@@ -41,20 +43,15 @@ struct HomeDashboardView: View {
             VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                 header
 
-                ForEach(renderableDashboardCards) { card in
-                    reorderableDashboardCard(card)
-                }
-
+                dashboardWidgets
+                #if !targetEnvironment(macCatalyst)
                 weeklyFocusEditorSection
+                #endif
                 dashboardCustomizationFooter
             }
             .padding(.horizontal, AgentLayout.pageMargin)
-            .padding(.top, AgentSpacing.x6)
+            .padding(.top, AgentLayout.pageTopPadding)
             .agentBottomNavigationClearance()
-        }
-        .coordinateSpace(name: HomeDashboardCoordinateSpace.name)
-        .onPreferenceChange(HomeDashboardCardFramePreferenceKey.self) { frames in
-            dashboardCardFrames = frames
         }
         .scrollDismissesKeyboard(.interactively)
         .toolbar(.hidden, for: .navigationBar)
@@ -116,17 +113,17 @@ struct HomeDashboardView: View {
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                         MetaLabel("Dashboard widgets")
-                        Text("Drag the cards to reorder them. Add or remove anything you do not need today.")
+                        Text(dashboardCustomizationInstructions)
                             .font(.agentSubtext)
                             .foregroundStyle(Color.agentSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
                     VStack(spacing: 0) {
-                        ForEach(Array(dashboardCards.enumerated()), id: \.element.id) { index, card in
+                        ForEach(Array(dashboardCustomizationCards.enumerated()), id: \.element.id) { index, card in
                             dashboardWidgetControl(card)
 
-                            if index < dashboardCards.count - 1 {
+                            if index < dashboardCustomizationCards.count - 1 {
                                 Rectangle()
                                     .fill(Color.agentHairline)
                                     .frame(height: 1)
@@ -134,7 +131,7 @@ struct HomeDashboardView: View {
                         }
 
                         if !availableDashboardCards.isEmpty {
-                            if !dashboardCards.isEmpty {
+                            if !dashboardLayout.orderedCards.isEmpty {
                                 Rectangle()
                                     .fill(Color.agentHairline)
                                     .frame(height: 1)
@@ -164,28 +161,34 @@ struct HomeDashboardView: View {
                     .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
                     .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
                 }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(.opacity)
             }
 
-            Button(action: toggleDashboardCustomization) {
-                Text(isArrangingDashboard ? "Done" : "Customize")
-                    .font(.agentSubtext.weight(.semibold))
-                    .foregroundStyle(Color.agentText)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .contentShape(.rect(cornerRadius: 24))
-            }
-            .buttonStyle(.plain)
-            .background(Color.agentSurface, in: .capsule)
-            .overlay {
-                Capsule()
-                    .stroke(Color.agentBorder, lineWidth: 1)
-            }
-            .accessibilityHint(
-                isArrangingDashboard
-                    ? "Finishes customizing your dashboard"
-                    : "Reorders, adds, or removes dashboard widgets"
-            )
+            customizeDashboardButton
+                .frame(width: 128)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
+    }
+
+    private var customizeDashboardButton: some View {
+        Button(action: toggleDashboardCustomization) {
+            Text(isArrangingDashboard ? "Done" : "Customize")
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(.rect(cornerRadius: 22))
+        }
+        .buttonStyle(.plain)
+        .background(Color.agentSurface, in: .capsule)
+        .overlay {
+            Capsule()
+                .stroke(Color.agentBorder, lineWidth: 1)
+        }
+        .accessibilityHint(
+            isArrangingDashboard
+                ? "Finishes customizing your dashboard"
+                : "Reorders, adds, or removes dashboard widgets"
+        )
     }
 
     private func dashboardWidgetControl(_ card: HomeDashboardCard) -> some View {
@@ -195,6 +198,9 @@ struct HomeDashboardView: View {
                 .foregroundStyle(Color.agentText)
 
             Spacer()
+
+            dashboardWidgetMoveButton(card, offset: -1)
+            dashboardWidgetMoveButton(card, offset: 1)
 
             Button {
                 setDashboardCard(card, isVisible: false)
@@ -211,23 +217,58 @@ struct HomeDashboardView: View {
         .frame(minHeight: 54)
     }
 
+    private func dashboardWidgetMoveButton(_ card: HomeDashboardCard, offset: Int) -> some View {
+        let cards = renderableDashboardCards
+        let currentIndex = cards.firstIndex(of: card)
+        let destinationIndex = currentIndex.map { $0 + offset }
+        let isEnabled = destinationIndex.map(cards.indices.contains) ?? false
+
+        return Button {
+            moveDashboardCard(card, offset: offset)
+        } label: {
+            AgentIconView(offset < 0 ? .collapse : .expand, size: 11)
+                .foregroundStyle(Color.agentSecondary)
+                .frame(width: 28, height: 28)
+                .background(Color.agentCanvas, in: .circle)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.28)
+        .accessibilityLabel(offset < 0 ? "Move \(card.title) up" : "Move \(card.title) down")
+    }
+
+    private var dashboardCustomizationCards: [HomeDashboardCard] {
+        dashboardLayout.orderedCards.filter(dashboardCardIsRenderable)
+    }
+
+    private var dashboardCustomizationInstructions: String {
+        "Move cards up or down, or remove anything you do not need today."
+    }
+
     private var availableDashboardCards: [HomeDashboardCard] {
-        HomeDashboardCard.defaultOrder.filter { !dashboardCards.contains($0) }
+        HomeDashboardCard.defaultOrder.filter {
+            dashboardCardIsRenderable($0) && !dashboardLayout.orderedCards.contains($0)
+        }
     }
 
     private var renderableDashboardCards: [HomeDashboardCard] {
-        dashboardCards.filter(dashboardCardIsRenderable)
+        dashboardLayout.orderedCards.filter(dashboardCardIsRenderable)
+    }
+
+    @ViewBuilder
+    private var dashboardWidgets: some View {
+        LazyVStack(alignment: .leading, spacing: AgentSpacing.x6) {
+            ForEach(renderableDashboardCards) { card in
+                reorderableDashboardCard(card)
+            }
+            #if targetEnvironment(macCatalyst)
+            weeklyFocusEditorSection
+            #endif
+        }
     }
 
     private func dashboardCardIsRenderable(_ card: HomeDashboardCard) -> Bool {
         card != .brandCabinet || (profiles.first?.showsBrandDealsInPostEditor ?? false)
-    }
-
-    private func mergingRenderableOrder(_ reorderedCards: [HomeDashboardCard]) -> [HomeDashboardCard] {
-        var iterator = reorderedCards.makeIterator()
-        return dashboardCards.map { card in
-            dashboardCardIsRenderable(card) ? (iterator.next() ?? card) : card
-        }
     }
 
     @ViewBuilder
@@ -323,40 +364,14 @@ struct HomeDashboardView: View {
     }
 
     private func reorderableDashboardCard(_ card: HomeDashboardCard) -> some View {
-        DashboardReorderableCard(
-            card: card,
-            isArranging: isArrangingDashboard,
-            reduceMotion: reduceMotion,
-            dragCompensationY: draggedDashboardCard == card ? dashboardDragCompensationY : 0,
-            onDragBegan: {
-                guard draggedDashboardCard == nil else { return }
-                draggedDashboardCard = card
-                dashboardDragOriginFrame = dashboardCardFrames[card]
-                arrangeFeedback += 1
-            },
-            onDragChanged: { translation in
-                updateDashboardOrder(card, translation: translation)
-            },
-            onDragEnded: { translation in
-                guard draggedDashboardCard == card else { return }
-                finishDashboardDrag(card, translation: translation)
-            }
-        ) {
-            dashboardCard(card)
-                .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
-                .disabled(isArrangingDashboard)
-        }
-        .accessibilityHint(
-            isArrangingDashboard
-                ? "Drag the handle above this card to move it"
-                : "Use Customize at the bottom of the dashboard to rearrange cards"
-        )
-        .accessibilityAction(named: "Move earlier") {
-            moveDashboardCard(card, offset: -1)
-        }
-        .accessibilityAction(named: "Move later") {
-            moveDashboardCard(card, offset: 1)
-        }
+        dashboardCard(card)
+            .agentSurfaceChrome(cornerRadius: AgentRadius.dashboard)
+            .disabled(isArrangingDashboard)
+            .accessibilityHint(
+                isArrangingDashboard
+                    ? "Use the dashboard widget controls below to move this card"
+                    : "Use Customize at the bottom of the dashboard to arrange cards"
+            )
     }
 
     private var header: some View {
@@ -367,6 +382,7 @@ struct HomeDashboardView: View {
                 openSettings: { appModel.presentedSheet = .settings }
             )
 
+            #if !targetEnvironment(macCatalyst)
             Button {
                 appModel.selectedTab = .cy
             } label: {
@@ -377,6 +393,7 @@ struct HomeDashboardView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Open Cy")
             .accessibilityHint("Opens your creative copilot")
+            #endif
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(greeting), \(activeIdentity.greetingName).")
@@ -1139,64 +1156,10 @@ struct HomeDashboardView: View {
     private func beginArrangingDashboard() {
         guard !isArrangingDashboard else { return }
 
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.24)) {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) {
             isArrangingDashboard = true
         }
         arrangeFeedback += 1
-    }
-
-    private func finishDashboardDrag(_ card: HomeDashboardCard, translation: CGSize) {
-        updateDashboardOrder(card, translation: translation)
-
-        withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
-            dashboardDragCompensationY = 0
-            draggedDashboardCard = nil
-        }
-        dashboardDragOriginFrame = nil
-        dashboardCardDidMove()
-    }
-
-    private func updateDashboardOrder(_ card: HomeDashboardCard, translation: CGSize) {
-        guard isArrangingDashboard,
-              draggedDashboardCard == card,
-              let originFrame = dashboardDragOriginFrame
-        else { return }
-
-        let finalMidY = originFrame.midY + translation.height
-        let currentCards = renderableDashboardCards
-        let remainingCards = currentCards.filter { $0 != card }
-        let insertionIndex = remainingCards.firstIndex { candidate in
-            guard let frame = dashboardCardFrames[candidate] else { return false }
-            return finalMidY < frame.midY
-        } ?? remainingCards.endIndex
-
-        var reorderedCards = remainingCards
-        reorderedCards.insert(card, at: insertionIndex)
-        guard reorderedCards != currentCards else { return }
-
-        let destinationMinY = dashboardCardMinY(for: card, in: reorderedCards)
-        let compensation = destinationMinY.map { originFrame.minY - $0 } ?? dashboardDragCompensationY
-
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0.04)) {
-            dashboardCards = mergingRenderableOrder(reorderedCards)
-            dashboardDragCompensationY = compensation
-        }
-        arrangeFeedback += 1
-    }
-
-    private func dashboardCardMinY(
-        for target: HomeDashboardCard,
-        in orderedCards: [HomeDashboardCard]
-    ) -> CGFloat? {
-        guard let firstMinY = dashboardCardFrames.values.map(\.minY).min() else { return nil }
-
-        var currentMinY = firstMinY
-        for card in orderedCards {
-            if card == target { return currentMinY }
-            guard let frame = dashboardCardFrames[card] else { return nil }
-            currentMinY += frame.height + AgentSpacing.x6
-        }
-        return nil
     }
 
     private func toggleDashboardCustomization() {
@@ -1208,34 +1171,21 @@ struct HomeDashboardView: View {
     }
 
     private func setDashboardCard(_ card: HomeDashboardCard, isVisible: Bool) {
-        withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
-            if isVisible {
-                hiddenDashboardCards.remove(card)
-                guard !dashboardCards.contains(card) else { return }
-                dashboardCards.append(card)
-            } else {
-                hiddenDashboardCards.insert(card)
-                dashboardCards.removeAll { $0 == card }
-                if draggedDashboardCard == card {
-                    draggedDashboardCard = nil
-                    dashboardDragOriginFrame = nil
-                    dashboardDragCompensationY = 0
-                }
-            }
-        }
+        var updatedLayout = dashboardLayout
+        guard updatedLayout.setCard(card, isVisible: isVisible) else { return }
+
+        applyDashboardLayout(updatedLayout)
+        let action = isVisible ? "show" : "hide"
+        dashboardWidgetLogger.info("Widget action=\(action, privacy: .public) card=\(card.rawValue, privacy: .public)")
         dashboardCardDidMove()
     }
 
     private func finishArrangingDashboard() {
-        guard isArrangingDashboard || draggedDashboardCard != nil else { return }
+        guard isArrangingDashboard else { return }
 
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) {
             isArrangingDashboard = false
-            draggedDashboardCard = nil
-            dashboardDragOriginFrame = nil
-            dashboardDragCompensationY = 0
         }
-        persistDashboardCardOrder()
     }
 
     private func dashboardCardDidMove() {
@@ -1244,76 +1194,62 @@ struct HomeDashboardView: View {
     }
 
     private func moveDashboardCard(_ card: HomeDashboardCard, offset: Int) {
-        var cards = renderableDashboardCards
-        guard let sourceIndex = cards.firstIndex(of: card) else { return }
-        let destinationIndex = min(max(sourceIndex + offset, 0), cards.count - 1)
-        guard sourceIndex != destinationIndex else { return }
+        var updatedLayout = dashboardLayout
+        guard updatedLayout.moveCard(card, by: offset, within: renderableDashboardCards) else { return }
 
-        beginArrangingDashboard()
-        withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
-            cards.move(
-                fromOffsets: IndexSet(integer: sourceIndex),
-                toOffset: destinationIndex > sourceIndex ? destinationIndex + 1 : destinationIndex
-            )
-            dashboardCards = mergingRenderableOrder(cards)
-        }
+        applyDashboardLayout(updatedLayout)
+        dashboardWidgetLogger.info("Widget action=move card=\(card.rawValue, privacy: .public) offset=\(offset)")
         dashboardCardDidMove()
     }
 
     private func restoreDashboardCardOrder() {
-        let savedValues = decodedDashboardCardOrders[dashboardOrderStorageKey] ?? []
-        let savedCards = savedValues.compactMap(HomeDashboardCard.init(rawValue:))
-        let savedHiddenValues = decodedHiddenDashboardCards[dashboardOrderStorageKey] ?? []
-        let savedHiddenCards = Set(savedHiddenValues.compactMap(HomeDashboardCard.init(rawValue:)))
-        let uniqueSavedCards = savedCards.reduce(into: [HomeDashboardCard]()) { result, card in
-            guard !result.contains(card), !savedHiddenCards.contains(card) else { return }
-            result.append(card)
+        let storedPreferences = DashboardWidgetPreferencesStore.decode(storedDashboardWidgetPreferences)
+        let snapshot = storedPreferences?.layoutsByWorkspace[dashboardOrderStorageKey]
+        let restoredLayout: DashboardWidgetLayoutState
+
+        if let snapshot {
+            restoredLayout = DashboardWidgetLayoutState(snapshot: snapshot)
+        } else {
+            let legacyOrders = DashboardWidgetPreferencesStore.decodeLegacyMap(legacyDashboardCardOrders)
+            let legacyHidden = DashboardWidgetPreferencesStore.decodeLegacyMap(legacyHiddenDashboardCards)
+            restoredLayout = DashboardWidgetLayoutState(
+                savedOrderRawValues: legacyOrders[dashboardOrderStorageKey] ?? [],
+                savedHiddenRawValues: legacyHidden[dashboardOrderStorageKey] ?? []
+            )
         }
-        let knownCards = Set(uniqueSavedCards).union(savedHiddenCards)
-        let missingCards = HomeDashboardCard.defaultOrder.filter { !knownCards.contains($0) }
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            dashboardCards = uniqueSavedCards + missingCards
-            hiddenDashboardCards = savedHiddenCards
+
+        applyDashboardLayout(restoredLayout)
+        dashboardWidgetLogger.info(
+            "Widget action=restore visible=\(restoredLayout.orderedCards.count) hidden=\(restoredLayout.hiddenCards.count)"
+        )
+
+        if snapshot == nil {
+            persistDashboardCardOrder()
         }
     }
 
     private func persistDashboardCardOrder() {
-        var orders = decodedDashboardCardOrders
-        orders[dashboardOrderStorageKey] = dashboardCards.map(\.rawValue)
+        var preferences = DashboardWidgetPreferencesStore.decode(storedDashboardWidgetPreferences) ?? .init()
+        preferences.layoutsByWorkspace[dashboardOrderStorageKey] = dashboardLayout.snapshot
 
-        guard let data = try? JSONEncoder().encode(orders),
-              let value = String(data: data, encoding: .utf8)
-        else { return }
-        storedDashboardCardOrders = value
-
-        var hiddenOrders = decodedHiddenDashboardCards
-        hiddenOrders[dashboardOrderStorageKey] = hiddenDashboardCards.map(\.rawValue).sorted()
-
-        guard let hiddenData = try? JSONEncoder().encode(hiddenOrders),
-              let hiddenValue = String(data: hiddenData, encoding: .utf8)
-        else { return }
-        storedHiddenDashboardCards = hiddenValue
+        guard let encodedPreferences = preferences.encoded() else {
+            dashboardWidgetLogger.error("Widget action=persist result=encoding-failed")
+            return
+        }
+        storedDashboardWidgetPreferences = encodedPreferences
     }
 
-    private var decodedDashboardCardOrders: [String: [String]] {
-        guard let data = storedDashboardCardOrders.data(using: .utf8),
-              let orders = try? JSONDecoder().decode([String: [String]].self, from: data)
-        else { return [:] }
-        return orders
-    }
-
-    private var decodedHiddenDashboardCards: [String: [String]] {
-        guard let data = storedHiddenDashboardCards.data(using: .utf8),
-              let orders = try? JSONDecoder().decode([String: [String]].self, from: data)
-        else { return [:] }
-        return orders
+    private func applyDashboardLayout(_ layout: DashboardWidgetLayoutState) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            dashboardLayout = layout
+        }
     }
 
 }
 
-private enum HomeDashboardCard: String, CaseIterable, Identifiable {
+enum HomeDashboardCard: String, CaseIterable, Identifiable, Codable, Sendable {
     case scheduledToday
     case continueWorking
     case tasks
@@ -1350,6 +1286,108 @@ private enum HomeDashboardCard: String, CaseIterable, Identifiable {
     ]
 }
 
+struct DashboardWidgetLayoutSnapshot: Codable, Equatable, Sendable {
+    let order: [String]
+    let hidden: [String]
+}
+
+struct DashboardWidgetLayoutState: Equatable, Sendable {
+    private(set) var orderedCards: [HomeDashboardCard]
+    private(set) var hiddenCards: Set<HomeDashboardCard>
+
+    init(
+        savedOrderRawValues: [String] = [],
+        savedHiddenRawValues: [String] = []
+    ) {
+        let hidden = Set(savedHiddenRawValues.compactMap(HomeDashboardCard.init(rawValue:)))
+        let savedCards = savedOrderRawValues.compactMap(HomeDashboardCard.init(rawValue:))
+        let uniqueSavedCards = savedCards.reduce(into: [HomeDashboardCard]()) { result, card in
+            guard !hidden.contains(card), !result.contains(card) else { return }
+            result.append(card)
+        }
+        let knownCards = Set(uniqueSavedCards).union(hidden)
+        let newCards = HomeDashboardCard.defaultOrder.filter { !knownCards.contains($0) }
+
+        orderedCards = uniqueSavedCards + newCards
+        hiddenCards = hidden
+    }
+
+    init(snapshot: DashboardWidgetLayoutSnapshot) {
+        self.init(
+            savedOrderRawValues: snapshot.order,
+            savedHiddenRawValues: snapshot.hidden
+        )
+    }
+
+    var snapshot: DashboardWidgetLayoutSnapshot {
+        DashboardWidgetLayoutSnapshot(
+            order: orderedCards.map(\.rawValue),
+            hidden: hiddenCards.map(\.rawValue).sorted()
+        )
+    }
+
+    @discardableResult
+    mutating func setCard(_ card: HomeDashboardCard, isVisible: Bool) -> Bool {
+        if isVisible {
+            guard hiddenCards.remove(card) != nil || !orderedCards.contains(card) else { return false }
+            if !orderedCards.contains(card) {
+                orderedCards.append(card)
+            }
+            return true
+        }
+
+        guard orderedCards.contains(card) || !hiddenCards.contains(card) else { return false }
+        hiddenCards.insert(card)
+        orderedCards.removeAll { $0 == card }
+        return true
+    }
+
+    @discardableResult
+    mutating func moveCard(
+        _ card: HomeDashboardCard,
+        by offset: Int,
+        within eligibleCards: [HomeDashboardCard]
+    ) -> Bool {
+        let eligibleSet = Set(eligibleCards)
+        var eligibleOrder = orderedCards.filter { eligibleSet.contains($0) }
+        guard let sourceIndex = eligibleOrder.firstIndex(of: card), !eligibleOrder.isEmpty else { return false }
+
+        let destinationIndex = min(max(sourceIndex + offset, 0), eligibleOrder.count - 1)
+        guard sourceIndex != destinationIndex else { return false }
+
+        let movedCard = eligibleOrder.remove(at: sourceIndex)
+        eligibleOrder.insert(movedCard, at: destinationIndex)
+        var iterator = eligibleOrder.makeIterator()
+        orderedCards = orderedCards.map { existingCard in
+            eligibleSet.contains(existingCard) ? (iterator.next() ?? existingCard) : existingCard
+        }
+        return true
+    }
+}
+
+struct DashboardWidgetPreferencesStore: Codable, Equatable, Sendable {
+    var layoutsByWorkspace: [String: DashboardWidgetLayoutSnapshot] = [:]
+
+    static func decode(_ value: String) -> DashboardWidgetPreferencesStore? {
+        guard !value.isEmpty,
+              let data = value.data(using: .utf8)
+        else { return nil }
+        return try? JSONDecoder().decode(DashboardWidgetPreferencesStore.self, from: data)
+    }
+
+    static func decodeLegacyMap(_ value: String) -> [String: [String]] {
+        guard let data = value.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
+    func encoded() -> String? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
 private struct HomeContinueWorkingItem: Identifiable {
     let brief: CreativeBrief
     let output: PlatformOutput
@@ -1357,128 +1395,6 @@ private struct HomeContinueWorkingItem: Identifiable {
     var id: UUID { output.id }
 }
 
-
-private struct DashboardReorderableCard<Content: View>: View {
-    let card: HomeDashboardCard
-    let isArranging: Bool
-    let reduceMotion: Bool
-    let dragCompensationY: CGFloat
-    let onDragBegan: () -> Void
-    let onDragChanged: (CGSize) -> Void
-    let onDragEnded: (CGSize) -> Void
-    let content: Content
-
-    @GestureState private var dragTranslation: CGSize = .zero
-    @State private var isDragging = false
-
-    init(
-        card: HomeDashboardCard,
-        isArranging: Bool,
-        reduceMotion: Bool,
-        dragCompensationY: CGFloat,
-        onDragBegan: @escaping () -> Void,
-        onDragChanged: @escaping (CGSize) -> Void,
-        onDragEnded: @escaping (CGSize) -> Void,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.card = card
-        self.isArranging = isArranging
-        self.reduceMotion = reduceMotion
-        self.dragCompensationY = dragCompensationY
-        self.onDragBegan = onDragBegan
-        self.onDragChanged = onDragChanged
-        self.onDragEnded = onDragEnded
-        self.content = content()
-    }
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            content
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: HomeDashboardCardFramePreferenceKey.self,
-                            value: [card: proxy.frame(in: .named(HomeDashboardCoordinateSpace.name))]
-                        )
-                    }
-                }
-
-            if isArranging {
-                dragHandle
-                    .offset(y: -15)
-                    .zIndex(1)
-            }
-        }
-        .offset(y: isDragging ? dragTranslation.height + dragCompensationY : 0)
-        .scaleEffect(isDragging ? 1.01 : 1)
-        .shadow(
-            color: isDragging ? Color.agentPureBlack.opacity(0.14) : .clear,
-            radius: isDragging ? 18 : 0,
-            y: isDragging ? 9 : 0
-        )
-        .zIndex(isDragging ? 10 : 0)
-    }
-
-    private var dragHandle: some View {
-        AgentIconView(.menu, size: 14)
-            .foregroundStyle(Color.agentSecondary)
-            .frame(width: 52, height: 30)
-            .contentShape(.capsule)
-            .glassEffect(.clear.interactive(), in: .capsule)
-            .overlay {
-                Capsule()
-                    .stroke(Color.agentBorder, lineWidth: 0.5)
-                    .allowsHitTesting(false)
-            }
-            .shadow(
-                color: Color.agentPureBlack.opacity(0.08),
-                radius: 8,
-                y: 3
-            )
-            .gesture(reorderGesture)
-            .accessibilityLabel("Move \(card.title)")
-            .accessibilityHint("Drag up or down to reorder this dashboard card")
-    }
-
-    private var reorderGesture: some Gesture {
-        DragGesture(
-            minimumDistance: 2,
-            coordinateSpace: .named(HomeDashboardCoordinateSpace.name)
-        )
-            .updating($dragTranslation) { value, state, _ in
-                state = value.translation
-            }
-            .onChanged { value in
-                guard isArranging else { return }
-
-                if !isDragging {
-                    isDragging = true
-                    onDragBegan()
-                }
-                onDragChanged(value.translation)
-            }
-            .onEnded { value in
-                guard isArranging, isDragging else { return }
-                onDragEnded(value.translation)
-                isDragging = false
-            }
-    }
-}
-
-private enum HomeDashboardCoordinateSpace {
-    static let name = "home-dashboard-reorder"
-}
-
-private struct HomeDashboardCardFramePreferenceKey: PreferenceKey {
-    static let defaultValue: [HomeDashboardCard: CGRect] = [:]
-
-    static func reduce(
-        value: inout [HomeDashboardCard: CGRect],
-        nextValue: () -> [HomeDashboardCard: CGRect]
-    ) {
-        value.merge(nextValue(), uniquingKeysWith: { _, newValue in newValue })
-    }
-}
 
 enum HomeWeekAgendaPolicy {
     static func includes(

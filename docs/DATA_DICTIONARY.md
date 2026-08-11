@@ -75,6 +75,20 @@ The master content object across the full lifecycle. A new record begins as a Sp
 - `lifecycleHistoryText`: ordered, timestamped status transitions. Repeated writes of the same status do not create duplicate history entries.
 - Dates: `createdAt`, `updatedAt`, optional `archivedAt`.
 - Optional `agendaDate` places the content once in Agenda. It is not a task or a lifecycle transition.
+- Optional `inspirationSourceID` preserves private provenance for a Spark shaped from a saved inspiration link.
+
+### InspirationSource
+
+A private saved-post record imported from the iOS Share Extension. It may contain a host-supplied caption and thumbnail plus device-derived transcript, visual observations, analyzed-input markers, and duration. Temporary video bytes are removed after analysis.
+
+- `id`, optional `workspaceID`, `canonicalURLString`, broad `platform`, and creator-authored `creatorObservation`.
+- `status`: `pending`, `shaping`, `failed`, or `converted`; `lastErrorCode` remains content-free.
+- Optional `sourceImportID` deduplicates queue replay and repeated shares within a workspace.
+- Optional `shapeOperationID` makes retry use the same AI operation identity.
+- Optional `linkedBriefID` and `filmingTaskID` make Spark creation and filming scheduling idempotent.
+- Optional `pillarID` stores the existing creator pillar selected for both the saved reference and its linked Spark.
+- `shapePayloadJSON` stores the validated result used to hydrate the linked Spark.
+- Dates: `createdAt`, `updatedAt`, and optional `lastAttemptAt`.
 
 ### PendingBriefProposal
 

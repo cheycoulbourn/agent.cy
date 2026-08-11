@@ -50,6 +50,7 @@ struct IdeaPostDraftView: View {
                     output: draftOutput,
                     suggestedTargetDate: suggestedTargetDate,
                     isAlreadyInIdeaBank: isAlreadyInIdeaBank,
+                    usesDesktopDetailRail: true,
                     onSpark: { showDevelopment = true }
                 )
             } else if creationFailed {
@@ -69,6 +70,10 @@ struct IdeaPostDraftView: View {
         }
         .navigationTitle("Edit post")
         .navigationBarTitleDisplayMode(.inline)
+#if targetEnvironment(macCatalyst)
+        .navigationBarBackButtonHidden(draftOutput != nil)
+        .toolbar(draftOutput == nil ? .visible : .hidden, for: .navigationBar)
+#endif
         .task {
             guard draftOutput == nil else { return }
             createDraft()

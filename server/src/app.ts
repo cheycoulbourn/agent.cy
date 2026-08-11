@@ -5,7 +5,11 @@ import Fastify, {
   type FastifyRequest,
 } from "fastify";
 import {
+  AppleAccountAuthorizationRequestSchema,
+  AppleAccountAuthorizationResultSchema,
   HealthResultSchema,
+  InspirationExtractRequestSchema,
+  InspirationExtractResultSchema,
   InstallationRedeemRequestSchema,
   InstallationRedeemResultSchema,
   PrivacyDeleteRequestSchema,
@@ -14,9 +18,13 @@ import {
   RevenueCatWebhookResultSchema,
   TelemetryEventsRequestSchema,
   TelemetryEventsResultSchema,
+  normalizeAiOperationResult,
   type TelemetryEvent,
 } from "@agent-cy/contracts";
-import type { z } from "zod";
+import {
+  AppleIdentityVerifier,
+  type AppleIdentityVerifying,
+} from "./apple-identity.js";
 import {
   operationDefinitions,
   operationResultIntegrityIssue,
@@ -26,6 +34,10 @@ import type { ServerConfig } from "./config.js";
 import { AppError, asAppError } from "./errors.js";
 import { developmentFixtures } from "./fixtures.js";
 import {
+  PublicPostExtractor,
+  type InspirationExtracting,
+} from "./inspiration-extractor.js";
+import {
   IdentityService,
   RotatingInstallationIdentityService,
   readBearerToken,
@@ -33,7 +45,9 @@ import {
 import {
   AnthropicAiProvider,
   FixtureAiProvider,
+  modelMatchesRequested,
   type AiProvider,
+  type ProviderRequest,
   type ProviderResult,
 } from "./provider.js";
 import { SseWriter } from "./sse.js";
@@ -49,6 +63,7 @@ import {
 const camelOperation: Record<AiOperation, string> = {
   voice_profile: "voiceProfile",
   ideas: "ideas",
+  inspiration_shape: "shapeInspiration",
   spark_turn: "sparkTurn",
   compose_brief: "composeBrief",
   revise_brief: "reviseBrief",
@@ -68,12 +83,15 @@ interface CachedResult {
 
 const INVITE_RATE_WINDOW_MS = 10 * 60 * 1_000;
 const MAX_INVITE_RATE_LIMIT_KEYS = 10_000;
+const PROVIDER_RETRY_DELAYS_MS = [250, 1_000] as const;
 
 export interface BuildAppOptions {
   readonly config: ServerConfig;
   readonly repository?: StateRepository;
   readonly provider?: AiProvider;
   readonly clock?: () => Date;
+  readonly inspirationExtractor?: InspirationExtracting;
+  readonly appleIdentityVerifier?: AppleIdentityVerifying;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -87,6 +105,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     config.installationHashSecrets,
   );
   const provider = options.provider ?? createProvider(config);
+  const inspirationExtractor = options.inspirationExtractor ?? new PublicPostExtractor();
+  const appleIdentityVerifier =
+    options.appleIdentityVerifier ?? new AppleIdentityVerifier(config.appleClientIds);
+  const appleSubjectIdentity = new IdentityService(config.appleSubjectHashSecret);
   const activeInstallations = new Set<string>();
   const idempotencyCache = new Map<string, CachedResult>();
   const inviteRedemptionAttempts = new Map<string, number[]>();
@@ -146,6 +168,22 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     });
   }
 
+  app.post("/v1/inspiration/extract", async (request, reply) => {
+    try {
+      await authenticate(request, repository, installationIdentity, clock());
+      const parsed = InspirationExtractRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError("invalid_input", "The shared post link is invalid.", {
+          fieldIssues: safeFieldIssues(parsed.error.issues),
+        });
+      }
+      const extracted = await inspirationExtractor.extract(parsed.data.canonicalUrl);
+      return reply.send(InspirationExtractResultSchema.parse(extracted));
+    } catch (error) {
+      return sendHttpError(reply, asAppError(error));
+    }
+  });
+
   app.post("/v1/installations/redeem", async (request, reply) => {
     try {
       enforceInviteRedemptionRateLimit(
@@ -192,6 +230,76 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
           : {}),
       });
       return reply.code(201).send(result);
+    } catch (error) {
+      return sendHttpError(reply, asAppError(error));
+    }
+  });
+
+  app.post("/v1/accounts/apple/link", async (request, reply) => {
+    try {
+      const installation = await authenticate(
+        request,
+        repository,
+        installationIdentity,
+        clock(),
+      );
+      const rawCredential = readBearerToken(request.headers.authorization);
+      const parsed = AppleAccountAuthorizationRequestSchema.safeParse(request.body);
+      if (!parsed.success || !rawCredential) {
+        throw new AppError("invalid_input", "The Apple sign-in request is invalid.");
+      }
+      const verified = await appleIdentityVerifier.verify(parsed.data);
+      const account = await repository.linkInstallationToAppleAccount(
+        installation.id,
+        appleSubjectIdentity.hash(verified.subject),
+        clock(),
+      );
+      return reply.send(
+        AppleAccountAuthorizationResultSchema.parse({
+          accountId: account.id,
+          installationId: installation.id,
+          credential: rawCredential,
+          access: account.access,
+          ...(account.promotionalEntitlementEndsAt
+            ? {
+                promotionalEntitlementEndsAt:
+                  account.promotionalEntitlementEndsAt,
+              }
+            : {}),
+        }),
+      );
+    } catch (error) {
+      return sendHttpError(reply, asAppError(error));
+    }
+  });
+
+  app.post("/v1/accounts/apple/sign-in", async (request, reply) => {
+    try {
+      const parsed = AppleAccountAuthorizationRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError("invalid_input", "The Apple sign-in request is invalid.");
+      }
+      const verified = await appleIdentityVerifier.verify(parsed.data);
+      const rawCredential = installationIdentity.createInstallationToken();
+      const result = await repository.createInstallationForAppleAccount(
+        appleSubjectIdentity.hash(verified.subject),
+        installationIdentity.hash(rawCredential),
+        clock(),
+      );
+      return reply.code(201).send(
+        AppleAccountAuthorizationResultSchema.parse({
+          accountId: result.account.id,
+          installationId: result.installation.id,
+          credential: rawCredential,
+          access: result.installation.access,
+          ...(result.installation.promotionalEntitlementEndsAt
+            ? {
+                promotionalEntitlementEndsAt:
+                  result.installation.promotionalEntitlementEndsAt,
+              }
+            : {}),
+        }),
+      );
     } catch (error) {
       return sendHttpError(reply, asAppError(error));
     }
@@ -435,6 +543,7 @@ async function handleAiRequest(context: AiHandlerContext): Promise<void> {
       throw new AppError(
         "invalid_input",
         "Some request fields were missing or invalid.",
+        { fieldIssues: safeFieldIssues(parsed.error.issues) },
       );
     }
 
@@ -497,7 +606,7 @@ async function handleAiRequest(context: AiHandlerContext): Promise<void> {
     }, config.requestTimeoutMs);
     timeout.unref();
     try {
-      providerResult = await provider.generate({
+      providerResult = await generateWithProviderRetries(provider, {
         operation: definition.operation,
         payload: parsed.data,
         outputSchema: definition.resultSchema,
@@ -512,7 +621,7 @@ async function handleAiRequest(context: AiHandlerContext): Promise<void> {
       reply.raw.off("close", abortOnDisconnect);
       responseSocket?.off("close", abortOnDisconnect);
     }
-    if (providerResult.model !== config.model) {
+    if (!modelMatchesRequested(providerResult.model, config.model)) {
       throw new AppError(
         "generation_invalid",
         "A result from an unexpected model was rejected.",
@@ -520,7 +629,12 @@ async function handleAiRequest(context: AiHandlerContext): Promise<void> {
     }
 
     writer.send("phase", { operationId, phase: "validating" });
-    const result = definition.resultSchema.safeParse(providerResult.output);
+    const normalizedResult = normalizeAiOperationResult(
+      definition.operation,
+      providerResult.output,
+      parsed.data,
+    );
+    const result = definition.resultSchema.safeParse(normalizedResult);
     if (!result.success) {
       throw new AppError(
         "generation_invalid",
@@ -585,12 +699,9 @@ async function handleAiRequest(context: AiHandlerContext): Promise<void> {
         })
       : asAppError(error);
     if (reservationId !== null && installation !== null) {
-      const failureCostMicros = providerResult
-        ? estimateCostMicros(
-            providerResult.inputTokens,
-            providerResult.outputTokens,
-          )
-        : definition.reservationCostMicros;
+      // Failed, cancelled, timed-out, and invalid generations never consume
+      // creator allowance or credits. Only a validated result is billable.
+      const failureCostMicros = 0;
       const settledAt = clock();
       await repository.settleOperation({
         reservationId,
@@ -619,6 +730,47 @@ async function handleAiRequest(context: AiHandlerContext): Promise<void> {
     if (installation) activeInstallations.delete(installation.id);
     writer.close();
   }
+}
+
+async function generateWithProviderRetries(
+  provider: AiProvider,
+  request: ProviderRequest,
+): Promise<ProviderResult> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await provider.generate(request);
+    } catch (error) {
+      const appError = asAppError(error);
+      const retryDelay = PROVIDER_RETRY_DELAYS_MS[attempt];
+      if (
+        retryDelay === undefined ||
+        request.signal.aborted ||
+        !appError.retryable ||
+        appError.code !== "upstream_unavailable"
+      ) {
+        throw error;
+      }
+      await waitForProviderRetry(retryDelay, request.signal);
+    }
+  }
+}
+
+function waitForProviderRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    timeout.unref();
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 async function authenticate(
@@ -704,6 +856,7 @@ function sendAiError(
         ? {}
         : { retryAfterSeconds: error.retryAfterSeconds }),
       ...(error.quotaScope === null ? {} : { quotaScope: error.quotaScope }),
+      ...(error.fieldIssues === null ? {} : { fieldIssues: error.fieldIssues }),
     },
   });
   writer.send("done", {
@@ -905,8 +1058,22 @@ function sendHttpError(reply: FastifyReply, error: AppError): FastifyReply {
         ? {}
         : { retryAfterSeconds: error.retryAfterSeconds }),
       ...(error.quotaScope === null ? {} : { quotaScope: error.quotaScope }),
+      ...(error.fieldIssues === null ? {} : { fieldIssues: error.fieldIssues }),
     },
   });
+}
+
+function safeFieldIssues(
+  issues: readonly { readonly path: PropertyKey[]; readonly message: string }[],
+): readonly { readonly path: readonly (string | number)[]; readonly message: string }[] {
+  return issues.slice(0, 20).map((issue) => ({
+    path: issue.path
+      .filter((component): component is string | number =>
+        typeof component === "string" || typeof component === "number",
+      )
+      .slice(0, 12),
+    message: issue.message.slice(0, 300),
+  }));
 }
 
 function pruneIdempotencyCache(cache: Map<string, CachedResult>, nowMs: number): void {

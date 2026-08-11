@@ -116,6 +116,27 @@ const openApi = {
       "201",
       "none",
     ),
+    "/v1/accounts/apple/link": jsonPost(
+      "linkAppleAccount",
+      "AppleAccountAuthorizationRequest",
+      "AppleAccountAuthorizationResult",
+      "200",
+      "installation",
+    ),
+    "/v1/accounts/apple/sign-in": jsonPost(
+      "signInWithApple",
+      "AppleAccountAuthorizationRequest",
+      "AppleAccountAuthorizationResult",
+      "201",
+      "none",
+    ),
+    "/v1/inspiration/extract": jsonPost(
+      "extractInspiration",
+      "InspirationExtractRequest",
+      "InspirationExtractResult",
+      "200",
+      "installation",
+    ),
     "/v1/telemetry/events": jsonPost(
       "recordTelemetryEvents",
       "TelemetryEventsRequest",

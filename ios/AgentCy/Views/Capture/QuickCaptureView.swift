@@ -150,6 +150,8 @@ struct QuickCaptureView: View {
         case focus
     }
 
+    private let onExit: (() -> Void)?
+
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -202,6 +204,10 @@ struct QuickCaptureView: View {
     @State private var selectedDetent: PresentationDetent = .large
     @FocusState private var focusedWritingField: WritingField?
 
+    init(onExit: (() -> Void)? = nil) {
+        self.onExit = onExit
+    }
+
     private var pillars: [Pillar] {
         allPillars.filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
@@ -220,6 +226,19 @@ struct QuickCaptureView: View {
     }
 
     var body: some View {
+        Group {
+            if onExit == nil {
+                captureNavigation
+                    .presentationDetents([.height(620), .large], selection: $selectedDetent)
+                    .presentationDragIndicator(.visible)
+            } else {
+                captureNavigation
+            }
+        }
+        .agentKeyboardDismissal()
+    }
+
+    private var captureNavigation: some View {
         NavigationStack {
             Group {
                 if !showingCySuggestions, kind == .post, let quickPostDraft {
@@ -263,11 +282,21 @@ struct QuickCaptureView: View {
                     .scrollDismissesKeyboard(.interactively)
                 }
             }
-            .navigationTitle(navigationTitle)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if onExit != nil {
+                    embeddedToolbar
+                }
+            }
+            .navigationTitle(onExit == nil ? navigationTitle : "")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(onExit == nil ? .automatic : .hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    AgentToolbarIconButton(title: "Close", icon: .close) { closeCapture() }
+                    if onExit == nil {
+                        AgentToolbarIconButton(title: "Close", icon: .close) { closeCapture() }
+                    } else {
+                        AgentToolbarIconButton(title: "Back to Quick Add", icon: .back) { closeCapture() }
+                    }
                 }
                 .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .confirmationAction) {
@@ -294,7 +323,8 @@ struct QuickCaptureView: View {
                     }
                 }
             }
-            .agentScreen()
+            .background(Color.agentCanvas.ignoresSafeArea())
+            .foregroundStyle(Color.agentText)
             .task {
                 if let plannedDate = appModel.quickCaptureTargetDate {
                     targetDate = plannedDate
@@ -375,7 +405,7 @@ struct QuickCaptureView: View {
             }
             .sheet(isPresented: $showPostTaskCreation, onDismiss: {
                 if didSavePostTask {
-                    dismiss()
+                    finishCapture()
                 } else {
                     quickTaskType = nil
                 }
@@ -387,9 +417,45 @@ struct QuickCaptureView: View {
                 .presentationDragIndicator(.visible)
             }
         }
-        .presentationDetents([.height(620), .large], selection: $selectedDetent)
-        .presentationDragIndicator(.visible)
-        .agentKeyboardDismissal()
+    }
+
+    private var embeddedToolbar: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            AgentToolbarIconButton(title: "Back to Quick Add", icon: .back, action: closeCapture)
+
+            Text(navigationTitle)
+                .font(.agentHeadline)
+                .foregroundStyle(Color.agentText)
+                .lineLimit(1)
+
+            Spacer(minLength: AgentSpacing.x4)
+
+            if !showingCySuggestions,
+               kind == .spark || (kind == .task && quickTaskType == .focus) {
+                Button {
+                    if kind == .spark {
+                        saveIdea()
+                    } else {
+                        saveTask()
+                    }
+                } label: {
+                    Text(kind == .spark ? "Save idea" : "Save task")
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(Color.onCyAccent)
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 40)
+                        .background(Color.cyAccent, in: .capsule)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .disabled(!canSaveToolbarItem)
+                .opacity(canSaveToolbarItem ? 1 : 0.42)
+            }
+        }
+        .padding(.horizontal, AgentSpacing.x6)
+        .frame(height: 64)
+        .background(.ultraThinMaterial)
+        .shadow(color: Color.agentPureBlack.opacity(0.045), radius: 10, y: 5)
+        .zIndex(1)
     }
 
     private var captureKindRail: some View {
@@ -976,7 +1042,7 @@ struct QuickCaptureView: View {
             }
             try? context.save()
             appModel.quickCaptureTargetDate = nil
-            dismiss()
+            finishCapture()
         }
     }
 
@@ -1163,12 +1229,20 @@ struct QuickCaptureView: View {
         if showingCySuggestions {
             appModel.quickCaptureStartsWithIdeas = false
             appModel.quickCaptureTargetDate = nil
-            dismiss()
+            finishCapture()
             return
         }
         updateSavedIdeaFromForm()
         preserveUnfinishedDrafts()
-        dismiss()
+        finishCapture()
+    }
+
+    private func finishCapture() {
+        if let onExit {
+            onExit()
+        } else {
+            dismiss()
+        }
     }
 
     private func saveIdea() {
@@ -1176,7 +1250,7 @@ struct QuickCaptureView: View {
         guard !title.isEmpty else { return }
         if savedBrief != nil {
             updateSavedIdeaFromForm()
-            dismiss()
+            finishCapture()
             return
         }
         let notes = ideaNotes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1192,7 +1266,7 @@ struct QuickCaptureView: View {
         didSaveIdea = savedBrief != nil
         if didSaveIdea {
             appModel.quickCaptureTargetDate = nil
-            dismiss()
+            finishCapture()
         }
     }
 

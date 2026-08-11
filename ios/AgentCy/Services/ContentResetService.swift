@@ -62,6 +62,8 @@ struct ContentResetService: ContentResetServicing {
             let outputs = try context.fetch(FetchDescriptor<PlatformOutput>()).filter(isActive)
             let tasks = try context.fetch(FetchDescriptor<CreatorTask>()).filter(isActive)
             let briefs = try context.fetch(FetchDescriptor<CreativeBrief>()).filter(isActive)
+            let inspirationSources = try context.fetch(FetchDescriptor<InspirationSource>()).filter(isActive)
+            let inspirationTags = try context.fetch(FetchDescriptor<InspirationTag>()).filter(isActive)
 
             messages.filter { resetThreadIDs.contains($0.threadID) }.forEach(context.delete)
             resetThreads.forEach(context.delete)
@@ -71,6 +73,8 @@ struct ContentResetService: ContentResetServicing {
             outputs.forEach(context.delete)
             tasks.forEach(context.delete)
             briefs.forEach(context.delete)
+            inspirationSources.forEach(context.delete)
+            inspirationTags.forEach(context.delete)
             try persistence.save(context: context)
         } catch {
             persistence.rollback(context: context)
@@ -99,6 +103,8 @@ enum WorkspaceDeletionService {
             try deleteScoped(BrandPartner.self, workspaceID: workspaceID, context: context)
             try deleteScoped(PlatformOutput.self, workspaceID: workspaceID, context: context)
             try deleteScoped(CreativeBrief.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(InspirationSource.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(InspirationTag.self, workspaceID: workspaceID, context: context)
             try deleteScoped(Pillar.self, workspaceID: workspaceID, context: context)
             try deleteScoped(DailyFocusTemplateEntry.self, workspaceID: workspaceID, context: context)
             try deleteScoped(DailyFocusOverride.self, workspaceID: workspaceID, context: context)

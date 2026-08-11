@@ -19,10 +19,10 @@ struct SettingsView: View {
     @State private var showOnboardingPreview = false
     @State private var showWeeklyFocusEditor = false
     @State private var reviewTestMessage: String?
+    @State private var requestedPagePath: [RequestedSettingsPage] = []
 
     var body: some View {
-        @Bindable var model = appModel
-        NavigationStack {
+        NavigationStack(path: $requestedPagePath) {
             ScrollView {
                 VStack(spacing: 0) {
                     EditorialHeader(
@@ -248,13 +248,39 @@ struct SettingsView: View {
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
-        }
-        .navigationDestination(item: $model.requestedSettingsPage) { page in
-            switch page {
-            case .notifications: NotificationSettingsView()
-            case .access: AccessSettingsView()
-            case .mcpBridge: MCPBridgeSettingsView()
+            .navigationDestination(for: RequestedSettingsPage.self) { page in
+                switch page {
+                case .notifications: NotificationSettingsView()
+                case .access: AccessSettingsView()
+                case .mcpBridge: MCPBridgeSettingsView()
+                case .switchAccount:
+                    if let profile = profiles.first {
+                        AccountSwitcherSettingsView(profile: profile)
+                    } else {
+                        AgentEmptyState(
+                            title: "Account unavailable",
+                            message: "Your creator profile is still loading.",
+                            icon: .profile
+                        )
+                        .agentScreen()
+                    }
+                case .addAccount:
+                    if let profile = profiles.first {
+                        SocialAccountEditorView(profile: profile, initialIdentity: activeIdentity)
+                    } else {
+                        AgentEmptyState(
+                            title: "Account unavailable",
+                            message: "Your creator profile is still loading.",
+                            icon: .profile
+                        )
+                        .agentScreen()
+                    }
+                }
             }
+        }
+        .onAppear(perform: openRequestedPageIfNeeded)
+        .onChange(of: appModel.requestedSettingsPage) { _, _ in
+            openRequestedPageIfNeeded()
         }
         .agentKeyboardDismissal()
         .sheet(isPresented: $showAddAccount) {
@@ -287,6 +313,14 @@ struct SettingsView: View {
             Button("Close", role: .cancel) { reviewTestMessage = nil }
         } message: {
             Text(reviewTestMessage ?? "")
+        }
+    }
+
+    private func openRequestedPageIfNeeded() {
+        guard let page = appModel.requestedSettingsPage else { return }
+        appModel.requestedSettingsPage = nil
+        if requestedPagePath.last != page {
+            requestedPagePath.append(page)
         }
     }
 

@@ -11,8 +11,13 @@ import {
   CreatorContextSchema,
   DurationSecondsSchema,
   IdeasResultSchema,
+  AppleAccountAuthorizationRequestSchema,
+  AppleAccountAuthorizationResultSchema,
+  InspirationShapeRequestSchema,
+  InspirationShapeResultSchema,
   McpBridgeSnapshotSchema,
   McpBridgeChangeRequestSchema,
+  normalizeAiOperationResult,
   PlatformSchema,
   PrivacyDeleteRequestSchema,
   ReviseBriefRequestSchema,
@@ -92,6 +97,36 @@ function readFixture(name: string): unknown {
 
 const composeFixture = readFixture("compose-brief-result.json");
 
+describe("Apple account authorization contracts", () => {
+  const request = {
+    identityToken: "header.payload.signature",
+    authorizationCode: "single-use-authorization-code",
+    nonce: "a-raw-nonce-with-at-least-thirty-two-characters",
+    appBuild: "1.0.0 (1)",
+    platform: "macCatalyst",
+  } as const;
+
+  it("accepts the minimum credential exchange without profile data", () => {
+    expect(AppleAccountAuthorizationRequestSchema.parse(request)).toEqual(request);
+    expect(AppleAccountAuthorizationRequestSchema.safeParse({
+      ...request,
+      email: "creator@example.com",
+      fullName: "Creator Name",
+    }).success).toBe(false);
+  });
+
+  it("returns an account link and a device-specific installation credential", () => {
+    const result = {
+      accountId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      installationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      credential: "device-specific-credential-that-is-long-enough",
+      access: "paid",
+    } as const;
+
+    expect(AppleAccountAuthorizationResultSchema.parse(result)).toEqual(result);
+  });
+});
+
 describe("wire enums", () => {
   it("accepts the exact PRD values", () => {
     expect(AssistanceModeSchema.parse("drive")).toBe("drive");
@@ -108,6 +143,78 @@ describe("wire enums", () => {
   it("rejects renamed wire values", () => {
     expect(AssistanceModeSchema.safeParse("leadMe").success).toBe(false);
     expect(PlatformSchema.safeParse("instagram_reels").success).toBe(false);
+  });
+});
+
+describe("inspiration shaping contracts", () => {
+  const request = {
+    schemaVersion: "inspiration-shape.request.v3",
+    promptVersion: "inspiration-shape.v3",
+    operationId,
+    appBuild: "1.0.0 (1)",
+    assistanceMode: "collaborate",
+    creatorContext: {
+      ...creatorContext,
+      voiceExamples: [],
+      librarySummaries: [],
+      taskSummaries: [],
+    },
+    sourcePlatform: "instagram",
+    sourceMaterial: {
+      title: "A practical filming reset",
+      caption: "The hook creates tension before revealing a practical reset.",
+      transcript: "I made filming easier by shrinking one setup decision.",
+      visualObservations: ["Direct-to-camera opening followed by a desk demonstration."],
+      analyzedInputs: ["caption", "audioTranscript", "videoFrames"],
+      durationSeconds: 45,
+    },
+  } as const;
+
+  it("accepts analyzed post material but rejects source URL fields", () => {
+    expect(InspirationShapeRequestSchema.parse(request).sourceMaterial.caption).toContain("tension");
+    expect(InspirationShapeRequestSchema.safeParse({
+      ...request,
+      sourceURL: "https://www.instagram.com/reel/private-source/",
+    }).success).toBe(false);
+  });
+
+  it("requires one original idea and one to three guardrails", () => {
+    const result = {
+      sourceSummary: "The post demonstrates how one smaller setup decision reduces filming friction.",
+      keyPoints: ["Name the tension first.", "Demonstrate one practical reset."],
+      interpretedMechanic: {
+        hookPattern: "Open with a contradiction",
+        structurePattern: "Tension, reset, practical example",
+        payoffPattern: "A smaller action the viewer can try",
+      },
+      originalityGuardrails: [
+        "Use a firsthand example from the creator's own process.",
+        "Do not reuse source wording or story details.",
+      ],
+      idea: {
+        title: "The reset that made starting easier",
+        premise: "Show how one smaller setup decision reduced creative friction.",
+        audience: "Solo creators who delay filming while perfecting the plan",
+        takeaway: "Reduce the setup until the first take feels possible.",
+        spokenHook: "The plan was not what kept me from filming.",
+        firstFrameText: "MAKE THE FIRST TAKE EASIER",
+        filmingApproach: "Talking head with one original desk-setup demonstration.",
+        recommendedFormat: "45-second vertical video",
+        durationSeconds: 45,
+      },
+      suggestedPillarId: null,
+      assumptions: ["The creator has a firsthand setup change to demonstrate."],
+    };
+
+    expect(InspirationShapeResultSchema.parse(result).idea.durationSeconds).toBe(45);
+    expect(InspirationShapeResultSchema.safeParse({
+      ...result,
+      originalityGuardrails: [],
+    }).success).toBe(false);
+    expect(InspirationShapeResultSchema.safeParse({
+      ...result,
+      originalityGuardrails: ["One", "Two", "Three", "Four"],
+    }).success).toBe(false);
   });
 });
 
@@ -478,6 +585,102 @@ describe("AI contracts", () => {
         workingState: { premise: "Only a patch" },
       }).success,
     ).toBe(false);
+  });
+
+  it("normalizes a usable partial Spark response before strict validation", () => {
+    const workingState = {
+      premise: "Show how to narrow a rough idea.",
+      audience: "Emerging solo creators.",
+      creativeGoal: null,
+      proofOrStory: null,
+      desiredTakeaway: null,
+      constraints: [],
+    };
+    const normalized = normalizeAiOperationResult(
+      "spark_turn",
+      {
+        message: "Start with the single claim this post needs to prove.",
+        workingState: { premise: "A sharper premise." },
+        providerOnlyField: "ignored",
+      },
+      { workingState },
+    );
+
+    expect(SparkTurnResultSchema.parse(normalized)).toEqual({
+      assistantMessage: "Start with the single claim this post needs to prove.",
+      focusedQuestion: null,
+      recommendedNextStep: "answerQuestion",
+      readyToCompose: false,
+      missingFields: [
+        "creativeGoal",
+        "proofOrStory",
+        "desiredTakeaway",
+        "constraints",
+      ],
+      workingState: {
+        ...workingState,
+        premise: "A sharper premise.",
+      },
+    });
+  });
+
+  it("normalizes a fenced nested Spark response returned by a provider SDK", () => {
+    const normalized = normalizeAiOperationResult(
+      "sparkTurn",
+      {
+        output: "```json\n{\"assistantMessage\":\"This is ready to shape.\",\"readyToCompose\":true}\n```",
+      },
+      { workingState: {
+        premise: "A complete premise",
+        audience: "Creators",
+        creativeGoal: "Teach one idea",
+        proofOrStory: "A real example",
+        desiredTakeaway: "Choose one next step",
+        constraints: ["Keep it short"],
+      } },
+    );
+
+    expect(SparkTurnResultSchema.parse(normalized)).toMatchObject({
+      assistantMessage: "This is ready to shape.",
+      recommendedNextStep: "composeNow",
+      readyToCompose: true,
+      missingFields: [],
+    });
+  });
+
+  it("normalizes Spark JSON wrapped in provider content blocks", () => {
+    const normalized = normalizeAiOperationResult(
+      "spark_turn",
+      {
+        content: [{
+          type: "text",
+          text: "```json\n{\"assistantMessage\":\"Choose the one result this post should create.\",\"readyToCompose\":false}\n```",
+        }],
+      },
+      { workingState: {
+        premise: "A complete premise",
+        audience: "Creators",
+        creativeGoal: null,
+        proofOrStory: null,
+        desiredTakeaway: null,
+        constraints: [],
+      } },
+    );
+
+    expect(SparkTurnResultSchema.parse(normalized)).toMatchObject({
+      assistantMessage: "Choose the one result this post should create.",
+      recommendedNextStep: "answerQuestion",
+      readyToCompose: false,
+    });
+  });
+
+  it("does not invent a successful Spark response when provider content is unusable", () => {
+    const normalized = normalizeAiOperationResult(
+      "spark_turn",
+      { readyToCompose: false },
+      { workingState: {} },
+    );
+    expect(SparkTurnResultSchema.safeParse(normalized).success).toBe(false);
   });
 
   it("decodes the canonical ready-brief JSON fixture", () => {

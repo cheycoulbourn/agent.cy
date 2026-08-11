@@ -90,6 +90,96 @@ export const IdeasResultSchema = z
   })
   .strict();
 
+export const InspirationPlatformSchema = z.enum([
+  "instagram",
+  "tiktok",
+  "youtube",
+  "threads",
+  "web",
+]);
+
+export const InspirationAnalyzedInputSchema = z.enum([
+  "caption",
+  "audioTranscript",
+  "videoFrames",
+  "onScreenText",
+  "linkMetadata",
+]);
+
+export const InspirationSourceMaterialSchema = z
+  .object({
+    title: shortText.optional(),
+    caption: longText.optional(),
+    transcript: longText.optional(),
+    visualObservations: z.array(mediumText).max(20),
+    analyzedInputs: z.array(InspirationAnalyzedInputSchema).min(1).max(5),
+    durationSeconds: z.number().int().positive().max(21_600).optional(),
+  })
+  .strict()
+  .superRefine((material, context) => {
+    if (new Set(material.analyzedInputs).size !== material.analyzedInputs.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["analyzedInputs"],
+        message: "Analyzed inputs must be unique",
+      });
+    }
+    if (
+      material.title === undefined &&
+      material.caption === undefined &&
+      material.transcript === undefined &&
+      material.visualObservations.length === 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [],
+        message: "Source material must contain analyzed post content",
+      });
+    }
+  });
+
+export const InspirationShapeRequestSchema =
+  ContextualAiRequestMetadataSchema.extend({
+    schemaVersion: z.literal("inspiration-shape.request.v3"),
+    promptVersion: z.literal("inspiration-shape.v3"),
+    sourcePlatform: InspirationPlatformSchema,
+    sourceMaterial: InspirationSourceMaterialSchema,
+  }).strict();
+
+export const InspirationMechanicSchema = z
+  .object({
+    hookPattern: mediumText,
+    structurePattern: mediumText,
+    payoffPattern: mediumText,
+  })
+  .strict();
+
+export const InspirationIdeaSchema = z
+  .object({
+    title: shortText,
+    premise: mediumText,
+    audience: mediumText,
+    takeaway: mediumText,
+    spokenHook: mediumText,
+    firstFrameText: mediumText,
+    filmingApproach: mediumText,
+    recommendedFormat: shortText,
+    durationSeconds: DurationSecondsSchema,
+  })
+  .strict();
+
+export const InspirationShapeResultSchema = z
+  .object({
+    sourceSummary: mediumText,
+    keyPoints: z.array(mediumText).min(1).max(4),
+    interpretedMechanic: InspirationMechanicSchema,
+    originalityGuardrails: z.array(mediumText).min(1).max(3),
+    idea: InspirationIdeaSchema,
+    suggestedPillarId: z.uuid().nullable(),
+    assumptions: z.array(mediumText).max(8),
+  })
+  .strict();
+
 export const SparkDevelopmentFieldSchema = z.enum([
   "premise",
   "audience",
@@ -403,6 +493,9 @@ export type VoiceProfileResult = z.infer<typeof VoiceProfileResultSchema>;
 export type IdeaDirection = z.infer<typeof IdeaDirectionSchema>;
 export type IdeasRequest = z.infer<typeof IdeasRequestSchema>;
 export type IdeasResult = z.infer<typeof IdeasResultSchema>;
+export type InspirationPlatform = z.infer<typeof InspirationPlatformSchema>;
+export type InspirationShapeRequest = z.infer<typeof InspirationShapeRequestSchema>;
+export type InspirationShapeResult = z.infer<typeof InspirationShapeResultSchema>;
 export type SparkDevelopmentField = z.infer<
   typeof SparkDevelopmentFieldSchema
 >;

@@ -16,11 +16,17 @@ export type AppErrorCode =
   | "cancelled"
   | "conflict";
 
+export interface AppErrorFieldIssue {
+  readonly path: readonly (string | number)[];
+  readonly message: string;
+}
+
 export class AppError extends Error {
   readonly code: AppErrorCode;
   readonly retryable: boolean;
   readonly retryAfterSeconds: number | null;
   readonly quotaScope: AiQuotaScope | null;
+  readonly fieldIssues: readonly AppErrorFieldIssue[] | null;
 
   constructor(
     code: AppErrorCode,
@@ -29,6 +35,7 @@ export class AppError extends Error {
       retryable?: boolean;
       retryAfterSeconds?: number | null;
       quotaScope?: AiQuotaScope | null;
+      fieldIssues?: readonly AppErrorFieldIssue[] | null;
       cause?: unknown;
     } = {},
   ) {
@@ -38,6 +45,7 @@ export class AppError extends Error {
     this.retryable = options.retryable ?? false;
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
     this.quotaScope = options.quotaScope ?? null;
+    this.fieldIssues = options.fieldIssues ?? null;
   }
 }
 

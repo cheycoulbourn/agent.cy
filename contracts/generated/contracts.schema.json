@@ -1565,6 +1565,695 @@
       ],
       "additionalProperties": false
     },
+    "InspirationShapeRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "inspiration-shape.request.v3"
+        },
+        "promptVersion": {
+          "type": "string",
+          "const": "inspiration-shape.v3"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "appBuild": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "assistanceMode": {
+          "type": "string",
+          "enum": [
+            "drive",
+            "collaborate",
+            "lead"
+          ]
+        },
+        "creatorContext": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "primaryGoal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "selectedPlatforms": {
+              "minItems": 1,
+              "maxItems": 4,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "instagramReels",
+                  "tiktok",
+                  "youtubeShorts",
+                  "youtubeVideo"
+                ]
+              }
+            },
+            "voiceExamples": {
+              "maxItems": 5,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "exampleId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "order": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "text",
+                      "publicPostText",
+                      "screenshotText"
+                    ]
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20000
+                  },
+                  "creatorConfirmed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "exampleId",
+                  "order",
+                  "source",
+                  "text",
+                  "creatorConfirmed"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Creator-confirmed example text only; combined UTF-8 text is limited to 40,000 bytes"
+            },
+            "voiceProfile": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "tone": {
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "sentenceStyle": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "signatureQualities": {
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "phrasesToUse": {
+                  "maxItems": 12,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "phrasesToAvoid": {
+                  "maxItems": 12,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "guidance": {
+                  "minItems": 1,
+                  "maxItems": 10,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "required": [
+                "summary",
+                "tone",
+                "sentenceStyle",
+                "signatureQualities",
+                "phrasesToUse",
+                "phrasesToAvoid",
+                "guidance",
+                "confidence"
+              ],
+              "additionalProperties": false
+            },
+            "pillars": {
+              "maxItems": 10,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "pillarId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "pillarId",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "librarySummaries": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "briefId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "premise": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "takeaway": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "notes": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "hook": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "caption": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "pillarId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "pillarName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "format": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "spark",
+                      "developing",
+                      "ready",
+                      "scheduled",
+                      "posted",
+                      "archived"
+                    ]
+                  },
+                  "platforms": {
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "instagramReels",
+                        "tiktok",
+                        "youtubeShorts",
+                        "youtubeVideo"
+                      ]
+                    }
+                  },
+                  "targetDate": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "includesTargetTime": {
+                    "type": "boolean"
+                  },
+                  "postedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "taskCount": {
+                    "default": 0,
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "completedTaskCount": {
+                    "default": 0,
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  }
+                },
+                "required": [
+                  "briefId",
+                  "title",
+                  "status",
+                  "platforms",
+                  "taskCount",
+                  "completedTaskCount"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "taskSummaries": {
+              "default": [],
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "taskId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "planning",
+                      "scripting",
+                      "filming",
+                      "editing",
+                      "publishing",
+                      "creatorBusiness"
+                    ]
+                  },
+                  "priority": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "high",
+                      "urgent"
+                    ]
+                  },
+                  "isCompleted": {
+                    "type": "boolean"
+                  },
+                  "targetDate": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "includesTargetTime": {
+                    "type": "boolean"
+                  },
+                  "postId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "pillarId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "taskId",
+                  "title",
+                  "kind",
+                  "priority",
+                  "isCompleted",
+                  "includesTargetTime"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "name",
+            "primaryGoal",
+            "selectedPlatforms",
+            "voiceExamples",
+            "pillars",
+            "librarySummaries",
+            "taskSummaries"
+          ],
+          "additionalProperties": false
+        },
+        "sourcePlatform": {
+          "type": "string",
+          "enum": [
+            "instagram",
+            "tiktok",
+            "youtube",
+            "threads",
+            "web"
+          ]
+        },
+        "sourceMaterial": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "caption": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "transcript": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "visualObservations": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "analyzedInputs": {
+              "minItems": 1,
+              "maxItems": 5,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "caption",
+                  "audioTranscript",
+                  "videoFrames",
+                  "onScreenText",
+                  "linkMetadata"
+                ]
+              }
+            },
+            "durationSeconds": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 21600
+            }
+          },
+          "required": [
+            "visualObservations",
+            "analyzedInputs"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "promptVersion",
+        "operationId",
+        "appBuild",
+        "assistanceMode",
+        "creatorContext",
+        "sourcePlatform",
+        "sourceMaterial"
+      ],
+      "additionalProperties": false
+    },
+    "InspirationShapeResult": {
+      "type": "object",
+      "properties": {
+        "sourceSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "keyPoints": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "interpretedMechanic": {
+          "type": "object",
+          "properties": {
+            "hookPattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "structurePattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "payoffPattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "hookPattern",
+            "structurePattern",
+            "payoffPattern"
+          ],
+          "additionalProperties": false
+        },
+        "originalityGuardrails": {
+          "minItems": 1,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "idea": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "premise": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "takeaway": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "spokenHook": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "firstFrameText": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "filmingApproach": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "recommendedFormat": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "durationSeconds": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "const": 15
+                },
+                {
+                  "type": "number",
+                  "const": 30
+                },
+                {
+                  "type": "number",
+                  "const": 45
+                },
+                {
+                  "type": "number",
+                  "const": 60
+                },
+                {
+                  "type": "number",
+                  "const": 90
+                },
+                {
+                  "type": "number",
+                  "const": 180
+                },
+                {
+                  "type": "number",
+                  "const": 300
+                },
+                {
+                  "type": "number",
+                  "const": 480
+                },
+                {
+                  "type": "number",
+                  "const": 600
+                },
+                {
+                  "type": "number",
+                  "const": 900
+                },
+                {
+                  "type": "number",
+                  "const": 1200
+                },
+                {
+                  "type": "number",
+                  "const": 1800
+                },
+                {
+                  "type": "number",
+                  "const": 2700
+                },
+                {
+                  "type": "number",
+                  "const": 3600
+                }
+              ]
+            }
+          },
+          "required": [
+            "title",
+            "premise",
+            "audience",
+            "takeaway",
+            "spokenHook",
+            "firstFrameText",
+            "filmingApproach",
+            "recommendedFormat",
+            "durationSeconds"
+          ],
+          "additionalProperties": false
+        },
+        "suggestedPillarId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assumptions": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "required": [
+        "sourceSummary",
+        "keyPoints",
+        "interpretedMechanic",
+        "originalityGuardrails",
+        "idea",
+        "suggestedPillarId",
+        "assumptions"
+      ],
+      "additionalProperties": false
+    },
     "SparkTurnRequest": {
       "type": "object",
       "properties": {
@@ -1989,7 +2678,8 @@
                 "text",
                 "voiceTranscript",
                 "cyDirection",
-                "repurposedBrief"
+                "repurposedBrief",
+                "sharedInspiration"
               ]
             },
             "text": {
@@ -2718,7 +3408,8 @@
                 "text",
                 "voiceTranscript",
                 "cyDirection",
-                "repurposedBrief"
+                "repurposedBrief",
+                "sharedInspiration"
               ]
             },
             "text": {
@@ -3739,7 +4430,8 @@
                 "text",
                 "voiceTranscript",
                 "cyDirection",
-                "repurposedBrief"
+                "repurposedBrief",
+                "sharedInspiration"
               ]
             },
             "text": {
@@ -12510,6 +13202,93 @@
       ],
       "additionalProperties": false
     },
+    "AppleAccountAuthorizationRequest": {
+      "type": "object",
+      "properties": {
+        "identityToken": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "authorizationCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "nonce": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 256
+        },
+        "appBuild": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "ios",
+            "macCatalyst"
+          ]
+        }
+      },
+      "required": [
+        "identityToken",
+        "authorizationCode",
+        "nonce",
+        "appBuild",
+        "platform"
+      ],
+      "additionalProperties": false
+    },
+    "AppleAccountAuthorizationResult": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "installationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 512
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "freeJourney",
+            "trial",
+            "paid",
+            "comped",
+            "expired"
+          ]
+        },
+        "credentialExpiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        },
+        "promotionalEntitlementEndsAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        }
+      },
+      "required": [
+        "accountId",
+        "installationId",
+        "credential",
+        "access"
+      ],
+      "additionalProperties": false
+    },
     "TelemetryEventsRequest": {
       "type": "object",
       "properties": {
@@ -13298,6 +14077,111 @@
         "status",
         "service",
         "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "InspirationExtractRequest": {
+      "type": "object",
+      "properties": {
+        "canonicalUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "format": "uri"
+        }
+      },
+      "required": [
+        "canonicalUrl"
+      ],
+      "additionalProperties": false
+    },
+    "InspirationExtractResult": {
+      "type": "object",
+      "properties": {
+        "canonicalUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "format": "uri"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "instagram",
+            "tiktok",
+            "youtube",
+            "threads",
+            "web"
+          ]
+        },
+        "mediaKind": {
+          "type": "string",
+          "enum": [
+            "video",
+            "image",
+            "carousel",
+            "unknown"
+          ]
+        },
+        "sourceTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "creatorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "creatorHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "caption": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "thumbnailUrl": {
+          "type": "string",
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "mediaUrls": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 8192,
+            "format": "uri"
+          }
+        },
+        "durationSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400
+        },
+        "evidence": {
+          "minItems": 1,
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "postMetadata",
+              "caption",
+              "creator",
+              "video",
+              "carousel"
+            ]
+          }
+        }
+      },
+      "required": [
+        "canonicalUrl",
+        "platform",
+        "mediaKind",
+        "mediaUrls",
+        "evidence"
       ],
       "additionalProperties": false
     }

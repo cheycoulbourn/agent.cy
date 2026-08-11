@@ -132,12 +132,27 @@ protocol LocalCreatorDataErasing {
 
 @MainActor
 struct SwiftDataLocalCreatorDataEraser: LocalCreatorDataErasing {
+    private let inspirationQueueStore: InspirationImportQueueStore?
+    private let inspirationWorkspaceDefaults: UserDefaults?
+
+    init(
+        inspirationQueueStore: InspirationImportQueueStore? = nil,
+        inspirationWorkspaceDefaults: UserDefaults? = UserDefaults(
+            suiteName: InspirationSharedContainer.appGroupIdentifier
+        )
+    ) {
+        self.inspirationQueueStore = inspirationQueueStore ?? (try? InspirationImportQueueStore())
+        self.inspirationWorkspaceDefaults = inspirationWorkspaceDefaults
+    }
+
     func eraseAll(context: ModelContext) async throws {
         try deleteAll(CreatorWorkspace.self, context: context)
         try deleteAll(CreatorProfile.self, context: context)
         try deleteAll(VoiceExample.self, context: context)
         try deleteAll(VoiceProfile.self, context: context)
         try deleteAll(CreativeBrief.self, context: context)
+        try deleteAll(InspirationSource.self, context: context)
+        try deleteAll(InspirationTag.self, context: context)
         try deleteAll(PendingBriefProposal.self, context: context)
         try deleteAll(PendingVoiceProfileProposal.self, context: context)
         try deleteAll(PlatformOutput.self, context: context)
@@ -161,6 +176,9 @@ struct SwiftDataLocalCreatorDataEraser: LocalCreatorDataErasing {
         try deleteAll(ReminderSettings.self, context: context)
         try deleteAll(SubscriptionState.self, context: context)
         try context.save()
+        try inspirationQueueStore?.removeAll()
+        try? InspirationShareCreatorSnapshotStore.delete()
+        InspirationWorkspaceHintStore.save(nil, defaults: inspirationWorkspaceDefaults)
         CreatorWorkspacePreferences.activeWorkspaceID = nil
     }
 

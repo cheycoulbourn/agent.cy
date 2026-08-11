@@ -36,16 +36,23 @@ struct AgentCyApp: App {
         let requiresInstallationInvite = liveAI
         #endif
         let creativeService: any CreativeServicing
+        let inspirationShapingService: any InspirationShapingServicing
+        let inspirationContentAnalysisService: any InspirationContentAnalyzing
         let subscriptionService = SubscriptionServiceFactory.runtime(useLiveAI: liveAI)
         if liveAI {
-            creativeService = RemoteCreativeService(
-                client: AgentCyAPIClient(baseURL: APIConfiguration.baseURL, store: credentialStore)
-            )
+            let client = AgentCyAPIClient(baseURL: APIConfiguration.baseURL, store: credentialStore)
+            creativeService = RemoteCreativeService(client: client)
+            inspirationShapingService = RemoteInspirationShapingService(client: client)
+            inspirationContentAnalysisService = RuntimeInspirationContentAnalysisService()
         } else {
             creativeService = PreviewCreativeService()
+            inspirationShapingService = PreviewInspirationShapingService()
+            inspirationContentAnalysisService = PreviewInspirationContentAnalysisService()
         }
         let model = AppModel(
             creativeService: creativeService,
+            inspirationShapingService: inspirationShapingService,
+            inspirationContentAnalysisService: inspirationContentAnalysisService,
             subscriptionService: subscriptionService,
             credentialStore: credentialStore,
             installationRedemptionClient: InstallationRedemptionClient(baseURL: APIConfiguration.baseURL, store: credentialStore),
@@ -92,6 +99,7 @@ struct AgentCyApp: App {
                     try? FocusTaskRecurrenceService.reconcile(context: container.mainContext)
                     appModel.applyPendingWidgetTaskCompletions(context: container.mainContext)
                     WidgetSnapshotService.refresh(context: container.mainContext)
+                    appModel.refreshInspirationShareCreatorSnapshot(context: container.mainContext)
                     try? MCPBridgeService.sync(context: container.mainContext)
                     Task { await appModel.refreshReminderSchedule(context: container.mainContext) }
                 }

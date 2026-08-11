@@ -193,7 +193,7 @@ enum AgentNotificationPlanBuilder {
         let dayStart = calendar.startOfDay(for: input.now)
         let horizonEnd = calendar.date(byAdding: .day, value: input.horizonDays, to: dayStart)
             ?? input.now.addingTimeInterval(TimeInterval(input.horizonDays * 86_400))
-        let briefByID = Dictionary(uniqueKeysWithValues: input.briefs.map { ($0.id, $0) })
+        let briefByID = DuplicateSafeIndex.firstValues(input.briefs.map { ($0.id, $0) })
         var automatic: [AgentNotificationPlanItem] = []
 
         if input.settings.postRemindersEnabled || input.settings.missedPostRemindersEnabled || input.settings.draftPrepRemindersEnabled {

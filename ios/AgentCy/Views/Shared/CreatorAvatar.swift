@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 import UIKit
 
@@ -62,8 +63,32 @@ struct CreatorAvatar: View {
 struct ProfileSettingsButton: View {
     let identity: ActiveCreatorIdentity
     let action: () -> Void
+    @Environment(AppModel.self) private var appModel
 
     var body: some View {
+        #if targetEnvironment(macCatalyst)
+        Menu {
+            Button {
+                openAccountPage(.switchAccount)
+            } label: {
+                Label("Switch account", systemImage: "person.2")
+            }
+
+            Button {
+                openAccountPage(.addAccount)
+            } label: {
+                Label("Add account", systemImage: "person.badge.plus")
+            }
+        } label: {
+            CreatorAvatar(identity: identity)
+                .frame(width: 44, height: 44)
+                .contentShape(.circle)
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Account menu")
+        .accessibilityHint("Switches accounts or adds a new account")
+        #else
         Button(action: action) {
             CreatorAvatar(identity: identity)
                 .frame(width: 44, height: 44)
@@ -72,6 +97,12 @@ struct ProfileSettingsButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Profile and settings")
         .accessibilityHint("Opens Settings")
+        #endif
+    }
+
+    private func openAccountPage(_ page: RequestedSettingsPage) {
+        appModel.requestedSettingsPage = page
+        appModel.presentedSheet = .settings
     }
 }
 

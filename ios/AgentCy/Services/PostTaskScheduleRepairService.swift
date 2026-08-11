@@ -17,10 +17,10 @@ enum PostTaskScheduleRepairService {
         guard !defaults.bool(forKey: migrationKey) else { return 0 }
 
         let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
-        let outputByID = Dictionary(uniqueKeysWithValues: outputs.map { ($0.id, $0) })
+        let outputByID = DuplicateSafeIndex.firstValues(outputs.map { ($0.id, $0) })
         let outputsByBriefID = Dictionary(grouping: outputs, by: \.briefID)
         let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-        let briefByID = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0) })
+        let briefByID = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
         var repairedCount = 0
 

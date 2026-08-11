@@ -1389,38 +1389,6 @@ private struct PaperConsentRow: View {
     }
 }
 
-private struct PaperOnboardingActionRow: View {
-    let symbol: String
-    let title: String
-    let detail: String
-
-    var body: some View {
-        HStack(spacing: AgentSpacing.x4) {
-            AgentIconView(AgentIcon(legacySystemName: symbol))
-                .font(.agentInter(size: 19, relativeTo: .body))
-                .frame(width: 32)
-            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                Text(title)
-                    .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
-                Text(detail)
-                    .font(.paperInter(size: 13, weight: .regular, relativeTo: .subheadline))
-                    .foregroundStyle(Color.agentSecondary)
-                    .lineLimit(2)
-            }
-            Spacer()
-            AgentIconView(.forward, size: 14)
-        }
-        .padding(.horizontal, AgentSpacing.x4)
-        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-        .agentSurfaceChrome(cornerRadius: 14)
-        .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.agentText.opacity(0.08), lineWidth: 1)
-        }
-    }
-}
-
 private struct PaperPlatformCard: View {
     let title: String
     let detail: String
@@ -1759,6 +1727,7 @@ private struct OnboardingWeekdayChooser: View {
 
 private struct PaperOnboardingPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1767,21 +1736,28 @@ private struct PaperOnboardingPrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.onAccent)
             .background(Color.actionAccent, in: .capsule)
             .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.36)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 private struct PaperOnboardingSecondaryButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(Color.agentText)
             .background(Color.agentSurface, in: .circle)
             .overlay { Circle().stroke(Color.agentBorder, lineWidth: 1) }
             .opacity(configuration.isPressed ? 0.72 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 private struct PaperOnboardingOutlineButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1795,6 +1771,8 @@ private struct PaperOnboardingOutlineButtonStyle: ButtonStyle {
                     .stroke(Color.agentBorder, lineWidth: 1)
             }
             .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

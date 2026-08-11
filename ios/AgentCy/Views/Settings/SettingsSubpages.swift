@@ -462,6 +462,15 @@ struct AccountSwitcherSettingsView: View {
                 .font(.agentSubtext)
                 .foregroundStyle(Color.agentSecondary)
         }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                AgentToolbarIconButton(title: "Close settings", icon: .close) {
+                    appModel.requestedSettingsPage = nil
+                    appModel.presentedSheet = nil
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
+        }
         .confirmationDialog(
             "Delete \(pendingDeletion?.name ?? "this account")?",
             isPresented: Binding(
@@ -1149,18 +1158,12 @@ struct AppearanceSettingsView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: saveAndDismiss) {
-                    AgentIconView(.check, size: 15)
-                        .foregroundStyle(Color.agentPureBlack)
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .tint(Color.agentPureWhite)
-                .disabled(!hasChanges)
-                .opacity(hasChanges ? 1 : 0.42)
-                .accessibilityLabel("Save appearance")
+                AgentToolbarIconButton(
+                    title: "Save appearance",
+                    icon: .check,
+                    isEnabled: hasChanges,
+                    action: saveAndDismiss
+                )
             }
         }
         .onDisappear {
@@ -1899,6 +1902,7 @@ struct AccessSettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var subscriptions: [SubscriptionState]
     @State private var isRotating = false
+    @State private var showsSignOutConfirmation = false
 
     var body: some View {
         SettingsPageShell(
@@ -1909,6 +1913,11 @@ struct AccessSettingsView: View {
             if let subscription = subscriptions.first {
                 let effectiveAccess = AccessPolicy.effectiveAccess(for: subscription)
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                        SectionRuleHeader(title: "Account")
+                        accountConnectionCard
+                    }
+
                     VStack(alignment: .leading, spacing: 0) {
                         SectionRuleHeader(title: "Plan details")
                         currentAccessCard(effectiveAccess, subscription: subscription)
@@ -1930,6 +1939,61 @@ struct AccessSettingsView: View {
             }
         }
         .onAppear { isRotating = true }
+        .confirmationDialog(
+            "Sign out of this device?",
+            isPresented: $showsSignOutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Sign out", role: .destructive) {
+                Task { await appModel.signOutOfAccount() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your ideas, plans, and drafts stay on this device. Signing out only removes this device’s secure account connection.")
+        }
+    }
+
+    private var accountConnectionCard: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                ZStack(alignment: .bottomTrailing) {
+                    AgentIconView(appModel.hasLinkedAccount ? .checkCircle : .profile, size: 23)
+                    if !appModel.hasLinkedAccount {
+                        AgentIconView(.add, size: 8)
+                            .foregroundStyle(Color.agentSurface)
+                            .frame(width: 14, height: 14)
+                            .background(Color.agentText, in: .circle)
+                            .offset(x: 2, y: 2)
+                    }
+                }
+                    .foregroundStyle(appModel.hasLinkedAccount ? Color.cyAccent : Color.agentText)
+                    .frame(width: 28, height: 28)
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text(appModel.hasLinkedAccount ? "Apple account connected" : "Use agent.cy on your Mac")
+                        .font(.agentHeadline)
+                        .foregroundStyle(Color.agentText)
+                    Text(appModel.hasLinkedAccount
+                         ? "This device can restore your agent.cy account. Your local work remains stored here."
+                         : "Link Apple once, then sign in on your Mac to restore the same synced workspace.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if appModel.hasLinkedAccount {
+                Button("Sign out of this device") {
+                    showsSignOutConfirmation = true
+                }
+                .buttonStyle(AgentSecondaryButtonStyle())
+            } else {
+                AgentAppleAccountButton()
+            }
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: 18))
+        .agentSurfaceChrome(cornerRadius: 18)
     }
 
     private func currentAccessCard(
@@ -2293,28 +2357,6 @@ private struct SettingsSelectionRow: View {
         .padding(.vertical, AgentSpacing.x4)
         .contentShape(.rect)
         .overlay(alignment: .top) { Rectangle().fill(Color.agentBorder).frame(height: 1) }
-        .overlay(alignment: .bottom) {
-            if isLast { Rectangle().fill(Color.agentBorder).frame(height: 1) }
-        }
-    }
-}
-
-private struct SettingsValueRow: View {
-    let title: String
-    let value: String
-    var isLast = false
-    var showsTopRule = true
-
-    var body: some View {
-        HStack {
-            Text(title).font(.agentBody).foregroundStyle(Color.agentText)
-            Spacer()
-            Text(value).font(.agentBody).foregroundStyle(Color.agentSecondary)
-        }
-        .frame(minHeight: 54)
-        .overlay(alignment: .top) {
-            if showsTopRule { Rectangle().fill(Color.agentBorder).frame(height: 1) }
-        }
         .overlay(alignment: .bottom) {
             if isLast { Rectangle().fill(Color.agentBorder).frame(height: 1) }
         }

@@ -2,13 +2,20 @@ import { randomUUID } from "node:crypto";
 import { request as nodeHttpRequest } from "node:http";
 import {
   AiSseSequenceSchema,
+  AppleAccountAuthorizationResultSchema,
   ComposeBriefResultSchema,
+  InspirationShapeResultSchema,
+  InspirationExtractResultSchema,
   PrivacyDeleteResultSchema,
   ReviseBriefResultSchema,
+  SparkTurnResultSchema,
 } from "@agent-cy/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
+import type { AppleIdentityVerifying } from "../src/apple-identity.js";
+import type { InspirationExtracting } from "../src/inspiration-extractor.js";
 import type { ServerConfig } from "../src/config.js";
+import { AppError } from "../src/errors.js";
 import { developmentFixtures } from "../src/fixtures.js";
 import { FixtureAiProvider, type AiProvider } from "../src/provider.js";
 import { parseSseForTests } from "../src/sse.js";
@@ -30,6 +37,8 @@ const config: ServerConfig = {
   dataFile: "/tmp/unused-agent-cy-test.json",
   inviteHashSecret: "test-invite-secret-long-enough-for-hmac",
   installationHashSecrets: ["test-install-secret-long-enough-for-hmac"],
+  appleSubjectHashSecret: "test-apple-subject-secret-long-enough-for-hmac",
+  appleClientIds: ["com.agentcy.app"],
   inviteCodes: ["FOUNDER-ONE"],
   pilotCompedAccess: false,
   pilotCompedDurationDays: 28,
@@ -50,6 +59,8 @@ afterEach(async () => {
 async function harness(
   provider?: AiProvider,
   configOverrides: Partial<ServerConfig> = {},
+  inspirationExtractor?: InspirationExtracting,
+  appleIdentityVerifier?: AppleIdentityVerifying,
 ) {
   const selectedConfig = { ...config, ...configOverrides };
   const repository = new StateRepository(new MemoryStateBackend());
@@ -60,6 +71,8 @@ async function harness(
     repository,
     provider: selectedProvider,
     clock: () => fixedNow,
+    ...(inspirationExtractor ? { inspirationExtractor } : {}),
+    ...(appleIdentityVerifier ? { appleIdentityVerifier } : {}),
   });
   openApps.push(app);
   const redeem = await app.inject({
@@ -80,6 +93,113 @@ async function harness(
   }>();
   return { app, repository, provider: selectedProvider, identity };
 }
+
+describe("Apple account access", () => {
+  const authorization = {
+    identityToken: "verified-identity-token",
+    authorizationCode: "single-use-authorization-code",
+    nonce: "raw-nonce-with-at-least-thirty-two-characters",
+    appBuild: "1.0 (1)",
+    platform: "macCatalyst",
+  } as const;
+
+  it("links an invited iPhone and signs another device into that account", async () => {
+    const verifier: AppleIdentityVerifying = {
+      verify: vi.fn(async () => ({ subject: "apple-user-one" })),
+    };
+    const { app, identity } = await harness(undefined, {}, undefined, verifier);
+
+    const linked = await app.inject({
+      method: "POST",
+      url: "/v1/accounts/apple/link",
+      headers: auth(identity.credential),
+      payload: { ...authorization, platform: "ios" },
+    });
+    expect(linked.statusCode).toBe(200);
+    const linkedIdentity = AppleAccountAuthorizationResultSchema.parse(
+      linked.json(),
+    );
+    expect(linkedIdentity.installationId).toBe(identity.installationId);
+
+    const signedIn = await app.inject({
+      method: "POST",
+      url: "/v1/accounts/apple/sign-in",
+      payload: authorization,
+    });
+    expect(signedIn.statusCode).toBe(201);
+    const macIdentity = AppleAccountAuthorizationResultSchema.parse(
+      signedIn.json(),
+    );
+    expect(macIdentity.accountId).toBe(linkedIdentity.accountId);
+    expect(macIdentity.installationId).not.toBe(linkedIdentity.installationId);
+    expect(macIdentity.credential).not.toBe(linkedIdentity.credential);
+    expect(verifier.verify).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires a linked account and a valid Apple credential", async () => {
+    const verifier: AppleIdentityVerifying = {
+      verify: vi.fn(async ({ identityToken }) => {
+        if (identityToken === "invalid-token") {
+          throw new AppError("installation_invalid", "Apple rejected this sign-in.");
+        }
+        return { subject: "unlinked-apple-user" };
+      }),
+    };
+    const { app } = await harness(undefined, {}, undefined, verifier);
+
+    const unlinked = await app.inject({
+      method: "POST",
+      url: "/v1/accounts/apple/sign-in",
+      payload: authorization,
+    });
+    expect(unlinked.statusCode).toBe(401);
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/v1/accounts/apple/sign-in",
+      payload: { ...authorization, identityToken: "invalid-token" },
+    });
+    expect(invalid.statusCode).toBe(401);
+  });
+});
+
+describe("POST /v1/inspiration/extract", () => {
+  it("requires installation authentication and returns validated extraction", async () => {
+    const extraction = InspirationExtractResultSchema.parse({
+      canonicalUrl: "https://www.instagram.com/reel/DbQtVSaMVlB/",
+      platform: "instagram",
+      mediaKind: "video",
+      sourceTitle: "Mari Movie on Instagram",
+      creatorName: "Mari Movie",
+      creatorHandle: "mariimovie",
+      caption: "A useful source caption.",
+      thumbnailUrl: "https://scontent.cdninstagram.com/cover.jpg",
+      mediaUrls: ["https://scontent.cdninstagram.com/clip.mp4"],
+      durationSeconds: 37.2,
+      evidence: ["postMetadata", "caption", "creator", "video"],
+    });
+    const extractor: InspirationExtracting = {
+      extract: vi.fn(async () => extraction),
+    };
+    const { app, identity } = await harness(undefined, {}, extractor);
+
+    const unauthorized = await app.inject({
+      method: "POST",
+      url: "/v1/inspiration/extract",
+      payload: { canonicalUrl: extraction.canonicalUrl },
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/inspiration/extract",
+      headers: auth(identity.credential),
+      payload: { canonicalUrl: extraction.canonicalUrl },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(extraction);
+  });
+});
 
 const creatorContext = {
   name: "Maya",
@@ -156,6 +276,57 @@ function composeRequest(operationId = randomUUID()) {
   } as const;
 }
 
+function sparkTurnRequest(operationId = randomUUID()) {
+  return {
+    schemaVersion: "agent-cy.ai.v1",
+    promptVersion: "spark-turn.v1",
+    operationId,
+    appBuild: "1.0 (1)",
+    assistanceMode: "collaborate",
+    creatorContext,
+    spark: {
+      sparkId: randomUUID(),
+      source: "text",
+      text: "Anatomy of a rough hit rate",
+    },
+    turnNumber: 1,
+    composeNow: false,
+    conversation: [],
+    workingState: {
+      premise: "A rough hit rate can still contain useful evidence.",
+      audience: "Data-curious creators",
+      creativeGoal: null,
+      proofOrStory: null,
+      desiredTakeaway: null,
+      constraints: [],
+    },
+  } as const;
+}
+
+function inspirationShapeRequest(operationId = randomUUID()) {
+  return {
+    schemaVersion: "inspiration-shape.request.v3",
+    promptVersion: "inspiration-shape.v3",
+    operationId,
+    appBuild: "1.0 (1)",
+    assistanceMode: "collaborate",
+    creatorContext: {
+      ...creatorContext,
+      voiceExamples: [],
+      librarySummaries: [],
+    },
+    sourcePlatform: "instagram",
+    sourceMaterial: {
+      title: "A practical filming reset",
+      caption: "The hook creates tension before a practical reset.",
+      transcript: "I made filming easier by shrinking one setup decision.",
+      visualObservations: ["Direct-to-camera opening followed by a demonstration."],
+      analyzedInputs: ["caption", "audioTranscript", "videoFrames"],
+      durationSeconds: 45,
+    },
+  } as const;
+}
+
 function fixtureResult(operation: keyof typeof developmentFixtures, payload: unknown) {
   const fixture = developmentFixtures[operation];
   if (typeof fixture !== "function") throw new Error(`Missing ${operation} fixture`);
@@ -163,6 +334,156 @@ function fixtureResult(operation: keyof typeof developmentFixtures, payload: unk
 }
 
 describe("agent.cy server", () => {
+  it("shapes inspiration without accepting source URL fields", async () => {
+    const { app, repository, identity } = await harness();
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/v1/ai/inspiration/shape",
+      headers: auth(identity.credential),
+      payload: {
+        ...inspirationShapeRequest(),
+        sourceURL: "https://www.instagram.com/reel/private-source/",
+      },
+    });
+    expect(rejected.body).toContain("invalid_input");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/ai/inspiration/shape",
+      headers: auth(identity.credential),
+      payload: inspirationShapeRequest(),
+    });
+    const events = parseSseForTests(response.body);
+    const resultEvent = events.find((event) => event.event === "result");
+    const result = InspirationShapeResultSchema.parse(
+      (resultEvent?.data as { payload?: { result?: unknown } } | undefined)?.payload?.result,
+    );
+    expect(result.originalityGuardrails).toHaveLength(2);
+    const snapshot = await repository.snapshotForTests();
+    expect(snapshot.installations[identity.installationId]?.allowanceCounts.ideas).toBe(1);
+  });
+
+  it("retries a temporary provider interruption within the same inspiration analysis", async () => {
+    const fixtureProvider = new FixtureAiProvider(config.model, developmentFixtures);
+    const generate = vi.fn<AiProvider["generate"]>(async (request) => {
+      if (generate.mock.calls.length <= 2) {
+        throw new AppError(
+          "upstream_unavailable",
+          "Cy is temporarily unavailable.",
+          { retryable: true },
+        );
+      }
+      return fixtureProvider.generate(request);
+    });
+    const { app, identity } = await harness({ generate });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/ai/inspiration/shape",
+      headers: auth(identity.credential),
+      payload: inspirationShapeRequest(),
+    });
+
+    const events = parseSseForTests(response.body);
+    expect(events.find((event) => event.event === "result")).toBeDefined();
+    expect(events.find((event) => event.event === "done")?.data).toMatchObject({
+      status: "succeeded",
+    });
+    expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it("allows a different post immediately after an analysis exhausts its retries", async () => {
+    const fixtureProvider = new FixtureAiProvider(config.model, developmentFixtures);
+    const generate = vi.fn<AiProvider["generate"]>(async (request) => {
+      if (generate.mock.calls.length <= 3) {
+        throw new AppError(
+          "upstream_unavailable",
+          "Cy is temporarily unavailable.",
+          { retryable: true },
+        );
+      }
+      return fixtureProvider.generate(request);
+    });
+    const { app, identity } = await harness(
+      { generate },
+      { shortWindowLimit: 1 },
+    );
+
+    const failed = await app.inject({
+      method: "POST",
+      url: "/v1/ai/inspiration/shape",
+      headers: auth(identity.credential),
+      payload: inspirationShapeRequest(),
+    });
+    expect(
+      parseSseForTests(failed.body).find((event) => event.event === "error")?.data,
+    ).toMatchObject({ error: { code: "upstream_unavailable", retryable: true } });
+
+    const nextPost = await app.inject({
+      method: "POST",
+      url: "/v1/ai/inspiration/shape",
+      headers: auth(identity.credential),
+      payload: inspirationShapeRequest(),
+    });
+    expect(
+      parseSseForTests(nextPost.body).find((event) => event.event === "done")?.data,
+    ).toMatchObject({ status: "succeeded" });
+    expect(generate).toHaveBeenCalledTimes(4);
+  });
+
+  it("accepts a usable partial hosted Spark response and consumes allowance only after success", async () => {
+    const provider = new FixtureAiProvider(config.model, {
+      ...developmentFixtures,
+      spark_turn: {
+        response: "What is the one belief this post should change?",
+        workingState: { premise: "Explain the rough hit rate clearly." },
+        extraProviderField: true,
+      },
+    });
+    const { app, repository, identity } = await harness(provider);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/ai/spark/turn",
+      headers: auth(identity.credential),
+      payload: sparkTurnRequest(),
+    });
+    expect(response.statusCode).toBe(200);
+    const events = parseSseForTests(response.body);
+    const resultEvent = events.find((event) => event.event === "result");
+    expect(resultEvent).toBeDefined();
+    expect(
+      SparkTurnResultSchema.parse(
+        (
+          (resultEvent?.data as { payload?: { result?: unknown } } | undefined)
+            ?.payload
+        )?.result,
+      ),
+    ).toMatchObject({
+      assistantMessage: "What is the one belief this post should change?",
+      readyToCompose: false,
+    });
+    const snapshot = await repository.snapshotForTests();
+    expect(snapshot.installations[identity.installationId]?.allowanceCounts.sparkTurn).toBe(1);
+  });
+
+  it("does not consume hosted Spark allowance when the provider result is unusable", async () => {
+    const provider = new FixtureAiProvider(config.model, {
+      ...developmentFixtures,
+      spark_turn: { readyToCompose: false },
+    });
+    const { app, repository, identity } = await harness(provider);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/ai/spark/turn",
+      headers: auth(identity.credential),
+      payload: sparkTurnRequest(),
+    });
+    expect(
+      parseSseForTests(response.body).find((event) => event.event === "error")?.data,
+    ).toMatchObject({ error: { code: "generation_invalid" } });
+    const snapshot = await repository.snapshotForTests();
+    expect(snapshot.installations[identity.installationId]?.allowanceCounts.sparkTurn).toBeUndefined();
+  });
   it("rate-limits invitation redemption attempts by source address", async () => {
     const { app } = await harness(undefined, { shortWindowLimit: 2 });
     const invalid = await app.inject({

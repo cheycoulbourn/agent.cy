@@ -177,8 +177,8 @@ enum StoreBootstrapService {
             workspace.hasCustomIdentity = true
             workspace.updatedAt = Date()
         }
-        let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
-        var workspaceByID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+        let accountByID = DuplicateSafeIndex.firstValues(accounts.map { ($0.id, $0) })
+        var workspaceByID = DuplicateSafeIndex.firstValues(workspaces.map { ($0.id, $0) })
 
         for account in accounts where account.workspaceID == nil {
             let workspace = CreatorWorkspace(
@@ -288,7 +288,7 @@ enum StoreBootstrapService {
 
     private static func migrateOutputs(context: ModelContext) throws {
         let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-        let durationByBrief = Dictionary(uniqueKeysWithValues: briefs.map { ($0.id, $0.durationSeconds) })
+        let durationByBrief = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0.durationSeconds) })
         for output in try context.fetch(FetchDescriptor<PlatformOutput>()) {
             let ids = PublishingCatalog.identifiers(for: output.platform)
             if output.destinationID == nil { output.destinationID = ids.destination }
@@ -299,7 +299,7 @@ enum StoreBootstrapService {
 
     private static func migrateTasks(context: ModelContext) throws {
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
-        let byID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
+        let byID = DuplicateSafeIndex.firstValues(tasks.map { ($0.id, $0) })
         for task in tasks {
             task.priority = task.priority.normalized
         }

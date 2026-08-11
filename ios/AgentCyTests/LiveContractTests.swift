@@ -166,6 +166,66 @@ final class LiveContractTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.lastRequest?.httpMethod, "POST")
     }
 
+    func testAppleAccountLinkPersistsAccountWithoutReplacingTheDeviceCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let accountID = UUID()
+        let installationID = UUID()
+        let credential = String(repeating: "i", count: 48)
+        StubURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = try JSONSerialization.data(withJSONObject: [
+                "accountId": accountID.uuidString,
+                "installationId": installationID.uuidString,
+                "credential": credential,
+                "access": "comped"
+            ])
+            return (response, data)
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let store = PreviewCredentialStore()
+        let client = AccountAuthorizationClient(
+            baseURL: URL(string: "https://unit.test")!,
+            session: session,
+            store: store
+        )
+        let currentIdentity = InstallationIdentity(
+            installationID: installationID,
+            credential: credential,
+            access: .comped,
+            credentialExpiresAt: nil,
+            promotionalEntitlementEndsAt: nil
+        )
+        let linked = try await client.link(
+            AppleAuthorizationMaterial(
+                identityToken: "header.payload.signature",
+                authorizationCode: "authorization-code",
+                nonce: "raw-nonce-with-at-least-thirty-two-characters",
+                appleUserID: "apple-user-id"
+            ),
+            to: currentIdentity
+        )
+
+        XCTAssertEqual(linked.accountID, accountID)
+        XCTAssertEqual(linked.appleUserID, "apple-user-id")
+        XCTAssertEqual(linked.credential, credential)
+        let storedIdentity = await store.load()
+        XCTAssertEqual(storedIdentity, linked)
+        XCTAssertEqual(StubURLProtocol.lastRequest?.url?.path, "/v1/accounts/apple/link")
+        XCTAssertEqual(
+            StubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"),
+            "Bearer \(credential)"
+        )
+    }
+
     func testAPIClientSendsRequestOperationIDAndDecodesCanonicalIdeasSSE() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]

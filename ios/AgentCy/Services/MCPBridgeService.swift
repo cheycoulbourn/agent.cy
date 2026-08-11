@@ -691,9 +691,9 @@ enum MCPBridgeService {
             )
         }
         let taskSnapshots = tasks.map(MCPBridgeTaskSnapshot.init)
-        let destinationByID = Dictionary(uniqueKeysWithValues: destinations.map { ($0.id, $0) })
-        let formatByID = Dictionary(uniqueKeysWithValues: formats.map { ($0.id, $0) })
-        let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+        let destinationByID = DuplicateSafeIndex.firstValues(destinations.map { ($0.id, $0) })
+        let formatByID = DuplicateSafeIndex.firstValues(formats.map { ($0.id, $0) })
+        let accountByID = DuplicateSafeIndex.firstValues(accounts.map { ($0.id, $0) })
         let postSnapshots = briefs.map { brief in
             let postOutputs = outputs.filter { $0.briefID == brief.id }
             let postTasks = tasks.filter { $0.briefID == brief.id }

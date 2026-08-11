@@ -1,8 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyAnthropicFailure,
+  modelMatchesRequested,
   type ProviderFailureDiagnostic,
 } from "../src/provider.js";
+
+describe("Anthropic model identity", () => {
+  it("accepts dated aliases returned for the configured model family", () => {
+    expect(modelMatchesRequested("claude-sonnet-5-20260715", "claude-sonnet-5")).toBe(true);
+  });
+
+  it("rejects a different model family", () => {
+    expect(modelMatchesRequested("claude-opus-5-20260715", "claude-sonnet-5")).toBe(false);
+  });
+});
 
 describe("Anthropic provider failure diagnostics", () => {
   it.each([

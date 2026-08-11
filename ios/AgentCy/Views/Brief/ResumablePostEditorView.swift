@@ -66,6 +66,7 @@ struct ResumablePostEditorView: View {
     let isReviewEditing: Bool
     let isAlreadyInIdeaBank: Bool
     let bottomActionClearance: CGFloat
+    let usesDesktopDetailRail: Bool
 
     @State private var targetDate: Date
     @State private var hasTargetDate: Bool
@@ -107,6 +108,7 @@ struct ResumablePostEditorView: View {
     @State private var newSeriesName = ""
     @State private var isKeyboardVisible = false
     @State private var draftNotes: String
+    @State private var showSparkDevelopment = false
     @FocusState private var customStatusFieldFocused: Bool
     @FocusState private var newSeriesNameFieldFocused: Bool
     private var pillars: [Pillar] {
@@ -142,6 +144,7 @@ struct ResumablePostEditorView: View {
         isReviewEditing: Bool = false,
         isAlreadyInIdeaBank: Bool = false,
         bottomActionClearance: CGFloat = 88,
+        usesDesktopDetailRail: Bool = false,
         onSpark: @escaping () -> Void
     ) {
         self.brief = brief
@@ -151,6 +154,7 @@ struct ResumablePostEditorView: View {
         self.isReviewEditing = isReviewEditing
         self.isAlreadyInIdeaBank = isAlreadyInIdeaBank
         self.bottomActionClearance = bottomActionClearance
+        self.usesDesktopDetailRail = usesDesktopDetailRail
         let briefID = brief.id
         _outputs = Query(
             filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
@@ -181,13 +185,20 @@ struct ResumablePostEditorView: View {
         ScrollView {
             editorContent
             .padding(.horizontal, AgentLayout.pageMargin)
-            .padding(.top, AgentSpacing.x4)
+            .padding(.top, editorTopPadding)
             .padding(.bottom, showsFloatingScheduleButton ? AgentSpacing.x6 : 80)
         }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             floatingScheduleButton
         }
+#if targetEnvironment(macCatalyst)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if usesDesktopDetailRail {
+                desktopDetailRail
+            }
+        }
+#endif
         .sheet(isPresented: $showDatePicker, onDismiss: finishDateSelection) {
             targetDatePickerSheet
         }
@@ -204,6 +215,9 @@ struct ResumablePostEditorView: View {
             PostDraftTaskComposer(brief: brief, output: output, defaultDate: defaultTaskDate)
                 .presentationDetents([.medium])
         }
+        .sheet(isPresented: $showSparkDevelopment) {
+            DevelopBriefView(brief: brief, output: output)
+        }
         .sheet(isPresented: $showSeriesPlanner) {
             if let selectedSeries {
                 SeriesPlannerView(
@@ -218,67 +232,17 @@ struct ResumablePostEditorView: View {
             }
         }
         .toolbar {
-            if isEditingFinalizedPost || isReviewEditing {
+#if targetEnvironment(macCatalyst)
+            if !usesDesktopDetailRail {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: saveDraft) {
-                        AgentIconView(.check, size: 15)
-                            .foregroundStyle(Color.agentPureBlack)
-                            .frame(width: 18, height: 18)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.circle)
-                    .controlSize(.large)
-                    .tint(Color.agentPureWhite)
-                    .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-                    .accessibilityLabel("Save changes")
-                }
-            } else if canManageDraft {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if canDeleteAsEmptyDraft {
-                        Button(role: .destructive) {
-                            confirmDeleteDraft = true
-                        } label: {
-                            AgentIconView(.trash)
-                        }
-                        .accessibilityLabel("Delete empty draft")
-                    } else {
-                        Menu {
-                            Button {
-                                saveDraft()
-                            } label: {
-                                AgentIconLabel(title: "Save draft", icon: .download)
-                            }
-                            Button {
-                                duplicateDraft()
-                            } label: {
-                                AgentIconLabel(title: "Duplicate post", icon: .duplicate)
-                            }
-                            Divider()
-                            Button {
-                                copyMarkdown()
-                            } label: {
-                                AgentIconLabel(title: "Copy Markdown", icon: .copy)
-                            }
-                            Button {
-                                exportMarkdown()
-                            } label: {
-                                AgentIconLabel(title: "Export Markdown", icon: .upload)
-                            }
-                            Divider()
-                            Button(role: .destructive) {
-                                confirmDeleteDraft = true
-                            } label: {
-                                AgentIconLabel(title: "Delete post", icon: .trash)
-                            }
-                        } label: {
-                            AgentIconView(.more)
-                                .foregroundStyle(Color.agentText)
-                        }
-                        .accessibilityLabel("Draft options")
-                    }
+                    navigationToolbarActionControl
                 }
             }
+#else
+            ToolbarItem(placement: .topBarTrailing) {
+                navigationToolbarActionControl
+            }
+#endif
         }
         .alert("Delete this post?", isPresented: $confirmDeleteDraft) {
             Button("Delete post", role: .destructive, action: deleteDraft)
@@ -355,6 +319,181 @@ struct ResumablePostEditorView: View {
             defaultFilename: PostMarkdownExporter.defaultFileName(for: brief),
             onCompletion: handleMarkdownExport
         )
+    }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopDetailRail: some View {
+        ZStack {
+            HStack(spacing: AgentSpacing.x3) {
+                Button(action: { dismiss() }) {
+                    AgentIconView(.back, size: 18)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 44, height: 44)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
+                        .contentShape(.circle)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Back")
+
+                Spacer(minLength: 0)
+
+                desktopEditorActionControl
+                    .frame(width: 44, height: 44)
+            }
+
+            Text("Edit post")
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .padding(.top, AgentSpacing.x6)
+        .padding(.bottom, AgentSpacing.x4)
+        .background(Color.agentCanvas)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+                .allowsHitTesting(false)
+        }
+    }
+#endif
+
+    private var editorTopPadding: CGFloat {
+#if targetEnvironment(macCatalyst)
+        usesDesktopDetailRail ? AgentSpacing.x6 : AgentSpacing.x4
+#else
+        AgentSpacing.x4
+#endif
+    }
+
+    @ViewBuilder
+    private var navigationToolbarActionControl: some View {
+        if isEditingFinalizedPost || isReviewEditing {
+            Button(action: saveDraft) {
+                AgentIconView(.check, size: 15)
+                    .foregroundStyle(Color.agentPureBlack)
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .tint(Color.agentPureWhite)
+            .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
+            .accessibilityLabel("Save changes")
+        } else if canManageDraft {
+            if canDeleteAsEmptyDraft {
+                Button(role: .destructive) {
+                    confirmDeleteDraft = true
+                } label: {
+                    AgentIconView(.trash)
+                }
+                .accessibilityLabel("Delete empty draft")
+            } else {
+                Menu {
+                    draftOptionsMenuContent
+                } label: {
+                    AgentIconView(.more)
+                        .foregroundStyle(Color.agentText)
+                }
+                .accessibilityLabel("Draft options")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopEditorActionControl: some View {
+        if isEditingFinalizedPost || isReviewEditing {
+            Button(action: saveDraft) {
+                AgentIconView(.check, size: 15)
+                    .foregroundStyle(Color.agentText)
+                    .frame(width: 44, height: 44)
+                    .background(Color.agentSurface, in: .circle)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
+                    .contentShape(.circle)
+            }
+            .buttonStyle(AgentPressButtonStyle())
+            .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
+            .accessibilityLabel("Save changes")
+        } else if canManageDraft {
+            if canDeleteAsEmptyDraft {
+                Button(role: .destructive) {
+                    confirmDeleteDraft = true
+                } label: {
+                    AgentIconView(.trash, size: 16)
+                        .foregroundStyle(Color.agentDestructive)
+                        .frame(width: 44, height: 44)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
+                        .contentShape(.circle)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Delete empty draft")
+            } else {
+                Menu {
+                    draftOptionsMenuContent
+                } label: {
+                    AgentIconView(.more, size: 17)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 44, height: 44)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
+                        .contentShape(.circle)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Draft options")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var draftOptionsMenuContent: some View {
+        Button {
+            saveDraft()
+        } label: {
+            AgentIconLabel(title: "Save draft", icon: .download)
+        }
+        Button {
+            duplicateDraft()
+        } label: {
+            AgentIconLabel(title: "Duplicate post", icon: .duplicate)
+        }
+        Divider()
+        Button {
+            copyMarkdown()
+        } label: {
+            AgentIconLabel(title: "Copy Markdown", icon: .copy)
+        }
+        Button {
+            exportMarkdown()
+        } label: {
+            AgentIconLabel(title: "Export Markdown", icon: .upload)
+        }
+        Divider()
+        Button(role: .destructive) {
+            confirmDeleteDraft = true
+        } label: {
+            AgentIconLabel(title: "Delete post", icon: .trash)
+        }
     }
 
     private var editorContent: some View {
@@ -1845,7 +1984,7 @@ struct ResumablePostEditorView: View {
 
     private func openSpark() {
         persistChanges()
-        onSpark()
+        showSparkDevelopment = true
     }
 
     private func saveDraft() {

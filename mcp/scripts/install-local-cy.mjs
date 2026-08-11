@@ -7,6 +7,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { build } from "esbuild";
+
 import { resolveDefaultWorkspaceDirectory } from "../dist/workspace.js";
 
 if (process.platform !== "darwin") {
@@ -14,9 +16,14 @@ if (process.platform !== "darwin") {
 }
 
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const runtimePath = join(packageDirectory, "dist", "local-cy.js");
+const runtimeDirectory = join(homedir(), "Library", "Application Support", "agent.cy", "local-cy");
+const runtimePath = join(runtimeDirectory, "local-cy.mjs");
 const workspace = resolve(valueAfter("--workspace") ?? resolveDefaultWorkspaceDirectory());
-const nodePath = resolve(valueAfter("--node") ?? process.env.AGENTCY_NODE_PATH ?? process.execPath);
+const nodePath = resolve(
+  valueAfter("--node")
+    ?? process.env.AGENTCY_NODE_PATH
+    ?? launchSafeNodePath(),
+);
 const claudePath = commandPath("claude");
 const uninstall = process.argv.includes("--uninstall");
 const label = "com.agentcy.local-cy";
@@ -35,7 +42,6 @@ if (uninstall) {
   process.exit(0);
 }
 
-if (!existsSync(runtimePath)) throw new Error("Build the MCP package before installing Local Cy.");
 if (!claudePath) throw new Error("Claude Code was not found. Install it and sign in first.");
 
 const auth = JSON.parse(execFileSync(claudePath, ["auth", "status"], { encoding: "utf8" }));
@@ -45,6 +51,7 @@ if (auth.loggedIn !== true || auth.authMethod !== "claude.ai") {
 
 mkdirSync(launchAgents, { recursive: true });
 mkdirSync(logs, { recursive: true });
+mkdirSync(runtimeDirectory, { recursive: true });
 mkdirSync(join(workspace, "cy-requests"), { recursive: true });
 mkdirSync(join(workspace, "cy-responses"), { recursive: true });
 mkdirSync(join(workspace, "cy-processing"), { recursive: true });
@@ -66,6 +73,20 @@ writeFileSync(connectionPath, `${JSON.stringify(connection, null, 2)}\n`, {
   mode: 0o600,
 });
 
+// LaunchAgents do not inherit Terminal's privacy permission for Documents.
+// Bundle the service into Application Support so macOS can start it reliably
+// after login without walking the source repository or pnpm symlinks.
+await build({
+  entryPoints: [join(packageDirectory, "src", "local-cy.ts")],
+  outfile: runtimePath,
+  bundle: true,
+  platform: "node",
+  target: "node24",
+  format: "esm",
+  minify: false,
+  sourcemap: false,
+});
+
 writeFileSync(plistPath, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -76,9 +97,11 @@ writeFileSync(plistPath, `<?xml version="1.0" encoding="UTF-8"?>
     <string>${xml(nodePath)}</string>
     <string>${xml(runtimePath)}</string>
   </array>
+  <key>WorkingDirectory</key><string>${xml(runtimeDirectory)}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>AGENTCY_WORKSPACE_DIR</key><string>${xml(workspace)}</string>
+    <key>AGENTCY_CLAUDE_EXECUTABLE</key><string>${xml(claudePath)}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -104,6 +127,18 @@ function commandPath(command) {
   } catch {
     return undefined;
   }
+}
+
+function launchSafeNodePath() {
+  const pathNode = commandPath("node");
+  const candidates = [pathNode, process.execPath].filter(Boolean);
+  const safeCandidate = candidates.find((candidate) => !candidate.includes("/Documents/"));
+  if (safeCandidate) return safeCandidate;
+
+  throw new Error([
+    "The detected Node runtime is inside Documents, where macOS cannot launch it in the background.",
+    "Install Node outside Documents or rerun with --node /absolute/path/to/node.",
+  ].join(" "));
 }
 
 function commandOutput(command, args) {

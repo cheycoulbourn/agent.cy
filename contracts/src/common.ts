@@ -19,6 +19,7 @@ export const SparkSourceSchema = z.enum([
   "voiceTranscript",
   "cyDirection",
   "repurposedBrief",
+  "sharedInspiration",
 ]);
 export const PlatformSchema = z.enum([
   "instagramReels",

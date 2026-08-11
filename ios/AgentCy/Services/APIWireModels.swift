@@ -144,6 +144,8 @@ enum AIContractVersion {
     static let schema = "1"
     static let voiceProfilePrompt = "voice-profile.v1"
     static let ideasPrompt = "ideas.v1"
+    static let inspirationShapeRequest = "inspiration-shape.request.v3"
+    static let inspirationShapePrompt = "inspiration-shape.v3"
     static let sparkTurnPrompt = "spark-turn.v1"
     static let composeBriefPrompt = "compose-brief.v1"
     static let reviseBriefPrompt = "revise-brief.v1"
@@ -197,6 +199,80 @@ struct IdeaDirectionWire: Codable, Sendable {
 
 struct IdeasResultWire: Codable, Sendable {
     let ideas: [IdeaDirectionWire]
+}
+
+struct InspirationShapeRequestWire: Codable, Sendable, AIRequestIdentifying {
+    let schemaVersion: String
+    let promptVersion: String
+    let operationId: UUID
+    let appBuild: String
+    let assistanceMode: AssistanceMode
+    let creatorContext: CreatorContextWire
+    let sourcePlatform: InspirationPlatform
+    let sourceMaterial: InspirationSourceMaterialWire
+}
+
+struct LegacyInspirationShapeRequestWire: Codable, Sendable, AIRequestIdentifying {
+    let schemaVersion: String
+    let promptVersion: String
+    let operationId: UUID
+    let appBuild: String
+    let assistanceMode: AssistanceMode
+    let creatorContext: CreatorContextWire
+    let sourcePlatform: InspirationPlatform
+    let creatorObservation: String
+}
+
+enum InspirationAnalyzedInputWire: String, Codable, CaseIterable, Sendable {
+    case caption
+    case audioTranscript
+    case videoFrames
+    case onScreenText
+    case linkMetadata
+}
+
+struct InspirationSourceMaterialWire: Codable, Equatable, Sendable {
+    let title: String?
+    let caption: String?
+    let transcript: String?
+    let visualObservations: [String]
+    let analyzedInputs: [InspirationAnalyzedInputWire]
+    let durationSeconds: Int?
+}
+
+struct InspirationMechanicWire: Codable, Equatable, Sendable {
+    let hookPattern: String
+    let structurePattern: String
+    let payoffPattern: String
+}
+
+struct InspirationIdeaWire: Codable, Equatable, Sendable {
+    let title: String
+    let premise: String
+    let audience: String
+    let takeaway: String
+    let spokenHook: String
+    let firstFrameText: String
+    let filmingApproach: String
+    let recommendedFormat: String
+    let durationSeconds: Int
+}
+
+struct InspirationShapeResultWire: Codable, Equatable, Sendable {
+    let sourceSummary: String
+    let keyPoints: [String]
+    let interpretedMechanic: InspirationMechanicWire
+    let originalityGuardrails: [String]
+    let idea: InspirationIdeaWire
+    let suggestedPillarId: UUID?
+    let assumptions: [String]
+}
+
+struct LegacyInspirationShapeResultWire: Codable, Equatable, Sendable {
+    let interpretedMechanic: InspirationMechanicWire
+    let originalityGuardrails: [String]
+    let idea: InspirationIdeaWire
+    let assumptions: [String]
 }
 
 enum SparkDevelopmentFieldWire: String, Codable, Sendable {
@@ -539,17 +615,4 @@ struct ReviseBriefResultWire: Codable, Equatable, Sendable {
     let brief: ReadyBriefWire
     let changedFields: [BriefRevisionFieldWire]
     let explanation: String
-}
-
-actor RemoteCreativeGateway {
-    private let client: AgentCyAPIClient
-
-    init(client: AgentCyAPIClient = AgentCyAPIClient()) {
-        self.client = client
-    }
-
-    func compose(_ request: ComposeBriefRequestWire, onPhase: (@Sendable (AIProgressPhase) async -> Void)? = nil) async throws -> BriefProposal {
-        let result = try await client.perform(operation: .composeBrief, request: request, result: ComposeBriefResultWire.self, onPhase: onPhase)
-        return result.brief.proposal(for: request.briefId)
-    }
 }

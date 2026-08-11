@@ -13,6 +13,10 @@ enum CreatorWorkspacePreferences {
             } else {
                 UserDefaults.standard.removeObject(forKey: activeWorkspaceKey)
             }
+            InspirationWorkspaceHintStore.save(
+                newValue,
+                defaults: UserDefaults(suiteName: InspirationSharedContainer.appGroupIdentifier)
+            )
         }
     }
 }
@@ -86,6 +90,15 @@ enum WorkspaceScope {
         }
         if let recordWorkspaceID { return recordWorkspaceID == activeID }
         return defaultWorkspace(in: workspaces)?.id == activeID
+    }
+}
+
+/// Saved references are private to one creator workspace. Records without an
+/// owner stay hidden until their ownership can be established safely.
+enum SavedPostsScopePolicy {
+    static func includes(recordWorkspaceID: UUID?, activeWorkspaceID: UUID?) -> Bool {
+        guard let recordWorkspaceID, let activeWorkspaceID else { return false }
+        return recordWorkspaceID == activeWorkspaceID
     }
 }
 
@@ -218,6 +231,15 @@ enum SparkSource: String, CaseIterable, Codable, Sendable {
     case voiceTranscript
     case cyDirection
     case repurposedBrief
+    case sharedInspiration
+}
+
+enum InspirationStatus: String, Codable, CaseIterable, Sendable {
+    case pending
+    case shaping
+    case ready
+    case failed
+    case converted
 }
 
 enum VoiceExampleSource: String, CaseIterable, Codable, Identifiable, Sendable {

@@ -214,7 +214,7 @@ final class LocalReminderService: ReminderServicing {
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
     }
 
-    private func makePlanningInput(context: ModelContext, now: Date) throws -> NotificationPlanningInput {
+    func makePlanningInput(context: ModelContext, now: Date) throws -> NotificationPlanningInput {
         let settings = try context.fetch(FetchDescriptor<ReminderSettings>()).first ?? ReminderSettings()
         let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
         let activeID = WorkspaceScope.activeWorkspaceID(
@@ -244,7 +244,7 @@ final class LocalReminderService: ReminderServicing {
         }
         let destinations = try context.fetch(FetchDescriptor<PublishingDestination>()).filter { !$0.isArchived }
         let subscriptions = try context.fetch(FetchDescriptor<SubscriptionState>())
-        let destinationByID = Dictionary(uniqueKeysWithValues: destinations.map { ($0.id, $0.name) })
+        let destinationByID = DuplicateSafeIndex.firstValues(destinations.map { ($0.id, $0.name) })
         let horizonDays = 21
         let dayStart = calendar.startOfDay(for: now)
         let resolvedFocuses = (0...horizonDays).compactMap { offset -> NotificationFocusSnapshot? in

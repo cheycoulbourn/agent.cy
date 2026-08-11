@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -73,6 +73,7 @@ export class LocalCyHTTPServer {
       const responsePath = join(this.workspace.localCyResponsesDirectory, `${envelope.id}.json`);
       const processingPath = join(this.workspace.localCyProcessingDirectory, `${envelope.id}.json`);
       const requestPath = join(this.workspace.localCyRequestsDirectory, `${envelope.id}.json`);
+      removeRetryableOrInvalidCachedResponse(responsePath);
       if (!existsSync(responsePath) && !existsSync(processingPath) && !existsSync(requestPath)) {
         writeJsonAtomically(requestPath, envelope);
       }
@@ -95,6 +96,25 @@ export class LocalCyHTTPServer {
     const right = Buffer.from(expected);
     return left.length === right.length && timingSafeEqual(left, right);
   }
+}
+
+function removeRetryableOrInvalidCachedResponse(responsePath: string): void {
+  if (!existsSync(responsePath)) return;
+  try {
+    const cached = LocalCyResponseSchema.parse(JSON.parse(readFileSync(responsePath, "utf8")));
+    if (cached.status === "failed" && cached.error.retryable) {
+      rmSync(responsePath, { force: true });
+    }
+  } catch (error) {
+    if (isMissingFileError(error)) return;
+    // A malformed response can never be a valid idempotency result. Remove it
+    // so the runtime can safely generate a fresh response for the same request.
+    rmSync(responsePath, { force: true });
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 async function waitForResponse(

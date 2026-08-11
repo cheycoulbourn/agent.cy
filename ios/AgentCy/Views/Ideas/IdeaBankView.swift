@@ -11,7 +11,9 @@ private enum IdeaBankFilter: Hashable {
 struct IdeaBankView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.openURL) private var openURL
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
+    @Query(sort: \InspirationSource.updatedAt, order: .reverse) private var allInspirationSources: [InspirationSource]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query private var profiles: [CreatorProfile]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
@@ -23,8 +25,26 @@ struct IdeaBankView: View {
     @State private var isSelecting = false
     @State private var selectedIdeaIDs: Set<UUID> = []
     @State private var confirmsSelectionDeletion = false
+    @State private var showsSavedPostsLibrary = false
+    @State private var pendingSavedPostDeletion: InspirationSource?
+    @State private var confirmsSavedPostDeletion = false
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
+    private var savedInspirations: [InspirationSource] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return allInspirationSources.filter { source in
+            SavedPostsScopePolicy.includes(
+                recordWorkspaceID: source.workspaceID,
+                activeWorkspaceID: appModel.activeWorkspaceID
+            ) && (
+                query.isEmpty || SavedPostPresentation.title(for: source).localizedStandardContains(query) ||
+                    inspirationPillar(source)?.name.localizedStandardContains(query) == true
+            )
+        }
+    }
+    private var savedInspirationPreview: [InspirationSource] {
+        SavedPostsPreviewPolicy.preview(savedInspirations)
+    }
     private var pillars: [Pillar] { scoped(allPillars) }
     private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
         values.filter {
@@ -57,9 +77,18 @@ struct IdeaBankView: View {
                     header
                         .reportAgentViewHeight()
 
-                    AgentDashboardSurface(minimumHeight: max(0, proxy.size.height - headerHeight + 72)) {
+                    AgentDashboardSurface(minimumHeight: AgentScrollableSurfacePolicy.minimumHeight(
+                        viewportHeight: proxy.size.height,
+                        headerHeight: headerHeight,
+                        mobileAdjustment: 72
+                    )) {
                         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                             searchField
+                            #if !targetEnvironment(macCatalyst)
+                            if !savedInspirations.isEmpty {
+                                inspirationList
+                            }
+                            #endif
                             if isSelecting {
                                 selectionActions
                             }
@@ -77,6 +106,9 @@ struct IdeaBankView: View {
         .navigationDestination(item: $selectedIdea) { brief in
             IdeaPostDraftView(brief: brief, isAlreadyInIdeaBank: true)
         }
+        .navigationDestination(isPresented: $showsSavedPostsLibrary) {
+            SavedPostsLibraryView()
+        }
         .confirmationDialog(
             deletionConfirmationTitle,
             isPresented: $confirmsSelectionDeletion,
@@ -87,11 +119,33 @@ struct IdeaBankView: View {
         } message: {
             Text("This cannot be undone.")
         }
+        .confirmationDialog(
+            "Delete saved post?",
+            isPresented: $confirmsSavedPostDeletion,
+            titleVisibility: .visible,
+            presenting: pendingSavedPostDeletion
+        ) { source in
+            Button("Delete saved post", role: .destructive) { deleteSavedPost(source) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The saved reference will be removed. Any idea you already created from it will stay in your Idea Bank.")
+        }
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
         .onChange(of: Set(ideas.map(\.id))) { _, visibleIdeaIDs in
             selectedIdeaIDs.formIntersection(visibleIdeaIDs)
         }
+        .onAppear(perform: openRequestedIdeaIfNeeded)
+        .onChange(of: appModel.requestedIdeaID) { _, _ in
+            openRequestedIdeaIfNeeded()
+        }
         .agentDashboardScreen()
+    }
+
+    private func openRequestedIdeaIfNeeded() {
+        guard let ideaID = appModel.requestedIdeaID,
+              let brief = briefs.first(where: { $0.id == ideaID }) else { return }
+        appModel.requestedIdeaID = nil
+        selectedIdea = brief
     }
 
     private var header: some View {
@@ -116,7 +170,7 @@ struct IdeaBankView: View {
         }
         .foregroundStyle(Color.agentText)
         .padding(.horizontal, AgentLayout.pageMargin)
-        .padding(.top, AgentSpacing.x8)
+        .padding(.top, AgentLayout.pageTopPadding)
         .padding(.bottom, AgentLayout.pageHeaderToContentSpacing)
     }
 
@@ -291,6 +345,64 @@ struct IdeaBankView: View {
                 .stroke(Color.agentBorder, lineWidth: 0.75)
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var inspirationList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionRuleHeader(title: "Saved Posts", trailing: "\(savedInspirations.count)")
+            ForEach(Array(savedInspirationPreview.enumerated()), id: \.element.id) { index, source in
+                SavedPostRow(
+                    source: source,
+                    pillarName: inspirationPillar(source)?.name,
+                    pillarColorHex: inspirationPillar(source)?.resolvedColorHex(in: allPillars),
+                    showsDivider: index < savedInspirationPreview.count - 1,
+                    open: { appModel.openInspiration(source) },
+                    openOriginal: { openOriginalPost(source) },
+                    requestDeletion: { requestSavedPostDeletion(source) }
+                )
+            }
+
+            Button {
+                showsSavedPostsLibrary = true
+            } label: {
+                HStack(spacing: AgentSpacing.x2) {
+                    Text("View all saved posts")
+                        .font(.agentSubtext.weight(.semibold))
+                    Spacer()
+                    AgentIconView(.forward, size: 11)
+                }
+                .foregroundStyle(Color.agentText)
+                .frame(minHeight: 48)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the complete Saved Posts bank")
+        }
+    }
+
+    private func inspirationPillar(_ source: InspirationSource) -> Pillar? {
+        guard let pillarID = source.pillarID else { return nil }
+        return allPillars.first { $0.id == pillarID && $0.workspaceID == source.workspaceID }
+    }
+
+    private func openOriginalPost(_ source: InspirationSource) {
+        guard let url = URL(string: source.canonicalURLString) else { return }
+        openURL(url)
+    }
+
+    private func requestSavedPostDeletion(_ source: InspirationSource) {
+        pendingSavedPostDeletion = source
+        confirmsSavedPostDeletion = true
+    }
+
+    private func deleteSavedPost(_ source: InspirationSource) {
+        do {
+            try InspirationDeletionCoordinator.delete(source, context: context)
+            appModel.notice = .info("Saved post deleted.")
+        } catch {
+            appModel.presentCreatorError(error, action: "This saved post")
+        }
+        pendingSavedPostDeletion = nil
     }
 
     @ViewBuilder
