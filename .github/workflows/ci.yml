@@ -20,6 +20,8 @@ jobs:
           node-version: 24.18.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build shared contracts
+        run: pnpm --filter @agent-cy/contracts build
       - run: pnpm typecheck
       - run: pnpm test
 
