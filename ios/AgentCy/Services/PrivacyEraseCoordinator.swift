@@ -245,6 +245,16 @@ final class PrivacyEraseCoordinator {
             )
         }
         await AIOperationIDRegistry.shared.removeAll()
+
+        // Best effort: the bridge folder may live in iCloud Drive and be
+        // unreachable right now; a failed file removal must not block the
+        // erase, but the connection and Local Cy opt-in always reset.
+        try? MCPBridgePreferences.withDirectory { folder in
+            try FileManager.default.removeItem(at: folder.appending(path: "snapshot.json"))
+        }
+        MCPBridgePreferences.disconnect()
+        UserDefaults.standard.removeObject(forKey: LocalCyPreferences.enabledKey)
+
         do {
             try archiveCleaner.removeArchives(currentExportURL: currentExportURL)
         } catch {

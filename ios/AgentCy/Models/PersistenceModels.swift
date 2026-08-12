@@ -1708,3 +1708,16 @@ enum AgentCySchema {
 
     static var schema: Schema { Schema(types) }
 }
+
+/// The store is versioned from day one so the first real model change can ship
+/// as a `MigrationStage` instead of relying on lightweight migration to
+/// succeed against every install in the field.
+enum AgentCySchemaV1: VersionedSchema {
+    static let versionIdentifier = Schema.Version(1, 0, 0)
+    static var models: [any PersistentModel.Type] { AgentCySchema.types }
+}
+
+enum AgentCyMigrationPlan: SchemaMigrationPlan {
+    static var schemas: [any VersionedSchema.Type] { [AgentCySchemaV1.self] }
+    static var stages: [MigrationStage] { [] }
+}

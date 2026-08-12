@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import WidgetKit
 
 struct PrivacyDeleteRequest: Codable, Equatable, Sendable {
     let requestId: UUID
@@ -146,44 +147,26 @@ struct SwiftDataLocalCreatorDataEraser: LocalCreatorDataErasing {
     }
 
     func eraseAll(context: ModelContext) async throws {
-        try deleteAll(CreatorWorkspace.self, context: context)
-        try deleteAll(CreatorProfile.self, context: context)
-        try deleteAll(VoiceExample.self, context: context)
-        try deleteAll(VoiceProfile.self, context: context)
-        try deleteAll(CreativeBrief.self, context: context)
-        try deleteAll(InspirationSource.self, context: context)
-        try deleteAll(InspirationTag.self, context: context)
-        try deleteAll(PendingBriefProposal.self, context: context)
-        try deleteAll(PendingVoiceProfileProposal.self, context: context)
-        try deleteAll(PlatformOutput.self, context: context)
-        try deleteAll(CreatorSocialAccount.self, context: context)
-        try deleteAll(BrandActivity.self, context: context)
-        try deleteAll(BrandContact.self, context: context)
-        try deleteAll(BrandPartner.self, context: context)
-        try deleteAll(CreatorTask.self, context: context)
-        try deleteAll(Pillar.self, context: context)
-        try deleteAll(PublishingFormat.self, context: context)
-        try deleteAll(PublishingDestination.self, context: context)
-        try deleteAll(DailyFocusTemplateEntry.self, context: context)
-        try deleteAll(DailyFocusOverride.self, context: context)
-        try deleteAll(DailyFocusDayDetail.self, context: context)
-        try deleteAll(PendingWeekProposal.self, context: context)
-        try deleteAll(CreatorAttachment.self, context: context)
-        try deleteAll(RhythmTemplate.self, context: context)
-        try deleteAll(WeekPlan.self, context: context)
-        try deleteAll(ConversationThread.self, context: context)
-        try deleteAll(ConversationMessage.self, context: context)
-        try deleteAll(ReminderSettings.self, context: context)
-        try deleteAll(SubscriptionState.self, context: context)
+        // Derived from the schema so a newly added model type can never be
+        // missed by this hand-off; PrivacyEraseTests asserts the store is
+        // empty for every schema type afterwards.
+        for type in AgentCySchema.types {
+            try deleteAll(type, context: context)
+        }
         try context.save()
         try inspirationQueueStore?.removeAll()
         try? InspirationShareCreatorSnapshotStore.delete()
         InspirationWorkspaceHintStore.save(nil, defaults: inspirationWorkspaceDefaults)
         CreatorWorkspacePreferences.activeWorkspaceID = nil
+        AgentCyWidgetSnapshotStore.delete()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
-    private func deleteAll<T: PersistentModel>(_ type: T.Type, context: ModelContext) throws {
-        try context.fetch(FetchDescriptor<T>()).forEach(context.delete)
+    private func deleteAll(_ type: any PersistentModel.Type, context: ModelContext) throws {
+        func wipe<T: PersistentModel>(_ concrete: T.Type) throws {
+            try context.fetch(FetchDescriptor<T>()).forEach(context.delete)
+        }
+        try wipe(type)
     }
 }
 

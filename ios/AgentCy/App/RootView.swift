@@ -77,11 +77,11 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .agentCyNotificationRouteReady)) { _ in
             handlePendingNotificationRoute()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .agentCyNotificationContentChanged)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .agentCyNotificationContentChanged).receive(on: DispatchQueue.main)) { _ in
             WidgetSnapshotService.refresh(context: context)
             Task { await appModel.refreshReminderSchedule(context: context) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange).receive(on: DispatchQueue.main)) { _ in
             Task { await appModel.refreshReminderSchedule(context: context) }
         }
         .agentScreen()

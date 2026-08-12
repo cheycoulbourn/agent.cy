@@ -131,6 +131,36 @@ final class PrivacyEraseTests: XCTestCase {
         XCTAssertTrue(completed)
     }
 
+    func testEraseAllEmptiesEveryModelTypeInTheSchema() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Ari", goal: "Teach", adultConfirmed: true, onboardingCompleted: true)
+        context.insert(profile)
+        let series = ContentSeries(name: "Weekly recap")
+        context.insert(series)
+        context.insert(SeriesEpisodeSlot(seriesID: series.id, plannedDate: Date()))
+        context.insert(CreatorTask(title: "Edit teaser"))
+        try context.save()
+
+        let eraser = SwiftDataLocalCreatorDataEraser()
+        try await eraser.eraseAll(context: context)
+
+        for type in AgentCySchema.types {
+            XCTAssertEqual(
+                try rowCount(of: type, context: context),
+                0,
+                "\(type) survived Erase All; the eraser must cover every AgentCySchema type"
+            )
+        }
+    }
+
+    private func rowCount(of type: any PersistentModel.Type, context: ModelContext) throws -> Int {
+        func count<T: PersistentModel>(_ concrete: T.Type) throws -> Int {
+            try context.fetchCount(FetchDescriptor<T>())
+        }
+        return try count(type)
+    }
+
     func testLivePrivacyFailurePreservesDataAndCredentialForRetry() async throws {
         let recorder = EraseOrderRecorder()
         let identity = InstallationIdentity(

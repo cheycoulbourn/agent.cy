@@ -175,6 +175,12 @@ enum AgentCyWidgetSnapshotStore {
         defaults.set(try encoder.encode(snapshot), forKey: AgentCyWidgetShared.snapshotKey)
     }
 
+    static func delete(
+        defaults: UserDefaults? = UserDefaults(suiteName: AgentCyWidgetShared.appGroupIdentifier)
+    ) {
+        defaults?.removeObject(forKey: AgentCyWidgetShared.snapshotKey)
+    }
+
     private static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970

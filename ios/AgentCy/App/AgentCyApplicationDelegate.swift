@@ -110,7 +110,11 @@ final class AgentCyApplicationDelegate: NSObject, UIApplicationDelegate, @precon
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        NotificationCenter.default.post(name: .agentCyNotificationContentChanged, object: nil)
+        // This delegate runs on UNUserNotificationCenter's queue; observers of
+        // this notification do main-actor SwiftData work, so hop first.
+        await MainActor.run {
+            NotificationCenter.default.post(name: .agentCyNotificationContentChanged, object: nil)
+        }
         return []
     }
 
