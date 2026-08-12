@@ -38,6 +38,7 @@ enum AgentLayout {
 enum AgentRadius {
     static let structural: CGFloat = 8
     static let control: CGFloat = 8
+    static let card: CGFloat = 12
     static let panel: CGFloat = 16
     static let floating: CGFloat = 28
     static let dashboard: CGFloat = 20
@@ -257,11 +258,7 @@ struct AgentDesktopDetailRail<Trailing: View>: View {
     var body: some View {
         ZStack {
             HStack(spacing: AgentSpacing.x3) {
-                AgentDesktopDetailIconButton(
-                    title: "Back",
-                    icon: .back,
-                    action: backAction
-                )
+                AgentDesktopDetailBackButton(action: backAction)
 
                 Spacer(minLength: 0)
 
@@ -278,6 +275,39 @@ struct AgentDesktopDetailRail<Trailing: View>: View {
         .padding(.top, AgentSpacing.x6)
         .padding(.bottom, AgentSpacing.x4)
         .background(Color.agentCanvas)
+    }
+}
+
+/// Desktop navigation stays visible without looking like a floating iPhone
+/// toolbar control. The label improves wayfinding, while the background only
+/// appears when a pointer confirms that the control is interactive.
+struct AgentDesktopDetailBackButton: View {
+    @State private var isHovered = false
+
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: AgentSpacing.x2) {
+                AgentIconView(.back, size: 17)
+                Text("Back")
+                    .font(.agentSubtext.weight(.medium))
+            }
+            .foregroundStyle(Color.agentText)
+            .padding(.horizontal, AgentSpacing.x2)
+            .frame(height: 36)
+            .background(
+                isHovered ? Color.agentSelectionFill : Color.clear,
+                in: .rect(cornerRadius: AgentRadius.control)
+            )
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(.rect)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+#if targetEnvironment(macCatalyst)
+        .onHover { isHovered = $0 }
+#endif
+        .accessibilityLabel("Back")
     }
 }
 
@@ -301,20 +331,24 @@ struct AgentDesktopDetailIconButton: View {
 }
 
 struct AgentDesktopDetailIconLabel: View {
+    @State private var isHovered = false
+
     let icon: AgentIcon
     var foreground: Color = .agentText
 
     var body: some View {
         AgentIconView(icon, size: icon == .back ? 18 : 16)
             .foregroundStyle(foreground)
+            .frame(width: 36, height: 36)
+            .background(
+                isHovered ? Color.agentSelectionFill : Color.clear,
+                in: .rect(cornerRadius: AgentRadius.control)
+            )
             .frame(width: 44, height: 44)
-            .background(Color.agentSurface, in: .circle)
-            .overlay {
-                Circle()
-                    .stroke(Color.agentBorder, lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .contentShape(.circle)
+            .contentShape(.rect)
+#if targetEnvironment(macCatalyst)
+            .onHover { isHovered = $0 }
+#endif
     }
 }
 
@@ -332,6 +366,7 @@ extension Color {
     static let agentFocusControl = adaptive(light: AgentColorPalette.focusLight, dark: AgentColorPalette.focusDark)
     static let actionAccent = adaptive(light: AgentColorPalette.inkLight, dark: AgentColorPalette.inkDark)
     static let cyAccent = Color(uiColor: AgentColorPalette.cy.uiColor)
+    static let cyAccentText = adaptive(light: AgentColorPalette.cy, dark: AgentColorPalette.cyTextDark)
     static let onCyAccent = Color(uiColor: AgentColorPalette.inkDark.uiColor)
     static let onAccent = adaptive(light: AgentColorPalette.inkDark, dark: AgentColorPalette.inkLight)
     static let agentSuccess = adaptive(light: AgentColorPalette.successLight, dark: AgentColorPalette.successDark)
@@ -731,6 +766,8 @@ struct AgentTaskCheckboxMark: View {
     let isCompleted: Bool
     var color: Color = .agentBorder
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         RoundedRectangle(cornerRadius: 4)
             .stroke(color, lineWidth: 1.25)
@@ -739,12 +776,13 @@ struct AgentTaskCheckboxMark: View {
                 in: .rect(cornerRadius: 4)
             )
             .overlay {
-                if isCompleted {
-                    AgentIconView(.check, size: 11)
-                        .foregroundStyle(Color.agentCanvas)
-                }
+                AgentIconView(.check, size: 11)
+                    .foregroundStyle(Color.agentCanvas)
+                    .opacity(isCompleted ? 1 : 0)
+                    .scaleEffect(isCompleted ? 1 : 0.6)
             }
             .frame(width: 19, height: 19)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isCompleted)
     }
 }
 
@@ -770,6 +808,50 @@ struct AgentCompactSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.agentText)
             .background(Color.agentSurface, in: .capsule)
             .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
+            .opacity(isEnabled ? 1 : 0.42)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Compact primary action for persistent desktop rails. It keeps the main
+/// action visible without turning the bottom of a form into a floating card.
+struct AgentDesktopPrimaryActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.agentSubtext.weight(.semibold))
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(minHeight: 36)
+            .foregroundStyle(Color.onAccent)
+            .background(Color.actionAccent, in: .rect(cornerRadius: AgentRadius.control))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.42)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Compact actions that sit directly above a desktop paper surface. They keep
+/// edit controls discoverable without competing with the content card.
+struct AgentDesktopQuietActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var isProminent = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.agentSubtext.weight(.medium))
+            .foregroundStyle(isProminent ? Color.onAccent : Color.agentText)
+            .padding(.horizontal, AgentSpacing.x3)
+            .frame(minHeight: 40)
+            .background(
+                isProminent
+                    ? Color.actionAccent.opacity(configuration.isPressed ? 0.82 : 1)
+                    : Color.agentSelectionFill.opacity(configuration.isPressed ? 1 : 0.72),
+                in: .rect(cornerRadius: AgentRadius.control)
+            )
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
@@ -909,6 +991,7 @@ struct SectionRuleHeader: View {
             if let trailing {
                 Text(trailing)
                     .font(.agentMetadata)
+                    .monospacedDigit()
                     .foregroundStyle(Color.agentSecondary)
             }
         }
@@ -916,6 +999,35 @@ struct SectionRuleHeader: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(Color.agentBorder).frame(height: 1)
         }
+    }
+}
+
+/// Pointer feedback for desktop rows: the selection fill appears only when a
+/// pointer confirms the row is interactive. Inert on touch platforms, so it is
+/// safe on shared views.
+struct AgentHoverRowModifier: ViewModifier {
+    var cornerRadius: CGFloat = AgentRadius.control
+
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                // Overlay, not background, so the fill also reads on opaque
+                // surfaces like the quick-add card.
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(isHovered ? Color.agentSelectionFill : Color.clear)
+                    .allowsHitTesting(false)
+            }
+#if targetEnvironment(macCatalyst)
+            .onHover { isHovered = $0 }
+#endif
+    }
+}
+
+extension View {
+    func agentHoverRow(cornerRadius: CGFloat = AgentRadius.control) -> some View {
+        modifier(AgentHoverRowModifier(cornerRadius: cornerRadius))
     }
 }
 
@@ -1065,7 +1177,7 @@ struct CyCallout<Content: View>: View {
                 Text(heading.rawValue.uppercased())
                     .font(.agentMetadata)
                     .tracking(1.4)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
                     .accessibilityLabel(heading.rawValue)
             }
             content
@@ -1075,10 +1187,10 @@ struct CyCallout<Content: View>: View {
         .padding(AgentSpacing.x6)
         .background(
             Color(uiColor: (colorScheme == .dark ? AgentColorPalette.cyPanel : AgentColorPalette.surfaceDark).uiColor),
-            in: .rect(cornerRadius: 20)
+            in: .rect(cornerRadius: AgentRadius.dashboard)
         )
         .agentSurfaceChrome(
-            cornerRadius: 20,
+            cornerRadius: AgentRadius.dashboard,
             borderColor: Color.cyAccent.opacity(colorScheme == .dark ? 0.42 : 0.18)
         )
         .environment(\.colorScheme, .dark)
@@ -1338,13 +1450,17 @@ struct AgentInputHeader: View {
             MetaLabel(title)
             Spacer()
             if isEditing {
-                Button("Done") {
+                Button {
                     onDone()
                     AgentKeyboard.dismiss()
+                } label: {
+                    Text("Done")
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+                        .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                        .contentShape(.rect)
                 }
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.agentText)
-                .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                .buttonStyle(.plain)
                 .accessibilityHint("Keeps your writing and hides the keyboard")
             }
         }
@@ -1409,7 +1525,7 @@ enum AgentChipContrast {
     ) -> String {
         guard let pillar = AgentOKLCH(hex: pillarHex),
               let background = AgentOKLCH(hex: backgroundHex) else {
-            return "5D6B58"
+            return AgentColorPalette.pillarFallbackHex
         }
         guard contrast(pillar, background) < minimumContrast else { return pillar.hexString }
 

@@ -260,6 +260,7 @@ struct DesktopAppShellView: View {
                 }
             }
             .contentShape(.rect(cornerRadius: AgentRadius.control))
+            .agentHoverRow()
         }
         .buttonStyle(AgentPressButtonStyle())
         .accessibilityElement(children: .combine)
@@ -291,6 +292,7 @@ struct DesktopAppShellView: View {
             .padding(.horizontal, AgentSpacing.x4)
             .padding(.vertical, AgentSpacing.x2)
             .contentShape(.rect)
+            .agentHoverRow(cornerRadius: 0)
         }
         .buttonStyle(AgentPressButtonStyle())
         .overlay(alignment: .top) {
@@ -450,6 +452,7 @@ struct DesktopAppShellView: View {
                     .stroke(Color.agentPureBlack.opacity(0.14), lineWidth: 1)
             }
             .contentShape(.rect(cornerRadius: AgentRadius.panel))
+            .agentHoverRow(cornerRadius: AgentRadius.panel)
         }
         .buttonStyle(AgentPressButtonStyle())
         .keyboardShortcut("n", modifiers: .command)
@@ -514,8 +517,9 @@ struct DesktopAppShellView: View {
                                         alignment: .leading
                                     )
                                     .contentShape(.rect)
+                                    .agentHoverRow()
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(AgentPressButtonStyle())
                             .accessibilityHint("Opens task details")
                         }
                         .frame(minHeight: 44)
@@ -573,6 +577,7 @@ struct DesktopAppShellView: View {
                         alignment: .leading
                     )
                     .contentShape(.rect)
+                    .agentHoverRow()
                 }
                 .buttonStyle(AgentPressButtonStyle())
                 .accessibilityHint("Opens this post")
@@ -620,6 +625,7 @@ struct DesktopAppShellView: View {
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                 .contentShape(.rect)
+                                .agentHoverRow()
                         }
                         .buttonStyle(AgentPressButtonStyle())
                         .accessibilityHint("Opens this idea")
@@ -662,8 +668,9 @@ struct DesktopAppShellView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .contentShape(.rect)
+                .agentHoverRow()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentPressButtonStyle())
             .accessibilityLabel(accessibilityLabel)
         }
     }
@@ -891,11 +898,14 @@ struct DesktopAppShellView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button("Undo") {
+            Button {
                 appModel.undoLastTaskCompletion(context: modelContext)
+            } label: {
+                Text("Undo")
+                    .font(.agentDesktopUtilityBodyEmphasis)
+                    .frame(minWidth: 56, minHeight: 40)
+                    .contentShape(.rect)
             }
-            .font(.agentDesktopUtilityBodyEmphasis)
-            .frame(minWidth: 56, minHeight: 40)
             .buttonStyle(.plain)
         }
         .padding(.leading, AgentSpacing.x4)
@@ -930,6 +940,10 @@ struct DesktopAppShellView: View {
             return
         }
         guard !requestIDs.subtracting(presentedMCPRequestIDs).isEmpty else { return }
+
+        // Never replace a sheet the creator is working in; the floating-button
+        // badge carries the signal and this poll retries once the sheet closes.
+        guard appModel.presentedSheet == nil else { return }
         presentedMCPRequestIDs = requestIDs
 
         appModel.requestedSettingsPage = nil

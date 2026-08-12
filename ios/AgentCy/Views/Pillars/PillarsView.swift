@@ -371,6 +371,12 @@ struct PillarDetailView: View {
                         detailHeader
                             .reportAgentViewHeight()
 
+#if targetEnvironment(macCatalyst)
+                        desktopPillarActions
+                            .padding(.horizontal, AgentLayout.dashboardGutter)
+                            .padding(.bottom, AgentSpacing.x3)
+#endif
+
                         PillarPaperSurface(
                             minimumHeight: AgentScrollableSurfacePolicy.minimumHeight(
                                 viewportHeight: proxy.size.height,
@@ -481,22 +487,36 @@ struct PillarDetailView: View {
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
         AgentDesktopDetailRail(title: "Pillar", backAction: dismiss.callAsFunction) {
-            HStack(spacing: AgentSpacing.x2) {
-                if isEditing {
-                    AgentDesktopDetailIconButton(title: "Cancel editing", icon: .close) {
-                        cancelEditing()
-                    }
-                    AgentDesktopDetailIconButton(
-                        title: "Save pillar",
-                        icon: .check,
-                        isEnabled: canSaveEdits,
-                        action: saveEdits
-                    )
-                } else {
-                    AgentDesktopDetailIconButton(title: "Edit \(pillar.name)", icon: .pencil) {
-                        beginEditing()
+            EmptyView()
+        }
+    }
+
+    private var desktopPillarActions: some View {
+        HStack(spacing: AgentSpacing.x2) {
+            Spacer(minLength: 0)
+
+            if isEditing {
+                Button("Cancel", action: cancelEditing)
+                    .buttonStyle(AgentDesktopQuietActionButtonStyle())
+
+                Button(action: saveEdits) {
+                    HStack(spacing: AgentSpacing.x2) {
+                        AgentIconView(.check, size: 14)
+                        Text("Save")
                     }
                 }
+                .buttonStyle(AgentDesktopQuietActionButtonStyle(isProminent: true))
+                .disabled(!canSaveEdits)
+                .accessibilityLabel("Save pillar")
+            } else {
+                Button(action: beginEditing) {
+                    HStack(spacing: AgentSpacing.x2) {
+                        AgentIconView(.pencil, size: 14)
+                        Text("Edit")
+                    }
+                }
+                .buttonStyle(AgentDesktopQuietActionButtonStyle())
+                .accessibilityLabel("Edit \(pillar.name)")
             }
         }
     }
@@ -513,9 +533,9 @@ struct PillarDetailView: View {
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 112)
                         .padding(14)
-                        .background(Color.agentCanvas, in: .rect(cornerRadius: 14))
+                        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.panel))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 14)
+                            RoundedRectangle(cornerRadius: AgentRadius.panel)
                                 .stroke(Color.agentBorder, lineWidth: 1)
                         }
                 } else {
@@ -562,7 +582,11 @@ struct PillarDetailView: View {
             var days = pillar.assignedWeekdays
             if selected { days.remove(day) } else { days.insert(day) }
             pillar.assignedWeekdays = days
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                appModel.notice = .error("Couldn’t update this pillar’s days. Try again.")
+            }
         } label: {
             VStack(spacing: AgentSpacing.x2) {
                 Text(day.letter)
@@ -893,7 +917,13 @@ struct NewPillarView: View {
         )
         pillar.workspaceID = appModel.resolvedWorkspaceID(context: context)
         context.insert(pillar)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            appModel.notice = .error("Couldn’t create this pillar. Try again.")
+            return
+        }
         onSave(pillar)
         dismiss()
     }
@@ -1030,9 +1060,31 @@ private struct PillarColorChooser: View {
                 .accessibilityLabel("Pillar color")
                 .accessibilityValue(isSelected(hex) ? "Selected" : "Not selected")
             }
-            ColorPicker("Custom color", selection: customColor, supportsOpacity: false)
-                .labelsHidden()
-                .frame(maxWidth: .infinity, minHeight: 48)
+            ZStack {
+                Circle()
+                    .fill(Color(agentHex: selectedHex))
+                    .frame(width: 32, height: 32)
+                    .overlay {
+                        Circle().stroke(Color.agentBorder, lineWidth: 0.75)
+                    }
+
+                Image(systemName: "eyedropper")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 13, height: 13)
+                    .foregroundStyle(Color.agentText)
+                    .symbolRenderingMode(.monochrome)
+
+                ColorPicker("Custom color", selection: customColor, supportsOpacity: false)
+                    .labelsHidden()
+                    .opacity(0.02)
+                    .frame(width: 44, height: 44)
+                    .clipShape(.circle)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(.circle)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Choose a custom pillar color")
         }
     }
 

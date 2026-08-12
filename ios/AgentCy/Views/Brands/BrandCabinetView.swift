@@ -244,9 +244,14 @@ struct BrandPartnerDetailView: View {
                             .foregroundStyle(Color.agentText)
                     }
                     Spacer()
-                    Button("Edit") { showEditor = true }
-                        .font(.agentSubtext.weight(.semibold))
-                        .foregroundStyle(Color.agentText)
+                    Button { showEditor = true } label: {
+                        Text("Edit")
+                            .font(.agentSubtext.weight(.semibold))
+                            .foregroundStyle(Color.agentText)
+                            .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
@@ -378,12 +383,7 @@ struct BrandPartnerDetailView: View {
                         Divider()
                             .overlay(Color.agentBorder)
 
-                        AgentBlockAddActionButton(
-                            title: "Log activity",
-                            background: .agentPureWhite,
-                            foreground: .agentPureBlack,
-                            border: .agentPureBlack.opacity(0.08)
-                        ) {
+                        AgentBlockAddActionButton(title: "Log activity") {
                             activityEditorRequest = BrandActivityEditorRequest()
                         }
                         .padding(.horizontal, AgentSpacing.x3)

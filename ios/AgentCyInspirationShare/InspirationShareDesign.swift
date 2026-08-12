@@ -42,6 +42,10 @@ extension Color {
         dark: AgentColorPalette.hairlineDark
     )
     static let shareCy = Color(uiColor: AgentColorPalette.cy.uiColor)
+    static let shareCyText = shareAdaptive(
+        light: AgentColorPalette.cy,
+        dark: AgentColorPalette.cyTextDark
+    )
     static let shareOnCy = Color(uiColor: AgentColorPalette.inkDark.uiColor)
     static let shareSuccess = shareAdaptive(
         light: AgentColorPalette.successLight,
@@ -159,7 +163,7 @@ struct ShareCyThinkingMark: View {
                 Capsule().frame(width: max(2, size * 0.1), height: size)
                     .rotationEffect(.degrees(135))
             }
-            .foregroundStyle(Color.shareCy)
+            .foregroundStyle(Color.shareCyText)
             .frame(width: size, height: size)
             .rotationEffect(.degrees(reduceMotion ? 0 : progress * 360))
             .scaleEffect(reduceMotion ? 0.94 + (pulse * 0.12) : 1)

@@ -9,7 +9,7 @@ private enum WidgetPalette {
     static let secondary = Color.widgetAdaptive(light: AgentColorPalette.secondaryLight, dark: AgentColorPalette.secondaryDark)
     static let border = Color.widgetAdaptive(light: AgentColorPalette.borderLight, dark: AgentColorPalette.borderDark)
     static let hairline = Color.widgetAdaptive(light: AgentColorPalette.hairlineLight, dark: AgentColorPalette.hairlineDark)
-    static let cy = Color(uiColor: AgentColorPalette.cy.uiColor)
+    static let cy = Color.widgetAdaptive(light: AgentColorPalette.cy, dark: AgentColorPalette.cyTextDark)
 }
 
 private struct WidgetSurface<Content: View>: View {
@@ -181,7 +181,7 @@ struct NextPostWidgetView: View {
                     Spacer(minLength: 10)
                     HStack(spacing: 7) {
                         Circle()
-                            .fill(Color(hex: post.pillarColorHex ?? "514D47"))
+                            .fill(Color(hex: post.pillarColorHex ?? AgentColorPalette.pillarFallbackHex))
                             .frame(width: 7, height: 7)
                         Text(post.pillarName.uppercased()).widgetMeta()
                     }
@@ -301,7 +301,7 @@ struct IdeaBankWidgetView: View {
                 if let idea = entry.snapshot.latestIdea {
                     HStack(alignment: .top, spacing: 9) {
                         Rectangle()
-                            .fill(Color(hex: idea.pillarColorHex ?? "514D47"))
+                            .fill(Color(hex: idea.pillarColorHex ?? AgentColorPalette.pillarFallbackHex))
                             .frame(width: 3)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(idea.title)
@@ -495,6 +495,8 @@ struct ProductionQueueWidgetView: View {
                                     isCompleted: !task.isCompleted
                                 )) {
                                     taskCheckbox(task)
+                                        .frame(width: 44, height: 44, alignment: .leading)
+                                        .contentShape(.rect)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(task.isCompleted ? "Mark \(task.title) open" : "Complete \(task.title)")
@@ -558,7 +560,7 @@ struct ProductionQueueWidgetView: View {
     }
 
     private func postAccent(_ post: WidgetPostSnapshot) -> Color {
-        Color(hex: post.pillarColorHex ?? "514D47")
+        Color(hex: post.pillarColorHex ?? AgentColorPalette.pillarFallbackHex)
     }
 
     private func postBackground(_ post: WidgetPostSnapshot) -> Color {
@@ -629,6 +631,7 @@ private struct CyAsteriskBadge: View {
 private extension View {
     func widgetMeta(color: Color = WidgetPalette.secondary) -> some View {
         font(.widgetMetadata(size: 10))
+            .monospacedDigit()
             .tracking(1.15)
             .foregroundStyle(color)
             .lineLimit(1)

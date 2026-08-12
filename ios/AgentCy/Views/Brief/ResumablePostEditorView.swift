@@ -66,7 +66,6 @@ struct ResumablePostEditorView: View {
     let isReviewEditing: Bool
     let isAlreadyInIdeaBank: Bool
     let bottomActionClearance: CGFloat
-    let usesDesktopDetailRail: Bool
 
     @State private var targetDate: Date
     @State private var hasTargetDate: Bool
@@ -97,6 +96,8 @@ struct ResumablePostEditorView: View {
     @State private var pendingProposal: BriefProposal?
     @State private var activeSetupPicker: PostDraftSetupPicker?
     @State private var isAddingCustomStatus = false
+    @State private var confirmsMediaRemoval = false
+    @State private var mediaPendingRemoval: CreatorAttachment?
     @State private var customStatusDraft = ""
     @State private var customStatusPendingDeletion: String?
     @State private var confirmDeleteCustomStatus = false
@@ -144,7 +145,6 @@ struct ResumablePostEditorView: View {
         isReviewEditing: Bool = false,
         isAlreadyInIdeaBank: Bool = false,
         bottomActionClearance: CGFloat = 88,
-        usesDesktopDetailRail: Bool = false,
         onSpark: @escaping () -> Void
     ) {
         self.brief = brief
@@ -154,7 +154,6 @@ struct ResumablePostEditorView: View {
         self.isReviewEditing = isReviewEditing
         self.isAlreadyInIdeaBank = isAlreadyInIdeaBank
         self.bottomActionClearance = bottomActionClearance
-        self.usesDesktopDetailRail = usesDesktopDetailRail
         let briefID = brief.id
         _outputs = Query(
             filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
@@ -183,21 +182,21 @@ struct ResumablePostEditorView: View {
 
     var body: some View {
         ScrollView {
-            editorContent
-            .padding(.horizontal, AgentLayout.pageMargin)
-            .padding(.top, editorTopPadding)
-            .padding(.bottom, showsFloatingScheduleButton ? AgentSpacing.x6 : 80)
+            editorPageSurface
         }
         .scrollDismissesKeyboard(.interactively)
+#if targetEnvironment(macCatalyst)
+        .background(Color.agentCanvas)
+#endif
         .safeAreaInset(edge: .bottom, spacing: 0) {
             floatingScheduleButton
         }
 #if targetEnvironment(macCatalyst)
         .safeAreaInset(edge: .top, spacing: 0) {
-            if usesDesktopDetailRail {
-                desktopDetailRail
-            }
+            desktopDetailRail
         }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
 #endif
         .sheet(isPresented: $showDatePicker, onDismiss: finishDateSelection) {
             targetDatePickerSheet
@@ -206,10 +205,12 @@ struct ResumablePostEditorView: View {
             workDatePickerSheet
         }
         .sheet(item: $activeSetupPicker, onDismiss: finishSetupPickerPresentation) { picker in
-            postSetupPickerSheet(picker)
-                .presentationDetents([.height(postSetupPickerHeight(for: picker))])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(Color.agentCanvas)
+            ScrollView {
+                postSetupPickerSheet(picker)
+            }
+            .presentationDetents([.height(postSetupPickerHeight(for: picker)), .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Color.agentCanvas)
         }
         .sheet(isPresented: $showTaskComposer) {
             PostDraftTaskComposer(brief: brief, output: output, defaultDate: defaultTaskDate)
@@ -232,13 +233,7 @@ struct ResumablePostEditorView: View {
             }
         }
         .toolbar {
-#if targetEnvironment(macCatalyst)
-            if !usesDesktopDetailRail {
-                ToolbarItem(placement: .topBarTrailing) {
-                    navigationToolbarActionControl
-                }
-            }
-#else
+#if !targetEnvironment(macCatalyst)
             ToolbarItem(placement: .topBarTrailing) {
                 navigationToolbarActionControl
             }
@@ -321,18 +316,52 @@ struct ResumablePostEditorView: View {
         )
     }
 
+    @ViewBuilder
+    private var editorPageSurface: some View {
+#if targetEnvironment(macCatalyst)
+        editorContent
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.vertical, AgentSpacing.x8)
+            .background(
+                Color.agentSurface,
+                in: .rect(cornerRadius: AgentRadius.dashboard)
+            )
+            .agentSurfaceChrome(
+                cornerRadius: AgentRadius.dashboard,
+                role: .structural
+            )
+            .padding(.horizontal, AgentLayout.dashboardGutter)
+            .padding(.top, AgentSpacing.x2)
+            .padding(.bottom, AgentSpacing.x8)
+#else
+        editorContent
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.top, editorTopPadding)
+            .padding(.bottom, showsScheduleAction ? AgentSpacing.x6 : 80)
+#endif
+    }
+
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
         AgentDesktopDetailRail(title: "Edit post", backAction: dismiss.callAsFunction) {
-            desktopEditorActionControl
-                .frame(width: 44, height: 44)
+            HStack(spacing: AgentSpacing.x2) {
+                if showsScheduleAction {
+                    Button("Schedule post", action: requestSchedule)
+                        .buttonStyle(AgentDesktopPrimaryActionButtonStyle())
+                        .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityHint("Sets a date and adds this post to the weekly agenda")
+                }
+
+                desktopEditorActionControl
+                    .frame(width: 44, height: 44)
+            }
         }
     }
 #endif
 
     private var editorTopPadding: CGFloat {
 #if targetEnvironment(macCatalyst)
-        usesDesktopDetailRail ? AgentSpacing.x6 : AgentSpacing.x4
+        AgentSpacing.x6
 #else
         AgentSpacing.x4
 #endif
@@ -482,7 +511,7 @@ struct ResumablePostEditorView: View {
                     .overlay(Capsule().stroke(Color.cyAccent.opacity(0.18), lineWidth: 1))
                     .shadow(color: Color.cyAccent.opacity(0.16), radius: 12, y: 4)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AgentPressButtonStyle())
                 .accessibilityHint("Opens Cy with this saved post as context")
             }
         }
@@ -550,14 +579,14 @@ struct ResumablePostEditorView: View {
             } label: {
                 PostDraftSetupRow(label: "Platform", value: selectedDestination?.name ?? output.platform.title)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentPressButtonStyle())
 
             Button {
                 presentSetupPicker(.format)
             } label: {
                 PostDraftSetupRow(label: "Format", value: selectedFormat?.name ?? "Choose a format")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentPressButtonStyle())
             .disabled(output.destinationID == nil)
             .opacity(output.destinationID == nil ? 0.55 : 1)
 
@@ -566,7 +595,7 @@ struct ResumablePostEditorView: View {
             } label: {
                 PostDraftSetupRow(label: "Status", value: displayedWorkflowStatus)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentPressButtonStyle())
 
             if workflowStatus != .idea {
                 if showsWorkDate {
@@ -576,7 +605,7 @@ struct ResumablePostEditorView: View {
                             value: workDateLabel
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AgentPressButtonStyle())
                 }
 
                 Button { editPostDate() } label: {
@@ -585,7 +614,7 @@ struct ResumablePostEditorView: View {
                         value: targetDateLabel
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AgentPressButtonStyle())
             }
         }
         .overlay(alignment: .top) {
@@ -638,13 +667,14 @@ struct ResumablePostEditorView: View {
         }
     }
 
-    private var showsFloatingScheduleButton: Bool {
+    private var showsScheduleAction: Bool {
         !isEditingFinalizedPost && !isReviewEditing
     }
 
     @ViewBuilder
     private var floatingScheduleButton: some View {
-        if showsFloatingScheduleButton {
+#if !targetEnvironment(macCatalyst)
+        if showsScheduleAction {
             Button("Schedule post", action: requestSchedule)
                 .buttonStyle(AgentPrimaryButtonStyle())
                 .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -654,6 +684,7 @@ struct ResumablePostEditorView: View {
                 .shadow(color: Color.agentPureBlack.opacity(0.14), radius: 16, y: 7)
                 .accessibilityHint("Sets a date and adds this post to the weekly agenda")
         }
+#endif
     }
 
     private var pillarMenu: some View {
@@ -668,7 +699,7 @@ struct ResumablePostEditorView: View {
                 }
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AgentPressButtonStyle())
     }
 
     private func performStableSetupSelection(_ update: () -> Void) {
@@ -883,7 +914,7 @@ struct ResumablePostEditorView: View {
             .frame(minHeight: 54)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AgentPressButtonStyle())
     }
 
     private func workflowStatusPickerChoice(_ status: PostWorkflowStatus) -> some View {
@@ -908,7 +939,7 @@ struct ResumablePostEditorView: View {
             .frame(minHeight: 54)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AgentPressButtonStyle())
     }
 
     private func customStatusPickerChoice(_ status: String) -> some View {
@@ -1477,13 +1508,27 @@ struct ResumablePostEditorView: View {
                     HStack(spacing: AgentSpacing.x3) {
                         ForEach(postMedia) { attachment in
                             PostMediaThumbnail(attachment: attachment) {
-                                context.delete(attachment)
-                                try? context.save()
+                                mediaPendingRemoval = attachment
+                                confirmsMediaRemoval = true
                             }
                         }
                     }
                 }
                 .scrollIndicators(.hidden)
+                .confirmationDialog(
+                    "Remove this media?",
+                    isPresented: $confirmsMediaRemoval,
+                    titleVisibility: .visible,
+                    presenting: mediaPendingRemoval
+                ) { attachment in
+                    Button("Remove media", role: .destructive) {
+                        context.delete(attachment)
+                        try? context.save()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { _ in
+                    Text("This cannot be undone.")
+                }
             }
 
             PhotosPicker(
@@ -1501,9 +1546,9 @@ struct ResumablePostEditorView: View {
                 .foregroundStyle(Color.agentText)
                 .padding(.horizontal, AgentSpacing.x4)
                 .frame(maxWidth: .infinity, minHeight: 50)
-                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: AgentRadius.panel)
                         .stroke(Color.agentBorder, lineWidth: 1)
                 }
             }
@@ -2949,10 +2994,10 @@ private struct BufferedPostNotesEditor: View {
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 160)
                 .padding(16)
-                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: AgentRadius.panel)
+                        .stroke(Color.agentBorder, lineWidth: 1)
                 }
                 .focused($isFocused)
         }
@@ -3011,9 +3056,9 @@ private struct PostMediaThumbnail: View {
                 }
             }
             .frame(width: 104, height: 118)
-            .clipShape(.rect(cornerRadius: 14))
+            .clipShape(.rect(cornerRadius: AgentRadius.panel))
             .overlay {
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: AgentRadius.panel)
                     .stroke(Color.agentBorder, lineWidth: 1)
             }
 
@@ -3022,9 +3067,10 @@ private struct PostMediaThumbnail: View {
                     .foregroundStyle(Color.agentText)
                     .frame(width: 28, height: 28)
                     .background(.ultraThinMaterial, in: .circle)
+                    .frame(width: 44, height: 44)
+                    .contentShape(.circle)
             }
             .buttonStyle(.plain)
-            .padding(6)
             .accessibilityLabel("Remove \(attachment.fileName)")
 
             if attachment.kind == .video {

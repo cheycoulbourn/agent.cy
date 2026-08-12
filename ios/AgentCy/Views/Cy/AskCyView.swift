@@ -1025,14 +1025,10 @@ struct AskCyView: View {
             .foregroundStyle(Color.agentText)
             .padding(.horizontal, AgentSpacing.x4)
             .frame(maxWidth: .infinity, minHeight: 50)
-            .background(Color.agentSurface, in: .rect(cornerRadius: 14))
-            .agentSurfaceChrome(cornerRadius: 14)
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.agentBorder, lineWidth: 1)
-            }
+            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+            .agentSurfaceChrome(cornerRadius: AgentRadius.panel, borderColor: Color.agentBorder)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AgentPressButtonStyle())
     }
 
     private var conversationDivider: some View {
@@ -1126,8 +1122,9 @@ struct AskCyView: View {
                             .foregroundStyle(Color.agentText)
                             .padding(.horizontal, AgentSpacing.x3)
                             .frame(minHeight: 48)
+                            .contentShape(.rect)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AgentPressButtonStyle())
                         .overlay(alignment: .top) {
                             if index > 0 {
                                 Rectangle()
@@ -1139,11 +1136,7 @@ struct AskCyView: View {
                     }
                 }
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
-                .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
-                .overlay {
-                    RoundedRectangle(cornerRadius: AgentRadius.panel)
-                        .stroke(Color.agentBorder, lineWidth: 0.75)
-                }
+                .agentSurfaceChrome(cornerRadius: AgentRadius.panel, borderColor: Color.agentBorder)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 

@@ -1046,10 +1046,10 @@ private struct LinkedPostTaskComposer: View {
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 132)
                         .padding(16)
-                        .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: AgentRadius.panel)
+                                .stroke(Color.agentBorder, lineWidth: 1)
                         }
                         .focused($notesAreFocused)
                 }
@@ -1135,7 +1135,13 @@ private struct LinkedPostTaskComposer: View {
                 subtask.completedAt = Date()
             }
         }
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            appModel.notice = .error("Couldn’t save this task. Try again.")
+            return
+        }
         onSaved()
     }
 }
@@ -1203,6 +1209,8 @@ struct TaskRow: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 10)
+                    .contentShape(.rect)
+                    .agentHoverRow()
                 }
                 .buttonStyle(.plain)
             }
@@ -1349,10 +1357,10 @@ private struct TaskNotesDraftField: View {
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 132)
                 .padding(16)
-                .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: AgentRadius.panel)
+                        .stroke(Color.agentBorder, lineWidth: 1)
                 }
                 .focused($isFocused)
         }
@@ -1569,7 +1577,12 @@ struct TaskDetailView: View {
                originalFocusTemplateSignature.map({ $0 != focusTemplateSignature }) == true {
                 task.isFocusTemplateCustomized = true
             }
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                // The view is already gone; the notice is the only channel left.
+                appModel.notice = .error("Couldn’t save your task edits. Reopen the task to retry.")
+            }
             appModel.queueCalendarSync(context: context)
         }
         .onAppear {
@@ -1774,7 +1787,12 @@ struct TaskDetailView: View {
 
     private func saveAndDismiss() {
         commitTextDraft()
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            appModel.notice = .error("Couldn’t save this task. Try again.")
+            return
+        }
         appModel.queueCalendarSync(context: context)
         dismiss()
     }
@@ -1782,7 +1800,12 @@ struct TaskDetailView: View {
     private func duplicate() {
         commitTextDraft()
         context.insert(CreatorTask(briefID: task.briefID, pillarID: task.pillarID, platformOutputID: task.platformOutputID, title: "\(task.title) copy", kind: task.kind, lane: task.lane, priority: task.priority.normalized, notes: task.notes, targetDate: task.targetDate, includesTargetTime: task.includesTargetTime, dailyFocusDate: task.dailyFocusDate, dailyFocusTitle: task.dailyFocusTitle, dailyFocusTemplateEntryID: task.dailyFocusTemplateEntryID))
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            appModel.notice = .error("Couldn’t duplicate this task. Try again.")
+        }
     }
 
     private func commitTextDraft() {
@@ -1987,7 +2010,12 @@ private struct TaskDueDateEditor: View {
                 : nil
         }
         task.includesTargetTime = hasDate && includesTime
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            appModel.notice = .error("Couldn’t save this date. Try again.")
+            return
+        }
         appModel.queueCalendarSync(context: context)
         dismiss()
     }

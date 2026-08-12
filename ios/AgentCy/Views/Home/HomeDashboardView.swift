@@ -238,6 +238,8 @@ struct HomeDashboardView: View {
                 .foregroundStyle(Color.agentSecondary)
                 .frame(width: 28, height: 28)
                 .background(Color.agentCanvas, in: .circle)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)

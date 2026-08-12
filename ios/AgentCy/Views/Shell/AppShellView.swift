@@ -269,11 +269,14 @@ struct AppShellView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button("Undo") {
+            Button {
                 appModel.undoLastTaskCompletion(context: modelContext)
+            } label: {
+                Text("Undo")
+                    .font(.agentSubtext.weight(.bold))
+                    .frame(minWidth: 56, minHeight: 44)
+                    .contentShape(.rect)
             }
-            .font(.agentSubtext.weight(.bold))
-            .frame(minWidth: 56, minHeight: 44)
             .buttonStyle(.plain)
         }
         .padding(.leading, AgentSpacing.x4)
@@ -328,9 +331,13 @@ struct AppShellView: View {
             return
         }
         guard !requestIDs.subtracting(presentedMCPRequestIDs).isEmpty else { return }
+
+        // Never yank the creator out of in-progress work: while a sheet is up,
+        // the Cy tab badge carries the signal and this poll retries once the
+        // sheet closes (presentedMCPRequestIDs is only marked after navigating).
+        guard appModel.presentedSheet == nil else { return }
         presentedMCPRequestIDs = requestIDs
 
-        appModel.presentedSheet = nil
         appModel.requestedSettingsPage = nil
         cyPath = NavigationPath()
         appModel.selectedTab = .cy
@@ -481,7 +488,7 @@ private struct WalkthroughGuideCard: View {
                 Text(step.suggestionLabel)
                     .font(.paperInter(size: 10, weight: .semibold, relativeTo: .caption2))
                     .tracking(0.8)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
 
                 Text(step.suggestion)
                     .font(.paperInter(size: 13, weight: .medium, relativeTo: .subheadline))

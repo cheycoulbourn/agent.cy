@@ -2638,8 +2638,12 @@ struct DayAgendaView: View {
             showPillarOverwriteConfirmation = true
             return
         }
-        try? context.save()
-        dismiss()
+        do {
+            try context.save()
+            dismiss()
+        } catch {
+            appModel.notice = .error("Couldn’t save this day. Try again.")
+        }
     }
 
     private func daySection<Content: View>(
@@ -2915,7 +2919,14 @@ struct DayAgendaView: View {
             briefs: activeBriefs,
             affectedBriefIDs: affectedBriefIDs
         )
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            appModel.notice = .error("Couldn’t replace the pillar for this day. Try again.")
+            dismissAfterPillarSave = false
+            return
+        }
         WidgetSnapshotService.refresh(context: context)
 
         if dismissAfterPillarSave {
@@ -2984,11 +2995,14 @@ struct DayAgendaView: View {
                 }
                 .foregroundStyle(Color.agentText)
                 .padding(.top, AgentSpacing.x3)
+                .frame(minHeight: 44)
                 .overlay(alignment: .top) {
                     Rectangle().fill(Color.agentHairline).frame(height: 1)
                 }
+                .contentShape(.rect)
+                .agentHoverRow()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentPressButtonStyle())
         }
     }
 

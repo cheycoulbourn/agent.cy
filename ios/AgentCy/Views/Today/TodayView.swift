@@ -305,9 +305,12 @@ struct TodayView: View {
                 }
                 .foregroundStyle(Color.agentText)
                 .padding(.top, AgentSpacing.x3)
+                .frame(minHeight: 44)
                 .overlay(alignment: .top) { Rectangle().fill(Color.agentHairline).frame(height: 1) }
+                .contentShape(.rect)
+                .agentHoverRow()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentPressButtonStyle())
         }
     }
 

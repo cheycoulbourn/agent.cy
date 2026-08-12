@@ -335,11 +335,15 @@ struct InspirationReviewView: View {
                             }
 
                             if brief == nil {
-                                Button(isEditing ? "Done editing" : "Edit suggestion") {
+                                Button {
                                     isEditing.toggle()
+                                } label: {
+                                    Text(isEditing ? "Done editing" : "Edit suggestion")
+                                        .font(.agentSubtext)
+                                        .fontWeight(.semibold)
+                                        .frame(minHeight: 44)
+                                        .contentShape(.rect)
                                 }
-                                .font(.agentSubtext)
-                                .fontWeight(.semibold)
                                 .buttonStyle(.plain)
                             }
                         }
@@ -416,7 +420,8 @@ struct InspirationReviewView: View {
                 placeholder: "Give this idea a working title",
                 text: manualDraftBinding(\.title, limit: 160),
                 focus: .title,
-                singleLine: true
+                singleLine: true,
+                limit: 160
             )
             manualPillarPicker
             manualEditableField(
@@ -554,12 +559,26 @@ struct InspirationReviewView: View {
         placeholder: String,
         text: Binding<String>,
         focus: ManualIdeaFocusField,
-        singleLine: Bool = false
+        singleLine: Bool = false,
+        limit: Int = 2_000
     ) -> some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-            Text(label.uppercased())
-                .font(.agentMetadata)
-                .foregroundStyle(Color.agentSecondary)
+            HStack(alignment: .firstTextBaseline) {
+                Text(label.uppercased())
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentSecondary)
+                Spacer(minLength: AgentSpacing.x2)
+                // The binding silently truncates at the limit; the counter is
+                // the only signal, so it appears once the limit is near.
+                if text.wrappedValue.count >= Int(Double(limit) * 0.8) {
+                    Text("\(text.wrappedValue.count)/\(limit)")
+                        .font(.agentMetadata)
+                        .monospacedDigit()
+                        .foregroundStyle(
+                            text.wrappedValue.count >= limit ? Color.agentDestructive : Color.agentSecondary
+                        )
+                }
+            }
             TextField(placeholder, text: text, axis: .vertical)
                 .lineLimit(singleLine ? 1...3 : 2...8)
                 .font(.agentBody)
@@ -656,12 +675,24 @@ struct InspirationReviewView: View {
     private func editableField(
         _ label: String,
         text: Binding<String>,
-        singleLine: Bool = false
+        singleLine: Bool = false,
+        limit: Int = 2_000
     ) -> some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-            Text(label.uppercased())
-                .font(.agentMetadata)
-                .foregroundStyle(Color.agentSecondary)
+            HStack(alignment: .firstTextBaseline) {
+                Text(label.uppercased())
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentSecondary)
+                Spacer(minLength: AgentSpacing.x2)
+                if text.wrappedValue.count >= Int(Double(limit) * 0.8) {
+                    Text("\(text.wrappedValue.count)/\(limit)")
+                        .font(.agentMetadata)
+                        .monospacedDigit()
+                        .foregroundStyle(
+                            text.wrappedValue.count >= limit ? Color.agentDestructive : Color.agentSecondary
+                        )
+                }
+            }
             if singleLine {
                 TextField(label, text: text, axis: .vertical)
                     .lineLimit(1...3)

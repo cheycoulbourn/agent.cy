@@ -38,8 +38,9 @@ struct AgentPostCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, AgentSpacing.x4)
         .padding(.vertical, AgentSpacing.x4)
-        .background(cardBackground, in: .rect(cornerRadius: 12))
-        .agentSurfaceChrome(cornerRadius: 12, borderColor: cardBorder)
+        .background(cardBackground, in: .rect(cornerRadius: AgentRadius.card))
+        .agentSurfaceChrome(cornerRadius: AgentRadius.card, borderColor: cardBorder)
+        .agentHoverRow(cornerRadius: AgentRadius.card)
     }
 
     private var cardContent: some View {
@@ -137,12 +138,15 @@ struct AgentInlinePostAction: View {
     let action: () -> Void
 
     var body: some View {
-        Button(title, action: action)
-            .font(.paperInter(size: 12, weight: .medium, relativeTo: .caption))
-            .foregroundStyle(isAlert ? Color.agentDestructive : Color.agentText)
-            .underline(pattern: .solid)
-            .buttonStyle(.plain)
-            .frame(minHeight: 32, alignment: .leading)
-            .accessibilityHint("Choose a new posting date and time")
+        Button(action: action) {
+            Text(title)
+                .font(.paperInter(size: 12, weight: .medium, relativeTo: .caption))
+                .foregroundStyle(isAlert ? Color.agentDestructive : Color.agentText)
+                .underline(pattern: .solid)
+                .frame(minHeight: 44, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Choose a new posting date and time")
     }
 }

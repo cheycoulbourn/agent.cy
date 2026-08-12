@@ -316,6 +316,7 @@ struct IdeaBankView: View {
         HStack(spacing: AgentSpacing.x3) {
             Text("\(selectedIdeaIDs.count) SELECTED")
                 .font(.agentMetadata)
+                .monospacedDigit()
                 .foregroundStyle(Color.agentSecondary)
 
             Spacer(minLength: AgentSpacing.x2)

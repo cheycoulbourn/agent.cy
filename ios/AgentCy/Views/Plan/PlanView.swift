@@ -279,7 +279,8 @@ private struct AgendaPostSearchView: View {
                 } label: {
                     AgentIconView(.close)
                         .foregroundStyle(Color.agentSecondary)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear search")

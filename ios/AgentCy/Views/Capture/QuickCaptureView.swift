@@ -661,7 +661,7 @@ struct QuickCaptureView: View {
                     .overlay(Capsule().stroke(Color.cyAccent.opacity(0.18), lineWidth: 1))
                     .shadow(color: Color.cyAccent.opacity(0.16), radius: 12, y: 4)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AgentPressButtonStyle())
                 .accessibilityHint("Asks Cy for three ideas")
             }
 
@@ -707,10 +707,10 @@ struct QuickCaptureView: View {
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 160)
                     .padding(16)
-                    .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.agentBorder, lineWidth: 1)
                     }
                     .focused($focusedWritingField, equals: .ideaNotes)
             }
@@ -998,10 +998,10 @@ struct QuickCaptureView: View {
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 132)
                     .padding(16)
-                    .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.agentText.opacity(0.16), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.agentBorder, lineWidth: 1)
                     }
                     .focused($focusedWritingField, equals: .taskNotes)
             }

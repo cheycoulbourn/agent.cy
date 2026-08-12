@@ -192,13 +192,13 @@ struct DevelopBriefView: View {
                     .foregroundStyle(Color.agentText)
                     .padding(.horizontal, AgentSpacing.x4)
                     .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(Color.agentSurface, in: .rect(cornerRadius: 14))
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 14)
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
                             .stroke(Color.agentBorder, lineWidth: 1)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AgentPressButtonStyle())
                 .disabled(appModel.isWorking || (thread?.turnCount ?? 0) >= 8)
             }
         }
@@ -330,11 +330,17 @@ struct DevelopBriefView: View {
 
             HStack {
                 MetaLabel("\(thread?.turnCount ?? 0) of 8 turns")
+                    .monospacedDigit()
                 Spacer()
-                Button("Compose post") { composePost() }
-                    .font(.agentSubtext.weight(.semibold))
-                    .foregroundStyle(Color.cyAccent)
-                    .disabled(appModel.isWorking)
+                Button { composePost() } label: {
+                    Text("Compose post")
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(Color.cyAccent)
+                        .frame(minHeight: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .disabled(appModel.isWorking)
                 if answerIsFocused {
                     Button { answerIsFocused = false } label: {
                         AgentIconView(.keyboardDown)

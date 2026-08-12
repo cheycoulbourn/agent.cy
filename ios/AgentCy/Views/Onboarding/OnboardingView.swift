@@ -156,6 +156,8 @@ struct OnboardingView: View {
                         AgentIconView(.close, size: 12)
                             .frame(width: 32, height: 32)
                             .background(Color.agentSurface, in: .circle)
+                            .frame(width: 44, height: 44)
+                            .contentShape(.circle)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close onboarding preview")
@@ -1285,10 +1287,11 @@ private struct OnboardingCommandBlock: View {
                 } label: {
                     AgentIconLabel(title: copied ? "Copied" : "Copy", icon: copied ? .check : .copy)
                         .font(.paperInter(size: 12, weight: .semibold, relativeTo: .caption))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.agentText)
-                .frame(minHeight: 32)
             }
 
             Text(command)

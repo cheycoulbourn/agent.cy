@@ -604,7 +604,7 @@ private struct InspirationShareView: View {
                                 HStack(alignment: .top, spacing: ShareSpacing.x3) {
                                     Text("\(index + 1)")
                                         .font(.shareMeta)
-                                        .foregroundStyle(Color.shareCy)
+                                        .foregroundStyle(Color.shareCyText)
                                         .frame(width: 18, alignment: .leading)
                                     Text(point)
                                         .font(.shareBody)
@@ -681,7 +681,7 @@ private struct InspirationShareView: View {
                     .overlay {
                         RoundedRectangle(cornerRadius: ShareRadius.control)
                             .stroke(
-                                isTitleFocused ? Color.shareCy : Color.shareBorder,
+                                isTitleFocused ? Color.shareCyText : Color.shareBorder,
                                 lineWidth: isTitleFocused ? 1.5 : 1
                             )
                     }
@@ -701,7 +701,7 @@ private struct InspirationShareView: View {
 
                 Text(titleFieldHelperText)
                     .font(.shareCaption)
-                    .foregroundStyle(titleValidationMessage == nil ? Color.shareSecondary : Color.shareCy)
+                    .foregroundStyle(titleValidationMessage == nil ? Color.shareSecondary : Color.shareCyText)
                     .accessibilityLabel(titleFieldHelperText)
             }
         }
@@ -802,7 +802,7 @@ private struct InspirationShareView: View {
         HStack(spacing: ShareSpacing.x3) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.shareCy)
+                .foregroundStyle(Color.shareCyText)
                 .frame(width: 24)
             Text(title)
                 .font(.shareBody)

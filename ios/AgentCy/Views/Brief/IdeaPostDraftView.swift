@@ -50,7 +50,6 @@ struct IdeaPostDraftView: View {
                     output: draftOutput,
                     suggestedTargetDate: suggestedTargetDate,
                     isAlreadyInIdeaBank: isAlreadyInIdeaBank,
-                    usesDesktopDetailRail: true,
                     onSpark: { showDevelopment = true }
                 )
             } else if creationFailed {
