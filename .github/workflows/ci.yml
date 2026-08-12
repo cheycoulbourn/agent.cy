@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  apps:
+    # The project pins Xcode 26 (ios/project.yml), which needs the macOS 26
+    # image; macos-latest can lag a major version behind.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+      - name: Test iOS app
+        run: |
+          cd ios
+          DEVICE=$(xcrun simctl list devices available | sed -n 's/^[[:space:]]*\(iPhone [^(]*\) (.*$/\1/p' | head -1 | xargs)
+          echo "Using simulator: $DEVICE"
+          xcodebuild test -project AgentCy.xcodeproj -scheme AgentCy \
+            -destination "platform=iOS Simulator,name=$DEVICE" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=""
+      - name: Build desktop app
+        run: |
+          cd ios
+          xcodebuild build -project AgentCy.xcodeproj -scheme "AgentCy Desktop" \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=""
