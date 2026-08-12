@@ -3613,7 +3613,9 @@ final class AppModel {
 
     func developmentThread(for brief: CreativeBrief, context: ModelContext) -> ConversationThread {
         let briefID = brief.id
-        let descriptor = FetchDescriptor<ConversationThread>(predicate: #Predicate { $0.briefID == briefID })
+        let descriptor = FetchDescriptor<ConversationThread>(
+            predicate: #Predicate { $0.briefID == briefID && !$0.isArchived }
+        )
         if let existing = try? context.fetch(descriptor).first { return existing }
         let thread = ConversationThread(briefID: brief.id, title: "Develop \(brief.title)")
         thread.workspaceID = brief.workspaceID ?? resolvedWorkspaceID(context: context)
@@ -3633,6 +3635,23 @@ final class AppModel {
         }
         try? context.save()
         return thread
+    }
+
+    /// Moves the post's current conversation into history so the next Spark
+    /// opens fresh; the archived thread and its messages stay intact.
+    func archiveDevelopmentThread(for brief: CreativeBrief, context: ModelContext) {
+        let briefID = brief.id
+        let descriptor = FetchDescriptor<ConversationThread>(
+            predicate: #Predicate { $0.briefID == briefID && !$0.isArchived }
+        )
+        guard let thread = try? context.fetch(descriptor).first else { return }
+        thread.isArchived = true
+        thread.updatedAt = Date()
+        do {
+            try context.save()
+        } catch {
+            notice = .error("Couldn’t archive this conversation. Try again.")
+        }
     }
 
     private func apply(_ draft: BriefDraft, to brief: CreativeBrief) {

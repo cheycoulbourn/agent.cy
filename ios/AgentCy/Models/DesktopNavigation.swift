@@ -128,12 +128,14 @@ enum DesktopLayoutPolicy {
 /// Page-level display typography remains shared with iPhone; these roles keep
 /// the narrower desktop rails optically balanced without one-off font sizes.
 enum DesktopTypographyScale {
-    static let utilityTitle: CGFloat = 16
-    static let quickAction: CGFloat = 15
-    static let navigation: CGFloat = 13
-    static let utilityBody: CGFloat = 13
-    static let utilityAction: CGFloat = 12
-    static let utilityMetadata: CGFloat = 11
+    // One notch larger across the chrome: Catalyst's scaled-iPad rendering
+    // shows these at ~77%, so the previous 13pt navigation read at ~10pt.
+    static let utilityTitle: CGFloat = 17
+    static let quickAction: CGFloat = 16
+    static let navigation: CGFloat = 15
+    static let utilityBody: CGFloat = 14
+    static let utilityAction: CGFloat = 13
+    static let utilityMetadata: CGFloat = 12
 }
 
 enum DesktopHomeWidgetColumnPolicy {

@@ -3598,6 +3598,27 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(lead[0].contains("Assumption"))
     }
 
+    func testArchivingDevelopmentThreadStartsAFreshConversation() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(CreatorProfile(name: "Ari", goal: "Teach", assistanceMode: .collaborate))
+        let brief = CreativeBrief(title: "A spark", premise: "A premise")
+        context.insert(brief)
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let original = model.developmentThread(for: brief, context: context)
+        XCTAssertEqual(model.developmentThread(for: brief, context: context).id, original.id)
+
+        model.archiveDevelopmentThread(for: brief, context: context)
+        let fresh = model.developmentThread(for: brief, context: context)
+
+        XCTAssertNotEqual(fresh.id, original.id)
+        XCTAssertTrue(original.isArchived)
+        XCTAssertFalse(fresh.isArchived)
+        // The archived conversation keeps its messages for history.
+        XCTAssertFalse(model.messages(for: original, context: context).isEmpty)
+    }
+
     func testDeniedNotificationPermissionPreservesReminderChoices() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext

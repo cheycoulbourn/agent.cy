@@ -15,6 +15,7 @@ struct DevelopBriefView: View {
     @State private var thread: ConversationThread?
     @State private var answer = ""
     @State private var postProposal: BriefProposal?
+    @State private var confirmsArchive = false
     @FocusState private var answerIsFocused: Bool
 
     init(brief: CreativeBrief, output: PlatformOutput? = nil) {
@@ -119,7 +120,36 @@ struct DevelopBriefView: View {
 
             MetaLabel("Cy · Post")
             Spacer()
+
+            if !messages.isEmpty {
+                Menu {
+                    Button("Archive conversation") {
+                        confirmsArchive = true
+                    }
+                } label: {
+                    AgentIconView(.more, size: 16)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.circle)
+                }
+                .accessibilityLabel("Conversation options")
+                .confirmationDialog(
+                    "Archive this conversation?",
+                    isPresented: $confirmsArchive,
+                    titleVisibility: .visible
+                ) {
+                    Button("Archive conversation") { archiveConversation() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Cy starts fresh for this post. The archived chat stays in your history.")
+                }
+            }
         }
+    }
+
+    private func archiveConversation() {
+        appModel.archiveDevelopmentThread(for: brief, context: context)
+        thread = appModel.developmentThread(for: brief, context: context)
     }
 
     private var opening: some View {

@@ -78,12 +78,12 @@ final class DesktopNavigationTests: XCTestCase {
     }
 
     func testDesktopTypographyUsesACompactDescendingScale() {
-        XCTAssertEqual(DesktopTypographyScale.utilityTitle, 16)
-        XCTAssertEqual(DesktopTypographyScale.quickAction, 15)
-        XCTAssertEqual(DesktopTypographyScale.navigation, 13)
-        XCTAssertEqual(DesktopTypographyScale.utilityBody, 13)
-        XCTAssertEqual(DesktopTypographyScale.utilityAction, 12)
-        XCTAssertEqual(DesktopTypographyScale.utilityMetadata, 11)
+        XCTAssertEqual(DesktopTypographyScale.utilityTitle, 17)
+        XCTAssertEqual(DesktopTypographyScale.quickAction, 16)
+        XCTAssertEqual(DesktopTypographyScale.navigation, 15)
+        XCTAssertEqual(DesktopTypographyScale.utilityBody, 14)
+        XCTAssertEqual(DesktopTypographyScale.utilityAction, 13)
+        XCTAssertEqual(DesktopTypographyScale.utilityMetadata, 12)
 
         XCTAssertGreaterThan(
             DesktopTypographyScale.utilityTitle,
