@@ -52,7 +52,10 @@ struct DevelopBriefView: View {
 
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                        // Plain VStack for the same reason as Ask Cy: the
+                        // 8-turn conversation is small, and lazy row
+                        // re-measurement snaps the bottom-edge bounce.
+                        VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                             opening
 
                             if messages.isEmpty {

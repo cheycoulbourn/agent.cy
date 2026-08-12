@@ -595,7 +595,10 @@ struct AskCyView: View {
     private var conversationContent: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                // A plain VStack: conversations are small, and LazyVStack's
+                // deferred row measurement makes the bottom-edge bounce snap
+                // when content height re-estimates mid-rubber-band.
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                     if cyAvailability == .unavailable {
                         cyUnavailableCard
                     }
@@ -871,26 +874,32 @@ struct AskCyView: View {
 
     @MainActor
     private func reloadCyAvailability() async {
+        let resolved = await resolveCyAvailability()
+        // An unchanged poll result must not touch @State: the write re-runs
+        // this body, which kills any in-flight scroll bounce mid-animation.
+        if cyAvailability != resolved {
+            cyAvailability = resolved
+        }
+    }
+
+    private func resolveCyAvailability() async -> CyAvailabilityState {
         if await LocalCyAIClient.shared.isAvailable() {
-            cyAvailability = .localBridge
-            return
+            return .localBridge
         }
 
         guard AccessPolicy.allows(.askCy, state: subscriptions.first) else {
-            cyAvailability = .unavailable
-            return
+            return .unavailable
         }
 
         do {
             guard let identity = try await DeviceOnlyKeychainCredentialStore.shared.load(),
                   !identity.credential.isEmpty,
                   identity.credentialExpiresAt.map({ $0 > Date() }) ?? true else {
-                cyAvailability = .unavailable
-                return
+                return .unavailable
             }
-            cyAvailability = .hosted
+            return .hosted
         } catch {
-            cyAvailability = .unavailable
+            return .unavailable
         }
     }
 
