@@ -1017,7 +1017,12 @@ struct CyQuickPromptsSettingsView: View {
                         )
                         Text("\(prompts[index].count)/\(CreatorProfile.maxCyQuickPromptLength)")
                             .font(.agentMetadata)
-                            .foregroundStyle(Color.agentSecondary)
+                            .monospacedDigit()
+                            .foregroundStyle(
+                                prompts[index].count >= CreatorProfile.maxCyQuickPromptLength
+                                    ? Color.agentDestructive
+                                    : Color.agentSecondary
+                            )
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                 }
@@ -1934,15 +1939,22 @@ struct AccessSettingsView: View {
                             .padding(.top, AgentSpacing.x4)
                     }
 
-                    Button("Restore purchases") {
-                        Task { await appModel.restorePurchases(context: context) }
-                    }
-                    .buttonStyle(AgentSecondaryButtonStyle())
+                    if appModel.purchasesAvailable {
+                        Button("Restore purchases") {
+                            Task { await appModel.restorePurchases(context: context) }
+                        }
+                        .buttonStyle(AgentSecondaryButtonStyle())
 
-                    Text("$8.99 a month after the trial. TestFlight access may be promotional and does not collect real money.")
-                        .font(.agentSubtext)
-                        .foregroundStyle(Color.agentSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        Text("$8.99 a month after the trial. TestFlight access may be promotional and does not collect real money.")
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Access is currently granted through your invite. Paid plans and purchase restoration arrive in an upcoming release.")
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
@@ -2073,7 +2085,7 @@ struct AccessSettingsView: View {
 
                 Spacer(minLength: 0)
 
-                Text(isActive ? "Active" : "$8.99/mo")
+                Text(isActive ? "Active" : (appModel.purchasesAvailable ? "$8.99/mo" : "Coming soon"))
                     .font(.agentMetadata)
                     .foregroundStyle(Color.onCyAccent)
                     .padding(.horizontal, AgentSpacing.x3)
@@ -2087,15 +2099,20 @@ struct AccessSettingsView: View {
                 planBenefit("Shape hooks, captions, platform posts, and revisions")
             }
 
-            if !isActive {
+            if isActive {
+                Text("Included with your current plan.")
+                    .font(.agentSubtext.weight(.semibold))
+                    .foregroundStyle(Color.cyAccentText)
+            } else if appModel.purchasesAvailable {
                 Button("Start 14-day trial") {
                     Task { await appModel.startTrial(context: context) }
                 }
                 .buttonStyle(AgentCyPrimaryButtonStyle())
             } else {
-                Text("Included with your current plan.")
+                Text("Paid plans arrive in an upcoming release. Your invite covers access until then.")
                     .font(.agentSubtext.weight(.semibold))
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(AgentSpacing.x4)

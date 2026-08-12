@@ -3265,6 +3265,12 @@ final class AppModel {
         }
     }
 
+    /// False until App Store verification ships (RevenueCat); the plan screen
+    /// hides trial/restore actions rather than offering buttons that throw.
+    var purchasesAvailable: Bool {
+        subscriptionService.supportsPurchases
+    }
+
     func startTrial(context: ModelContext) async {
         guard let state = subscriptionState(context) else { return }
         do {

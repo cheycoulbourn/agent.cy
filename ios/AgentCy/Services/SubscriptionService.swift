@@ -10,6 +10,9 @@ struct SubscriptionOffering: Equatable, Sendable {
 @MainActor
 protocol SubscriptionServicing {
     var offering: SubscriptionOffering { get }
+    /// False while App Store verification is not wired (pre-RevenueCat); the
+    /// UI must not offer trial/restore actions that can only throw.
+    var supportsPurchases: Bool { get }
     func refresh(state: SubscriptionState) async
     func startTrial(state: SubscriptionState) async throws
     func restore(state: SubscriptionState) async throws
@@ -29,6 +32,7 @@ enum SubscriptionServiceError: LocalizedError, Equatable {
 @MainActor
 struct UnavailableLiveSubscriptionService: SubscriptionServicing {
     let offering = SubscriptionOffering(monthlyPrice: "$8.99", trialDays: 14, isPromotionalCohort: false)
+    let supportsPurchases = false
 
     func refresh(state: SubscriptionState) async {
         let now = Date()
@@ -91,6 +95,7 @@ enum DevelopmentSubscriptionAccess {
 @MainActor
 struct PreviewSubscriptionService: SubscriptionServicing {
     let offering = SubscriptionOffering(monthlyPrice: "$8.99", trialDays: 14, isPromotionalCohort: true)
+    let supportsPurchases = true
 
     func refresh(state: SubscriptionState) async {
         if state.access == .trial, let trialEnd = state.trialEnd, trialEnd < Date() {
