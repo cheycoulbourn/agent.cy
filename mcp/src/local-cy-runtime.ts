@@ -240,6 +240,9 @@ async function generateWithClaude(
     settingSources: [],
     persistSession: false,
     permissionMode: "dontAsk" as const,
+    // The system prompt already says "do not use tools", but prompt text is
+    // not an enforcement mechanism; synced creator content is untrusted input.
+    allowedTools: [] as string[],
     systemPrompt: `${localCySystemPrompt}\n${definition.instruction}\nReturn the required structured result immediately. Do not use tools and do not output prose outside the requested schema.`,
     outputFormat: { type: "json_schema" as const, schema },
   };

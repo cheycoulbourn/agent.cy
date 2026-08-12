@@ -112,6 +112,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const activeInstallations = new Set<string>();
   const idempotencyCache = new Map<string, CachedResult>();
   const inviteRedemptionAttempts = new Map<string, number[]>();
+  const appleSignInAttempts = new Map<string, number[]>();
 
   await repository.seedInviteHashes(
     config.inviteCodes.map((inviteCode) => inviteIdentity.hash(inviteCode)),
@@ -133,6 +134,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     logger: false,
     bodyLimit: config.bodyLimitBytes,
     requestIdHeader: false,
+    // Behind Railway's edge proxy request.ip is otherwise the proxy address,
+    // which would collapse every per-IP rate-limit bucket into one.
+    trustProxy: true,
   });
   const telemetryPurgeInterval = setInterval(() => {
     const now = clock();
@@ -275,6 +279,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.post("/v1/accounts/apple/sign-in", async (request, reply) => {
     try {
+      enforceInviteRedemptionRateLimit(
+        appleSignInAttempts,
+        request.ip,
+        clock(),
+        config.shortWindowLimit,
+        "Too many sign-in attempts. Please wait before trying again.",
+      );
       const parsed = AppleAccountAuthorizationRequestSchema.safeParse(request.body);
       if (!parsed.success) {
         throw new AppError("invalid_input", "The Apple sign-in request is invalid.");
@@ -1087,6 +1098,7 @@ function enforceInviteRedemptionRateLimit(
   address: string,
   now: Date,
   limit: number,
+  message = "Too many invitation attempts. Please wait before trying again.",
 ): void {
   const nowMs = now.getTime();
   for (const [key, attempts] of attemptsByAddress.entries()) {
@@ -1102,7 +1114,7 @@ function enforceInviteRedemptionRateLimit(
     const firstAttemptAt = Math.min(...attempts);
     throw new AppError(
       "rate_limited",
-      "Too many invitation attempts. Please wait before trying again.",
+      message,
       {
         retryable: true,
         retryAfterSeconds: Math.max(

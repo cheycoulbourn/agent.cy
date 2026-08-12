@@ -31,6 +31,10 @@ export class LocalCyHTTPServer {
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
+      // Binds all interfaces on purpose: the iPhone app reaches this bridge
+      // over the LAN. Every request still requires the bearer token from
+      // cy-connection.json (written 0600), and content is plain HTTP — treat
+      // shared networks accordingly.
       server.listen(port, "0.0.0.0", () => {
         server.off("error", reject);
         resolve();
