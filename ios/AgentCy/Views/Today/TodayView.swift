@@ -308,7 +308,6 @@ struct TodayView: View {
                 .frame(minHeight: 44)
                 .overlay(alignment: .top) { Rectangle().fill(Color.agentHairline).frame(height: 1) }
                 .contentShape(.rect)
-                .agentHoverRow(bleed: AgentSpacing.x2)
             }
             .buttonStyle(AgentPressButtonStyle())
         }

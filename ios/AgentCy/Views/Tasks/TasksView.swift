@@ -1210,7 +1210,6 @@ struct TaskRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 10)
                     .contentShape(.rect)
-                    .agentHoverRow(bleed: AgentSpacing.x2)
                 }
                 .buttonStyle(.plain)
             }
