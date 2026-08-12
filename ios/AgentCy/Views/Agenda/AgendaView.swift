@@ -3000,7 +3000,7 @@ struct DayAgendaView: View {
                     Rectangle().fill(Color.agentHairline).frame(height: 1)
                 }
                 .contentShape(.rect)
-                .agentHoverRow()
+                .agentHoverRow(bleed: AgentSpacing.x2)
             }
             .buttonStyle(AgentPressButtonStyle())
         }

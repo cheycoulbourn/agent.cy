@@ -821,12 +821,15 @@ struct AgentDesktopPrimaryActionButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
+        // A warm capsule in the brand accent: the previous ink-filled block
+        // was the only near-black element in the light-mode chrome and read
+        // as foreign next to the paper surfaces.
         configuration.label
             .font(.agentSubtext.weight(.semibold))
-            .padding(.horizontal, AgentSpacing.x4)
-            .frame(minHeight: 36)
-            .foregroundStyle(Color.onAccent)
-            .background(Color.actionAccent, in: .rect(cornerRadius: AgentRadius.control))
+            .padding(.horizontal, 14)
+            .frame(minHeight: 40)
+            .foregroundStyle(Color.onCyAccent)
+            .background(Color.cyAccent, in: .capsule)
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.42)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
@@ -1007,6 +1010,11 @@ struct SectionRuleHeader: View {
 /// safe on shared views.
 struct AgentHoverRowModifier: ViewModifier {
     var cornerRadius: CGFloat = AgentRadius.control
+    /// Extends the fill beyond the content bounds. Bare-text rows need this
+    /// breathing room — without it the fill starts flush at the first glyph
+    /// and reads as a cramped slab. Rows with their own internal padding
+    /// keep the default of zero.
+    var horizontalBleed: CGFloat = 0
 
     @State private var isHovered = false
 
@@ -1017,6 +1025,7 @@ struct AgentHoverRowModifier: ViewModifier {
                 // surfaces like the quick-add card.
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(isHovered ? Color.agentSelectionFill : Color.clear)
+                    .padding(.horizontal, -horizontalBleed)
                     .allowsHitTesting(false)
             }
 #if targetEnvironment(macCatalyst)
@@ -1026,8 +1035,11 @@ struct AgentHoverRowModifier: ViewModifier {
 }
 
 extension View {
-    func agentHoverRow(cornerRadius: CGFloat = AgentRadius.control) -> some View {
-        modifier(AgentHoverRowModifier(cornerRadius: cornerRadius))
+    func agentHoverRow(
+        cornerRadius: CGFloat = AgentRadius.control,
+        bleed: CGFloat = 0
+    ) -> some View {
+        modifier(AgentHoverRowModifier(cornerRadius: cornerRadius, horizontalBleed: bleed))
     }
 }
 

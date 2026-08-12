@@ -517,7 +517,7 @@ struct DesktopAppShellView: View {
                                         alignment: .leading
                                     )
                                     .contentShape(.rect)
-                                    .agentHoverRow()
+                                    .agentHoverRow(bleed: AgentSpacing.x2)
                             }
                             .buttonStyle(AgentPressButtonStyle())
                             .accessibilityHint("Opens task details")
@@ -577,7 +577,7 @@ struct DesktopAppShellView: View {
                         alignment: .leading
                     )
                     .contentShape(.rect)
-                    .agentHoverRow()
+                    .agentHoverRow(bleed: AgentSpacing.x2)
                 }
                 .buttonStyle(AgentPressButtonStyle())
                 .accessibilityHint("Opens this post")
@@ -625,7 +625,7 @@ struct DesktopAppShellView: View {
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                 .contentShape(.rect)
-                                .agentHoverRow()
+                                .agentHoverRow(bleed: AgentSpacing.x2)
                         }
                         .buttonStyle(AgentPressButtonStyle())
                         .accessibilityHint("Opens this idea")
@@ -668,7 +668,7 @@ struct DesktopAppShellView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .contentShape(.rect)
-                .agentHoverRow()
+                .agentHoverRow(bleed: AgentSpacing.x2)
             }
             .buttonStyle(AgentPressButtonStyle())
             .accessibilityLabel(accessibilityLabel)

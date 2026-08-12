@@ -187,6 +187,11 @@ struct ResumablePostEditorView: View {
         .scrollDismissesKeyboard(.interactively)
 #if targetEnvironment(macCatalyst)
         .background(Color.agentCanvas)
+        // A hardware keyboard never covers the window, but Catalyst still
+        // reports keyboard frames for floating input panels (dictation
+        // utilities included). The automatic avoidance inset those add can
+        // linger and let the editor scroll far past its own content.
+        .ignoresSafeArea(.keyboard)
 #endif
         .safeAreaInset(edge: .bottom, spacing: 0) {
             floatingScheduleButton
@@ -348,17 +353,10 @@ struct ResumablePostEditorView: View {
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
         AgentDesktopDetailRail(title: "Edit post", backAction: dismiss.callAsFunction) {
-            HStack(spacing: AgentSpacing.x2) {
-                if showsScheduleAction {
-                    Button("Schedule post", action: requestSchedule)
-                        .buttonStyle(AgentDesktopPrimaryActionButtonStyle())
-                        .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityHint("Sets a date and adds this post to the weekly agenda")
-                }
-
-                desktopEditorActionControl
-                    .frame(width: 44, height: 44)
-            }
+            // Schedule lives beside Spark in the editor heading so the two
+            // post-level actions read as one group on the paper.
+            desktopEditorActionControl
+                .frame(width: 44, height: 44)
         }
     }
 #endif
@@ -517,6 +515,16 @@ struct ResumablePostEditorView: View {
                 }
                 .buttonStyle(AgentPressButtonStyle())
                 .accessibilityHint("Opens Cy with this saved post as context")
+
+#if targetEnvironment(macCatalyst)
+                if showsScheduleAction {
+                    Button("Schedule post", action: requestSchedule)
+                        .buttonStyle(AgentDesktopPrimaryActionButtonStyle())
+                        .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .padding(.leading, AgentSpacing.x2)
+                        .accessibilityHint("Sets a date and adds this post to the weekly agenda")
+                }
+#endif
             }
         }
     }
