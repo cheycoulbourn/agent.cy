@@ -109,7 +109,7 @@ struct DesktopAppShellView: View {
             appModel.importPendingInspiration(context: modelContext)
             presentedMCPRequestIDs = []
             while !Task.isCancelled {
-                presentMCPApprovalsIfNeeded()
+                await presentMCPApprovalsIfNeeded()
                 try? await Task.sleep(for: .seconds(4))
             }
         }
@@ -926,17 +926,25 @@ struct DesktopAppShellView: View {
         appModel.requestedTaskID = nil
     }
 
-    private func presentMCPApprovalsIfNeeded() {
+    private func presentMCPApprovalsIfNeeded() async {
         guard MCPBridgePreferences.isConnected else {
-            hasPendingMCPReview = false
-            presentedMCPRequestIDs = []
+            if hasPendingMCPReview { hasPendingMCPReview = false }
+            if !presentedMCPRequestIDs.isEmpty { presentedMCPRequestIDs = [] }
             return
         }
-        guard let requests = try? MCPBridgeService.pendingRequests() else { return }
+        // Bridge-folder reads can hit iCloud Drive; keep them off the main
+        // thread and leave @State untouched when nothing changed, or the
+        // 4-second poll hitches whatever the creator is scrolling.
+        let fetched = await Task.detached(priority: .utility) {
+            try? MCPBridgeService.pendingRequests()
+        }.value
+        guard let requests = fetched else { return }
         let requestIDs = Set(requests.map(\.id))
-        hasPendingMCPReview = !requestIDs.isEmpty
+        if hasPendingMCPReview != !requestIDs.isEmpty {
+            hasPendingMCPReview = !requestIDs.isEmpty
+        }
         guard !requestIDs.isEmpty else {
-            presentedMCPRequestIDs = []
+            if !presentedMCPRequestIDs.isEmpty { presentedMCPRequestIDs = [] }
             return
         }
         guard !requestIDs.subtracting(presentedMCPRequestIDs).isEmpty else { return }

@@ -89,9 +89,6 @@ struct DevelopBriefView: View {
                         guard isFocused else { return }
                         revealConversationEnd(using: proxy)
                     }
-                    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                        revealConversationEnd(using: proxy)
-                    }
                 }
 
                 composer
@@ -223,41 +220,28 @@ struct DevelopBriefView: View {
     @ViewBuilder
     private func messageView(_ message: ConversationMessage) -> some View {
         if message.role == .cy {
+            // Mirrors the Ask Cy conversation: rendered markdown in the
+            // Cy-tinted card at full width, instead of raw asterisks in a
+            // narrow gray bubble.
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 HStack(spacing: AgentSpacing.x2) {
                     CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
                     MetaLabel("Cy")
                 }
-                Text(message.text)
-                    .font(.agentSubtext)
+                CyMarkdownResponseView(source: message.text)
                     .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, AgentSpacing.x4)
-                    .padding(.vertical, 14)
-                    .background(Color.agentSurface)
-                    .clipShape(
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 16,
-                            bottomLeadingRadius: 4,
-                            bottomTrailingRadius: 16,
-                            topTrailingRadius: 16
-                        )
-                    )
+                    .padding(AgentSpacing.x4)
+                    .background(Color.cyAccent.opacity(0.045), in: .rect(cornerRadius: AgentRadius.panel))
                     .overlay {
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 16,
-                            bottomLeadingRadius: 4,
-                            bottomTrailingRadius: 16,
-                            topTrailingRadius: 16
-                        )
-                        .stroke(Color.agentBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.cyAccent.opacity(0.16), lineWidth: 0.75)
                     }
-                    .frame(maxWidth: 342, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(message.text)
-                .font(.agentSubtext)
+                .font(.agentBody)
                 .foregroundStyle(Color.agentCanvas)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)

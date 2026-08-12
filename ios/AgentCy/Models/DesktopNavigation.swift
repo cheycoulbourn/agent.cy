@@ -117,7 +117,7 @@ enum DesktopLayoutPolicy {
         case .quickCapture:
             DesktopSheetMetrics(width: 760, height: 760)
         case .askCy:
-            DesktopSheetMetrics(width: 760, height: 780)
+            DesktopSheetMetrics(width: 900, height: 860)
         case .settings:
             DesktopSheetMetrics(width: 840, height: 780)
         }

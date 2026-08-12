@@ -268,7 +268,7 @@ enum CyMarkdownParser {
     }
 }
 
-private struct CyMarkdownResponseView: View {
+struct CyMarkdownResponseView: View {
     let source: String
 
     private var blocks: [CyMarkdownBlock] {
@@ -457,7 +457,19 @@ struct AskCyView: View {
         }
         .task {
             while !Task.isCancelled {
-                reloadPendingReviews()
+                // The bridge folder can live in iCloud Drive; reading it on
+                // the main thread stutters an in-flight scroll, so the poll
+                // fetches off-main and only applies results that changed.
+                if MCPBridgePreferences.isConnected {
+                    let requests = await Task.detached(priority: .utility) {
+                        try? MCPBridgeService.pendingRequests()
+                    }.value
+                    if let requests {
+                        applyPendingReviews(requests)
+                    }
+                } else {
+                    clearPendingReviews()
+                }
                 await reloadCyAvailability()
                 try? await Task.sleep(for: .seconds(4))
             }
@@ -591,7 +603,7 @@ struct AskCyView: View {
                         opening
                     } else {
                         conversationDivider
-                        ForEach(Array(messages.enumerated()), id: \.element.id) { _, message in
+                        ForEach(messages) { message in
                             messageView(message)
                                 .id(message.id)
                         }
@@ -606,7 +618,11 @@ struct AskCyView: View {
                 .padding(.bottom, AgentSpacing.x4)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: messages.last?.id) { _, _ in
+            .onChange(of: messages.last?.id) { previousID, _ in
+                // Loading the thread on open hydrates its existing messages;
+                // only follow messages that arrive after the conversation is
+                // already on screen, or the sheet jerks mid-presentation.
+                guard previousID != nil else { return }
                 revealLatestMessage(using: proxy)
             }
             .onChange(of: isSending) { _, sending in
@@ -615,9 +631,6 @@ struct AskCyView: View {
             }
             .onChange(of: composerIsFocused) { _, isFocused in
                 guard isFocused else { return }
-                revealConversationEnd(using: proxy)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
                 revealConversationEnd(using: proxy)
             }
         }
@@ -1598,16 +1611,27 @@ struct AskCyView: View {
 
     private func reloadPendingReviews() {
         guard MCPBridgePreferences.isConnected else {
-            pendingReviews = []
-            isSelectingReviews = false
-            selectedReviewIDs.removeAll()
-            showReviewCompletion = false
-            hasLoadedPendingReviews = true
+            clearPendingReviews()
             return
         }
         guard let requests = try? MCPBridgeService.pendingRequests() else {
             return
         }
+        applyPendingReviews(requests)
+    }
+
+    private func clearPendingReviews() {
+        pendingReviews = []
+        isSelectingReviews = false
+        selectedReviewIDs.removeAll()
+        showReviewCompletion = false
+        hasLoadedPendingReviews = true
+    }
+
+    private func applyPendingReviews(_ requests: [MCPBridgeChangeRequest]) {
+        // An unchanged poll result must not touch @State: every write re-runs
+        // this body mid-scroll, and the poll fires every four seconds.
+        if hasLoadedPendingReviews, requests == pendingReviews { return }
         if hasLoadedPendingReviews, !pendingReviews.isEmpty, requests.isEmpty {
             showReviewCompletion = true
         } else if !requests.isEmpty {

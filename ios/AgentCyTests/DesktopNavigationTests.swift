@@ -69,7 +69,7 @@ final class DesktopNavigationTests: XCTestCase {
         )
         XCTAssertEqual(
             DesktopLayoutPolicy.sheetMetrics(for: .askCy),
-            DesktopSheetMetrics(width: 760, height: 780)
+            DesktopSheetMetrics(width: 900, height: 860)
         )
     }
 

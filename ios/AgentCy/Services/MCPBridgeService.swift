@@ -362,7 +362,7 @@ private extension KeyedEncodingContainer {
     }
 }
 
-struct MCPBridgeRequestPayload: Codable {
+struct MCPBridgeRequestPayload: Codable, Equatable {
     var title: String?
     var premise: String?
     var notes: String?
@@ -382,7 +382,7 @@ struct MCPBridgeRequestPayload: Codable {
     var taskId: UUID?
 }
 
-struct MCPBridgeChangeRequest: Codable, Identifiable {
+struct MCPBridgeChangeRequest: Codable, Identifiable, Equatable {
     let schemaVersion: Int
     let id: UUID
     let createdAt: Date
@@ -441,7 +441,7 @@ enum MCPBridgeService {
         }
     }
 
-    static let schemaVersion = 1
+    nonisolated static let schemaVersion = 1
 
     static func sync(context: ModelContext, workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID) throws {
         guard MCPBridgePreferences.isConnected else { return }
@@ -468,7 +468,10 @@ enum MCPBridgeService {
         UserDefaults.standard.set(Date(), forKey: MCPBridgePreferences.lastSyncKey)
     }
 
-    static func pendingRequests(
+    // Reading the review queue is pure file I/O; it stays callable from a
+    // background task so the shells' 4-second polls never block the main
+    // thread on an iCloud Drive folder.
+    nonisolated static func pendingRequests(
         workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
     ) throws -> [MCPBridgeChangeRequest] {
         guard MCPBridgePreferences.isConnected else { return [] }
@@ -477,7 +480,7 @@ enum MCPBridgeService {
         }
     }
 
-    static func pendingRequests(
+    nonisolated static func pendingRequests(
         directory: URL,
         workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
     ) throws -> [MCPBridgeChangeRequest] {
@@ -1192,7 +1195,7 @@ enum MCPBridgeService {
         return encoder
     }
 
-    private static var decoder: JSONDecoder {
+    nonisolated private static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()

@@ -218,6 +218,10 @@ struct ResumablePostEditorView: View {
         }
         .sheet(isPresented: $showSparkDevelopment) {
             DevelopBriefView(brief: brief, output: output)
+#if targetEnvironment(macCatalyst)
+                .frame(width: 900, height: 860)
+                .presentationBackground(Color.agentCanvas)
+#endif
         }
         .sheet(isPresented: $showSeriesPlanner) {
             if let selectedSeries {
