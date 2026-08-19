@@ -1,12 +1,17 @@
 import Foundation
 import Observation
 import SwiftData
+import os
 
 enum AppSheet: String, Identifiable, Equatable {
     case creationHub
     case quickCapture
+    case voiceSpark
+    case creatorSession
     case askCy
     case settings
+    case weeklyFocus
+    case activityCenter
 
     var id: String { rawValue }
 }
@@ -19,6 +24,155 @@ enum AppNotice: Equatable {
         switch self {
         case .info(let message), .error(let message): message
         }
+    }
+}
+
+enum InstallationInviteStatus: Equatable {
+    case idle
+    case progress(String)
+    case error(String)
+
+    var message: String? {
+        switch self {
+        case .idle: nil
+        case .progress(let message), .error(let message): message
+        }
+    }
+
+    var showsProgress: Bool {
+        if case .progress = self { return true }
+        return false
+    }
+
+    var isUrgent: Bool {
+        if case .error = self { return true }
+        return false
+    }
+}
+
+enum InstallationInviteRedemptionOutcome: Equatable {
+    case redeemed
+    case validationFailed
+    case failed
+    case duplicateIgnored
+}
+
+enum InstallationInviteErrorMapper {
+    static func message(for error: Error) -> String {
+        if error is CredentialStoreError || error is InspirationShareBridgeError {
+            return "Cy couldn’t save this device connection. Your invitation can be retried safely."
+        }
+        if let urlError = error as? URLError,
+           urlError.code == .notConnectedToInternet ||
+            urlError.code == .networkConnectionLost ||
+            urlError.code == .cannotConnectToHost ||
+            urlError.code == .cannotFindHost {
+            return "Cy couldn’t reach the invitation service. Check your connection and try again."
+        }
+        if let apiError = error as? AgentCyAPIError {
+            switch apiError {
+            case .invalidRequest(let message):
+                return message
+            case .server(let wireError) where wireError.code == .installationInvalid:
+                if wireError.message.localizedCaseInsensitiveContains("expired") {
+                    return "That invitation has expired. Ask for a new code."
+                }
+                return "That invitation is invalid or has already been used. Check the code or ask for a new one."
+            case .server(let wireError) where wireError.code == .rateLimited:
+                guard let retryAfterSeconds = wireError.retryAfterSeconds else {
+                    return "Too many invitation attempts. Wait a moment and try again."
+                }
+                let minutes = max(1, Int(ceil(Double(retryAfterSeconds) / 60)))
+                return "Too many invitation attempts. Try again in \(minutes) \(minutes == 1 ? "minute" : "minutes")."
+            default:
+                break
+            }
+        }
+        return "Cy couldn’t check that invitation right now. Try again."
+    }
+}
+
+@MainActor
+enum InstallationRedemptionDiagnostics {
+    private static let logger = Logger(subsystem: "com.agentcy.app", category: "InvitationRedemption")
+    private static let signposter = OSSignposter(logger: logger)
+    private static var intervalState: OSSignpostIntervalState?
+    private static var signpostID: OSSignpostID?
+    private static var startedAt: TimeInterval?
+
+    static func begin() {
+        let id = signposter.makeSignpostID()
+        signpostID = id
+        startedAt = ProcessInfo.processInfo.systemUptime
+        intervalState = signposter.beginInterval("Invitation Redemption", id: id)
+    }
+
+    static func duplicateIgnored() {
+        guard let signpostID else { return }
+        signposter.emitEvent("Duplicate Ignored", id: signpostID)
+    }
+
+    static func finish(outcome: String) {
+        guard let intervalState else { return }
+        let elapsedMilliseconds = startedAt.map {
+            (ProcessInfo.processInfo.systemUptime - $0) * 1_000
+        } ?? 0
+        signposter.endInterval(
+            "Invitation Redemption",
+            intervalState,
+            "outcome=\(outcome, privacy: .public) elapsed_ms=\(elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+        logger.notice(
+            "outcome=\(outcome, privacy: .public) elapsed_ms=\(elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+        self.intervalState = nil
+        signpostID = nil
+        startedAt = nil
+    }
+}
+
+@MainActor
+enum AccountAuthorizationDiagnostics {
+    private static let logger = Logger(subsystem: "com.agentcy.app", category: "AccountAuthorization")
+    private static let signposter = OSSignposter(logger: logger)
+    private static var intervalState: OSSignpostIntervalState?
+    private static var signpostID: OSSignpostID?
+    private static var startedAt: TimeInterval?
+
+    static func begin() {
+        let id = signposter.makeSignpostID()
+        signpostID = id
+        startedAt = ProcessInfo.processInfo.systemUptime
+        intervalState = signposter.beginInterval("Apple Account Authorization", id: id)
+    }
+
+    static func markRoute(_ route: String) {
+        guard let signpostID else { return }
+        signposter.emitEvent(
+            "Account Authorization Route",
+            id: signpostID,
+            "route=\(route, privacy: .public)"
+        )
+    }
+
+    static func duplicateIgnored() {
+        logger.notice("duplicate_request=ignored")
+    }
+
+    static func finish(outcome: String) {
+        guard let intervalState, let startedAt else { return }
+        let elapsedMilliseconds = (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+        signposter.endInterval(
+            "Apple Account Authorization",
+            intervalState,
+            "outcome=\(outcome, privacy: .public) elapsed_ms=\(elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+        logger.notice(
+            "outcome=\(outcome, privacy: .public) elapsed_ms=\(elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+        self.intervalState = nil
+        self.signpostID = nil
+        self.startedAt = nil
     }
 }
 
@@ -77,11 +231,20 @@ struct InspirationReviewRoute: Identifiable, Equatable {
 @MainActor
 @Observable
 final class AppModel {
-    var selectedTab: AppTab = .home
+    var selectedTab: AppTab = .home {
+        didSet { selectedTabRevision &+= 1 }
+    }
+    var selectedTabRevision = 0
     var appearancePreference: AppearancePreference = .system
     var activeWorkspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
     var workspaceRevision = 0
-    var presentedSheet: AppSheet?
+    var presentedSheet: AppSheet? {
+        didSet {
+            if presentedSheet != nil, inspirationReviewRoute != nil {
+                inspirationReviewRoute = nil
+            }
+        }
+    }
     var notice: AppNotice?
     var isWorking = false
     var recordingMilestones = 0
@@ -98,11 +261,20 @@ final class AppModel {
     var widgetBriefOpensEditor = false
     var requestedTaskID: UUID?
     var requestedIdeaID: UUID?
-    var inspirationReviewRoute: InspirationReviewRoute?
+    var inspirationReviewRoute: InspirationReviewRoute? {
+        didSet {
+            if inspirationReviewRoute != nil, presentedSheet != nil {
+                presentedSheet = nil
+            }
+        }
+    }
     var requestedPlanMode: PlanMode?
     var requestedPlanWeekOffset: Int?
     var requestedPlanNavigationReset = 0
     var requestedOpenPostsList = 0
+    var requestedLateWorkList = 0
+    var requestedCreatorSessionPostID: UUID?
+    var requestedCreatorSessionPostTitle: String?
     var requestedSettingsPage: RequestedSettingsPage?
     var pendingCyPrompt: String?
     var walkthroughStep: AppWalkthroughStep?
@@ -115,8 +287,36 @@ final class AppModel {
     var hasInstallationCredential = false
     var hasLinkedAccount = false
     var isInstallationCredentialStatusResolved = false
-    var isRedeemingInvite = false
+    var installationInviteStatus: InstallationInviteStatus = .idle
+    var isRedeemingInvite: Bool { installationInviteStatus.showsProgress }
     var isAuthorizingAccount = false
+
+    var hasGlobalPresentation: Bool {
+        presentedSheet != nil || inspirationReviewRoute != nil
+    }
+
+    func dismissGlobalPresentation() {
+        presentedSheet = nil
+        inspirationReviewRoute = nil
+    }
+
+    func consumeRequestedTaskRoute() -> UUID? {
+        guard let requestedTaskID else { return nil }
+        dismissGlobalPresentation()
+        self.requestedTaskID = nil
+        return requestedTaskID
+    }
+
+    func prepareShellForWorkspaceSwitch() {
+        quickCapturePillarID = nil
+        widgetAgendaDay = nil
+        widgetBriefID = nil
+        requestedTaskID = nil
+        inspirationReviewRoute = nil
+        if presentedSheet != .settings {
+            presentedSheet = nil
+        }
+    }
 
     func setQuickCaptureMode(_ mode: QuickCaptureLaunchMode) {
         quickCaptureStartsWithIdeas = mode == .cyIdeas
@@ -124,24 +324,60 @@ final class AppModel {
         quickCaptureStartsWithTask = mode == .task
     }
 
+    func prepareInstallationInviteEntry() {
+        guard !isRedeemingInvite else { return }
+        installationInviteStatus = .idle
+    }
+
+    func resetInstallationInviteState() {
+        guard !isRedeemingInvite else { return }
+        installationInviteStatus = .idle
+    }
+
     func startWalkthrough() {
-        presentedSheet = nil
+        dismissGlobalPresentation()
         selectedTab = .home
         walkthroughStep = .dashboard
     }
 
     func routeToWeeklyAgenda() {
-        presentedSheet = nil
+        dismissGlobalPresentation()
         requestedPlanNavigationReset &+= 1
         requestedPlanMode = .week
         selectedTab = .today
     }
 
     func routeToOpenPostsList() {
-        presentedSheet = nil
+        dismissGlobalPresentation()
         requestedPlanNavigationReset &+= 1
         requestedOpenPostsList &+= 1
         selectedTab = .today
+    }
+
+    func routeToLateWorkList() {
+        dismissGlobalPresentation()
+        requestedPlanNavigationReset &+= 1
+        requestedLateWorkList &+= 1
+        selectedTab = .today
+    }
+
+    func presentMCPReview() {
+        requestedSettingsPage = nil
+        presentedSheet = .askCy
+    }
+
+    func presentCreatorSession(linkedPostID: UUID? = nil, linkedPostTitle: String? = nil) {
+        guard CreatorSessionFeatureAvailability.isEnabled else { return }
+        requestedCreatorSessionPostID = linkedPostID
+        requestedCreatorSessionPostTitle = linkedPostTitle
+        presentedSheet = .creatorSession
+    }
+
+    func consumeCreatorSessionRequest() -> (postID: UUID?, postTitle: String?) {
+        let request = (requestedCreatorSessionPostID, requestedCreatorSessionPostTitle)
+        requestedCreatorSessionPostID = nil
+        requestedCreatorSessionPostTitle = nil
+        return request
     }
 
     func presentCreatorError(_ error: Error, action: String? = nil) {
@@ -163,7 +399,7 @@ final class AppModel {
     @ObservationIgnored private let subscriptionService: any SubscriptionServicing
     @ObservationIgnored private let exportService: any ExportServicing
     @ObservationIgnored private let credentialStore: any InstallationCredentialStoring
-    @ObservationIgnored private let installationRedemptionClient: InstallationRedemptionClient
+    @ObservationIgnored private let installationRedemptionClient: any InstallationRedeeming
     @ObservationIgnored private let accountAuthorizationClient: any AccountAuthorizing
     @ObservationIgnored private let privacyEraseCoordinator: PrivacyEraseCoordinator
     @ObservationIgnored private let contentResetService: any ContentResetServicing
@@ -178,7 +414,7 @@ final class AppModel {
         subscriptionService: any SubscriptionServicing = PreviewSubscriptionService(),
         exportService: any ExportServicing = LocalExportService(),
         credentialStore: any InstallationCredentialStoring = DeviceOnlyKeychainCredentialStore.shared,
-        installationRedemptionClient: InstallationRedemptionClient? = nil,
+        installationRedemptionClient: (any InstallationRedeeming)? = nil,
         accountAuthorizationClient: (any AccountAuthorizing)? = nil,
         privacyDeletionService: (any PrivacyDeletionServicing)? = nil,
         privacyEraseProgressStore: any PrivacyEraseProgressStoring = UserDefaultsPrivacyEraseProgressStore(),
@@ -230,12 +466,8 @@ final class AppModel {
         guard workspaces.contains(where: { $0.id == workspaceID && !$0.isArchived }) else { return }
         activeWorkspaceID = workspaceID
         CreatorWorkspacePreferences.activeWorkspaceID = workspaceID
+        prepareShellForWorkspaceSwitch()
         workspaceRevision &+= 1
-        quickCapturePillarID = nil
-        widgetAgendaDay = nil
-        widgetBriefID = nil
-        requestedTaskID = nil
-        inspirationReviewRoute = nil
         try? FocusTaskRecurrenceService.reconcile(context: context, workspaceID: workspaceID)
         try? MCPBridgeService.sync(context: context, workspaceID: workspaceID)
         WidgetSnapshotService.refresh(context: context, workspaceID: workspaceID)
@@ -300,14 +532,28 @@ final class AppModel {
     }
 
     @discardableResult
-    func redeemInstallationInvite(_ code: String, context: ModelContext? = nil) async -> Bool {
+    func redeemInstallationInvite(
+        _ code: String,
+        context: ModelContext? = nil
+    ) async -> InstallationInviteRedemptionOutcome {
         defer { isInstallationCredentialStatusResolved = true }
         guard requiresInstallationInvite else {
             hasInstallationCredential = true
-            return true
+            return .redeemed
         }
-        isRedeemingInvite = true
-        defer { isRedeemingInvite = false }
+        guard !isRedeemingInvite else {
+            InstallationRedemptionDiagnostics.duplicateIgnored()
+            return .duplicateIgnored
+        }
+        switch InstallationInviteInput.resolve(code) {
+        case .invalid(let message):
+            installationInviteStatus = .error(message)
+            return .validationFailed
+        case .valid:
+            break
+        }
+        installationInviteStatus = .progress("Checking your invitation…")
+        InstallationRedemptionDiagnostics.begin()
         do {
             let identity = try await installationRedemptionClient.redeem(inviteCode: code)
             hasInstallationCredential = true
@@ -315,11 +561,21 @@ final class AppModel {
             if let context {
                 synchronizeSubscriptionAccess(with: identity, context: context)
             }
-            return true
+            installationInviteStatus = .idle
+            InstallationRedemptionDiagnostics.finish(outcome: "success")
+            return .redeemed
+        } catch is CancellationError {
+            installationInviteStatus = .idle
+            InstallationRedemptionDiagnostics.finish(outcome: "cancelled")
+            return .failed
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            installationInviteStatus = .idle
+            InstallationRedemptionDiagnostics.finish(outcome: "cancelled")
+            return .failed
         } catch {
-            hasInstallationCredential = false
-            presentCreatorError(error, action: "The invite")
-            return false
+            installationInviteStatus = .error(InstallationInviteErrorMapper.message(for: error))
+            InstallationRedemptionDiagnostics.finish(outcome: "error")
+            return .failed
         }
     }
 
@@ -328,20 +584,29 @@ final class AppModel {
         _ material: AppleAuthorizationMaterial,
         context: ModelContext? = nil
     ) async -> Bool {
+        guard !isAuthorizingAccount else {
+            AccountAuthorizationDiagnostics.duplicateIgnored()
+            return false
+        }
         isAuthorizingAccount = true
+        AccountAuthorizationDiagnostics.begin()
+        var authorizationOutcome = "failure"
         defer {
             isAuthorizingAccount = false
             isInstallationCredentialStatusResolved = true
+            AccountAuthorizationDiagnostics.finish(outcome: authorizationOutcome)
         }
         do {
             let existingIdentity = try await credentialStore.load()
             let identity: InstallationIdentity
             if let existingIdentity {
+                AccountAuthorizationDiagnostics.markRoute("link")
                 identity = try await accountAuthorizationClient.link(
                     material,
                     to: existingIdentity
                 )
             } else {
+                AccountAuthorizationDiagnostics.markRoute("sign_in")
                 identity = try await accountAuthorizationClient.signIn(material)
             }
             hasInstallationCredential = true
@@ -350,6 +615,7 @@ final class AppModel {
                 synchronizeSubscriptionAccess(with: identity, context: context)
             }
             notice = .info("Your Apple account is connected. Your local work is still here.")
+            authorizationOutcome = "success"
             return true
         } catch {
             presentCreatorError(error, action: "Sign in with Apple")
@@ -357,13 +623,15 @@ final class AppModel {
         }
     }
 
-    func signOutOfAccount() async {
+    func signOutOfAccount(
+        successMessage: String = "Signed out. Your work is still stored on this device."
+    ) async {
         do {
             try await credentialStore.delete()
             hasInstallationCredential = false
             hasLinkedAccount = false
             isInstallationCredentialStatusResolved = true
-            notice = .info("Signed out. Your work is still stored on this device.")
+            notice = .info(successMessage)
         } catch {
             presentCreatorError(error, action: "Sign out")
         }
@@ -634,9 +902,9 @@ final class AppModel {
             avatarImageData: profile.avatarImageData,
             hasCustomIdentity: true
         )
+        workspace.vibePalette = draft.vibePalette
+        workspace.weeklyPostingGoal = draft.weeklyPostingGoal.map(WeeklyConsistencyPolicy.clampedGoal)
         context.insert(workspace)
-        activeWorkspaceID = workspace.id
-        CreatorWorkspacePreferences.activeWorkspaceID = workspace.id
 
         let retainedPillars = Array(draft.pillars.prefix(4))
         let anchorID = retainedPillars.first?.id
@@ -703,6 +971,8 @@ final class AppModel {
 
         do {
             try context.save()
+            activeWorkspaceID = workspace.id
+            CreatorWorkspacePreferences.activeWorkspaceID = workspace.id
             appearancePreference = draft.appearance ?? .system
             DeviceAppearancePreferences.save(appearancePreference)
             LocalCyPreferences.isEnabled = draft.aiProvider == .claudeOrCodex
@@ -855,8 +1125,11 @@ final class AppModel {
             recordWorkspaceID: source.workspaceID,
             activeWorkspaceID: activeWorkspaceID
         ) else { return }
-        presentedSheet = nil
-        selectedTab = .ideaBank
+        dismissGlobalPresentation()
+        // The review sheet is shell-owned: presenting it must not relocate
+        // the user's tab. On every shell the selected tab drives the page
+        // visible beneath the sheet, so a tab switch here surfaces the Idea
+        // Bank behind the review and strands the user there afterwards.
         inspirationReviewRoute = InspirationReviewRoute(id: source.id)
     }
 
@@ -973,6 +1246,48 @@ final class AppModel {
             return brief
         } catch {
             presentCreatorError(error, action: "This idea")
+            return nil
+        }
+    }
+
+    func saveInspirationEdits(
+        source: InspirationSource,
+        result: InspirationShapeResultWire,
+        draft: InspirationEditableIdea,
+        context: ModelContext
+    ) -> InspirationShapeResultWire? {
+        do {
+            let savedResult = try InspirationShapePersistenceCoordinator.persistEdits(
+                draft,
+                result: result,
+                to: source,
+                context: context
+            )
+            WidgetSnapshotService.refresh(context: context)
+            try? MCPBridgeService.sync(context: context)
+            return savedResult
+        } catch {
+            presentCreatorError(error, action: "This saved post")
+            return nil
+        }
+    }
+
+    func saveManualInspirationDraft(
+        source: InspirationSource,
+        draft: ManualInspirationIdeaDraft,
+        context: ModelContext
+    ) -> ManualInspirationIdeaDraft? {
+        do {
+            let savedDraft = try InspirationShapePersistenceCoordinator.persistManualDraft(
+                draft,
+                to: source,
+                context: context
+            )
+            WidgetSnapshotService.refresh(context: context)
+            try? MCPBridgeService.sync(context: context)
+            return savedDraft
+        } catch {
+            presentCreatorError(error, action: "This saved post")
             return nil
         }
     }
@@ -1104,6 +1419,8 @@ final class AppModel {
         title explicitTitle: String? = nil,
         notes: String = "",
         pillarID: UUID? = nil,
+        preferredDestinationID: UUID? = nil,
+        preferredFormatID: UUID? = nil,
         targetDate: Date? = nil,
         placement: IdeaBankPlacement = .idea,
         context: ModelContext
@@ -1121,6 +1438,8 @@ final class AppModel {
         brief.ideaBankPlacement = placement
         brief.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         brief.pillarID = pillarID
+        brief.preferredDestinationID = preferredDestinationID
+        brief.preferredFormatID = preferredFormatID
         brief.agendaDate = targetDate
         context.insert(brief)
         try? context.save()
@@ -1148,17 +1467,36 @@ final class AppModel {
 
         guard brief.status == .spark || brief.status == .developing else { return nil }
         let profile = try? context.fetch(FetchDescriptor<CreatorProfile>()).first
-        let platform = profile?.selectedPlatforms.first ?? .instagramReels
+        var platform = profile?.selectedPlatforms.first ?? .instagramReels
         let catalogIDs = PublishingCatalog.identifiers(for: platform)
+        var destinationID = catalogIDs.destination
+        var formatID = catalogIDs.format
+        // An idea tagged with a platform at capture time starts its draft there.
+        if let preferredDestinationID = brief.preferredDestinationID,
+           let destinations = try? context.fetch(FetchDescriptor<PublishingDestination>()),
+           destinations.contains(where: { $0.id == preferredDestinationID && !$0.isArchived }),
+           let formats = try? context.fetch(FetchDescriptor<PublishingFormat>()) {
+            let available = IdeaPlatformChoicePolicy.availableFormats(
+                destinationID: preferredDestinationID,
+                formats: formats
+            )
+            if let preferredFormatID = available.first(where: { $0.id == brief.preferredFormatID })?.id
+                ?? available.first?.id {
+                destinationID = preferredDestinationID
+                formatID = preferredFormatID
+                platform = PublishingCatalog.legacyPlatform(destinationID: destinationID, formatID: formatID)
+                    ?? platform
+            }
+        }
         let duration = platform.format.durationOptions.contains(brief.durationSeconds)
             ? brief.durationSeconds
             : platform.format.defaultDuration
         let output = PlatformOutput(
             briefID: brief.id,
             platform: platform,
-            destinationID: catalogIDs.destination,
-            formatID: catalogIDs.format,
-            socialAccountID: preferredSocialAccountID(for: catalogIDs.destination, context: context),
+            destinationID: destinationID,
+            formatID: formatID,
+            socialAccountID: preferredSocialAccountID(for: destinationID, context: context),
             durationSeconds: duration,
             status: .draft
         )
@@ -1386,7 +1724,7 @@ final class AppModel {
         formatID: UUID? = nil,
         socialAccountID: UUID? = nil,
         durationSeconds: Int,
-        targetDate: Date,
+        targetDate: Date?,
         includesTargetTime: Bool = false,
         context: ModelContext
     ) -> (brief: CreativeBrief, output: PlatformOutput)? {
@@ -1420,7 +1758,7 @@ final class AppModel {
         )
         output.workspaceID = workspaceID
         output.targetDate = targetDate
-        output.includesTargetTime = includesTargetTime
+        output.includesTargetTime = targetDate != nil && includesTargetTime
         context.insert(output)
 
         do {
@@ -1560,6 +1898,7 @@ final class AppModel {
             predicate: #Predicate { $0.briefID == sourceBriefID },
             sortBy: [SortDescriptor(\CreatorAttachment.createdAt)]
         ))) ?? []
+        var attachmentCopiesBySourceID: [UUID: CreatorAttachment] = [:]
         for attachment in sourceAttachments {
             let attachmentCopy = CreatorAttachment(
                 ownerKind: attachment.ownerKind,
@@ -1571,11 +1910,17 @@ final class AppModel {
                 byteCount: attachment.byteCount,
                 localRelativePath: attachment.localRelativePath,
                 cloudData: attachment.cloudData,
+                previewData: attachment.previewData,
+                isCoverOnly: attachment.isCoverOnly,
                 syncState: attachment.syncState,
                 createdAt: now
             )
             attachmentCopy.workspaceID = copy.workspaceID
+            attachmentCopiesBySourceID[attachment.id] = attachmentCopy
             context.insert(attachmentCopy)
+        }
+        if let coverAttachmentID = output.coverAttachmentID {
+            outputCopy.coverAttachmentID = attachmentCopiesBySourceID[coverAttachmentID]?.id
         }
 
         do {
@@ -1668,7 +2013,7 @@ final class AppModel {
         formatID: UUID? = nil,
         socialAccountID: UUID? = nil,
         durationSeconds: Int,
-        targetDate: Date,
+        targetDate: Date?,
         includesTargetTime: Bool = false,
         context: ModelContext
     ) -> CreativeBrief? {
@@ -1712,7 +2057,7 @@ final class AppModel {
         )
         output.workspaceID = workspaceID
         output.targetDate = targetDate
-        output.includesTargetTime = includesTargetTime
+        output.includesTargetTime = targetDate != nil && includesTargetTime
         context.insert(output)
 
         do {
@@ -1872,10 +2217,18 @@ final class AppModel {
             }
             return .success(execution.value)
         } catch is CancellationError {
+            Logger(subsystem: "com.agentcy.app", category: "cy-ideas")
+                .error("findIdeaSuggestions cancelled (CancellationError) — task torn down mid-flight")
             return .cancelled
         } catch let error as URLError where error.code == .cancelled {
+            Logger(subsystem: "com.agentcy.app", category: "cy-ideas")
+                .error("findIdeaSuggestions cancelled (URLError.cancelled) — session task cancelled")
             return .cancelled
         } catch {
+            // Field diagnosis needs the true failure, which the friendly
+            // notice intentionally hides. No creator content is logged.
+            Logger(subsystem: "com.agentcy.app", category: "cy-ideas")
+                .error("findIdeaSuggestions failed: \(String(describing: error), privacy: .public)")
             let requiresUpgrade = ideaSuggestionsRequireUpgrade(for: error)
             return .unavailable(
                 message: requiresUpgrade
@@ -2480,6 +2833,68 @@ final class AppModel {
         queueCalendarSync(context: context)
     }
 
+    /// Updates planning dates without changing the post's workflow status.
+    /// Work is the preferred task day; the scheduled date is the fallback.
+    @discardableResult
+    func updatePostPlanDates(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        workDate: Date?,
+        includesWorkTime: Bool,
+        scheduledDate: Date?,
+        includesScheduledTime: Bool,
+        context: ModelContext
+    ) -> Bool {
+        guard brief.status != .archived,
+              output.briefID == brief.id,
+              output.status != .posted else {
+            notice = .info("Posted work keeps its planning dates.")
+            return false
+        }
+        guard PostDatePlanPolicy.isChronologicallyValid(
+            workDate: workDate,
+            scheduledDate: scheduledDate
+        ) else {
+            notice = .info("Choose a scheduled date on or after the work date.")
+            return false
+        }
+
+        brief.workDate = workDate
+        brief.includesWorkTime = workDate != nil && includesWorkTime
+        output.targetDate = scheduledDate
+        output.includesTargetTime = scheduledDate != nil && includesScheduledTime
+
+        let scheduledDates = outputs(for: brief, context: context)
+            .compactMap(\.targetDate)
+            .sorted()
+        brief.agendaDate = scheduledDates.first
+        brief.updatedAt = Date()
+
+        let allTasks = (try? context.fetch(FetchDescriptor<CreatorTask>())) ?? []
+        if let preferredDate = PostDatePlanPolicy.preferredTaskDate(
+            workDate: workDate,
+            scheduledDate: scheduledDate
+        ) {
+            PostTaskReschedulePolicy.alignOpenTasks(
+                allTasks,
+                to: output,
+                on: preferredDate
+            )
+        } else {
+            PostTaskReschedulePolicy.clearOpenTaskDates(allTasks, for: output)
+        }
+
+        do {
+            try context.save()
+            queueCalendarSync(context: context)
+            return true
+        } catch {
+            context.rollback()
+            notice = .error("Those planning dates could not be saved.")
+            return false
+        }
+    }
+
     @discardableResult
     func clearPostDate(
         brief: CreativeBrief,
@@ -2592,10 +3007,10 @@ final class AppModel {
         }
     }
 
-    func togglePosted(output: PlatformOutput, context: ModelContext) {
+    func togglePosted(output: PlatformOutput, postedAt: Date = Date(), context: ModelContext) {
         guard can(.updatePosting, context: context) else { return }
         guard let brief = brief(id: output.briefID, context: context),
-              BriefLifecycle.togglePosted(output, brief: brief) else {
+              BriefLifecycle.togglePosted(output, brief: brief, postedAt: postedAt) else {
             notice = .info("Finish this post before updating its posting progress.")
             return
         }

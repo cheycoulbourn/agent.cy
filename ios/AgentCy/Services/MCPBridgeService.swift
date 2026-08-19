@@ -4,6 +4,7 @@ import SwiftData
 enum MCPBridgeError: LocalizedError {
     case notConnected
     case inaccessibleFolder
+    case unableToSaveFolderAccess
     case invalidRequest(String)
     case missingRecord(String)
     case actionNotAllowed(String)
@@ -12,9 +13,55 @@ enum MCPBridgeError: LocalizedError {
         switch self {
         case .notConnected: "Choose the agent.cy MCP folder first."
         case .inaccessibleFolder: "The selected Files folder is no longer available. Choose it again."
+        case .unableToSaveFolderAccess: "agent.cy could not keep access to that folder. Choose the agent.cy MCP folder itself in iCloud Drive."
         case .invalidRequest: "The proposal could not be read. Ask Claude or Codex to prepare it again."
         case .missingRecord(let message): message
         case .actionNotAllowed(let message): message
+        }
+    }
+}
+
+enum MCPBridgeBookmarkStrategy: Equatable {
+    case minimal
+    case securityScoped
+}
+
+enum MCPBridgeBookmarkPolicy {
+    static func strategy(isMacCatalyst: Bool) -> MCPBridgeBookmarkStrategy {
+        isMacCatalyst ? .securityScoped : .minimal
+    }
+
+    static var currentStrategy: MCPBridgeBookmarkStrategy {
+        #if targetEnvironment(macCatalyst)
+        strategy(isMacCatalyst: true)
+        #else
+        strategy(isMacCatalyst: false)
+        #endif
+    }
+
+    static var creationOptions: URL.BookmarkCreationOptions {
+        switch currentStrategy {
+        case .minimal:
+            [.minimalBookmark]
+        case .securityScoped:
+            #if targetEnvironment(macCatalyst)
+            [.withSecurityScope]
+            #else
+            [.minimalBookmark]
+            #endif
+        }
+    }
+
+    static var resolutionOptions: URL.BookmarkResolutionOptions {
+        switch currentStrategy {
+        case .minimal:
+            [.withoutUI]
+        case .securityScoped:
+            #if targetEnvironment(macCatalyst)
+            [.withSecurityScope, .withoutUI]
+            #else
+            [.withoutUI]
+            #endif
         }
     }
 }
@@ -39,11 +86,16 @@ enum MCPBridgePreferences {
     static func connect(to url: URL) throws {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        let bookmark = try url.bookmarkData(
-            options: [.minimalBookmark],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
+        let bookmark: Data
+        do {
+            bookmark = try url.bookmarkData(
+                options: MCPBridgeBookmarkPolicy.creationOptions,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        } catch {
+            throw MCPBridgeError.unableToSaveFolderAccess
+        }
         UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
         UserDefaults.standard.set(url.lastPathComponent, forKey: folderNameKey)
     }
@@ -61,7 +113,7 @@ enum MCPBridgePreferences {
         var stale = false
         let url = try URL(
             resolvingBookmarkData: bookmark,
-            options: [.withoutUI],
+            options: MCPBridgeBookmarkPolicy.resolutionOptions,
             relativeTo: nil,
             bookmarkDataIsStale: &stale
         )
@@ -81,7 +133,15 @@ struct MCPBridgeProfileSnapshot: Codable {
     let goal: String
 }
 
-struct MCPBridgeConnectionStatus: Codable, Equatable {
+struct MCPBridgeSocialAccountSnapshot: Codable {
+    let id: UUID
+    let destinationId: UUID
+    let destination: String
+    let label: String
+    let isPrimary: Bool
+}
+
+struct MCPBridgeConnectionStatus: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let status: String
     let updatedAt: Date
@@ -133,6 +193,7 @@ struct MCPBridgeOutputSnapshot: Codable {
     let platform: String
     let destination: String
     let format: String
+    let socialAccountId: UUID?
     let account: String?
     let status: String
     let targetDate: Date?
@@ -146,7 +207,7 @@ struct MCPBridgeOutputSnapshot: Codable {
     let publishedUrl: String
 
     private enum CodingKeys: String, CodingKey {
-        case id, platform, destination, format, account, status, targetDate
+        case id, platform, destination, format, socialAccountId, account, status, targetDate
         case includesTargetTime, durationSeconds, title, caption, openingAdjustment
         case callToAction, editNotes, publishedUrl
     }
@@ -157,6 +218,7 @@ struct MCPBridgeOutputSnapshot: Codable {
         try container.encode(platform, forKey: .platform)
         try container.encode(destination, forKey: .destination)
         try container.encode(format, forKey: .format)
+        try container.encodeOptional(socialAccountId, forKey: .socialAccountId)
         try container.encodeOptional(account, forKey: .account)
         try container.encode(status, forKey: .status)
         try container.encodeOptional(targetDate, forKey: .targetDate)
@@ -294,6 +356,7 @@ struct MCPBridgeSeriesSnapshot: Codable {
     let defaultSocialAccountId: UUID?
     let defaultDurationSeconds: Int?
     let cadence: String
+    let cadenceStartDate: Date?
     let cadenceWeekdays: [Int]
     let cadenceMonthDay: Int?
     let cadenceEndDate: Date?
@@ -320,21 +383,86 @@ struct MCPBridgeEpisodeSlotSnapshot: Codable {
     let convertedPostId: UUID?
 }
 
+struct MCPBridgeBrandPartnerSnapshot: Codable {
+    let id: UUID
+    let name: String
+    let type: String
+    let stage: String
+    let website: String
+    let socialHandle: String
+    let notes: String
+    let nextFollowUpAt: Date?
+    let lastContactedAt: Date?
+}
+
 struct MCPBridgeWorkspaceSnapshot: Codable {
     let schemaVersion: Int
     let generatedAt: Date
     let workspaceId: UUID?
     let workspaceName: String?
     let profile: MCPBridgeProfileSnapshot?
+    let socialAccounts: [MCPBridgeSocialAccountSnapshot]
     let pillars: [MCPBridgePillarSnapshot]
     let posts: [MCPBridgePostSnapshot]
     let tasks: [MCPBridgeTaskSnapshot]
     let series: [MCPBridgeSeriesSnapshot]
     let episodeSlots: [MCPBridgeEpisodeSlotSnapshot]
+    let brandPartners: [MCPBridgeBrandPartnerSnapshot]
+    let notification: MCPBridgePushCapability?
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, generatedAt, workspaceId, workspaceName, profile, pillars, posts, tasks
-        case series, episodeSlots
+        case schemaVersion, generatedAt, workspaceId, workspaceName, profile, socialAccounts, pillars, posts, tasks
+        case series, episodeSlots, brandPartners, notification
+    }
+
+    init(
+        schemaVersion: Int,
+        generatedAt: Date,
+        workspaceId: UUID?,
+        workspaceName: String?,
+        profile: MCPBridgeProfileSnapshot?,
+        socialAccounts: [MCPBridgeSocialAccountSnapshot],
+        pillars: [MCPBridgePillarSnapshot],
+        posts: [MCPBridgePostSnapshot],
+        tasks: [MCPBridgeTaskSnapshot],
+        series: [MCPBridgeSeriesSnapshot],
+        episodeSlots: [MCPBridgeEpisodeSlotSnapshot],
+        brandPartners: [MCPBridgeBrandPartnerSnapshot],
+        notification: MCPBridgePushCapability? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.workspaceId = workspaceId
+        self.workspaceName = workspaceName
+        self.profile = profile
+        self.socialAccounts = socialAccounts
+        self.pillars = pillars
+        self.posts = posts
+        self.tasks = tasks
+        self.series = series
+        self.episodeSlots = episodeSlots
+        self.brandPartners = brandPartners
+        self.notification = notification
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+        workspaceId = try container.decodeIfPresent(UUID.self, forKey: .workspaceId)
+        workspaceName = try container.decodeIfPresent(String.self, forKey: .workspaceName)
+        profile = try container.decodeIfPresent(MCPBridgeProfileSnapshot.self, forKey: .profile)
+        socialAccounts = try container.decodeIfPresent(
+            [MCPBridgeSocialAccountSnapshot].self,
+            forKey: .socialAccounts
+        ) ?? []
+        pillars = try container.decode([MCPBridgePillarSnapshot].self, forKey: .pillars)
+        posts = try container.decode([MCPBridgePostSnapshot].self, forKey: .posts)
+        tasks = try container.decode([MCPBridgeTaskSnapshot].self, forKey: .tasks)
+        series = try container.decodeIfPresent([MCPBridgeSeriesSnapshot].self, forKey: .series) ?? []
+        episodeSlots = try container.decodeIfPresent([MCPBridgeEpisodeSlotSnapshot].self, forKey: .episodeSlots) ?? []
+        brandPartners = try container.decodeIfPresent([MCPBridgeBrandPartnerSnapshot].self, forKey: .brandPartners) ?? []
+        notification = try container.decodeIfPresent(MCPBridgePushCapability.self, forKey: .notification)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -344,11 +472,14 @@ struct MCPBridgeWorkspaceSnapshot: Codable {
         try container.encodeOptional(workspaceId, forKey: .workspaceId)
         try container.encodeOptional(workspaceName, forKey: .workspaceName)
         try container.encodeOptional(profile, forKey: .profile)
+        try container.encode(socialAccounts, forKey: .socialAccounts)
         try container.encode(pillars, forKey: .pillars)
         try container.encode(posts, forKey: .posts)
         try container.encode(tasks, forKey: .tasks)
         try container.encode(series, forKey: .series)
         try container.encode(episodeSlots, forKey: .episodeSlots)
+        try container.encode(brandPartners, forKey: .brandPartners)
+        try container.encodeOptional(notification, forKey: .notification)
     }
 }
 
@@ -369,6 +500,7 @@ struct MCPBridgeRequestPayload: Codable, Equatable {
     var pillarId: UUID?
     var platform: String?
     var format: String?
+    var socialAccountId: UUID?
     var postId: UUID?
     var outputId: UUID?
     var hook: String?
@@ -380,6 +512,31 @@ struct MCPBridgeRequestPayload: Codable, Equatable {
     var lane: String?
     var priority: String?
     var taskId: UUID?
+    var name: String?
+    var seriesId: UUID?
+    var episodeSlotId: UUID?
+    var proposedEpisodeSlotId: UUID?
+    var episodeReviewId: UUID?
+    var revisionNumber: Int?
+    var revisionOfRequestId: UUID?
+    var episodeNumber: Int?
+    var episodeLabel: String?
+    var workDate: Date?
+    var includesWorkTime: Bool?
+    var clearWorkDate: Bool?
+    var postedAt: Date?
+    var cadence: String?
+    var cadenceStartDate: Date?
+    var cadenceWeekdays: [Int]?
+    var cadenceMonthDay: Int?
+    var cadenceEndDate: Date?
+    var brandPartnerId: UUID?
+    var brandType: String?
+    var brandStage: String?
+    var website: String?
+    var socialHandle: String?
+    var nextFollowUpAt: Date?
+    var clearNextFollowUp: Bool?
 }
 
 struct MCPBridgeChangeRequest: Codable, Identifiable, Equatable {
@@ -388,8 +545,29 @@ struct MCPBridgeChangeRequest: Codable, Identifiable, Equatable {
     let createdAt: Date
     let source: String
     let workspaceId: UUID?
+    let externalPlan: MCPBridgeExternalPlanContext?
     let type: String
     let payload: MCPBridgeRequestPayload
+
+    init(
+        schemaVersion: Int,
+        id: UUID,
+        createdAt: Date,
+        source: String,
+        workspaceId: UUID?,
+        externalPlan: MCPBridgeExternalPlanContext? = nil,
+        type: String,
+        payload: MCPBridgeRequestPayload
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.createdAt = createdAt
+        self.source = source
+        self.workspaceId = workspaceId
+        self.externalPlan = externalPlan
+        self.type = type
+        self.payload = payload
+    }
 
     var title: String {
         switch type {
@@ -397,6 +575,13 @@ struct MCPBridgeChangeRequest: Codable, Identifiable, Equatable {
         case "createPostDraft": payload.targetDate == nil ? "Create a post draft" : "Create and schedule a post"
         case "updatePost": "Update a post"
         case "schedulePost": "Schedule a post"
+        case "reschedulePost": "Reschedule a post"
+        case "markPostPosted": "Mark a post as posted"
+        case "createSeries": "Create a series"
+        case "createSeriesEpisode": "Create a series episode"
+        case "createBrandPartner": "Create a brand partner"
+        case "updateBrandPartner": "Update a brand partner"
+        case "makeAnchorPillar": "Make an anchor pillar"
         case "addTask": "Add a task"
         case "completeTask": "Complete a task"
         default: "Proposal"
@@ -404,7 +589,8 @@ struct MCPBridgeChangeRequest: Codable, Identifiable, Equatable {
     }
 
     var summary: String {
-        payload.title ?? payload.postId?.uuidString ?? payload.taskId?.uuidString ?? "Review the requested change."
+        payload.title ?? payload.name ?? payload.postId?.uuidString ?? payload.taskId?.uuidString
+            ?? payload.brandPartnerId?.uuidString ?? "Review the requested change."
     }
 
     func replacingPayload(_ payload: MCPBridgeRequestPayload) -> MCPBridgeChangeRequest {
@@ -414,10 +600,22 @@ struct MCPBridgeChangeRequest: Codable, Identifiable, Equatable {
             createdAt: createdAt,
             source: source,
             workspaceId: workspaceId,
+            externalPlan: externalPlan,
             type: type,
             payload: payload
         )
     }
+}
+
+struct MCPBridgeExternalPlanContext: Codable, Equatable {
+    let status: String
+    let creatorConfirmed: Bool
+    let system: String?
+    let workspace: String?
+    let destination: String?
+    let sourceOfTruth: String?
+    let syncDirection: String?
+    let externalWritesRequireApproval: Bool?
 }
 
 private struct MCPBridgeReceipt: Codable {
@@ -426,11 +624,39 @@ private struct MCPBridgeReceipt: Codable {
     let processedAt: Date
     let status: String
     let message: String
+    let workspaceId: UUID?
+    let type: String?
+    let seriesId: UUID?
+    let episodeReviewId: UUID?
+    let episodeSlotId: UUID?
+    let revisionNumber: Int?
+    let decisionNote: String?
+    let resultPostId: UUID?
+    let nextAction: String?
+}
+
+struct MCPBridgeEpisodeRevisionRecord: Codable, Equatable {
+    let schemaVersion: Int
+    let episodeReviewId: UUID
+    let workspaceId: UUID?
+    let seriesId: UUID
+    let episodeSlotId: UUID?
+    var requestId: UUID
+    var revisionNumber: Int
+    var status: String
+    var decisionAt: Date
+    var decisionNote: String
+    var request: MCPBridgeChangeRequest
+}
+
+private struct MCPBridgeChangeRequestHeader: Decodable {
+    let schemaVersion: Int
+    let workspaceId: UUID?
 }
 
 @MainActor
 enum MCPBridgeService {
-    static func connectionStatus() throws -> MCPBridgeConnectionStatus? {
+    nonisolated static func connectionStatus() throws -> MCPBridgeConnectionStatus? {
         guard MCPBridgePreferences.isConnected else { return nil }
         return try MCPBridgePreferences.withDirectory { directory in
             let url = directory.appending(path: "bridge-status.json")
@@ -458,7 +684,15 @@ enum MCPBridgeService {
         if try migrateStructuredPostFields(context: context) {
             try context.save()
         }
-        let snapshot = try makeSnapshot(context: context, workspaceID: workspaceID)
+        let notification = BridgePushRegistrationPolicy.snapshotCapabilityForCurrentPlatform(
+            local: MCPBridgePushPreferences.capability,
+            existing: existingNotificationCapability(in: directory)
+        )
+        let snapshot = try makeSnapshot(
+            context: context,
+            workspaceID: workspaceID,
+            notification: notification
+        )
         try prepare(directory: directory)
         try encoder.encode(snapshot).write(
             to: directory.appending(path: "snapshot.json"),
@@ -466,6 +700,15 @@ enum MCPBridgeService {
         )
         try writeReadme(directory: directory)
         UserDefaults.standard.set(Date(), forKey: MCPBridgePreferences.lastSyncKey)
+    }
+
+    private static func existingNotificationCapability(in directory: URL) -> MCPBridgePushCapability? {
+        let snapshotURL = directory.appending(path: "snapshot.json")
+        guard let data = try? Data(contentsOf: snapshotURL),
+              let snapshot = try? decoder.decode(MCPBridgeWorkspaceSnapshot.self, from: data) else {
+            return nil
+        }
+        return snapshot.notification
     }
 
     // Reading the review queue is pure file I/O; it stays callable from a
@@ -493,13 +736,18 @@ enum MCPBridgeService {
         )
         .filter { $0.pathExtension.lowercased() == "json" }
 
-        return try requestURLs.map { url in
+        return try requestURLs.compactMap { url in
             do {
                 let data = try Data(contentsOf: url)
-                let request = try decoder.decode(MCPBridgeChangeRequest.self, from: data)
-                guard request.schemaVersion == schemaVersion else {
+                let header = try decoder.decode(MCPBridgeChangeRequestHeader.self, from: data)
+                guard header.schemaVersion == schemaVersion else {
                     throw MCPBridgeError.invalidRequest("Unsupported schema version in \(url.lastPathComponent).")
                 }
+                if let requestWorkspaceID = header.workspaceId,
+                   requestWorkspaceID != workspaceID {
+                    return nil
+                }
+                let request = try decoder.decode(MCPBridgeChangeRequest.self, from: data)
                 return request
             } catch let error as MCPBridgeError {
                 throw error
@@ -509,11 +757,81 @@ enum MCPBridgeService {
                 )
             }
         }
-        .filter { request in
-            guard let requestWorkspaceID = request.workspaceId else { return true }
-            return requestWorkspaceID == workspaceID
-        }
         .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Asks iCloud Drive to materialize the bridge queue, then performs a
+    /// short bounded re-read so manual and foreground refreshes can observe a
+    /// request that arrived while the app was inactive.
+    nonisolated static func refreshPendingRequests(
+        workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
+    ) async throws -> [MCPBridgeChangeRequest] {
+        guard MCPBridgePreferences.isConnected else { return [] }
+        var latest: [MCPBridgeChangeRequest] = []
+        for attempt in 0..<3 {
+            latest = try MCPBridgePreferences.withDirectory { directory in
+                try requestUbiquitousDownloads(in: directory)
+                return try pendingRequests(directory: directory, workspaceID: workspaceID)
+            }
+            guard attempt < 2 else { break }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        return latest
+    }
+
+    nonisolated static func refreshPendingRequests(
+        directory: URL,
+        workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
+    ) async throws -> [MCPBridgeChangeRequest] {
+        try requestUbiquitousDownloads(in: directory)
+        await Task.yield()
+        return try pendingRequests(directory: directory, workspaceID: workspaceID)
+    }
+
+    private nonisolated static func requestUbiquitousDownloads(in directory: URL) throws {
+        let fileManager = FileManager.default
+        let requests = directory.appending(path: "requests", directoryHint: .isDirectory)
+        try fileManager.createDirectory(at: requests, withIntermediateDirectories: true)
+        // An undownloaded iCloud item is a hidden placeholder named
+        // ".<filename>.icloud". Skipping hidden files here skipped exactly the
+        // items that still needed downloading, so a device that never
+        // materialised the folder (typically iPhone) saw an empty queue
+        // forever. Include hidden entries so the download is actually asked for.
+        let urls = [requests] + ((try? fileManager.contentsOfDirectory(
+            at: requests,
+            includingPropertiesForKeys: [.isUbiquitousItemKey],
+            options: []
+        )) ?? [])
+        for url in urls {
+            let isUbiquitous = (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?
+                .isUbiquitousItem == true
+            if isUbiquitous {
+                try? fileManager.startDownloadingUbiquitousItem(at: url)
+            }
+        }
+    }
+
+    nonisolated static func updatePendingRequest(_ request: MCPBridgeChangeRequest) throws {
+        guard MCPBridgePreferences.isConnected else { throw MCPBridgeError.notConnected }
+        try MCPBridgePreferences.withDirectory { directory in
+            try updatePendingRequest(request, directory: directory)
+        }
+    }
+
+    nonisolated static func updatePendingRequest(
+        _ request: MCPBridgeChangeRequest,
+        directory: URL
+    ) throws {
+        guard request.schemaVersion == schemaVersion else {
+            throw MCPBridgeError.invalidRequest("This proposal uses an unsupported schema version.")
+        }
+        try prepare(directory: directory)
+        try encoder.encode(request).write(
+            to: directory
+                .appending(path: "requests", directoryHint: .isDirectory)
+                .appending(path: "\(request.id.uuidString.lowercased()).json"),
+            options: [.atomic, .completeFileProtectionUnlessOpen]
+        )
     }
 
     @discardableResult
@@ -554,6 +872,7 @@ enum MCPBridgeService {
             createdAt: Date(),
             source: "agentcy-demo",
             workspaceId: activeID,
+            externalPlan: nil,
             type: "createPostDraft",
             payload: MCPBridgeRequestPayload(
                 title: "A gentler way to plan content",
@@ -587,24 +906,202 @@ enum MCPBridgeService {
     }
 
     static func approve(_ request: MCPBridgeChangeRequest, context: ModelContext) throws {
+        guard MCPBridgePreferences.isConnected else { throw MCPBridgeError.notConnected }
+        try MCPBridgePreferences.withDirectory { directory in
+            try approve(request, context: context, directory: directory)
+        }
+    }
+
+    static func approve(
+        _ request: MCPBridgeChangeRequest,
+        context: ModelContext,
+        directory: URL
+    ) throws {
         do {
             // Establish a clean rollback boundary so an invalid proposal cannot
             // leave partially mutated or inserted models in the live context.
             try context.save()
             try apply(request, context: context)
             try context.save()
-            try finish(request, status: "approved", message: "Applied in agent.cy.")
-            try sync(context: context)
+            try finish(
+                request,
+                status: "approved",
+                message: "Applied in agent.cy.",
+                context: context,
+                directory: directory
+            )
+            try sync(context: context, directory: directory)
             WidgetSnapshotService.refresh(context: context)
         } catch {
             context.rollback()
-            try? finish(request, status: "failed", message: error.localizedDescription)
+            try? finish(
+                request,
+                status: "failed",
+                message: error.localizedDescription,
+                directory: directory
+            )
             throw error
         }
     }
 
-    static func reject(_ request: MCPBridgeChangeRequest) throws {
-        try finish(request, status: "rejected", message: "Declined in agent.cy.")
+    static func approve(_ requests: [MCPBridgeChangeRequest], context: ModelContext) throws {
+        guard MCPBridgePreferences.isConnected else { throw MCPBridgeError.notConnected }
+        try MCPBridgePreferences.withDirectory { directory in
+            try approve(requests, context: context, directory: directory)
+        }
+    }
+
+    static func approve(
+        _ requests: [MCPBridgeChangeRequest],
+        context: ModelContext,
+        directory: URL
+    ) throws {
+        guard !requests.isEmpty else { return }
+        let ordered = requests.sorted { left, right in
+            if left.type == "createSeries", right.type != "createSeries" { return true }
+            if left.type != "createSeries", right.type == "createSeries" { return false }
+            let leftNumber = left.payload.episodeNumber ?? Int.max
+            let rightNumber = right.payload.episodeNumber ?? Int.max
+            if leftNumber != rightNumber { return leftNumber < rightNumber }
+            return left.createdAt < right.createdAt
+        }
+        do {
+            try context.save()
+            for request in ordered {
+                try apply(request, context: context)
+            }
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+
+        for request in ordered {
+            try finish(
+                request,
+                status: "approved",
+                message: "Applied in agent.cy as part of the approved series bundle.",
+                context: context,
+                directory: directory
+            )
+        }
+        try sync(context: context, directory: directory)
+        WidgetSnapshotService.refresh(context: context)
+    }
+
+    static func approveEpisodeInBundle(
+        _ episode: MCPBridgeChangeRequest,
+        seriesRequest: MCPBridgeChangeRequest,
+        context: ModelContext
+    ) throws {
+        guard MCPBridgePreferences.isConnected else { throw MCPBridgeError.notConnected }
+        try MCPBridgePreferences.withDirectory { directory in
+            try approveEpisodeInBundle(
+                episode,
+                seriesRequest: seriesRequest,
+                context: context,
+                directory: directory
+            )
+        }
+    }
+
+    static func approveEpisodeInBundle(
+        _ episode: MCPBridgeChangeRequest,
+        seriesRequest: MCPBridgeChangeRequest,
+        context: ModelContext,
+        directory: URL
+    ) throws {
+        guard episode.type == "createSeriesEpisode",
+              seriesRequest.type == "createSeries",
+              let seriesID = seriesRequest.payload.seriesId,
+              episode.payload.seriesId == seriesID else {
+            throw MCPBridgeError.invalidRequest("This episode is not attached to the proposed series.")
+        }
+        do {
+            try context.save()
+            try apply(seriesRequest, context: context)
+            try apply(episode, context: context)
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+
+        try finish(
+            episode,
+            status: "approved",
+            message: "Applied in agent.cy after individual episode approval.",
+            context: context,
+            directory: directory
+        )
+        try sync(context: context, directory: directory)
+        WidgetSnapshotService.refresh(context: context)
+    }
+
+    static func reject(_ request: MCPBridgeChangeRequest, decisionNote: String? = nil) throws {
+        guard MCPBridgePreferences.isConnected else { throw MCPBridgeError.notConnected }
+        try MCPBridgePreferences.withDirectory { directory in
+            try reject(request, decisionNote: decisionNote, directory: directory)
+        }
+    }
+
+    static func reject(
+        _ request: MCPBridgeChangeRequest,
+        decisionNote: String? = nil,
+        directory: URL
+    ) throws {
+        guard request.type == "createSeriesEpisode", let seriesID = request.payload.seriesId else {
+            try finish(
+                request,
+                status: "rejected",
+                message: "Declined in agent.cy.",
+                decisionNote: decisionNote,
+                directory: directory
+            )
+            return
+        }
+        var payload = request.payload
+        payload.episodeReviewId = payload.episodeReviewId ?? UUID()
+        if payload.episodeSlotId == nil {
+            payload.proposedEpisodeSlotId = payload.proposedEpisodeSlotId ?? UUID()
+        }
+        payload.revisionNumber = payload.revisionNumber ?? 1
+        let retainedRequest = request.replacingPayload(payload)
+        let note = decisionNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let record = MCPBridgeEpisodeRevisionRecord(
+            schemaVersion: schemaVersion,
+            episodeReviewId: payload.episodeReviewId ?? UUID(),
+            workspaceId: request.workspaceId,
+            seriesId: seriesID,
+            episodeSlotId: payload.episodeSlotId ?? payload.proposedEpisodeSlotId,
+            requestId: request.id,
+            revisionNumber: payload.revisionNumber ?? 1,
+            status: "needsRevision",
+            decisionAt: Date(),
+            decisionNote: note,
+            request: retainedRequest
+        )
+        try writeEpisodeRevision(record, directory: directory)
+        try finish(
+            retainedRequest,
+            status: "needsRevision",
+            message: "Returned for revision in agent.cy.",
+            decisionNote: note,
+            directory: directory
+        )
+    }
+
+    nonisolated static func episodeRevisions(directory: URL) throws -> [MCPBridgeEpisodeRevisionRecord] {
+        let revisionsDirectory = directory.appending(path: "episode-revisions", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: revisionsDirectory, withIntermediateDirectories: true)
+        return try FileManager.default.contentsOfDirectory(
+            at: revisionsDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+        .filter { $0.pathExtension.lowercased() == "json" }
+        .map { try decoder.decode(MCPBridgeEpisodeRevisionRecord.self, from: Data(contentsOf: $0)) }
+        .sorted { $0.decisionAt < $1.decisionAt }
     }
 
     static func restorePremiseIfNotesWereCopied(_ brief: CreativeBrief) -> Bool {
@@ -641,7 +1138,8 @@ enum MCPBridgeService {
 
     static func makeSnapshot(
         context: ModelContext,
-        workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
+        workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID,
+        notification: MCPBridgePushCapability? = MCPBridgePushPreferences.capability
     ) throws -> MCPBridgeWorkspaceSnapshot {
         let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
         let activeID = WorkspaceScope.activeWorkspaceID(preferredID: workspaceID, workspaces: workspaces)
@@ -666,10 +1164,14 @@ enum MCPBridgeService {
         let episodeSlots = try context.fetch(FetchDescriptor<SeriesEpisodeSlot>()).filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
         }
+        let brandPartners = try context.fetch(FetchDescriptor<BrandPartner>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+        }
         let destinations = try context.fetch(FetchDescriptor<PublishingDestination>())
         let formats = try context.fetch(FetchDescriptor<PublishingFormat>())
         let accounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>()).filter {
-            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
+            !$0.isArchived &&
+                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
         }
         let attachments = try context.fetch(FetchDescriptor<CreatorAttachment>()).filter {
             WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeID, workspaces: workspaces)
@@ -697,6 +1199,17 @@ enum MCPBridgeService {
         let destinationByID = DuplicateSafeIndex.firstValues(destinations.map { ($0.id, $0) })
         let formatByID = DuplicateSafeIndex.firstValues(formats.map { ($0.id, $0) })
         let accountByID = DuplicateSafeIndex.firstValues(accounts.map { ($0.id, $0) })
+        let accountSnapshots = accounts.map { account in
+            let destination = destinationByID[account.destinationID]?.name ?? "Unknown destination"
+            let cleanLabel = account.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            return MCPBridgeSocialAccountSnapshot(
+                id: account.id,
+                destinationId: account.destinationID,
+                destination: destination,
+                label: cleanLabel.isEmpty ? "Unnamed account" : cleanLabel,
+                isPrimary: account.isPrimary
+            )
+        }
         let postSnapshots = briefs.map { brief in
             let postOutputs = outputs.filter { $0.briefID == brief.id }
             let postTasks = tasks.filter { $0.briefID == brief.id }
@@ -733,6 +1246,7 @@ enum MCPBridgeService {
                         platform: output.platform.rawValue,
                         destination: output.destinationID.flatMap { destinationByID[$0]?.name } ?? output.platform.title,
                         format: output.formatID.flatMap { formatByID[$0]?.name } ?? output.platform.shortTitle,
+                        socialAccountId: output.socialAccountID,
                         account: output.socialAccountID.flatMap { accountByID[$0]?.label },
                         status: output.status.rawValue,
                         targetDate: output.targetDate,
@@ -764,6 +1278,7 @@ enum MCPBridgeService {
                 defaultSocialAccountId: item.defaultSocialAccountID,
                 defaultDurationSeconds: item.defaultDurationSeconds,
                 cadence: item.cadence.rawValue,
+                cadenceStartDate: item.cadenceStartDate,
                 cadenceWeekdays: item.cadenceWeekdays.map(\.rawValue).sorted(),
                 cadenceMonthDay: item.cadenceMonthDay,
                 cadenceEndDate: item.cadenceEndDate,
@@ -791,17 +1306,33 @@ enum MCPBridgeService {
                 convertedPostId: slot.convertedBriefID
             )
         }
+        let brandPartnerSnapshots = brandPartners.map { partner in
+            MCPBridgeBrandPartnerSnapshot(
+                id: partner.id,
+                name: partner.name,
+                type: partner.type.rawValue,
+                stage: partner.stage.rawValue,
+                website: partner.websiteURLString,
+                socialHandle: partner.socialHandle,
+                notes: partner.notes,
+                nextFollowUpAt: partner.nextFollowUpAt,
+                lastContactedAt: partner.lastContactedAt
+            )
+        }
         return MCPBridgeWorkspaceSnapshot(
             schemaVersion: schemaVersion,
             generatedAt: Date(),
             workspaceId: activeID,
             workspaceName: activeWorkspace?.name,
             profile: profile,
+            socialAccounts: accountSnapshots,
             pillars: pillarSnapshots,
             posts: postSnapshots,
             tasks: taskSnapshots,
             series: seriesSnapshots,
-            episodeSlots: episodeSlotSnapshots
+            episodeSlots: episodeSlotSnapshots,
+            brandPartners: brandPartnerSnapshots,
+            notification: notification
         )
     }
 
@@ -856,6 +1387,14 @@ enum MCPBridgeService {
             output.caption = request.payload.caption ?? ""
             output.cta = request.payload.callToAction ?? ""
             try applyRequestedFormat(request.payload.format, to: output, context: context)
+            output.socialAccountID = try resolvedSocialAccountID(
+                requestedID: request.payload.socialAccountId,
+                existingID: nil,
+                destinationID: output.destinationID,
+                context: context,
+                workspaceID: workspaceID,
+                workspaces: workspaces
+            )
 
             if let targetDate = request.payload.targetDate {
                 try prepareForApprovedScheduling(brief)
@@ -884,11 +1423,27 @@ enum MCPBridgeService {
             if let notes = request.payload.notes { brief.notes = notes }
             if let hook = request.payload.hook { brief.spokenHook = hook }
             if let callToAction = request.payload.callToAction { brief.ctaIntent = callToAction }
+            if request.payload.clearWorkDate == true {
+                brief.workDate = nil
+                brief.includesWorkTime = false
+            } else if let workDate = request.payload.workDate {
+                brief.workDate = workDate
+                brief.includesWorkTime = request.payload.includesWorkTime ?? false
+            }
             if let pillarID = request.payload.pillarId {
                 brief.pillarID = try validatedPillarID(pillarID, context: context, workspaceID: workspaceID, workspaces: workspaces)
             }
-            if request.payload.caption != nil || request.payload.callToAction != nil || request.payload.format != nil {
-                let output = try fetchOutputs(postID, context: context, workspaceID: workspaceID, workspaces: workspaces).first ?? {
+            if request.payload.caption != nil || request.payload.callToAction != nil || request.payload.format != nil || request.payload.socialAccountId != nil {
+                let existingOutputs = try fetchOutputs(
+                    postID,
+                    context: context,
+                    workspaceID: workspaceID,
+                    workspaces: workspaces
+                )
+                let output = try selectedOutput(
+                    requestedID: request.payload.outputId,
+                    from: existingOutputs
+                ) ?? {
                     let identifiers = PublishingCatalog.identifiers(for: .instagramReels)
                     let created = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .draft)
                     created.workspaceID = brief.workspaceID
@@ -900,18 +1455,40 @@ enum MCPBridgeService {
                 if let caption = request.payload.caption { output.caption = caption }
                 if let callToAction = request.payload.callToAction { output.cta = callToAction }
                 try applyRequestedFormat(request.payload.format, to: output, context: context)
+                if request.payload.socialAccountId != nil {
+                    output.socialAccountID = try resolvedSocialAccountID(
+                        requestedID: request.payload.socialAccountId,
+                        existingID: output.socialAccountID,
+                        destinationID: output.destinationID,
+                        context: context,
+                        workspaceID: workspaceID,
+                        workspaces: workspaces
+                    )
+                }
             }
             brief.updatedAt = Date()
-        case "schedulePost":
+        case "schedulePost", "reschedulePost":
             guard let postID = request.payload.postId,
                   let targetDate = request.payload.targetDate,
                   let brief = try fetchBrief(postID, context: context, workspaceID: workspaceID, workspaces: workspaces) else {
                 throw MCPBridgeError.missingRecord("The post or posting date is missing.")
             }
+            if request.type == "reschedulePost",
+               Calendar.current.startOfDay(for: targetDate) < Calendar.current.startOfDay(for: Date()) {
+                throw MCPBridgeError.actionNotAllowed("Choose today or a future date when rescheduling a late post.")
+            }
             let outputs = try fetchOutputs(postID, context: context, workspaceID: workspaceID, workspaces: workspaces)
-            guard let output = request.payload.outputId.flatMap({ id in outputs.first { $0.id == id } }) ?? outputs.first else {
+            guard let output = try selectedOutput(requestedID: request.payload.outputId, from: outputs) else {
                 throw MCPBridgeError.missingRecord("Add a platform to the post before scheduling it.")
             }
+            output.socialAccountID = try resolvedSocialAccountID(
+                requestedID: request.payload.socialAccountId,
+                existingID: output.socialAccountID,
+                destinationID: output.destinationID,
+                context: context,
+                workspaceID: workspaceID,
+                workspaces: workspaces
+            )
             try prepareForApprovedScheduling(brief)
             guard BriefLifecycle.schedule(output, for: targetDate, brief: brief) else {
                 throw MCPBridgeError.actionNotAllowed("This post could not be scheduled.")
@@ -925,6 +1502,284 @@ enum MCPBridgeService {
                 to: output,
                 on: brief.workDate ?? targetDate
             )
+        case "markPostPosted":
+            guard let postID = request.payload.postId,
+                  let postedAt = request.payload.postedAt,
+                  let brief = try fetchBrief(postID, context: context, workspaceID: workspaceID, workspaces: workspaces) else {
+                throw MCPBridgeError.missingRecord("The post or posted date is missing.")
+            }
+            guard PostedDatePolicy.isValid(postedAt) else {
+                throw MCPBridgeError.actionNotAllowed("A post cannot be marked live in the future.")
+            }
+            let outputs = try fetchOutputs(postID, context: context, workspaceID: workspaceID, workspaces: workspaces)
+            guard let output = try selectedOutput(requestedID: request.payload.outputId, from: outputs) else {
+                throw MCPBridgeError.missingRecord("Add a platform to the post before marking it posted.")
+            }
+            guard output.status != .posted else { return }
+            guard BriefLifecycle.togglePosted(output, brief: brief, postedAt: postedAt) else {
+                throw MCPBridgeError.actionNotAllowed("This post could not be marked as posted.")
+            }
+            BriefLifecycle.synchronize(brief, outputs: outputs)
+        case "createSeries":
+            let name = try requiredTitle(request.payload.name)
+            let proposedSeriesID = request.payload.seriesId ?? UUID()
+            guard let requestedPillarID = request.payload.pillarId else {
+                throw MCPBridgeError.invalidRequest("Choose a pillar before approving this series.")
+            }
+            guard let pillarID = try validatedPillarID(
+                requestedPillarID,
+                context: context,
+                workspaceID: workspaceID,
+                workspaces: workspaces
+            ) else {
+                throw MCPBridgeError.invalidRequest("Choose a pillar before approving this series.")
+            }
+            if let existingSeries = try context.fetch(FetchDescriptor<ContentSeries>()).first(where: {
+                $0.id == proposedSeriesID
+            }) {
+                guard existingSeries.name == name else {
+                    throw MCPBridgeError.actionNotAllowed("This series identifier already belongs to a different series.")
+                }
+                guard existingSeries.pillarID == pillarID else {
+                    throw MCPBridgeError.actionNotAllowed("This series identifier already belongs to a different pillar.")
+                }
+                return
+            }
+            let platform = request.payload.platform.flatMap(CreatorPlatform.init(rawValue:)) ?? .instagramReels
+            let identifiers = PublishingCatalog.identifiers(for: platform)
+            let socialAccountID = try resolvedSocialAccountID(
+                requestedID: request.payload.socialAccountId,
+                existingID: nil,
+                destinationID: identifiers.destination,
+                context: context,
+                workspaceID: workspaceID,
+                workspaces: workspaces
+            )
+            let series = ContentSeries(
+                id: proposedSeriesID,
+                workspaceID: workspaceID,
+                name: name,
+                pillarID: pillarID,
+                platform: platform,
+                destinationID: identifiers.destination,
+                formatID: identifiers.format,
+                socialAccountID: socialAccountID
+            )
+            series.cadence = request.payload.cadence.flatMap(PostRecurrenceFrequency.init(rawValue:)) ?? .none
+            series.cadenceStartDate = request.payload.cadenceStartDate
+            series.cadenceWeekdays = Set((request.payload.cadenceWeekdays ?? []).compactMap(PillarWeekday.init(rawValue:)))
+            series.cadenceMonthDay = request.payload.cadenceMonthDay
+            series.cadenceEndDate = request.payload.cadenceEndDate
+            series.cadenceIncludesTime = request.payload.includesTargetTime ?? false
+            context.insert(series)
+        case "createSeriesEpisode":
+            guard let seriesID = request.payload.seriesId,
+                  let series = try context.fetch(FetchDescriptor<ContentSeries>()).first(where: {
+                      $0.id == seriesID && $0.state != .archived && WorkspaceScope.includes(
+                          $0.workspaceID,
+                          activeWorkspaceID: workspaceID,
+                          workspaces: workspaces
+                      )
+                  }) else {
+                throw MCPBridgeError.missingRecord("The active series no longer exists.")
+            }
+            guard let seriesPillarID = series.pillarID,
+                  let inheritedPillarID = try validatedPillarID(
+                      seriesPillarID,
+                      context: context,
+                      workspaceID: workspaceID,
+                      workspaces: workspaces
+                  ) else {
+                throw MCPBridgeError.actionNotAllowed("Assign an active pillar to this series before approving an MCP episode.")
+            }
+            let slot: SeriesEpisodeSlot
+            let isNewSlot: Bool
+            if let slotID = request.payload.episodeSlotId {
+                guard let existingSlot = try context.fetch(FetchDescriptor<SeriesEpisodeSlot>()).first(where: {
+                    $0.id == slotID && $0.seriesID == series.id && $0.status == .open
+                }) else {
+                    throw MCPBridgeError.missingRecord("The open episode slot no longer exists.")
+                }
+                slot = existingSlot
+                isNewSlot = false
+            } else {
+                // The creator owns the work date, so an agent may legitimately
+                // propose an episode with only a publish date. Fall back to it
+                // for the planning slot rather than rejecting the proposal.
+                guard let plannedDate = request.payload.workDate ?? request.payload.targetDate else {
+                    throw MCPBridgeError.invalidRequest("A work date, a publish date, or an open episode slot is required.")
+                }
+                let plannedIncludesTime = request.payload.workDate != nil
+                    ? (request.payload.includesWorkTime ?? false)
+                    : (request.payload.includesTargetTime ?? false)
+                let proposedSlotID = request.payload.proposedEpisodeSlotId ?? UUID()
+                guard try !context.fetch(FetchDescriptor<SeriesEpisodeSlot>()).contains(where: {
+                    $0.id == proposedSlotID
+                }) else {
+                    throw MCPBridgeError.actionNotAllowed("This episode version has already entered the series pipeline.")
+                }
+                slot = SeriesEpisodeSlot(
+                    id: proposedSlotID,
+                    workspaceID: workspaceID,
+                    seriesID: series.id,
+                    plannedDate: plannedDate,
+                    includesTime: plannedIncludesTime
+                )
+                isNewSlot = true
+            }
+            let existingEpisodes = try context.fetch(FetchDescriptor<CreativeBrief>()).filter {
+                $0.seriesID == series.id && $0.status != .archived
+            }
+            let episodeNumber = request.payload.episodeNumber
+                ?? ((existingEpisodes.compactMap(\.episodeNumber).max() ?? 0) + 1)
+            let title = try requiredTitle(request.payload.title)
+            let brief = CreativeBrief(
+                title: title,
+                premise: request.payload.premise ?? "",
+                source: .text,
+                status: .spark
+            )
+            brief.workspaceID = workspaceID
+            brief.ideaBankPlacement = .post
+            brief.notes = request.payload.notes ?? ""
+            brief.pillarID = inheritedPillarID
+            brief.seriesID = series.id
+            brief.episodeNumber = episodeNumber
+            brief.episodeLabel = request.payload.episodeLabel ?? ""
+            brief.workDate = slot.plannedDate
+            brief.includesWorkTime = slot.includesTime
+            brief.agendaDate = slot.plannedDate
+            brief.spokenHook = request.payload.hook ?? ""
+            brief.ctaIntent = request.payload.callToAction ?? ""
+            if let duration = series.defaultDurationSeconds { brief.durationSeconds = duration }
+
+            let platform = request.payload.platform.flatMap(CreatorPlatform.init(rawValue:))
+                ?? series.defaultPlatform
+                ?? .instagramReels
+            let identifiers = PublishingCatalog.identifiers(for: platform)
+            let output = PlatformOutput(
+                briefID: brief.id,
+                platform: platform,
+                destinationID: series.defaultDestinationID ?? identifiers.destination,
+                formatID: series.defaultFormatID ?? identifiers.format,
+                socialAccountID: series.defaultSocialAccountID,
+                durationSeconds: series.defaultDurationSeconds ?? brief.durationSeconds,
+                status: .draft
+            )
+            output.workspaceID = workspaceID
+            output.seriesName = series.name
+            output.caption = request.payload.caption ?? ""
+            output.cta = request.payload.callToAction ?? ""
+            try applyRequestedFormat(request.payload.format, to: output, context: context)
+            output.socialAccountID = try resolvedSocialAccountID(
+                requestedID: request.payload.socialAccountId,
+                existingID: series.defaultSocialAccountID,
+                destinationID: output.destinationID,
+                context: context,
+                workspaceID: workspaceID,
+                workspaces: workspaces
+            )
+
+            if let targetDate = request.payload.targetDate {
+                guard PostDatePlanPolicy.isChronologicallyValid(
+                    workDate: slot.plannedDate,
+                    scheduledDate: targetDate
+                ) else {
+                    throw MCPBridgeError.actionNotAllowed("The scheduled date cannot be before the episode work date.")
+                }
+                try prepareForApprovedScheduling(brief)
+                guard BriefLifecycle.schedule(output, for: targetDate, brief: brief) else {
+                    throw MCPBridgeError.actionNotAllowed("This episode could not be scheduled.")
+                }
+                output.includesTargetTime = request.payload.includesTargetTime ?? false
+                brief.agendaDate = targetDate
+                BriefLifecycle.synchronize(brief, outputs: [output])
+            }
+
+            if isNewSlot { context.insert(slot) }
+            context.insert(brief)
+            context.insert(output)
+            for item in series.taskTemplate {
+                let task = CreatorTask(
+                    briefID: brief.id,
+                    pillarID: brief.pillarID,
+                    platformOutputID: output.id,
+                    title: item.title,
+                    kind: item.kind,
+                    lane: .production,
+                    priority: item.priority,
+                    notes: item.notes,
+                    estimatedMinutes: item.estimatedMinutes,
+                    targetDate: slot.plannedDate,
+                    includesTargetTime: slot.includesTime,
+                    sortOrder: item.sortOrder
+                )
+                task.workspaceID = workspaceID
+                context.insert(task)
+            }
+            slot.convertedBriefID = brief.id
+            slot.status = .converted
+        case "createBrandPartner":
+            let name = try requiredTitle(request.payload.name)
+            let partner = BrandPartner(
+                workspaceID: workspaceID,
+                name: name,
+                type: request.payload.brandType.flatMap(BrandPartnerType.init(rawValue:)) ?? .brand,
+                stage: request.payload.brandStage.flatMap(BrandPartnerStage.init(rawValue:)) ?? .wishlist
+            )
+            partner.websiteURLString = request.payload.website ?? ""
+            partner.socialHandle = request.payload.socialHandle ?? ""
+            partner.notes = request.payload.notes ?? ""
+            partner.nextFollowUpAt = request.payload.nextFollowUpAt
+            context.insert(partner)
+            let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            BrandPartnershipService.reconcileFollowUpTask(for: partner, tasks: tasks, context: context)
+        case "updateBrandPartner":
+            guard let partnerID = request.payload.brandPartnerId,
+                  let partner = try context.fetch(FetchDescriptor<BrandPartner>()).first(where: {
+                      $0.id == partnerID && WorkspaceScope.includes(
+                          $0.workspaceID,
+                          activeWorkspaceID: workspaceID,
+                          workspaces: workspaces
+                      )
+                  }) else {
+                throw MCPBridgeError.missingRecord("The brand partner no longer exists.")
+            }
+            if let name = request.payload.name { partner.name = try requiredTitle(name) }
+            if let type = request.payload.brandType.flatMap(BrandPartnerType.init(rawValue:)) { partner.type = type }
+            if let stage = request.payload.brandStage.flatMap(BrandPartnerStage.init(rawValue:)) { partner.stage = stage }
+            if let website = request.payload.website { partner.websiteURLString = website }
+            if let socialHandle = request.payload.socialHandle { partner.socialHandle = socialHandle }
+            if let notes = request.payload.notes { partner.notes = notes }
+            if request.payload.clearNextFollowUp == true {
+                partner.nextFollowUpAt = nil
+            } else if let followUp = request.payload.nextFollowUpAt {
+                partner.nextFollowUpAt = followUp
+            }
+            partner.updatedAt = Date()
+            let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+            BrandPartnershipService.reconcileFollowUpTask(for: partner, tasks: tasks, context: context)
+        case "makeAnchorPillar":
+            guard let pillarID = request.payload.pillarId,
+                  let pillar = try context.fetch(FetchDescriptor<Pillar>()).first(where: {
+                      $0.id == pillarID && !$0.isArchived && WorkspaceScope.includes(
+                          $0.workspaceID,
+                          activeWorkspaceID: workspaceID,
+                          workspaces: workspaces
+                      )
+                  }) else {
+                throw MCPBridgeError.missingRecord("The pillar no longer exists.")
+            }
+            let pillars = try context.fetch(FetchDescriptor<Pillar>()).filter {
+                !$0.isArchived && WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: workspaceID,
+                    workspaces: workspaces
+                )
+            }
+            guard PillarAnchorPromotionService.promote(pillar, pillars: pillars) else {
+                throw MCPBridgeError.actionNotAllowed("This pillar could not become the anchor.")
+            }
         case "addTask":
             let title = try requiredTitle(request.payload.title)
             let postID = request.payload.postId
@@ -1040,35 +1895,93 @@ enum MCPBridgeService {
         return changed
     }
 
-    private static func finish(_ request: MCPBridgeChangeRequest, status: String, message: String) throws {
-        try MCPBridgePreferences.withDirectory { directory in
-            try prepare(directory: directory)
-            let receipt = MCPBridgeReceipt(
-                schemaVersion: schemaVersion,
-                requestId: request.id,
-                processedAt: Date(),
-                status: status,
-                message: message
+    private static func finish(
+        _ request: MCPBridgeChangeRequest,
+        status: String,
+        message: String,
+        decisionNote: String? = nil,
+        context: ModelContext? = nil,
+        directory: URL
+    ) throws {
+        try prepare(directory: directory)
+        let slotID = request.payload.episodeSlotId ?? request.payload.proposedEpisodeSlotId
+        let resultPostID = try context.flatMap { context in
+            try context.fetch(FetchDescriptor<SeriesEpisodeSlot>())
+                .first(where: { $0.id == slotID })?
+                .convertedBriefID
+        }
+        let receipt = MCPBridgeReceipt(
+            schemaVersion: schemaVersion,
+            requestId: request.id,
+            processedAt: Date(),
+            status: status,
+            message: message,
+            workspaceId: request.workspaceId,
+            type: request.type,
+            seriesId: request.payload.seriesId,
+            episodeReviewId: request.payload.episodeReviewId,
+            episodeSlotId: slotID,
+            revisionNumber: request.payload.revisionNumber,
+            decisionNote: decisionNote,
+            resultPostId: resultPostID,
+            nextAction: status == "needsRevision" ? "reviseSeriesEpisode" : "none"
+        )
+        try encoder.encode(receipt).write(
+            to: directory.appending(path: "responses/\(request.id.uuidString.lowercased()).json"),
+            options: [.atomic, .completeFileProtectionUnlessOpen]
+        )
+        if status == "approved", let reviewID = request.payload.episodeReviewId {
+            try updateEpisodeRevision(
+                reviewID: reviewID,
+                status: "approved",
+                request: request,
+                directory: directory
             )
-            try encoder.encode(receipt).write(
-                to: directory.appending(path: "responses/\(request.id.uuidString.lowercased()).json"),
-                options: [.atomic, .completeFileProtectionUnlessOpen]
-            )
-            let requestsDirectory = directory.appending(path: "requests", directoryHint: .isDirectory)
-            let matchingRequestURL = try? FileManager.default
-                .contentsOfDirectory(at: requestsDirectory, includingPropertiesForKeys: nil)
-                .first(where: {
-                    $0.deletingPathExtension().lastPathComponent.lowercased()
-                        == request.id.uuidString.lowercased()
-                })
-            if let matchingRequestURL {
-                try? FileManager.default.removeItem(at: matchingRequestURL)
-            }
+        }
+        let requestsDirectory = directory.appending(path: "requests", directoryHint: .isDirectory)
+        let matchingRequestURL = try? FileManager.default
+            .contentsOfDirectory(at: requestsDirectory, includingPropertiesForKeys: nil)
+            .first(where: {
+                $0.deletingPathExtension().lastPathComponent.lowercased()
+                    == request.id.uuidString.lowercased()
+            })
+        if let matchingRequestURL {
+            try? FileManager.default.removeItem(at: matchingRequestURL)
         }
     }
 
-    private static func prepare(directory: URL) throws {
-        for folder in ["requests", "responses", "cy-requests", "cy-responses", "cy-processing"] {
+    private static func writeEpisodeRevision(
+        _ record: MCPBridgeEpisodeRevisionRecord,
+        directory: URL
+    ) throws {
+        try prepare(directory: directory)
+        try encoder.encode(record).write(
+            to: directory.appending(
+                path: "episode-revisions/\(record.episodeReviewId.uuidString.lowercased()).json"
+            ),
+            options: [.atomic, .completeFileProtectionUnlessOpen]
+        )
+    }
+
+    private static func updateEpisodeRevision(
+        reviewID: UUID,
+        status: String,
+        request: MCPBridgeChangeRequest,
+        directory: URL
+    ) throws {
+        guard var record = try episodeRevisions(directory: directory).first(where: {
+            $0.episodeReviewId == reviewID
+        }) else { return }
+        record.status = status
+        record.requestId = request.id
+        record.revisionNumber = request.payload.revisionNumber ?? record.revisionNumber
+        record.decisionAt = Date()
+        record.request = request
+        try writeEpisodeRevision(record, directory: directory)
+    }
+
+    nonisolated private static func prepare(directory: URL) throws {
+        for folder in ["requests", "responses", "episode-revisions", "cy-requests", "cy-responses", "cy-processing"] {
             try FileManager.default.createDirectory(
                 at: directory.appending(path: folder, directoryHint: .isDirectory),
                 withIntermediateDirectories: true
@@ -1085,6 +1998,7 @@ enum MCPBridgeService {
         - `snapshot.json` is a read-only workspace snapshot written by the app.
         - `requests/` contains proposals waiting for approval in Cy.
         - `responses/` contains approval receipts for Claude or Codex.
+        - `episode-revisions/` retains denied series episodes and their revision history until they re-enter the series.
         - `cy-requests/` and `cy-responses/` carry private Local Cy requests between this iPhone and your Mac.
         - `cy-runtime.json` reports whether the Local Cy worker is available.
 
@@ -1121,6 +2035,76 @@ enum MCPBridgeService {
             throw MCPBridgeError.missingRecord("The selected pillar no longer exists.")
         }
         return value
+    }
+
+    private static func selectedOutput(
+        requestedID: UUID?,
+        from outputs: [PlatformOutput]
+    ) throws -> PlatformOutput? {
+        if let requestedID {
+            guard let output = outputs.first(where: { $0.id == requestedID }) else {
+                throw MCPBridgeError.missingRecord("The selected platform output no longer exists.")
+            }
+            return output
+        }
+        guard outputs.count <= 1 else {
+            throw MCPBridgeError.actionNotAllowed(
+                "This post has multiple platform outputs. Choose the output and account explicitly before approving it."
+            )
+        }
+        return outputs.first
+    }
+
+    private static func resolvedSocialAccountID(
+        requestedID: UUID?,
+        existingID: UUID?,
+        destinationID: UUID?,
+        context: ModelContext,
+        workspaceID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) throws -> UUID? {
+        guard let destinationID else {
+            guard requestedID == nil, existingID == nil else {
+                throw MCPBridgeError.actionNotAllowed(
+                    "Choose a platform before choosing its social account."
+                )
+            }
+            return nil
+        }
+
+        let matches = try context.fetch(FetchDescriptor<CreatorSocialAccount>()).filter {
+            !$0.isArchived && $0.destinationID == destinationID && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: workspaceID,
+                workspaces: workspaces
+            )
+        }
+
+        if let requestedID {
+            guard matches.contains(where: { $0.id == requestedID }) else {
+                throw MCPBridgeError.actionNotAllowed(
+                    "The selected social account is not available for this platform in the active agent.cy workspace."
+                )
+            }
+            return requestedID
+        }
+
+        if let existingID {
+            guard matches.contains(where: { $0.id == existingID }) else {
+                throw MCPBridgeError.actionNotAllowed(
+                    "This post's social account is no longer available. Choose an active account before scheduling it."
+                )
+            }
+            return existingID
+        }
+
+        if matches.count == 1 { return matches[0].id }
+        guard matches.count < 2 else {
+            throw MCPBridgeError.actionNotAllowed(
+                "This platform has multiple social accounts. Choose the intended account explicitly before approving it."
+            )
+        }
+        return nil
     }
 
     private static func applyRequestedFormat(
@@ -1188,7 +2172,7 @@ enum MCPBridgeService {
         return cleaned.count == 6 ? cleaned.uppercased() : "55705B"
     }
 
-    private static var encoder: JSONEncoder {
+    nonisolated private static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601

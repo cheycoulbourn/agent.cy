@@ -1,6 +1,8 @@
 import SwiftData
 import SwiftUI
 import QuickLook
+import PhotosUI
+import UniformTypeIdentifiers
 
 struct PostOutputDetailView: View {
     let brief: CreativeBrief
@@ -79,12 +81,7 @@ enum FinalizedPostPresentation {
         calendar: Calendar = .current
     ) -> String {
         if outputStatus == .posted { return "Posted" }
-        return isMissed(
-            outputStatus: outputStatus,
-            targetDate: targetDate,
-            now: now,
-            calendar: calendar
-        ) ? "Missed post" : "Scheduled post"
+        return "Scheduled post"
     }
 
     static func statusTitle(
@@ -93,13 +90,12 @@ enum FinalizedPostPresentation {
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> String {
-        if outputStatus == .posted { return "POSTED" }
-        return isMissed(
-            outputStatus: outputStatus,
-            targetDate: targetDate,
-            now: now,
-            calendar: calendar
-        ) ? "MISSED" : "SCHEDULED"
+        switch outputStatus {
+        case .draft: "DRAFT"
+        case .ready: "READY"
+        case .scheduled: "SCHEDULED"
+        case .posted: "POSTED"
+        }
     }
 }
 
@@ -143,19 +139,30 @@ struct ScheduledPostDetailView: View {
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
     @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
+    @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var tasks: [CreatorTask]
     @Query private var attachments: [CreatorAttachment]
     @State private var showEditor = false
+    @State private var isOpeningEditor = false
     @State private var showTaskComposer = false
     @State private var showRescheduler = false
+    @State private var actualPostedDate = Date()
+    @State private var showActualPostedDateConfirmation = false
     @State private var confirmArchive = false
     @State private var confirmDelete = false
     @State private var selectedMoodBoardPreview: MoodBoardImagePreview?
     @State private var attachmentPreviewURL: URL?
+    @State private var selectedPostMedia: [PhotosPickerItem] = []
+    @State private var isImportingPostMedia = false
+    @State private var showMediaManager = false
+    @State private var mediaExportRequest: PostMediaExportRequest?
     @State private var markdownDocument: MarkdownFileDocument?
     @State private var showMarkdownExporter = false
     @State private var isKeyboardVisible = false
+#if targetEnvironment(macCatalyst)
+    @State private var showDesktopPostOptions = false
+#endif
 
     private var pillars: [Pillar] {
         allPillars.filter {
@@ -193,10 +200,34 @@ struct ScheduledPostDetailView: View {
     }
 
     var body: some View {
+        Group {
+            if showEditor {
+                inlinePostEditor
+            } else {
+                postDetailContent
+            }
+        }
+    }
+
+    private var postDetailContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 postHeader
+                episodeSeriesAction
+                mediaSpotlight
+                if !voiceRecordings.isEmpty {
+                    PostVoiceRecordingsSection(
+                        recordings: voiceRecordings,
+                        onDownload: requestMediaExport,
+                        onDelete: deleteVoiceRecording,
+                        onTitleChange: updateVoiceRecordingTitle,
+                        onPlaybackError: { appModel.notice = .error($0) }
+                    )
+                }
                 scheduleSurface
+                if CreatorSessionFeatureAvailability.isEnabled {
+                    focusSessionAction
+                }
                 postContent
                 collaborationDetails
                 moodBoardDetails
@@ -237,27 +268,6 @@ struct ScheduledPostDetailView: View {
             }
         }
 #endif
-        .sheet(isPresented: $showEditor) {
-            NavigationStack {
-                ResumablePostEditorView(
-                    brief: brief,
-                    output: output,
-                    bottomActionClearance: AgentSpacing.x3,
-                    onSpark: {}
-                )
-                .taskNavigationDestinations()
-                .navigationTitle("Edit post")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        AgentToolbarIconButton(title: "Close", icon: .close) { showEditor = false }
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                }
-                .agentScreen()
-                .agentKeyboardDismissal()
-            }
-        }
         .sheet(isPresented: $showTaskComposer) {
             PostDraftTaskComposer(
                 brief: brief,
@@ -268,6 +278,31 @@ struct ScheduledPostDetailView: View {
         }
         .sheet(isPresented: $showRescheduler) {
             PostRescheduleSheet(output: output)
+        }
+        .sheet(isPresented: $showActualPostedDateConfirmation) {
+#if targetEnvironment(macCatalyst)
+            ActualPostedDatePicker(
+                postedAt: $actualPostedDate,
+                onSave: markPosted
+            )
+            .presentationSizing(.fitted)
+            .presentationCornerRadius(AgentRadius.floating)
+            .presentationBackground(Color.agentCanvas)
+#else
+            ActualPostedDatePicker(
+                postedAt: $actualPostedDate,
+                onSave: markPosted
+            )
+            .presentationDetents([.height(330)])
+            .agentSheetDragIndicator()
+#endif
+        }
+        .sheet(isPresented: $showMediaManager) {
+            PostMediaManagerView(
+                briefID: brief.id,
+                workspaceID: brief.workspaceID ?? appModel.resolvedWorkspaceID(context: context),
+                output: output
+            )
         }
         .fullScreenCover(item: $selectedMoodBoardPreview) { preview in
             MoodBoardImageViewer(preview: preview)
@@ -280,6 +315,17 @@ struct ScheduledPostDetailView: View {
             defaultFilename: PostMarkdownExporter.defaultFileName(for: brief),
             onCompletion: handleMarkdownExport
         )
+        .fileExporter(
+            isPresented: mediaExporterPresented,
+            document: mediaExportRequest?.document,
+            contentType: mediaExportRequest?.contentType ?? .data,
+            defaultFilename: mediaExportRequest?.fileName ?? "post-media",
+            onCompletion: handleMediaExport
+        )
+        .onChange(of: selectedPostMedia) { _, items in
+            guard !items.isEmpty else { return }
+            Task { await importPostMedia(items) }
+        }
         .onChange(of: attachmentPreviewURL) { oldValue, newValue in
             guard newValue == nil, let oldValue else { return }
             try? FileManager.default.removeItem(at: oldValue)
@@ -289,6 +335,25 @@ struct ScheduledPostDetailView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             isKeyboardVisible = false
+        }
+        .task(id: postMediaPreviewKey) {
+            await PostMediaPreviewBackfillService.populateMissingPreviews(
+                for: postMedia,
+                context: context
+            )
+        }
+        .task(id: publishedThumbnailHydrationKey) {
+            do {
+                try await Task.sleep(for: .milliseconds(450))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await PublishedPostThumbnailHydrator().hydrate(
+                brief: brief,
+                output: output,
+                context: context
+            )
         }
         .alert("Archive this post?", isPresented: $confirmArchive) {
             Button("Archive", role: .destructive) {
@@ -310,21 +375,109 @@ struct ScheduledPostDetailView: View {
                 : "This removes only this episode and its linked tasks. The series and future empty slots stay in place.")
         }
         .onDisappear {
-            if output.status == .posted { savePublishedLink() }
+            // Pushing the editor makes this detail view disappear. Saving and
+            // synchronizing the same post during that transition caused
+            // SwiftUI's AttributeGraph to cycle until the watchdog killed the
+            // app. The editor owns persistence while it is open; this view
+            // only saves the published link when it is actually being left.
+            if output.status == .posted, !showEditor { savePublishedLink() }
         }
         .agentScreen()
+    }
+
+    private var focusSessionAction: some View {
+        Button {
+            appModel.presentCreatorSession(
+                linkedPostID: brief.id,
+                linkedPostTitle: brief.title
+            )
+        } label: {
+            HStack(spacing: AgentSpacing.x4) {
+                AgentIconView(.play, size: 17)
+                    .offset(x: 1)
+                    .frame(width: 40, height: 40)
+                    .background(Color.agentSelectionFill, in: .rect(cornerRadius: AgentRadius.control))
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text("Focus on this post")
+                        .font(.agentHeadline)
+                    HStack(spacing: AgentSpacing.x2) {
+                        AgentIconView(.link, size: 13)
+                        Text("Opens Creator Session with this post linked")
+                            .font(.agentMetadata)
+                    }
+                    .foregroundStyle(Color.agentSecondary)
+                }
+
+                Spacer(minLength: AgentSpacing.x3)
+                AgentIconView(.forward, size: 13)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            .foregroundStyle(Color.agentText)
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+            .background(Color.agentSurface)
+            .clipShape(.rect(cornerRadius: AgentRadius.card))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentRadius.card)
+                    .stroke(Color.agentBorder, lineWidth: 1)
+            }
+            .contentShape(.rect(cornerRadius: AgentRadius.card))
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityHint("Starts a session without replacing your optional session note")
     }
 
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
         AgentDesktopDetailRail(title: pageTitle, backAction: dismiss.callAsFunction) {
-            Menu {
-                postOptionsMenuContent
+            Button {
+                showDesktopPostOptions.toggle()
             } label: {
                 AgentDesktopDetailIconLabel(icon: .more)
             }
             .buttonStyle(AgentPressButtonStyle())
             .accessibilityLabel("Post options")
+            .popover(isPresented: $showDesktopPostOptions, arrowEdge: .top) {
+                desktopPostOptionsPopover
+                    .frame(width: 230)
+                    .padding(AgentSpacing.x2)
+                    .presentationCompactAdaptation(.popover)
+                    .presentationBackground(Color.agentSurface)
+            }
+        }
+    }
+
+    private var desktopPostOptionsPopover: some View {
+        VStack(spacing: AgentSpacing.x1) {
+            AgentDesktopMenuRow(title: "Edit post", icon: .pencil) {
+                showDesktopPostOptions = false
+                openPostEditor(afterDismissingDesktopMenu: true)
+            }
+            if let mediaMenuAttachment {
+                AgentDesktopMenuRow(title: "Download media", icon: .download) {
+                    showDesktopPostOptions = false
+                    requestMediaExport(mediaMenuAttachment)
+                }
+            }
+            AgentDesktopMenuDivider()
+            AgentDesktopMenuRow(title: "Copy Markdown", icon: .copy) {
+                showDesktopPostOptions = false
+                copyMarkdown()
+            }
+            AgentDesktopMenuRow(title: "Export Markdown", icon: .upload) {
+                showDesktopPostOptions = false
+                exportMarkdown()
+            }
+            AgentDesktopMenuDivider()
+            AgentDesktopMenuRow(title: "Archive", icon: .archive) {
+                showDesktopPostOptions = false
+                confirmArchive = true
+            }
+            AgentDesktopMenuRow(title: "Delete post", icon: .trash, isDestructive: true) {
+                showDesktopPostOptions = false
+                confirmDelete = true
+            }
         }
     }
 #endif
@@ -332,9 +485,16 @@ struct ScheduledPostDetailView: View {
     @ViewBuilder
     private var postOptionsMenuContent: some View {
         Button {
-            showEditor = true
+            openPostEditor()
         } label: {
             AgentIconLabel(title: "Edit post", icon: .pencil)
+        }
+        if let mediaMenuAttachment {
+            Button {
+                requestMediaExport(mediaMenuAttachment)
+            } label: {
+                AgentIconLabel(title: "Download media", icon: .download)
+            }
         }
         Divider()
         Button {
@@ -357,6 +517,59 @@ struct ScheduledPostDetailView: View {
             confirmDelete = true
         } label: {
             AgentIconLabel(title: "Delete post", icon: .trash)
+        }
+    }
+
+    private var inlinePostEditor: some View {
+        ResumablePostEditorView(
+            brief: brief,
+            output: output,
+            bottomActionClearance: AgentSpacing.x3,
+            closeAction: closePostEditor,
+            onSpark: {}
+        )
+        .navigationTitle("Edit post")
+        .navigationBarTitleDisplayMode(.inline)
+#if !targetEnvironment(macCatalyst)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                AgentToolbarIconButton(
+                    title: "Back to post details",
+                    icon: .back,
+                    action: closePostEditor
+                )
+            }
+            .sharedBackgroundVisibility(.hidden)
+        }
+#endif
+        .agentScreen()
+        .agentKeyboardDismissal()
+    }
+
+    private func closePostEditor() {
+        showEditor = false
+    }
+
+    private func openPostEditor(afterDismissingDesktopMenu: Bool = false) {
+        guard !showEditor, !isOpeningEditor else { return }
+        isOpeningEditor = true
+
+        #if targetEnvironment(macCatalyst)
+        if afterDismissingDesktopMenu {
+            showDesktopPostOptions = false
+        }
+        #endif
+
+        Task { @MainActor in
+            // Both SwiftUI Menu on iPhone and the custom Catalyst popover need
+            // to finish dismissing before the navigation stack changes. A
+            // yield is not long enough for UIKit's dismissal transaction and
+            // can leave the presentation graph cycling until the watchdog
+            // terminates the app.
+            try? await Task.sleep(for: .milliseconds(180))
+            showEditor = true
+            isOpeningEditor = false
         }
     }
 
@@ -388,18 +601,48 @@ struct ScheduledPostDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var episodeSeriesAction: some View {
+        if let selectedSeries {
+            NavigationLink(value: selectedSeries) {
+                HStack(spacing: AgentSpacing.x3) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                        MetaLabel("Series")
+                        Text(selectedSeries.name)
+                            .font(.agentBody.weight(.medium))
+                            .foregroundStyle(Color.agentText)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: AgentSpacing.x3)
+
+                    Text("Go to series")
+                        .font(.agentSubtext.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+                        .fixedSize()
+                    AgentIconView(.forward, size: 12)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.control)
+                        .stroke(Color.agentBorder, lineWidth: 1)
+                }
+                .contentShape(.rect(cornerRadius: AgentRadius.control))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the full series schedule")
+        }
+    }
+
     private var scheduleSurface: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             SectionRuleHeader(title: "Posting details")
             detailRow(label: "Date", value: scheduleDateText)
             detailRow(label: "Platform", value: platformLabel, keepsValueOnOneLine: true)
             detailRow(label: "Duration", value: durationLabel)
-            if isMissed {
-                AgentInlinePostAction(title: "Reschedule", isAlert: true) {
-                    showRescheduler = true
-                }
-                .padding(.top, AgentSpacing.x2)
-            }
         }
         .padding(.horizontal, AgentSpacing.x4)
         .padding(.vertical, AgentSpacing.x4)
@@ -473,6 +716,28 @@ struct ScheduledPostDetailView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open \(attachment.fileName)")
                 }
+            }
+        }
+    }
+
+    /// Mobile post media is the visual lead. Text-only posts intentionally have
+    /// no placeholder so the title flows straight into posting details.
+    @ViewBuilder
+    private var mediaSpotlight: some View {
+        if !postMedia.isEmpty {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                PostMediaSpotlight(
+                    attachments: postMedia,
+                    coverAttachmentID: output.coverAttachmentID,
+                    onOpen: openPostMedia,
+                    onDownload: requestMediaExport
+                )
+
+                PostMediaActionBar(
+                    selection: $selectedPostMedia,
+                    isImporting: isImportingPostMedia,
+                    onEdit: { showMediaManager = true }
+                )
             }
         }
     }
@@ -579,19 +844,145 @@ struct ScheduledPostDetailView: View {
 
     @ViewBuilder
     private var floatingPostingAction: some View {
-        Button(output.status == .posted ? "Mark not posted" : "Mark as posted") {
-            appModel.togglePosted(output: output, context: context)
+        Group {
+            switch bottomPostAction {
+            case .schedule:
+                floatingPostActionButton(
+                    title: "Schedule post",
+                    hint: "Chooses a scheduled date"
+                ) {
+                    showRescheduler = true
+                }
+            case .markPosted:
+                floatingPostActionButton(
+                    title: "Mark as posted",
+                    hint: "Marks this scheduled post as posted",
+                    action: requestPostingStatusChange
+                )
+            case .markPostedAndReschedule:
+                HStack(spacing: AgentSpacing.x3) {
+                    floatingPostActionButton(
+                        title: "Mark posted",
+                        hint: "Marks this late scheduled post as posted",
+                        action: requestPostingStatusChange
+                    )
+                    floatingPostActionButton(
+                        title: "Reschedule",
+                        hint: "Chooses a new scheduled date"
+                    ) {
+                        showRescheduler = true
+                    }
+                }
+            case .markNotPosted:
+                floatingPostActionButton(
+                    title: "Mark not posted",
+                    hint: "Returns this post to its scheduled status",
+                    action: requestPostingStatusChange
+                )
+            }
         }
-        .buttonStyle(AgentPrimaryButtonStyle())
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x2)
-        .padding(.bottom, 88)
-        .shadow(color: Color.agentPureBlack.opacity(0.14), radius: 16, y: 7)
-        .accessibilityHint(
-            output.status == .posted
-                ? "Returns this post to its scheduled status"
-                : "Marks this scheduled post as posted"
+        .padding(.bottom, postActionBottomPadding)
+        .frame(maxWidth: postActionMaximumWidth)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var postActionBottomPadding: CGFloat {
+#if targetEnvironment(macCatalyst)
+        AgentSpacing.x6
+#else
+        88
+#endif
+    }
+
+    private var postActionMaximumWidth: CGFloat? {
+#if targetEnvironment(macCatalyst)
+        560
+#else
+        nil
+#endif
+    }
+
+    private var bottomPostAction: PostBottomAction {
+        PostBottomActionPolicy.action(
+            outputStatus: output.status,
+            scheduledDate: output.targetDate,
+            includesScheduledTime: output.includesTargetTime
         )
+    }
+
+    private func floatingPostActionButton(
+        title: String,
+        hint: String,
+        action: @escaping () -> Void
+    ) -> some View {
+#if targetEnvironment(macCatalyst)
+        Button(action: action) {
+            Text(title)
+                .font(.agentSubtext.weight(.medium))
+                .lineLimit(1)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
+            .foregroundStyle(Color.agentText)
+            .padding(.horizontal, AgentSpacing.x5)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(
+                Color.agentPureWhite.opacity(colorScheme == .dark ? 0.18 : 0.94),
+                in: .capsule
+            )
+            .glassEffect(
+                .clear.interactive()
+                    .tint(Color.agentPureWhite.opacity(colorScheme == .dark ? 0.08 : 0.20)),
+                in: .capsule
+            )
+            .overlay {
+                // A white stroke on a near-white capsule over a light canvas
+                // read as no border at all on desktop. Dark mode keeps the
+                // white edge; light mode uses the border token so the control
+                // has a visible boundary.
+                Capsule()
+                    .stroke(
+                        colorScheme == .dark
+                            ? Color.agentPureWhite.opacity(0.24)
+                            : Color.agentBorder,
+                        lineWidth: 1
+                    )
+                    .allowsHitTesting(false)
+            }
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityHint(hint)
+#else
+        AgentPhonePostActionButton(
+            title: title,
+            accessibilityHint: hint,
+            action: action
+        )
+#endif
+    }
+
+    private func requestPostingStatusChange() {
+        guard output.status != .posted else {
+            appModel.togglePosted(output: output, context: context)
+            return
+        }
+
+        let now = Date()
+        if PostedDatePolicy.needsActualDateConfirmation(scheduledDate: output.targetDate, now: now) {
+            actualPostedDate = now
+            showActualPostedDateConfirmation = true
+        } else {
+            markPosted(at: now)
+        }
+    }
+
+    private func markPosted(at postedAt: Date) {
+        guard PostedDatePolicy.isValid(postedAt) else {
+            appModel.notice = .info("A live post cannot have a future posted date.")
+            return
+        }
+        appModel.togglePosted(output: output, postedAt: postedAt, context: context)
     }
 
     private func detailRow(
@@ -615,6 +1006,17 @@ struct ScheduledPostDetailView: View {
     }
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
+    private var selectedSeries: ContentSeries? {
+        guard let seriesID = brief.seriesID else { return nil }
+        return allSeries.first {
+            $0.id == seriesID &&
+                WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: brief.workspaceID ?? appModel.activeWorkspaceID,
+                    workspaces: workspaces
+                )
+        }
+    }
     private var selectedPillar: Pillar? { activePillars.first { $0.id == brief.pillarID } }
     private var pillarName: String { selectedPillar?.name ?? "Unfiled" }
     private var pillarColor: Color {
@@ -628,6 +1030,46 @@ struct ScheduledPostDetailView: View {
     }
     private var moodBoardMedia: [CreatorAttachment] {
         attachments.filter { $0.ownerKind == .moodBoardMedia && $0.platformOutputID == output.id }
+    }
+    private var postMedia: [CreatorAttachment] {
+        attachments
+            .filter { $0.ownerKind == .postMedia && $0.platformOutputID == output.id }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+    private var voiceRecordings: [CreatorAttachment] {
+        PostVoiceRecordingPolicy.recordings(from: attachments, briefID: brief.id)
+    }
+
+    @discardableResult
+    private func updateVoiceRecordingTitle(_ attachment: CreatorAttachment, title: String) -> Bool {
+        attachment.displayTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        attachment.updatedAt = Date()
+        do {
+            try context.save()
+            return true
+        } catch {
+            appModel.notice = .error("That recording title could not be saved.")
+            return false
+        }
+    }
+    private var postMediaPreviewKey: String {
+        postMedia.map { "\($0.id.uuidString):\($0.previewData == nil ? 0 : 1)" }.joined(separator: "|")
+    }
+    private var publishedThumbnailHydrationKey: String {
+        PublishedPostThumbnailPolicy.taskKey(output: output)
+    }
+    private var mediaMenuAttachment: CreatorAttachment? {
+        let coverID = PostMediaPresentationPolicy.resolvedCoverID(
+            preferredID: output.coverAttachmentID,
+            mediaIDs: postMedia.map(\.id)
+        )
+        return postMedia.first { $0.id == coverID }
+    }
+    private var mediaExporterPresented: Binding<Bool> {
+        Binding(
+            get: { mediaExportRequest != nil },
+            set: { if !$0 { mediaExportRequest = nil } }
+        )
     }
     private var completedTaskCount: Int { topLevelTasks.filter(\.isCompleted).count }
     private var displayTitle: String {
@@ -656,15 +1098,15 @@ struct ScheduledPostDetailView: View {
         )
     }
     private var statusBadgeBackground: Color {
-        if isMissed { return .agentDestructive }
         return output.status == .posted ? .actionAccent : .clear
     }
     private var statusBadgeForeground: Color {
-        if isMissed { return .onCyAccent }
+        if isMissed { return .agentDestructive }
         return output.status == .posted ? .onAccent : .agentText
     }
     private var statusBadgeBorder: Color {
-        isMissed || output.status == .posted ? .clear : Color.agentText.opacity(0.20)
+        if output.status == .posted { return .clear }
+        return isMissed ? .agentDestructive : Color.agentText.opacity(0.20)
     }
     private var scheduleDateText: String {
         guard let targetDate = output.targetDate else { return "Not set" }
@@ -739,6 +1181,75 @@ struct ScheduledPostDetailView: View {
             }
         }
     }
+
+    @MainActor
+    private func importPostMedia(_ items: [PhotosPickerItem]) async {
+        isImportingPostMedia = true
+        defer {
+            isImportingPostMedia = false
+            selectedPostMedia = []
+        }
+        let result = await PostMediaImportService.add(
+            items: items,
+            briefID: brief.id,
+            output: output,
+            workspaceID: brief.workspaceID ?? appModel.resolvedWorkspaceID(context: context),
+            context: context
+        )
+        if let notice = result.notice { appModel.notice = .info(notice) }
+    }
+
+    private func openPostMedia(_ attachment: CreatorAttachment) {
+        if attachment.kind == .photo, let data = attachment.cloudData {
+            selectedMoodBoardPreview = MoodBoardImagePreview(
+                id: attachment.id,
+                data: data,
+                title: attachment.fileName
+            )
+        } else {
+            openAttachment(attachment)
+        }
+    }
+
+    private func requestMediaExport(_ attachment: CreatorAttachment) {
+        let preferredFileName = PostVoiceRecordingPolicy.isVoiceRecording(attachment)
+            ? VoiceRecordingExportNaming.fileName(
+                title: attachment.displayTitle,
+                recordedAt: attachment.createdAt,
+                postTitle: displayTitle
+            )
+            : nil
+        guard let request = PostMediaExportRequest(
+            attachment: attachment,
+            preferredFileName: preferredFileName
+        ) else {
+            appModel.notice = .error("That original is not available on this device yet.")
+            return
+        }
+        mediaExportRequest = request
+    }
+
+    private func deleteVoiceRecording(_ attachment: CreatorAttachment) {
+        context.delete(attachment)
+        do {
+            try context.save()
+        } catch {
+            appModel.notice = .error("That recording could not be deleted.")
+        }
+    }
+
+    private func handleMediaExport(_ result: Result<URL, Error>) {
+        defer { mediaExportRequest = nil }
+        switch result {
+        case .success:
+            appModel.notice = .info("Full-resolution media saved to Files.")
+        case let .failure(error):
+            if (error as? CocoaError)?.code != .userCancelled {
+                appModel.notice = .error("That media file could not be saved.")
+            }
+        }
+    }
+
     private func openAttachment(_ attachment: CreatorAttachment) {
         guard let data = attachment.cloudData else {
             appModel.notice = .error("That attachment is not available on this device yet.")

@@ -34,20 +34,6 @@ private struct CyAnalysisToolbarMark: View {
     }
 }
 
-private struct CyAnalysisToolbarButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .contentShape(.circle)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(
-                reduceMotion ? nil : .easeOut(duration: 0.15),
-                value: configuration.isPressed
-            )
-    }
-}
-
 enum InspirationReviewAnalysisAction: Equatable {
     case analyze
     case retry
@@ -55,7 +41,21 @@ enum InspirationReviewAnalysisAction: Equatable {
     case hidden
 
     var title: String? {
-        nil
+        switch self {
+        case .analyze: "Analyze with Cy"
+        case .retry: "Try Cy again"
+        case .processing: "Cy is analyzing"
+        case .hidden: nil
+        }
+    }
+
+    var detail: String? {
+        switch self {
+        case .analyze: "Turn this reference into an original direction."
+        case .retry: "Run the analysis again without changing your saved reference."
+        case .processing: "Your saved post is safe while Cy works."
+        case .hidden: nil
+        }
     }
 
     var accessibilityLabel: String {
@@ -88,12 +88,12 @@ struct InspirationReviewFailurePresentation: Equatable {
         if errorCode == "source_content_unavailable" {
             return InspirationReviewFailurePresentation(
                 title: "Cy needs the post content",
-                message: "The link is saved. Share the post again with its caption or video, then tap Cy above."
+                message: "The link is saved. Share the post again with its caption or video, then try Cy again."
             )
         }
         return InspirationReviewFailurePresentation(
             title: "Cy couldn’t finish the analysis",
-            message: "Your saved post is safe. Tap Cy above to try again."
+            message: "Your saved post is safe. Try Cy again when you’re ready."
         )
     }
 }
@@ -113,7 +113,12 @@ struct InspirationReviewView: View {
     @State private var isAnalyzing = false
     @State private var isScheduling = false
     @State private var confirmsDeletion = false
+    @State private var confirmsUnsavedClose = false
+    @State private var isSavingChanges = false
     @State private var manualDraft = ManualInspirationIdeaDraft()
+    @State private var draftBaseline: InspirationEditableIdea?
+    @State private var manualDraftBaseline = ManualInspirationIdeaDraft()
+    @State private var loadedSourceID: UUID?
     @FocusState private var manualFocus: ManualIdeaFocusField?
 
     private var source: InspirationSource? {
@@ -180,27 +185,40 @@ struct InspirationReviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", action: dismiss.callAsFunction)
+                    Button("Close", action: requestClose)
                 }
-                if analysisAction != .hidden {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        analysisToolbarControl
+                if hasUnsavedChanges {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            saveChanges()
+                        } label: {
+                            // Saved Post save actions are always a checkmark only.
+                            AgentIconView(.check, size: 16)
+                                .frame(width: 24, height: 24)
+                        }
+                        .disabled(!canSaveChanges || isSavingChanges)
+                        .accessibilityLabel("Save changes")
                     }
-                    .sharedBackgroundVisibility(.hidden)
                 }
             }
         }
         .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .agentSheetDragIndicator()
         .presentationBackground(Color.agentCanvas)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: source?.shapePayloadJSON)
         .onChange(of: source?.shapePayloadJSON, initial: true) { _, _ in
-            guard draft == nil, let result else { return }
-            draft = InspirationEditableIdea(result: result)
+            guard let result else { return }
+            let latestDraft = InspirationEditableIdea(result: result)
+            guard draft == nil || draft == draftBaseline else { return }
+            draft = latestDraft
+            draftBaseline = latestDraft
         }
         .onChange(of: source?.id, initial: true) { _, _ in
-            guard manualDraft.pillarID == nil else { return }
-            manualDraft.pillarID = source?.pillarID
+            guard let source, loadedSourceID != source.id else { return }
+            let savedDraft = InspirationShapePersistenceCoordinator.manualDraft(for: source)
+            manualDraft = savedDraft
+            manualDraftBaseline = savedDraft
+            loadedSourceID = source.id
         }
         .sheet(isPresented: $isScheduling) {
             if let source, let linkedBrief {
@@ -220,6 +238,16 @@ struct InspirationReviewView: View {
         } message: {
             Text("This removes the saved reference. Any post idea you created from it will stay in your Idea Bank.")
         }
+        .alert("Save changes before closing?", isPresented: $confirmsUnsavedClose) {
+            Button("Save changes") {
+                saveChanges(dismissAfterSave: true)
+            }
+            .disabled(!canSaveChanges)
+            Button("Discard changes", role: .destructive, action: dismiss.callAsFunction)
+            Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text("Your updates to this saved post have not been saved yet.")
+        }
     }
 
     private var navigationTitle: String {
@@ -232,7 +260,7 @@ struct InspirationReviewView: View {
     private func analysisContent(_ source: InspirationSource) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                sourceCard(source)
+                sourceActionGroup(source)
 
                 manualIdeaCard(source)
                 deleteSavedPostButton
@@ -247,10 +275,8 @@ struct InspirationReviewView: View {
     private func failureContent(_ source: InspirationSource) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                    sourceCard(source)
-                    failureCallout(source)
-                }
+                sourceActionGroup(source)
+                failureCallout(source)
                 manualIdeaCard(source)
                 deleteSavedPostButton
             }
@@ -293,7 +319,7 @@ struct InspirationReviewView: View {
     ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                sourceCard(source)
+                sourceActionGroup(source)
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                     SectionRuleHeader(title: "From the post")
@@ -336,15 +362,16 @@ struct InspirationReviewView: View {
 
                             if brief == nil {
                                 Button {
-                                    isEditing.toggle()
+                                    if isEditing {
+                                        draft = draftBaseline
+                                        isEditing = false
+                                    } else {
+                                        isEditing = true
+                                    }
                                 } label: {
-                                    Text(isEditing ? "Done editing" : "Edit suggestion")
-                                        .font(.agentSubtext)
-                                        .fontWeight(.semibold)
-                                        .frame(minHeight: 44)
-                                        .contentShape(.rect)
+                                    Text(isEditing ? "Cancel editing" : "Edit saved take")
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(AgentSecondaryButtonStyle())
                             }
                         }
                     }
@@ -363,7 +390,7 @@ struct InspirationReviewView: View {
                     Button("Schedule filming") { isScheduling = true }
                         .buttonStyle(AgentSecondaryButtonStyle())
                 } else if source.saveMode != .originalOnly {
-                    Button("Save to agent.cy") {
+                    Button("Create post from this") {
                         saveIdea(source: source, result: result)
                     }
                     .buttonStyle(AgentCyPrimaryButtonStyle())
@@ -371,7 +398,7 @@ struct InspirationReviewView: View {
                     .contentTransition(.opacity)
                 }
 
-                Button("Done", action: dismiss.callAsFunction)
+                Button("Done", action: requestClose)
                     .font(.agentSubtext.weight(.semibold))
                     .foregroundStyle(Color.agentSecondary)
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -384,26 +411,55 @@ struct InspirationReviewView: View {
         .background(Color.agentCanvas)
     }
 
-    @ViewBuilder
-    private var analysisToolbarControl: some View {
+    private func sourceActionGroup(_ source: InspirationSource) -> some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            sourceCard(source)
+            if analysisAction != .hidden {
+                analysisInlineControl(source)
+            }
+        }
+    }
+
+    private func analysisInlineControl(_ source: InspirationSource) -> some View {
         Button {
-            guard analysisAction != .processing, let source else { return }
+            guard analysisAction != .processing else { return }
             manualFocus = nil
             Task { await analyze(source) }
         } label: {
-            CyAnalysisToolbarMark(isProcessing: analysisAction == .processing)
-                .frame(width: 44, height: 44)
-                .contentShape(.circle)
+            HStack(spacing: AgentSpacing.x3) {
+                CyAnalysisToolbarMark(isProcessing: analysisAction == .processing)
+                    .frame(width: 36, height: 36)
+                    .background(Color.cyAccent.opacity(0.10), in: .circle)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(analysisAction.title ?? "Analyze with Cy")
+                        .font(.agentBody.weight(.semibold))
+                        .foregroundStyle(Color.agentText)
+                    if let detail = analysisAction.detail {
+                        Text(detail)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if analysisAction != .processing {
+                    AgentIconView(.arrowRight, size: 14)
+                        .foregroundStyle(Color.cyAccent)
+                }
+            }
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+            .contentShape(.rect)
         }
-        .buttonStyle(CyAnalysisToolbarButtonStyle())
-        .frame(width: 44, height: 44)
-        .glassEffect(.clear.interactive(), in: .circle)
+        .buttonStyle(AgentPressButtonStyle())
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
         .overlay {
-            Circle()
-                .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                .allowsHitTesting(false)
+            RoundedRectangle(cornerRadius: AgentRadius.panel)
+                .stroke(Color.cyAccent.opacity(0.22), lineWidth: 1)
         }
-        .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
+        .shadow(color: Color.cyAccent.opacity(0.08), radius: 14, y: 5)
         .allowsHitTesting(analysisAction != .processing)
         .accessibilityLabel(analysisAction.accessibilityLabel)
     }
@@ -476,7 +532,7 @@ struct InspirationReviewView: View {
     ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                sourceCard(source)
+                sourceActionGroup(source)
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                     SectionRuleHeader(title: "Your idea")
@@ -514,7 +570,7 @@ struct InspirationReviewView: View {
                 Button("Schedule filming") { isScheduling = true }
                     .buttonStyle(AgentSecondaryButtonStyle())
 
-                Button("Done", action: dismiss.callAsFunction)
+                Button("Done", action: requestClose)
                     .font(.agentSubtext.weight(.semibold))
                     .foregroundStyle(Color.agentSecondary)
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -641,7 +697,7 @@ struct InspirationReviewView: View {
                         Text("No pillar")
                     }
                     Spacer()
-                    AgentIconView(.moveVertical, size: 14)
+                    AgentIconView(.expand, size: 14)
                         .foregroundStyle(Color.agentSecondary)
                 }
                 .font(.agentBody)
@@ -750,7 +806,7 @@ struct InspirationReviewView: View {
                         Text("No pillar")
                     }
                     Spacer()
-                    AgentIconView(.moveVertical, size: 14)
+                    AgentIconView(.expand, size: 14)
                         .foregroundStyle(Color.agentSecondary)
                 }
                 .font(.agentBody)
@@ -858,6 +914,65 @@ struct InspirationReviewView: View {
         isAnalyzing = false
     }
 
+    private var hasUnsavedChanges: Bool {
+        guard linkedBrief == nil else { return false }
+        if result != nil {
+            return draft != draftBaseline
+        }
+        return manualDraft != manualDraftBaseline
+    }
+
+    private var canSaveChanges: Bool {
+        if result != nil {
+            return draft?.isValid == true
+        }
+        return true
+    }
+
+    private func requestClose() {
+        manualFocus = nil
+        if hasUnsavedChanges {
+            confirmsUnsavedClose = true
+        } else {
+            dismiss()
+        }
+    }
+
+    private func saveChanges(dismissAfterSave: Bool = false) {
+        guard let source, hasUnsavedChanges, canSaveChanges else { return }
+        manualFocus = nil
+        isSavingChanges = true
+        var didSave = false
+
+        if let result, let draft,
+           let savedResult = appModel.saveInspirationEdits(
+               source: source,
+               result: result,
+               draft: draft,
+               context: context
+           ) {
+            let savedDraft = InspirationEditableIdea(result: savedResult)
+            self.draft = savedDraft
+            draftBaseline = savedDraft
+            isEditing = false
+            didSave = true
+        } else if result == nil,
+                  let savedDraft = appModel.saveManualInspirationDraft(
+                      source: source,
+                      draft: manualDraft,
+                      context: context
+                  ) {
+            manualDraft = savedDraft
+            manualDraftBaseline = savedDraft
+            didSave = true
+        }
+
+        isSavingChanges = false
+        if didSave, dismissAfterSave {
+            dismiss()
+        }
+    }
+
     private func saveIdea(source: InspirationSource, result: InspirationShapeResultWire) {
         guard let draft else { return }
         _ = appModel.saveInspirationIdea(
@@ -940,6 +1055,6 @@ private struct InspirationFilmingScheduleView: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .agentSheetDragIndicator()
     }
 }

@@ -39,3 +39,6 @@ mcp/artifacts/
 
 # One-off tool probes
 .codex-tool-probe
+
+# Local queue backups from MCP review sessions (creator content, never source)
+.mcp-denied-backup-*/

@@ -110,6 +110,84 @@ final class NotificationPlanningTests: XCTestCase {
         XCTAssertTrue(task.playsSound)
     }
 
+    func testLateWorkDateSchedulesOnePostAlertAfterTheDatePasses() throws {
+        let now = date(2026, 7, 15, 8)
+        let briefID = UUID()
+        let outputID = UUID()
+        let workDate = date(2026, 7, 16)
+        let input = makeInput(
+            now: now,
+            settings: makeSettings(missed: true),
+            briefs: [
+                .init(
+                    id: briefID,
+                    title: "Finish the Sunday reset",
+                    status: .developing,
+                    workDate: workDate,
+                    updatedAt: now
+                ),
+            ],
+            outputs: [
+                .init(
+                    id: outputID,
+                    briefID: briefID,
+                    status: .draft,
+                    targetDate: nil,
+                    includesTargetTime: false,
+                    destinationID: nil,
+                    destinationName: "Instagram",
+                    accountID: nil
+                ),
+            ]
+        )
+
+        let reminder = try XCTUnwrap(
+            AgentNotificationPlanBuilder.build(input).first { $0.kind == .lateWork }
+        )
+
+        XCTAssertEqual(reminder.fireDate, date(2026, 7, 17, 8))
+        XCTAssertEqual(reminder.metadata[AgentNotificationMetadataKey.briefID], briefID.uuidString)
+        XCTAssertEqual(reminder.metadata[AgentNotificationMetadataKey.outputID], outputID.uuidString)
+        XCTAssertEqual(reminder.metadata[AgentNotificationMetadataKey.route], "draft")
+        XCTAssertTrue(reminder.playsSound)
+    }
+
+    func testLateWorkAlertStopsWhenThePostIsScheduledOrPosted() {
+        let now = date(2026, 7, 15, 8)
+        let workDate = date(2026, 7, 16)
+
+        for status in [PlatformOutputStatus.scheduled, .posted] {
+            let briefID = UUID()
+            let input = makeInput(
+                now: now,
+                settings: makeSettings(missed: true),
+                briefs: [
+                    .init(
+                        id: briefID,
+                        title: "Ready post",
+                        status: status == .scheduled ? .scheduled : .posted,
+                        workDate: workDate,
+                        updatedAt: now
+                    ),
+                ],
+                outputs: [
+                    .init(
+                        id: UUID(),
+                        briefID: briefID,
+                        status: status,
+                        targetDate: date(2026, 7, 18),
+                        includesTargetTime: false,
+                        destinationID: nil,
+                        destinationName: "Instagram",
+                        accountID: nil
+                    ),
+                ]
+            )
+
+            XCTAssertFalse(AgentNotificationPlanBuilder.build(input).contains { $0.kind == .lateWork })
+        }
+    }
+
     func testFlexibleDailyOverviewDefersUntilQuietHoursEnd() throws {
         let now = date(2026, 7, 15, 21)
         let activeDay = date(2026, 7, 16)
@@ -282,6 +360,102 @@ final class NotificationPlanningTests: XCTestCase {
         )
 
         XCTAssertTrue(AgentNotificationPlanBuilder.build(makeInput(now: now, settings: disabled)).isEmpty)
+    }
+
+    @MainActor
+    func testActivityCenterPersistsPlannedAndLiveActionItemsUntilTheyAreResolved() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let now = date(2026, 8, 17, 12)
+
+        let lateBrief = CreativeBrief(title: "Finish Sunday reset", status: .developing)
+        lateBrief.ideaBankPlacement = .post
+        lateBrief.workDate = date(2026, 8, 16)
+        let lateOutput = PlatformOutput(briefID: lateBrief.id, status: .draft)
+
+        let missedBrief = CreativeBrief(title: "No scroll Sundays", status: .scheduled)
+        missedBrief.ideaBankPlacement = .post
+        let missedOutput = PlatformOutput(briefID: missedBrief.id, status: .scheduled)
+        missedOutput.targetDate = date(2026, 8, 16, 10)
+
+        let overdueTask = CreatorTask(title: "Export the reel")
+        overdueTask.targetDate = date(2026, 8, 17, 10)
+        overdueTask.includesTargetTime = true
+
+        [lateBrief, missedBrief].forEach(context.insert)
+        [lateOutput, missedOutput].forEach(context.insert)
+        context.insert(overdueTask)
+        try context.save()
+
+        try AgentActivityCenterService.reconcile(plan: [], context: context, now: now, calendar: calendar)
+
+        let records = try context.fetch(FetchDescriptor<AgentActivityRecord>())
+        XCTAssertEqual(Set(records.map(\.kind)), [.lateWork, .missedPost, .timedTask])
+        XCTAssertTrue(records.allSatisfy {
+            AgentActivityPresentationPolicy.isVisible(availableAt: $0.availableAt, archivedAt: $0.archivedAt, clearedAt: $0.clearedAt, now: now)
+        })
+
+        let taskRecord = try XCTUnwrap(records.first { $0.kind == .timedTask })
+        try AgentActivityCenterService.markRead(taskRecord, context: context, now: now)
+        XCTAssertNotNil(taskRecord.readAt)
+        XCTAssertTrue(AgentActivityPresentationPolicy.needsAttention(
+            kind: taskRecord.kind,
+            readAt: taskRecord.readAt,
+            resolvedAt: taskRecord.resolvedAt
+        ))
+
+        overdueTask.isCompleted = true
+        lateBrief.workDate = nil
+        missedOutput.status = .posted
+        try context.save()
+        try AgentActivityCenterService.reconcile(
+            plan: [],
+            context: context,
+            now: now.addingTimeInterval(60),
+            calendar: calendar
+        )
+
+        XCTAssertTrue(records.allSatisfy { $0.resolvedAt != nil })
+    }
+
+    @MainActor
+    func testPlannedActivityExistsBeforeDeliveryButDoesNotAppearEarly() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let now = date(2026, 8, 17, 12)
+        let fireDate = date(2026, 8, 18, 9)
+        let item = AgentNotificationPlanItem(
+            id: "agentcy.v2.daily.20260818",
+            kind: .daily,
+            fireDate: fireDate,
+            title: "Today’s plan",
+            body: "Two items planned.",
+            reason: "Daily overview",
+            categoryIdentifier: AgentNotificationCategory.daily,
+            playsSound: false,
+            isCreatorRequested: false,
+            priority: 60,
+            metadata: [
+                AgentNotificationMetadataKey.kind: AgentNotificationKind.daily.rawValue,
+                AgentNotificationMetadataKey.route: "day",
+            ]
+        )
+
+        try AgentActivityCenterService.reconcile(plan: [item], context: context, now: now, calendar: calendar)
+
+        let record = try XCTUnwrap(context.fetch(FetchDescriptor<AgentActivityRecord>()).first)
+        XCTAssertFalse(AgentActivityPresentationPolicy.isVisible(
+            availableAt: record.availableAt,
+            archivedAt: record.archivedAt,
+            clearedAt: record.clearedAt,
+            now: now
+        ))
+        XCTAssertTrue(AgentActivityPresentationPolicy.isVisible(
+            availableAt: record.availableAt,
+            archivedAt: record.archivedAt,
+            clearedAt: record.clearedAt,
+            now: fireDate
+        ))
     }
 
     private func makeSettings(

@@ -42,13 +42,14 @@ enum AgendaListStandardStatus: String, CaseIterable, Hashable {
 enum AgendaListStatusFilter: Hashable {
     case all
     case open
+    case lateWork
     case standard(AgendaListStandardStatus)
     case custom(String)
 
     static let defaultFilter: Self = .open
 }
 
-private enum AgendaPostOccurrenceKind: String, Hashable {
+enum AgendaPostOccurrenceKind: String, Hashable {
     case work
     case post
 
@@ -91,19 +92,21 @@ private struct AgendaUndatedPost: Identifiable {
     var id: UUID { output.id }
 }
 
+private struct AgendaListProjection {
+    let upcomingGroups: [AgendaOutputDayGroup]
+    let pastGroups: [AgendaOutputDayGroup]
+    let undatedPosts: [AgendaUndatedPost]
+}
+
 private struct AgendaRenderSnapshot {
     let briefByID: [UUID: CreativeBrief]
     let occurrences: [AgendaPostOccurrence]
     let occurrencesByDay: [Date: [AgendaPostOccurrence]]
-    let tasksByDay: [Date: [CreatorTask]]
 
     func occurrences(on day: Date, calendar: Calendar = .current) -> [AgendaPostOccurrence] {
         occurrencesByDay[calendar.startOfDay(for: day)] ?? []
     }
 
-    func tasks(on day: Date, calendar: Calendar = .current) -> [CreatorTask] {
-        tasksByDay[calendar.startOfDay(for: day)] ?? []
-    }
 }
 
 private enum AgendaLayout {
@@ -116,9 +119,10 @@ struct AgendaView: View {
     let showsHeader: Bool
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
-    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
     @Query(sort: \SeriesEpisodeSlot.plannedDate) private var allEpisodeSlots: [SeriesEpisodeSlot]
@@ -142,10 +146,10 @@ struct AgendaView: View {
     @State private var listStatusFilter: AgendaListStatusFilter = .defaultFilter
     @State private var isListPillarFilterPresented = false
     @State private var isListStatusFilterPresented = false
+    let referenceDate: Date
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
-    private var tasks: [CreatorTask] { scoped(allTasks) }
     private var pillars: [Pillar] { scoped(allPillars) }
     private var seriesRecords: [ContentSeries] {
         scoped(allSeries).filter { $0.state != .archived }
@@ -168,11 +172,11 @@ struct AgendaView: View {
     }
 
     private var weekStart: Date {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let daysSinceMonday = (calendar.component(.weekday, from: today) + 5) % 7
-        let current = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today) ?? today
-        return calendar.date(byAdding: .weekOfYear, value: weekOffset, to: current) ?? current
+        PlanClockPolicy.weekStart(
+            referenceDate: referenceDate,
+            offset: weekOffset,
+            calendar: .current
+        )
     }
     private var weekDays: [Date] { (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) } }
     private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
@@ -190,11 +194,19 @@ struct AgendaView: View {
     init(
         weekOffset: Binding<Int>,
         selectedDay: Binding<Date>,
+        referenceDate: Date,
         showsHeader: Bool = true
     ) {
         _weekOffset = weekOffset
         _selectedDay = selectedDay
+        _calendarMonth = State(initialValue: referenceDate)
+        self.referenceDate = referenceDate
         self.showsHeader = showsHeader
+#if DEBUG
+        if let previewMode = PreviewAgendaRuntimeFixture.initialDisplayMode() {
+            _displayMode = State(initialValue: previewMode)
+        }
+#endif
     }
 
     var body: some View {
@@ -233,7 +245,7 @@ struct AgendaView: View {
                     case .calendar:
                         calendarAgendaView(snapshot: snapshot)
                     case .list:
-                        agendaListView
+                        agendaListView(snapshot: snapshot)
                     }
                 }
                 .padding(.horizontal, AgentLayout.dashboardGutter)
@@ -251,7 +263,7 @@ struct AgendaView: View {
             }
         }
         .navigationDestination(item: $focusedDay) { selection in
-            DayAgendaView(day: selection.day)
+            DayAgendaView(day: selection.day, referenceDate: referenceDate)
         }
         .navigationDestination(item: $schedulingPost) { selection in
             AgendaPostIdeaPickerView(day: selection.day)
@@ -294,6 +306,12 @@ struct AgendaView: View {
             listStatusFilter = .open
             appModel.requestedOpenPostsList = 0
         }
+        .onChange(of: appModel.requestedLateWorkList, initial: true) { _, request in
+            guard request > 0 else { return }
+            displayMode = .list
+            listStatusFilter = .lateWork
+            appModel.requestedLateWorkList = 0
+        }
         .onChange(of: appModel.widgetBriefID, initial: true) { _, id in
             guard let id, let brief = activeBriefs.first(where: { $0.id == id }) else { return }
             deepLinkedBriefOpensEditor = appModel.widgetBriefOpensEditor
@@ -312,13 +330,23 @@ struct AgendaView: View {
         .agentDashboardScreen()
     }
 
+    @ViewBuilder
     private var agendaModeRail: some View {
+#if targetEnvironment(macCatalyst)
+        agendaModePicker
+#else
+        agendaModePicker.padding(3)
+#endif
+    }
+
+    private var agendaModePicker: some View {
         Picker("Agenda view", selection: $displayMode) {
             ForEach(AgendaDisplayMode.allCases) { mode in
                 Text(mode.title).tag(mode)
             }
         }
         .pickerStyle(.segmented)
+        .dynamicTypeSize(...AgendaCompactCalendarPolicy.maximumDynamicTypeSize)
         .frame(maxWidth: .infinity)
         .accessibilityHint("Switch between week, calendar, and post list views")
     }
@@ -367,7 +395,18 @@ struct AgendaView: View {
         .accessibilityLabel(label)
     }
 
+    @ViewBuilder
     private var calendarStrip: some View {
+        if AgendaCompactCalendarPolicy.showsWeekdayChips(
+            dynamicTypeSize: dynamicTypeSize
+        ) {
+            weekdayChipStrip
+        } else {
+            accessibilityWeekNavigator
+        }
+    }
+
+    private var weekdayChipStrip: some View {
         HStack(spacing: AgentSpacing.x1) {
             weekButton(symbol: "chevron.left", label: "Previous week", amount: -1)
 
@@ -381,17 +420,35 @@ struct AgendaView: View {
 
             weekButton(symbol: "chevron.right", label: "Next week", amount: 1)
         }
+        .dynamicTypeSize(...AgendaCompactCalendarPolicy.maximumDynamicTypeSize)
         .padding(.horizontal, -AgentSpacing.x2)
         .padding(.bottom, AgentSpacing.x4)
     }
 
+    private var accessibilityWeekNavigator: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            weekButton(symbol: "chevron.left", label: "Previous week", amount: -1)
+
+            Text(weekRange)
+                .font(.agentBody.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+
+            weekButton(symbol: "chevron.right", label: "Next week", amount: 1)
+        }
+        .padding(.horizontal, -AgentSpacing.x2)
+        .padding(.bottom, AgentSpacing.x4)
+        .accessibilityElement(children: .contain)
+    }
+
     private func calendarDay(_ day: Date) -> some View {
-        let isToday = Calendar.current.isDateInToday(day)
+        let isToday = Calendar.current.isDate(day, inSameDayAs: referenceDate)
         let dotColor = pillarHex(on: day).map {
             Color(agentHex: AgendaPillarDotPresentation.displayedHex(storedHex: $0))
         }
         return Button {
-            withAnimation(.snappy(duration: 0.24)) {
+            performAgendaUpdate(animation: .snappy(duration: 0.24)) {
                 selectedDay = Calendar.current.startOfDay(for: day)
             }
             openDay(day)
@@ -436,7 +493,6 @@ struct AgendaView: View {
 
     private func calendarAgendaView(snapshot: AgendaRenderSnapshot) -> some View {
         let selectedOccurrences = snapshot.occurrences(on: selectedDay)
-        let selectedTasks = snapshot.tasks(on: selectedDay)
         let selectedSlots = episodeSlots(on: selectedDay)
 
         return ScrollView {
@@ -470,9 +526,7 @@ struct AgendaView: View {
                                     if let brief = snapshot.briefByID[occurrence.output.briefID] {
                                         agendaPostCard(
                                             occurrence: occurrence,
-                                            brief: brief,
-                                            day: selectedDay,
-                                            dayTasks: selectedTasks
+                                            brief: brief
                                         )
                                     }
                                 }
@@ -532,48 +586,73 @@ struct AgendaView: View {
 
     private func calendarMonthGrid(snapshot: AgendaRenderSnapshot) -> some View {
         let pillarHexByWeekday = calendarPillarHexByWeekday()
+        let weekdayHeaders = AgendaMonthCalendarColorPolicy.weekdayHeaders(
+            symbols: Calendar.current.veryShortStandaloneWeekdaySymbols,
+            firstWeekday: Calendar.current.firstWeekday,
+            pillarHexByWeekday: pillarHexByWeekday
+        )
 
         return VStack(spacing: AgentSpacing.x2) {
             LazyVGrid(
                 columns: Array(repeating: GridItem(.flexible(), spacing: AgentSpacing.x1), count: 7),
                 spacing: AgentSpacing.x2
             ) {
-                ForEach(Array(calendarWeekdaySymbols.enumerated()), id: \.offset) { _, symbol in
-                    Text(symbol)
-                        .font(.agentMetadata)
-                        .foregroundStyle(Color.agentSecondary)
-                        .frame(maxWidth: .infinity, minHeight: 24)
-                        .accessibilityHidden(true)
+                ForEach(weekdayHeaders) { header in
+                    calendarWeekdayHeader(header)
                 }
 
                 ForEach(calendarMonthDays, id: \.self) { day in
                     calendarMonthCell(
                         day,
-                        postCount: snapshot.occurrences(on: day).count,
-                        pillarHex: PillarWeekday(
-                            rawValue: Calendar.current.component(.weekday, from: day)
-                        ).flatMap { pillarHexByWeekday[$0] }
+                        postCount: snapshot.occurrences(on: day).count
                     )
                 }
             }
         }
+        .dynamicTypeSize(...AgendaCompactCalendarPolicy.maximumDynamicTypeSize)
+    }
+
+    private func calendarWeekdayHeader(
+        _ header: AgendaMonthCalendarWeekdayHeader
+    ) -> some View {
+        let displayedHex = header.pillarHex.map {
+            AgendaPillarDotPresentation.displayedHex(storedHex: $0)
+        }
+        let markerColor = displayedHex.map { Color(agentHex: $0) }
+        let foreground = displayedHex.map {
+            Color(agentHex: AgentChipContrast.foregroundHex(on: $0))
+        } ?? Color.agentSecondary
+
+        return ZStack {
+            if let markerColor {
+                Circle()
+                    .fill(markerColor)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.agentText.opacity(0.2), lineWidth: 0.5)
+                    }
+            }
+
+            Text(header.symbol)
+                .font(.agentMetadata.weight(.semibold))
+                .foregroundStyle(foreground)
+        }
+        .frame(width: 28, height: 28)
+        .frame(maxWidth: .infinity, minHeight: 32)
+        .accessibilityHidden(true)
     }
 
     private func calendarMonthCell(
         _ day: Date,
-        postCount: Int,
-        pillarHex: String?
+        postCount: Int
     ) -> some View {
         let calendar = Calendar.current
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
-        let isToday = calendar.isDateInToday(day)
+        let isToday = calendar.isDate(day, inSameDayAs: referenceDate)
         let isCurrentMonth = calendar.isDate(day, equalTo: calendarMonthStart, toGranularity: .month)
-        let dotColor = pillarHex.map {
-            Color(agentHex: AgendaPillarDotPresentation.displayedHex(storedHex: $0))
-        }
 
         return Button {
-            withAnimation(.snappy(duration: 0.22)) {
+            performAgendaUpdate(animation: .snappy(duration: 0.22)) {
                 selectedDay = calendar.startOfDay(for: day)
                 if !isCurrentMonth {
                     calendarMonth = day
@@ -589,13 +668,6 @@ struct AgendaView: View {
                     )
 
                 HStack(spacing: 4) {
-                    if let dotColor {
-                        PillarColorMark(color: dotColor, diameter: 6)
-                            .overlay {
-                                Circle()
-                                    .stroke(Color.agentText.opacity(0.2), lineWidth: 0.5)
-                            }
-                    }
                     if postCount > 0 {
                         Text("\(postCount)")
                             .font(.agentMetadata.weight(.semibold))
@@ -628,19 +700,21 @@ struct AgendaView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private var agendaListView: some View {
-        ScrollView {
+    private func agendaListView(snapshot: AgendaRenderSnapshot) -> some View {
+        let projection = makeAgendaListProjection(snapshot: snapshot)
+
+        return ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x5) {
                 agendaListFilters
 
-                if upcomingAgendaGroups.isEmpty &&
-                    pastAgendaGroups.isEmpty &&
-                    filteredUndatedListPosts.isEmpty {
+                if projection.upcomingGroups.isEmpty &&
+                    projection.pastGroups.isEmpty &&
+                    projection.undatedPosts.isEmpty {
                     agendaListEmptyState
                 } else {
-                    agendaListSection(title: "Upcoming", groups: upcomingAgendaGroups)
-                    agendaListSection(title: "Past", groups: pastAgendaGroups)
-                    agendaUndatedListSection
+                    agendaListSection(title: "Upcoming", groups: projection.upcomingGroups)
+                    agendaListSection(title: "Past", groups: projection.pastGroups)
+                    agendaUndatedListSection(posts: projection.undatedPosts)
                 }
             }
             .agentBottomNavigationClearance()
@@ -694,44 +768,62 @@ struct AgendaView: View {
         }
     }
 
+    @ViewBuilder
     private var agendaListFilters: some View {
-        HStack(spacing: AgentSpacing.x3) {
-            Button {
-                isListPillarFilterPresented = true
-            } label: {
-                agendaListFilterLabel(
-                    category: "Pillar",
-                    value: selectedListPillarTitle,
-                    color: selectedListPillarColor
-                )
+        if AgendaCompactCalendarPolicy.usesStackedListFilters(
+            dynamicTypeSize: dynamicTypeSize
+        ) {
+            VStack(spacing: AgentSpacing.x3) {
+                agendaListPillarFilterButton
+                agendaListStatusFilterButton
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Filter by pillar")
-            .accessibilityValue(selectedListPillarTitle)
-            .popover(isPresented: $isListPillarFilterPresented) {
-                agendaListPillarFilterPopover
-                    .presentationCompactAdaptation(.popover)
-                    .presentationBackground(.ultraThinMaterial)
-                    .presentationCornerRadius(24)
+        } else {
+            HStack(spacing: AgentSpacing.x3) {
+                agendaListPillarFilterButton
+                agendaListStatusFilterButton
             }
+        }
+    }
 
-            Button {
-                isListStatusFilterPresented = true
-            } label: {
-                agendaListFilterLabel(
-                    category: "Status",
-                    value: selectedListStatusTitle
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Filter by status")
-            .accessibilityValue(selectedListStatusTitle)
-            .popover(isPresented: $isListStatusFilterPresented) {
-                agendaListStatusFilterPopover
-                    .presentationCompactAdaptation(.popover)
-                    .presentationBackground(.ultraThinMaterial)
-                    .presentationCornerRadius(24)
-            }
+    private var agendaListPillarFilterButton: some View {
+        Button {
+            isListPillarFilterPresented = true
+        } label: {
+            agendaListFilterLabel(
+                category: "Pillar",
+                value: selectedListPillarTitle,
+                color: selectedListPillarColor
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Filter by pillar")
+        .accessibilityValue(selectedListPillarTitle)
+        .popover(isPresented: $isListPillarFilterPresented) {
+            agendaListPillarFilterPopover
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(.ultraThinMaterial)
+                .presentationCornerRadius(24)
+        }
+    }
+
+    private var agendaListStatusFilterButton: some View {
+        Button {
+            isListStatusFilterPresented = true
+        } label: {
+            agendaListFilterLabel(
+                category: "Status",
+                value: selectedListStatusTitle,
+                valueColor: listStatusFilter == .lateWork ? .agentDestructive : nil
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Filter by status")
+        .accessibilityValue(selectedListStatusTitle)
+        .popover(isPresented: $isListStatusFilterPresented) {
+            agendaListStatusFilterPopover
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(.ultraThinMaterial)
+                .presentationCornerRadius(24)
         }
     }
 
@@ -808,13 +900,18 @@ struct AgendaView: View {
                     title: "Open posts",
                     filter: .open
                 )
-
                 ForEach(AgendaListStandardStatus.allCases, id: \.self) { status in
                     agendaListStatusFilterRow(
                         title: status.title,
                         filter: .standard(status)
                     )
                 }
+
+                agendaListStatusFilterRow(
+                    title: "Late work",
+                    filter: .lateWork,
+                    textColor: .agentDestructive
+                )
 
                 if !availableListCustomStatuses.isEmpty {
                     Rectangle()
@@ -841,7 +938,8 @@ struct AgendaView: View {
 
     private func agendaListStatusFilterRow(
         title: String,
-        filter: AgendaListStatusFilter
+        filter: AgendaListStatusFilter,
+        textColor: Color? = nil
     ) -> some View {
         Button {
             listStatusFilter = filter
@@ -850,7 +948,7 @@ struct AgendaView: View {
             HStack(spacing: AgentSpacing.x3) {
                 Text(title)
                     .font(.agentBody)
-                    .foregroundStyle(Color.agentText)
+                    .foregroundStyle(textColor ?? Color.agentText)
                     .lineLimit(1)
 
                 Spacer(minLength: AgentSpacing.x3)
@@ -871,7 +969,8 @@ struct AgendaView: View {
     private func agendaListFilterLabel(
         category: String,
         value: String,
-        color: Color? = nil
+        color: Color? = nil,
+        valueColor: Color? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x1) {
             Text(category.uppercased())
@@ -885,7 +984,7 @@ struct AgendaView: View {
 
                 Text(value)
                     .font(.agentSubtext.weight(.semibold))
-                    .foregroundStyle(Color.agentText)
+                    .foregroundStyle(valueColor ?? Color.agentText)
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
@@ -950,8 +1049,6 @@ struct AgendaView: View {
                                     agendaPostCard(
                                         occurrence: occurrence,
                                         brief: brief,
-                                        day: group.day,
-                                        dayTasks: tasks(on: group.day),
                                         statusTextOverride: statusOverride?.text,
                                         displayStatusOverride: statusOverride?.status
                                     )
@@ -965,18 +1062,16 @@ struct AgendaView: View {
     }
 
     @ViewBuilder
-    private var agendaUndatedListSection: some View {
-        if !filteredUndatedListPosts.isEmpty {
+    private func agendaUndatedListSection(posts: [AgendaUndatedPost]) -> some View {
+        if !posts.isEmpty {
             AgentInsetSurface {
                 VStack(alignment: .leading, spacing: AgentSpacing.x5) {
                     SectionRuleHeader(
                         title: "No date",
-                        trailing: AgendaDayPresentation.postCountLabel(
-                            filteredUndatedListPosts.count
-                        )
+                        trailing: AgendaDayPresentation.postCountLabel(posts.count)
                     )
 
-                    ForEach(filteredUndatedListPosts) { item in
+                    ForEach(posts) { item in
                         let statusOverride = listStatusOverride(for: item.brief)
                         AgentPostCard(
                             title: outputTitle(item.output, brief: item.brief),
@@ -1007,7 +1102,6 @@ struct AgendaView: View {
     private func weekRow(_ day: Date, snapshot: AgendaRenderSnapshot) -> some View {
         let dayOccurrences = snapshot.occurrences(on: day)
         let dayOutputs = dayOccurrences.map(\.output)
-        let dayTasks = snapshot.tasks(on: day)
         let dayFocus = focus(on: day)
         let dayEpisodeSlots = episodeSlots(on: day)
 
@@ -1019,7 +1113,7 @@ struct AgendaView: View {
                     briefStatus: snapshot.briefByID[output.briefID]?.status
                 )
             },
-            now: Date()
+            now: referenceDate
         ) {
             compactCompletedDay(
                 day: day,
@@ -1037,9 +1131,7 @@ struct AgendaView: View {
                     if let brief = snapshot.briefByID[occurrence.output.briefID] {
                         agendaPostCard(
                             occurrence: occurrence,
-                            brief: brief,
-                            day: day,
-                            dayTasks: dayTasks
+                            brief: brief
                         )
                     }
                 }
@@ -1085,11 +1177,70 @@ struct AgendaView: View {
         return Button {
             openDay(day)
         } label: {
+            compactCompletedDayContent(
+                day: day,
+                focusTitle: focusTitle,
+                postCountLabel: postCountLabel
+            )
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
+        .accessibilityLabel(
+            [
+                day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()),
+                "complete",
+                "focus \(focusTitle)",
+                postCountLabel
+            ]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+        )
+        .accessibilityHint("Opens this day's schedule")
+    }
+
+    @ViewBuilder
+    private func compactCompletedDayContent(
+        day: Date,
+        focusTitle: String,
+        postCountLabel: String?
+    ) -> some View {
+        if AgendaCompactCalendarPolicy.usesStackedCompletedDayLayout(
+            dynamicTypeSize: dynamicTypeSize
+        ) {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                HStack(spacing: AgentSpacing.x3) {
+                    Text(AgendaDayPresentation.weekdayMonthDayLabel(day))
+                        .font(.agentMetadata)
+                        .textCase(.uppercase)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    AgentIconView(.check, size: 13)
+                    AgentIconView(.forward, size: 11)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+
+                Text(focusTitle)
+                    .font(.agentBody.weight(.medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let postCountLabel {
+                    Text(postCountLabel)
+                        .font(.agentMetadata)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+            }
+            .foregroundStyle(Color.agentText)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.vertical, AgentSpacing.x4)
+            .contentShape(.rect)
+        } else {
             HStack(spacing: AgentSpacing.x3) {
-                Text(day.formatted(.dateTime.weekday(.abbreviated).day()))
+                Text(AgendaDayPresentation.weekdayMonthDayLabel(day))
                     .font(.agentMetadata)
                     .textCase(.uppercase)
-                    .frame(width: 56, alignment: .leading)
+                    .frame(width: 92, alignment: .leading)
                 AgentIconView(.check, size: 13)
                     .frame(width: 14, height: 14)
 
@@ -1114,21 +1265,6 @@ struct AgendaView: View {
             .padding(.vertical, AgentSpacing.x3)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.agentHairline).frame(height: 1)
-        }
-        .accessibilityLabel(
-            [
-                day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()),
-                "complete",
-                "focus \(focusTitle)",
-                postCountLabel
-            ]
-            .compactMap { $0 }
-            .joined(separator: ", ")
-        )
-        .accessibilityHint("Opens this day's schedule")
     }
 
     private func nonDraftPostCount(in outputs: [PlatformOutput]) -> Int {
@@ -1150,14 +1286,20 @@ struct AgendaView: View {
             } label: {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                     Text(dayHeaderDate(day))
-                        .font(.agentMetadata.weight(Calendar.current.isDateInToday(day) ? .semibold : .medium))
+                        .font(.agentMetadata.weight(
+                            Calendar.current.isDate(day, inSameDayAs: referenceDate) ? .semibold : .medium
+                        ))
                         .textCase(.uppercase)
-                        .foregroundStyle(Calendar.current.isDateInToday(day) ? Color.cyAccent : Color.agentText)
+                        .foregroundStyle(
+                            Calendar.current.isDate(day, inSameDayAs: referenceDate)
+                                ? Color.cyAccent
+                                : Color.agentText
+                        )
                         .fixedSize()
 
                     Text(agendaFocusTitle(focus))
                         .font(.agentBody.weight(.medium))
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
                 .foregroundStyle(Color.agentText)
                 .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
@@ -1197,8 +1339,6 @@ struct AgendaView: View {
     private func agendaPostCard(
         occurrence: AgendaPostOccurrence,
         brief: CreativeBrief,
-        day: Date,
-        dayTasks: [CreatorTask],
         statusTextOverride: String? = nil,
         displayStatusOverride: PlatformOutputStatus? = nil
     ) -> some View {
@@ -1209,14 +1349,17 @@ struct AgendaView: View {
         )
         let displaysAsDraft = section != .goingLive
         let overdue = occurrence.kind == .post &&
-            section == .goingLive &&
             AgendaDayPresentation.isOverdue(
             targetDate: occurrence.date,
             status: output.status,
-            now: Date()
+            now: referenceDate
+        )
+        let lateWork = occurrence.kind == .work && PostWorkDateStatusPolicy.isLate(
+            workDate: occurrence.date,
+            briefStatus: brief.status,
+            outputStatus: output.status
         )
         let accent = pillarAccent(for: brief)
-        let firstTaskDate = firstTaskDate(for: output, dayTasks: dayTasks)
         let isScheduledDraftOccurrence = occurrence.kind == .post && displaysAsDraft
         let inferredDisplayStatus: PlatformOutputStatus = if isScheduledDraftOccurrence {
             .scheduled
@@ -1226,17 +1369,15 @@ struct AgendaView: View {
             output.status
         }
         let displayStatus = displayStatusOverride ?? inferredDisplayStatus
-        let displayTime: Date? = switch occurrence.kind {
-        case .work:
-            brief.includesWorkTime ? occurrence.date : nil
-        case .post:
-            firstTaskDate ?? (output.includesTargetTime ? occurrence.date : nil)
-        }
+        let displayTime = AgendaCardTimePolicy.displayTime(
+            kind: occurrence.kind,
+            occurrenceDate: occurrence.date,
+            includesWorkTime: brief.includesWorkTime,
+            includesTargetTime: output.includesTargetTime
+        )
         let statusText: String
         if let statusTextOverride {
             statusText = statusTextOverride
-        } else if overdue {
-            statusText = "Missed"
         } else if isScheduledDraftOccurrence {
             statusText = "Scheduled draft"
         } else {
@@ -1257,6 +1398,7 @@ struct AgendaView: View {
             metadata: metadata,
             timeText: displayTime?.formatted(date: .omitted, time: .shortened),
             statusTextOverride: statusText,
+            isLate: overdue || lateWork,
             destination: postDestination(brief: brief, output: output),
             footerActionTitle: overdue ? "Reschedule" : nil,
             footerAction: overdue ? { reschedulingOutput = output } : nil
@@ -1284,7 +1426,7 @@ struct AgendaView: View {
     }
 
     private func dayHeaderDate(_ day: Date) -> String {
-        day.formatted(.dateTime.weekday(.abbreviated).day())
+        AgendaDayPresentation.weekdayMonthDayLabel(day)
     }
 
     private func pillar(for brief: CreativeBrief) -> Pillar? {
@@ -1318,15 +1460,6 @@ struct AgendaView: View {
         return output.platform.title
     }
 
-    private func firstTaskDate(for output: PlatformOutput, dayTasks: [CreatorTask]) -> Date? {
-        let linkedTasks = dayTasks.filter {
-            $0.platformOutputID == output.id || $0.briefID == output.briefID
-        }
-        let sourceTasks = linkedTasks.isEmpty ? dayTasks : linkedTasks
-        let candidates = sourceTasks.map { $0.includesTargetTime ? $0.targetDate : nil }
-        return AgendaDayPresentation.firstTaskDate(in: candidates)
-    }
-
     private var weekRange: String {
         guard let last = weekDays.last else { return "" }
         if Calendar.current.isDate(weekStart, equalTo: last, toGranularity: .month) {
@@ -1338,37 +1471,25 @@ struct AgendaView: View {
         "\(weekRange) · Week \(Calendar.current.component(.weekOfYear, from: weekStart))"
     }
     private var greeting: String {
-        switch Calendar.current.component(.hour, from: Date()) {
-        case 5..<12: "Good morning"
-        case 12..<18: "Good afternoon"
-        default: "Good evening"
-        }
+        PlanClockPolicy.greeting(referenceDate: referenceDate, calendar: .current)
     }
     private func moveWeek(_ amount: Int) {
-        withAnimation(.snappy) {
+        performAgendaUpdate(animation: .snappy) {
             weekOffset += amount
             selectedDay = Calendar.current.date(byAdding: .weekOfYear, value: amount, to: selectedDay) ?? weekStart
         }
     }
     private func targetWeekOffset(containing day: Date) -> Int {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let daysSinceMonday = (calendar.component(.weekday, from: today) + 5) % 7
-        let currentWeekStart = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today) ?? today
-        let targetDaysSinceMonday = (calendar.component(.weekday, from: day) + 5) % 7
-        let targetWeekStart = calendar.date(byAdding: .day, value: -targetDaysSinceMonday, to: day) ?? day
-        return calendar.dateComponents([.weekOfYear], from: currentWeekStart, to: targetWeekStart).weekOfYear ?? 0
+        PlanClockPolicy.weekOffset(
+            containing: day,
+            referenceDate: referenceDate,
+            calendar: .current
+        )
     }
     private var calendarMonthStart: Date {
         let calendar = Calendar.current
         let components = calendar.dateComponents([.year, .month], from: calendarMonth)
         return calendar.date(from: components) ?? calendar.startOfDay(for: calendarMonth)
-    }
-    private var calendarWeekdaySymbols: [String] {
-        let calendar = Calendar.current
-        let symbols = calendar.veryShortStandaloneWeekdaySymbols
-        let offset = max(0, min(symbols.count - 1, calendar.firstWeekday - 1))
-        return Array(symbols[offset...] + symbols[..<offset])
     }
     private var calendarMonthDays: [Date] {
         let calendar = Calendar.current
@@ -1383,7 +1504,7 @@ struct AgendaView: View {
     private func makeRenderSnapshot() -> AgendaRenderSnapshot {
         let calendar = Calendar.current
         let activeBriefs = briefs.filter { $0.status != .archived }
-        let briefByID = DuplicateSafeIndex.firstValues(activeBriefs.map { ($0.id, $0) })
+        let briefByID = AgendaBriefIndexPolicy.index(activeBriefs)
         let activeBriefIDs = Set(briefByID.keys)
         let occurrences = outputs
             .filter {
@@ -1398,15 +1519,15 @@ struct AgendaView: View {
                 }
 
                 var occurrences: [AgendaPostOccurrence] = []
-                let isActiveWork = output.status == .draft &&
-                    brief.status != .scheduled &&
-                    brief.status != .posted
+                let showsWorkOccurrence = output.status != .posted &&
+                    brief.status != .posted &&
+                    brief.status != .archived
 
                 let postDateSharesWorkDay = brief.workDate.map { workDate in
                     output.targetDate.map { calendar.isDate($0, inSameDayAs: workDate) } ?? false
                 } ?? false
 
-                if isActiveWork, let workDate = brief.workDate, !postDateSharesWorkDay {
+                if showsWorkOccurrence, let workDate = brief.workDate, !postDateSharesWorkDay {
                     occurrences.append(
                         AgendaPostOccurrence(
                             output: output,
@@ -1439,45 +1560,39 @@ struct AgendaView: View {
         let occurrencesByDay = Dictionary(grouping: occurrences) {
             calendar.startOfDay(for: $0.date)
         }
-        let tasksByDay = Dictionary(grouping: tasks.filter {
-            $0.parentTaskID == nil &&
-                !$0.isSkipped &&
-                TaskCollectionPolicy.collection(
-                    briefID: $0.briefID,
-                    platformOutputID: $0.platformOutputID
-                ) == .myTasks &&
-                $0.targetDate != nil
-        }) {
-            calendar.startOfDay(for: $0.targetDate ?? .distantFuture)
-        }.mapValues {
-            $0.sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
-        }
-
         return AgendaRenderSnapshot(
             briefByID: briefByID,
             occurrences: occurrences,
-            occurrencesByDay: occurrencesByDay,
-            tasksByDay: tasksByDay
+            occurrencesByDay: occurrencesByDay
         )
     }
 
-    private var datedAgendaOccurrences: [AgendaPostOccurrence] {
-        makeRenderSnapshot().occurrences
+    private func makeAgendaListProjection(
+        snapshot: AgendaRenderSnapshot
+    ) -> AgendaListProjection {
+        let filteredOccurrences = filteredListAgendaOccurrences(snapshot: snapshot)
+        let groups = filteredListAgendaOutputGroups(
+            occurrences: filteredOccurrences,
+            briefByID: snapshot.briefByID
+        )
+        let today = Calendar.current.startOfDay(for: referenceDate)
+        return AgendaListProjection(
+            upcomingGroups: groups
+                .filter { $0.day >= today }
+                .sorted { $0.day < $1.day },
+            pastGroups: groups
+                .filter { $0.day < today }
+                .sorted { $0.day > $1.day },
+            undatedPosts: filteredUndatedListPosts(snapshot: snapshot)
+        )
     }
-    private var upcomingAgendaGroups: [AgendaOutputDayGroup] {
-        filteredListAgendaOutputGroups
-            .filter { $0.day >= Calendar.current.startOfDay(for: Date()) }
-            .sorted { $0.day < $1.day }
-    }
-    private var pastAgendaGroups: [AgendaOutputDayGroup] {
-        filteredListAgendaOutputGroups
-            .filter { $0.day < Calendar.current.startOfDay(for: Date()) }
-            .sorted { $0.day > $1.day }
-    }
-    private var filteredListAgendaOccurrences: [AgendaPostOccurrence] {
-        let briefByID = DuplicateSafeIndex.firstValues(activeBriefs.map { ($0.id, $0) })
+
+    private func filteredListAgendaOccurrences(
+        snapshot: AgendaRenderSnapshot
+    ) -> [AgendaPostOccurrence] {
+        let briefByID = AgendaBriefIndexPolicy.index(activeBriefs)
         let occurrencesByOutputID = Dictionary(
-            grouping: datedAgendaOccurrences,
+            grouping: snapshot.occurrences,
             by: { $0.output.id }
         )
 
@@ -1494,7 +1609,7 @@ struct AgendaView: View {
                     return candidates
                 case .standard(.scheduled), .standard(.posted):
                     return candidates.first(where: { $0.kind == .post }).map { [$0] } ?? []
-                case .open, .standard(.draft), .standard(.inProgress), .custom:
+                case .open, .lateWork, .standard(.draft), .standard(.inProgress), .custom:
                     if let workOccurrence = candidates.first(where: { $0.kind == .work }) {
                         return [workOccurrence]
                     }
@@ -1513,11 +1628,13 @@ struct AgendaView: View {
                 )
             }
     }
-    private var filteredUndatedListPosts: [AgendaUndatedPost] {
+    private func filteredUndatedListPosts(
+        snapshot: AgendaRenderSnapshot
+    ) -> [AgendaUndatedPost] {
         guard !listStatusRequiresPostDate else { return [] }
 
-        let briefByID = DuplicateSafeIndex.firstValues(activeBriefs.map { ($0.id, $0) })
-        let datedOutputIDs = Set(datedAgendaOccurrences.map(\.output.id))
+        let briefByID = AgendaBriefIndexPolicy.index(activeBriefs)
+        let datedOutputIDs = Set(snapshot.occurrences.map(\.output.id))
         return outputs
             .compactMap { output in
                 guard !datedOutputIDs.contains(output.id),
@@ -1563,12 +1680,13 @@ struct AgendaView: View {
         case .all:
             matchesStatus = true
         case .open:
-            matchesStatus = ContinueWorkingPostPolicy.includes(
+            matchesStatus = AgendaOpenPostPolicy.includes(
                 briefStatus: brief.status,
                 outputStatus: output.status,
-                customStatus: brief.resolvedCustomStatusLabel,
                 ideaBankPlacement: brief.ideaBankPlacement
             )
+        case .lateWork:
+            matchesStatus = CyNoticedReconciliationPolicy.includes(brief: brief, output: output)
         case .standard(let status):
             switch status {
             case .draft:
@@ -1605,12 +1723,12 @@ struct AgendaView: View {
             return nil
         }
     }
-    private var filteredListAgendaOutputGroups: [AgendaOutputDayGroup] {
+    private func filteredListAgendaOutputGroups(
+        occurrences: [AgendaPostOccurrence],
+        briefByID: [UUID: CreativeBrief]
+    ) -> [AgendaOutputDayGroup] {
         let calendar = Calendar.current
-        let briefByID = Dictionary(
-            uniqueKeysWithValues: activeBriefs.map { ($0.id, $0) }
-        )
-        let grouped = Dictionary(grouping: filteredListAgendaOccurrences) {
+        let grouped = Dictionary(grouping: occurrences) {
             calendar.startOfDay(for: $0.date)
         }
         return grouped.map { day, dayOccurrences in
@@ -1669,6 +1787,8 @@ struct AgendaView: View {
             "All"
         case .open:
             "Open posts"
+        case .lateWork:
+            "Late work"
         case .standard(let status):
             status.title
         case .custom(let statusKey):
@@ -1691,7 +1811,7 @@ struct AgendaView: View {
         appModel.presentedSheet = .quickCapture
     }
     private func clearAgendaListFilters() {
-        withAnimation(.snappy(duration: 0.2)) {
+        performAgendaUpdate(animation: .snappy(duration: 0.2)) {
             listPillarFilter = .all
             listStatusFilter = .defaultFilter
         }
@@ -1703,9 +1823,20 @@ struct AgendaView: View {
             to: calendarMonthStart
         ) else { return }
 
-        withAnimation(.snappy(duration: 0.24)) {
+        performAgendaUpdate(animation: .snappy(duration: 0.24)) {
             calendarMonth = newMonth
             selectedDay = newMonth
+        }
+    }
+
+    private func performAgendaUpdate(
+        animation: Animation,
+        _ update: () -> Void
+    ) {
+        if AgendaMotionPolicy.usesAnimation(reduceMotion: reduceMotion) {
+            withAnimation(animation, update)
+        } else {
+            update()
         }
     }
     private func agendaOccurrencePrecedes(
@@ -1725,18 +1856,6 @@ struct AgendaView: View {
             rhs.output,
             briefStatus: briefByID[rhs.output.briefID]?.status
         )
-    }
-    private func tasks(on day: Date) -> [CreatorTask] {
-        tasks.filter {
-            $0.parentTaskID == nil &&
-                !$0.isSkipped &&
-                TaskCollectionPolicy.collection(
-                    briefID: $0.briefID,
-                    platformOutputID: $0.platformOutputID
-                ) == .myTasks &&
-                $0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: day) } == true
-        }
-            .sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
     }
     private func focus(on day: Date) -> ResolvedDailyFocus? { DailyFocusResolver.resolve(date: day, templates: focusTemplates, overrides: focusOverrides) }
     private func agendaFocusTitle(_ focus: ResolvedDailyFocus?) -> String {
@@ -1768,6 +1887,20 @@ struct AgendaView: View {
         output.socialAccountID.flatMap { id in socialAccounts.first { $0.id == id } }?.label
     }
 }
+
+#if DEBUG
+private enum PreviewAgendaRuntimeFixture {
+    static func initialDisplayMode(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> AgendaDisplayMode? {
+        guard let marker = arguments.firstIndex(of: "-agentCyPreviewAgendaMode"),
+              arguments.indices.contains(marker + 1) else {
+            return nil
+        }
+        return AgendaDisplayMode(rawValue: arguments[marker + 1])
+    }
+}
+#endif
 
 private struct AgendaFixedCalendarSurface<Header: View, Content: View>: View {
     let minimumHeight: CGFloat?
@@ -1834,6 +1967,83 @@ enum AgendaPillarDotPresentation {
     }
 }
 
+struct AgendaMonthCalendarWeekdayHeader: Identifiable, Equatable {
+    let weekday: PillarWeekday
+    let symbol: String
+    let pillarHex: String?
+
+    var id: PillarWeekday { weekday }
+}
+
+enum AgendaMonthCalendarColorPolicy {
+    static let showsPillarColorOnMonthDates = false
+
+    static func weekdayHeaders(
+        symbols: [String],
+        firstWeekday: Int,
+        pillarHexByWeekday: [PillarWeekday: String]
+    ) -> [AgendaMonthCalendarWeekdayHeader] {
+        guard symbols.count == PillarWeekday.allCases.count else { return [] }
+        let normalizedFirstWeekday = min(max(firstWeekday, 1), symbols.count)
+
+        return (0..<symbols.count).compactMap { offset in
+            let symbolIndex = (normalizedFirstWeekday - 1 + offset) % symbols.count
+            guard let weekday = PillarWeekday(rawValue: symbolIndex + 1) else { return nil }
+            return AgendaMonthCalendarWeekdayHeader(
+                weekday: weekday,
+                symbol: symbols[symbolIndex],
+                pillarHex: pillarHexByWeekday[weekday]
+            )
+        }
+    }
+}
+
+enum AgendaCompactCalendarPolicy {
+    static let maximumDynamicTypeSize: DynamicTypeSize = .large
+
+    static func usesStackedCompletedDayLayout(
+        dynamicTypeSize: DynamicTypeSize
+    ) -> Bool {
+        dynamicTypeSize.isAccessibilitySize
+    }
+
+    static func showsWeekdayChips(dynamicTypeSize: DynamicTypeSize) -> Bool {
+        !dynamicTypeSize.isAccessibilitySize
+    }
+
+    static func usesStackedListFilters(dynamicTypeSize: DynamicTypeSize) -> Bool {
+        dynamicTypeSize.isAccessibilitySize
+    }
+}
+
+enum AgendaCardTimePolicy {
+    static func displayTime(
+        kind: AgendaPostOccurrenceKind,
+        occurrenceDate: Date,
+        includesWorkTime: Bool,
+        includesTargetTime: Bool
+    ) -> Date? {
+        switch kind {
+        case .work:
+            includesWorkTime ? occurrenceDate : nil
+        case .post:
+            includesTargetTime ? occurrenceDate : nil
+        }
+    }
+}
+
+enum AgendaBriefIndexPolicy {
+    static func index(_ briefs: [CreativeBrief]) -> [UUID: CreativeBrief] {
+        DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
+    }
+}
+
+enum AgendaMotionPolicy {
+    static func usesAnimation(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+}
+
 enum AgendaOutputOrdering {
     static func rank(
         outputStatus: PlatformOutputStatus,
@@ -1877,9 +2087,26 @@ struct AgendaOutputState {
             briefStatus: briefStatus
         ) == .goingLive && outputStatus != .posted
     }
+
+    var isUnposted: Bool {
+        outputStatus != .posted
+    }
 }
 
 enum AgendaDayPresentation {
+    static func weekdayMonthDayLabel(
+        _ day: Date,
+        locale: Locale = .current,
+        calendar: Calendar = .current
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = locale
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "EEE MMM d"
+        return formatter.string(from: day)
+    }
+
     static func trailingActionSymbol(hasPosts: Bool) -> String {
         hasPosts ? "chevron.right" : "plus"
     }
@@ -1924,7 +2151,7 @@ enum AgendaDayPresentation {
         calendar: Calendar = .current
     ) -> Bool {
         guard calendar.startOfDay(for: day) < calendar.startOfDay(for: now) else { return false }
-        return outputs.allSatisfy { !$0.needsRescheduling }
+        return outputs.allSatisfy { !$0.isUnposted }
     }
 
     static func isOverdue(
@@ -1937,8 +2164,22 @@ enum AgendaDayPresentation {
         return calendar.startOfDay(for: targetDate) < calendar.startOfDay(for: now)
     }
 
-    static func firstTaskDate(in candidates: [Date?]) -> Date? {
-        candidates.compactMap { $0 }.min()
+}
+
+enum DayAgendaPostGroup: Equatable {
+    case production
+    case scheduled
+}
+
+enum DayAgendaPostGrouping {
+    static func group(
+        outputStatus: PlatformOutputStatus,
+        briefStatus: BriefStatus?
+    ) -> DayAgendaPostGroup {
+        TodayOutputPresentation.section(
+            outputStatus: outputStatus,
+            briefStatus: briefStatus
+        ) == .goingLive ? .scheduled : .production
     }
 }
 
@@ -2117,13 +2358,13 @@ struct EpisodeSlotActionsView: View {
                             }
                         } else {
                             VStack(spacing: AgentSpacing.x3) {
-                                episodeAction("Create new episode") {
+                                episodeAction("Create New Episode") {
                                     convertNew(series: series)
                                 }
-                                episodeAction("Use an Idea Bank idea") {
+                                episodeAction("Use an Idea Bank Idea") {
                                     showsIdeas = true
                                 }
-                                episodeAction("Duplicate previous episode") {
+                                episodeAction("Duplicate Previous Episode") {
                                     duplicatePrevious(series: series)
                                 }
                             }
@@ -2149,7 +2390,7 @@ struct EpisodeSlotActionsView: View {
                 .padding(AgentLayout.pageMargin)
             }
             .background(Color.agentCanvas)
-            .navigationTitle(showsIdeas ? "Choose an idea" : "Episode")
+            .navigationTitle(showsIdeas ? "Choose an Idea" : "Plan Episode")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -2248,6 +2489,7 @@ struct EpisodeSlotActionsView: View {
 
 struct DayAgendaView: View {
     let day: Date
+    let referenceDate: Date
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -2276,6 +2518,7 @@ struct DayAgendaView: View {
     @State private var selectedEpisodeSlot: SeriesEpisodeSlot?
     @State private var convertedEpisodeBrief: CreativeBrief?
     @State private var acceptsDayContentInteractions = false
+    @State private var showAddLivePost = false
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
     private var outputs: [PlatformOutput] { scoped(allOutputs) }
@@ -2319,6 +2562,7 @@ struct DayAgendaView: View {
             }
             return AgendaDayOutputVisibility.includes(
                 outputTargetDate: $0.targetDate,
+                outputPostedAt: $0.postedAt,
                 outputStatus: $0.status,
                 briefWorkDate: brief.workDate,
                 briefStatus: brief.status,
@@ -2373,37 +2617,34 @@ struct DayAgendaView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     EditorialHeader(
                         kicker: day.formatted(.dateTime.month(.abbreviated).day().year()),
-                        title: Calendar.current.isDateInToday(day) ? "Today." : day.formatted(.dateTime.weekday(.wide)),
+                        title: Calendar.current.isDate(day, inSameDayAs: referenceDate)
+                            ? "Today."
+                            : day.formatted(.dateTime.weekday(.wide)),
                         subtitle: "Everything planned for this day."
                     )
                     .padding(.horizontal, AgentLayout.pageMargin)
 
+                    dayPlanningShowcase
+                        .padding(.horizontal, AgentLayout.dashboardGutter)
+                        .padding(.top, AgentSpacing.x8)
+
                     AgentInsetSurface {
                         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-                            daySection(title: "Post details") {
-                                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                                    focusSection
-                                    pillarSection
-                                    dayTaskCollection(
-                                        title: TaskCollection.myTasks.title,
-                                        tasks: snapshot.focusTasks,
-                                        snapshot: snapshot,
-                                        emptyMessage: "No tasks planned.",
-                                        taskTopPadding: AgentSpacing.x1,
-                                        addAction: addMyTaskForDay
-                                    )
-                                }
-                            }
-
-                            daySection(title: "Scheduled") {
-                                postsSection(snapshot)
-                            }
-
+                            productionPostsSection(snapshot)
+                            scheduledPostsSection(snapshot)
+                            dayTaskCollection(
+                                title: TaskCollection.myTasks.title,
+                                tasks: snapshot.focusTasks,
+                                snapshot: snapshot,
+                                emptyMessage: "No focus tasks.",
+                                taskTopPadding: AgentSpacing.x1,
+                                addAction: addMyTaskForDay
+                            )
                             postTasksSection(snapshot)
                         }
                     }
                     .padding(.horizontal, AgentLayout.dashboardGutter)
-                    .padding(.top, AgentSpacing.x8)
+                    .padding(.top, AgentSpacing.x4)
                 }
                 .padding(.top, AgentSpacing.x6)
                 .agentBottomNavigationClearance()
@@ -2422,7 +2663,11 @@ struct DayAgendaView: View {
         .navigationTitle(day.formatted(.dateTime.weekday(.wide)))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if AgendaDayPresentation.showsSaveControl(day: day, now: Date(), hasChanges: hasDayChanges) {
+            if AgendaDayPresentation.showsSaveControl(
+                day: day,
+                now: referenceDate,
+                hasChanges: hasDayChanges
+            ) {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: saveAndDismiss) {
                         AgentIconView(.check, size: 15)
@@ -2465,13 +2710,21 @@ struct DayAgendaView: View {
         .sheet(isPresented: $isPillarPickerPresented, onDismiss: finishPillarSelection) {
             pillarPickerSheet
                 .presentationDetents([.height(pillarPickerHeight)])
-                .presentationDragIndicator(.visible)
+                .agentSheetDragIndicator()
                 .presentationBackground(Color.agentCanvas)
         }
         .sheet(item: $selectedEpisodeSlot) { slot in
             EpisodeSlotActionsView(slot: slot) { result in
                 convertedEpisodeBrief = result.brief
             }
+        }
+        .sheet(isPresented: $showAddLivePost, onDismiss: {
+            baselineDaySignature = currentDaySignature
+        }) {
+            AddLivePostView(suggestedPostedAt: day)
+                .environment(appModel)
+                .presentationDetents([.large])
+                .agentSheetDragIndicator()
         }
         .navigationDestination(isPresented: $isChoosingPost) {
             AgendaPostIdeaPickerView(day: day)
@@ -2520,7 +2773,11 @@ struct DayAgendaView: View {
             title: day.formatted(.dateTime.weekday(.wide)),
             backAction: dismiss.callAsFunction
         ) {
-            if AgendaDayPresentation.showsSaveControl(day: day, now: Date(), hasChanges: hasDayChanges) {
+            if AgendaDayPresentation.showsSaveControl(
+                day: day,
+                now: referenceDate,
+                hasChanges: hasDayChanges
+            ) {
                 AgentDesktopDetailIconButton(
                     title: "Save day",
                     icon: .check,
@@ -2553,6 +2810,7 @@ struct DayAgendaView: View {
             }
             return AgendaDayOutputVisibility.includes(
                 outputTargetDate: output.targetDate,
+                outputPostedAt: output.postedAt,
                 outputStatus: output.status,
                 briefWorkDate: brief.workDate,
                 briefStatus: brief.status,
@@ -2663,54 +2921,108 @@ struct DayAgendaView: View {
         }
     }
 
-    private var focusSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            MetaLabel("Focus")
-            NavigationLink {
-                DailyFocusDetailView(date: day)
-            } label: {
-                HStack {
-                    Text(dayFocus?.title ?? "Rest").font(.agentHeadline)
-                    Spacer()
-                    AgentIconView(.forward)
-                }
-                .foregroundStyle(Color.agentText)
-                .frame(minHeight: 52)
+    private var dayPlanningShowcase: some View {
+        AgentInsetSurface {
+#if targetEnvironment(macCatalyst)
+            HStack(alignment: .top, spacing: AgentSpacing.x6) {
+                focusShowcaseControl
+                    .frame(maxWidth: .infinity)
+
+                Rectangle()
+                    .fill(Color.agentHairline)
+                    .frame(width: 1)
+                    .padding(.vertical, AgentSpacing.x1)
+
+                pillarShowcaseControl
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens focus details")
+#else
+            VStack(alignment: .leading, spacing: 0) {
+                focusShowcaseControl
+
+                Rectangle()
+                    .fill(Color.agentHairline)
+                    .frame(height: 1)
+                    .padding(.vertical, AgentSpacing.x4)
+
+                pillarShowcaseControl
+            }
+#endif
         }
     }
 
-    private var pillarSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            HStack(alignment: .firstTextBaseline) {
-                MetaLabel("Pillar")
-                Spacer()
-                MetaLabel("Assigned every \(weekday.title)")
-            }
+    private var focusShowcaseControl: some View {
+        NavigationLink {
+            DailyFocusDetailView(date: day)
+        } label: {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                HStack {
+                    MetaLabel("Focus")
+                    Spacer()
+                    AgentIconView(.forward, size: 12)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(width: 24, height: 24)
+                }
 
-            Button {
-                isPillarPickerPresented = true
-            } label: {
+                Text(dayFocusShowcaseTitle)
+                    .font(.agentTitle)
+                    .foregroundStyle(Color.agentText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Edit this day’s focus")
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityHint("Opens focus details")
+    }
+
+    private var pillarShowcaseControl: some View {
+        Button {
+            isPillarPickerPresented = true
+        } label: {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                HStack {
+                    MetaLabel("Pillar")
+                    Spacer()
+                    AgentIconView(.expand, size: 12)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(width: 24, height: 24)
+                }
+
                 HStack(spacing: AgentSpacing.x3) {
                     if let displayedPillar {
                         PillarColorMark(
                             color: Color(agentHex: displayedPillar.resolvedColorHex(in: activePillars)),
-                            diameter: 10
+                            diameter: 12
                         )
                     }
                     Text(displayedPillar?.name ?? "Assign a pillar")
-                        .font(.agentBody.weight(.semibold))
-                    Spacer()
-                    AgentIconView(.expand, size: 11)
+                        .font(.agentTitle)
+                        .foregroundStyle(Color.agentText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .foregroundStyle(Color.agentText)
-                .frame(maxWidth: .infinity, minHeight: 52)
-                .contentShape(.rect)
+
+                Text(displayedPillar == nil
+                    ? "Choose the pillar for \(weekday.title)"
+                    : "Assigned every \(weekday.title)")
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentSecondary)
             }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            .contentShape(.rect)
         }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityHint("Opens the pillar picker")
+    }
+
+    private var dayFocusShowcaseTitle: String {
+        let title = dayFocus?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Rest"
+        guard !title.lowercased().hasSuffix(" day") else { return title }
+        return "\(title) Day"
     }
 
     private var pillarPickerSheet: some View {
@@ -2850,7 +3162,7 @@ struct DayAgendaView: View {
     }
 
     private var isPastDay: Bool {
-        AgendaDayPresentation.showsPastDaySaveControl(day: day, now: Date())
+        AgendaDayPresentation.showsPastDaySaveControl(day: day, now: referenceDate)
     }
 
     private func choosePillar(_ selected: Pillar?) {
@@ -2935,13 +3247,56 @@ struct DayAgendaView: View {
         }
     }
 
-    private func postsSection(_ snapshot: DayAgendaRenderSnapshot) -> some View {
+    private func productionPostsSection(_ snapshot: DayAgendaRenderSnapshot) -> some View {
+        daySection(title: "In production") {
+            dayPostsList(
+                outputs: snapshot.dayOutputs.filter {
+                    DayAgendaPostGrouping.group(
+                        outputStatus: $0.status,
+                        briefStatus: snapshot.briefByID[$0.briefID]?.status
+                    ) == .production
+                },
+                episodeSlots: snapshot.episodeSlots,
+                snapshot: snapshot,
+                emptyMessage: "No posts in production.",
+                showsScheduleActions: false
+            )
+        }
+    }
+
+    private func scheduledPostsSection(_ snapshot: DayAgendaRenderSnapshot) -> some View {
+        daySection(title: "Scheduled posts") {
+            dayPostsList(
+                outputs: snapshot.dayOutputs.filter {
+                    DayAgendaPostGrouping.group(
+                        outputStatus: $0.status,
+                        briefStatus: snapshot.briefByID[$0.briefID]?.status
+                    ) == .scheduled
+                },
+                episodeSlots: [],
+                snapshot: snapshot,
+                emptyMessage: "No scheduled posts.",
+                showsScheduleActions: true
+            )
+        }
+    }
+
+    private func dayPostsList(
+        outputs: [PlatformOutput],
+        episodeSlots: [SeriesEpisodeSlot],
+        snapshot: DayAgendaRenderSnapshot,
+        emptyMessage: String,
+        showsScheduleActions: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if snapshot.dayOutputs.isEmpty && snapshot.episodeSlots.isEmpty {
-                Text("No posts planned.").font(.agentSubtext).foregroundStyle(Color.agentSecondary).padding(.vertical, AgentSpacing.x4)
+            if outputs.isEmpty && episodeSlots.isEmpty {
+                Text(emptyMessage)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .padding(.vertical, AgentSpacing.x4)
             } else {
                 VStack(spacing: AgentSpacing.x3) {
-                    ForEach(snapshot.dayOutputs) { output in
+                    ForEach(outputs) { output in
                         if let brief = snapshot.briefByID[output.briefID] {
                             NavigationLink { PostOutputDetailView(brief: brief, output: output) } label: {
                                 AgentPostCard(
@@ -2952,13 +3307,21 @@ struct DayAgendaView: View {
                                     metadata: outputLabel(output, snapshot: snapshot),
                                     timeText: output.includesTargetTime
                                         ? output.targetDate?.formatted(date: .omitted, time: .shortened)
-                                        : nil
+                                        : nil,
+                                    isLate: FinalizedPostPresentation.isMissed(
+                                        outputStatus: output.status,
+                                        targetDate: output.targetDate
+                                    ) || PostWorkDateStatusPolicy.isLate(
+                                        workDate: brief.workDate,
+                                        briefStatus: brief.status,
+                                        outputStatus: output.status
+                                    )
                                 )
                             }
                             .buttonStyle(.plain)
                         }
                     }
-                    ForEach(snapshot.episodeSlots) { slot in
+                    ForEach(episodeSlots) { slot in
                         if let series = snapshot.seriesByID[slot.seriesID] {
                             Button {
                                 selectedEpisodeSlot = slot
@@ -2970,8 +3333,14 @@ struct DayAgendaView: View {
                     }
                 }
             }
-            AgentBlockAddActionButton(title: "Schedule post") { isChoosingPost = true }
+
+            if showsScheduleActions {
+                HStack(spacing: AgentSpacing.x3) {
+                    AgentBlockAddActionButton(title: "Schedule post") { isChoosingPost = true }
+                    AgentBlockAddActionButton(title: "Add live post") { showAddLivePost = true }
+                }
                 .padding(.top, AgentSpacing.x6)
+            }
         }
     }
 
@@ -3193,19 +3562,23 @@ enum AgendaContentVisibility {
 enum AgendaDayOutputVisibility {
     static func includes(
         outputTargetDate: Date?,
+        outputPostedAt: Date? = nil,
         outputStatus: PlatformOutputStatus,
         briefWorkDate: Date?,
         briefStatus: BriefStatus,
         day: Date,
         calendar: Calendar = .current
     ) -> Bool {
+        if outputStatus == .posted, let outputPostedAt {
+            return calendar.isDate(outputPostedAt, inSameDayAs: day)
+        }
         if let outputTargetDate, calendar.isDate(outputTargetDate, inSameDayAs: day) {
             return true
         }
 
-        guard outputStatus == .draft,
-              briefStatus != .scheduled,
+        guard outputStatus != .posted,
               briefStatus != .posted,
+              briefStatus != .archived,
               let briefWorkDate else {
             return false
         }
@@ -3249,6 +3622,14 @@ struct PostRescheduleSheet: View {
     }
 
     var body: some View {
+#if targetEnvironment(macCatalyst)
+        desktopBody
+#else
+        standardBody
+#endif
+    }
+
+    private var standardBody: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
@@ -3280,14 +3661,7 @@ struct PostRescheduleSheet: View {
                     .padding(AgentSpacing.x4)
                     .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
 
-                    Button("Save new date") {
-                        output.includesTargetTime = includesTime
-                        let resolvedDate = includesTime
-                            ? targetDate
-                            : Calendar.current.startOfDay(for: targetDate)
-                        appModel.schedule(output: output, date: resolvedDate, context: context)
-                        dismiss()
-                    }
+                    Button("Save new date", action: saveAndDismiss)
                     .buttonStyle(AgentPrimaryButtonStyle())
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)
@@ -3303,5 +3677,122 @@ struct PostRescheduleSheet: View {
             }
             .agentScreen()
         }
+    }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopBody: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: AgentSpacing.x3) {
+                Text("Reschedule post")
+                    .font(.agentHeadline)
+                    .foregroundStyle(Color.agentText)
+                Spacer(minLength: 0)
+                Button { dismiss() } label: {
+                    AgentIconView(.close, size: 14)
+                        .frame(width: 40, height: 40)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel")
+            }
+            .padding(.leading, AgentSpacing.x5)
+            .padding(.trailing, AgentSpacing.x3)
+            .padding(.top, AgentSpacing.x3)
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                Text("Choose a new scheduled date.")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+
+                PillarCalendarDatePicker(
+                    date: $targetDate,
+                    pillarMarkers: [],
+                    minimumDate: minimumDate,
+                    cellHeight: 38,
+                    dayDiameter: 28
+                )
+                .padding(AgentSpacing.x4)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.card)
+                        .stroke(Color.agentBorder, lineWidth: 1)
+                }
+
+                VStack(spacing: 0) {
+                    Toggle("Include a time", isOn: $includesTime)
+                        .font(.agentBody.weight(.medium))
+                        .tint(Color.actionAccent)
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+
+                    if includesTime {
+                        Divider().overlay(Color.agentHairline)
+                        HStack {
+                            Text("Time").font(.agentBody)
+                            Spacer()
+                            DatePicker(
+                                "Time",
+                                selection: $targetDate,
+                                displayedComponents: .hourAndMinute
+                            )
+                            .labelsHidden()
+                            .datePickerStyle(.compact)
+                        }
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+                    }
+                }
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.control)
+                        .stroke(Color.agentBorder, lineWidth: 1)
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x5)
+            .padding(.top, AgentSpacing.x2)
+            .padding(.bottom, AgentSpacing.x5)
+
+            Divider().overlay(Color.agentHairline)
+
+            HStack(spacing: AgentSpacing.x3) {
+                Button("Cancel") { dismiss() }
+                    .font(.agentSubtext.weight(.medium))
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(width: 92)
+                    .frame(minHeight: 44)
+                    .contentShape(.rect(cornerRadius: AgentRadius.card))
+                    .buttonStyle(.plain)
+
+                Button(action: saveAndDismiss) {
+                    Text("Save new date")
+                        .font(.agentSubtext.weight(.medium))
+                        .foregroundStyle(Color.agentText)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AgentRadius.card)
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(AgentSpacing.x4)
+        }
+        .frame(width: 500)
+        .background(Color.agentCanvas)
+        .agentScreen()
+        .presentationSizing(.fitted)
+        .presentationCornerRadius(AgentRadius.floating)
+        .presentationBackground(Color.agentCanvas)
+    }
+#endif
+
+    private func saveAndDismiss() {
+        output.includesTargetTime = includesTime
+        let resolvedDate = includesTime
+            ? targetDate
+            : Calendar.current.startOfDay(for: targetDate)
+        appModel.schedule(output: output, date: resolvedDate, context: context)
+        dismiss()
     }
 }

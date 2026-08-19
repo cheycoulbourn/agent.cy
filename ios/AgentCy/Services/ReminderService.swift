@@ -1,6 +1,482 @@
 import Foundation
 import SwiftData
+import UIKit
 import UserNotifications
+
+@Model
+final class AgentActivityRecord {
+    var id: UUID = UUID()
+    var notificationID: String = ""
+    var workspaceID: UUID?
+    var kindRaw: String = AgentNotificationKind.daily.rawValue
+    var availableAt: Date = Date()
+    var title: String = ""
+    var body: String = ""
+    var reason: String = ""
+    var priority: Int = 0
+    var briefID: UUID?
+    var outputID: UUID?
+    var taskID: UUID?
+    var focusDetailID: UUID?
+    var routeRaw: String = AgentNotificationRouteKind.day.rawValue
+    var eventDate: Date?
+    var readAt: Date?
+    var resolvedAt: Date?
+    var archivedAt: Date?
+    /// Creator-initiated "Clear all". Unlike `archivedAt`, reconcile leaves it
+    /// standing while a live seed persists; only a genuinely new occurrence
+    /// resets it. Optional for additive CloudKit migration safety.
+    var clearedAt: Date?
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    init(
+        notificationID: String,
+        workspaceID: UUID?,
+        kind: AgentNotificationKind,
+        availableAt: Date,
+        title: String,
+        body: String,
+        reason: String,
+        priority: Int,
+        briefID: UUID? = nil,
+        outputID: UUID? = nil,
+        taskID: UUID? = nil,
+        focusDetailID: UUID? = nil,
+        route: AgentNotificationRouteKind,
+        eventDate: Date? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.notificationID = notificationID
+        self.workspaceID = workspaceID
+        self.kindRaw = kind.rawValue
+        self.availableAt = availableAt
+        self.title = title
+        self.body = body
+        self.reason = reason
+        self.priority = priority
+        self.briefID = briefID
+        self.outputID = outputID
+        self.taskID = taskID
+        self.focusDetailID = focusDetailID
+        self.routeRaw = route.rawValue
+        self.eventDate = eventDate
+        self.createdAt = createdAt
+        self.updatedAt = createdAt
+    }
+
+    var kind: AgentNotificationKind {
+        AgentNotificationKind(rawValue: kindRaw) ?? .daily
+    }
+
+    var route: AgentNotificationRoute {
+        let routeKind = AgentNotificationRouteKind(rawValue: routeRaw) ?? .day
+        let objectID: UUID? = switch routeKind {
+        case .brief, .draft: briefID
+        case .task: taskID
+        default: nil
+        }
+        return AgentNotificationRoute(kind: routeKind, objectID: objectID, date: eventDate)
+    }
+}
+
+extension AgentActivityRecord: WorkspaceScopedRecord {}
+
+enum AgentActivityPresentationPolicy {
+    static func isVisible(availableAt: Date, archivedAt: Date?, clearedAt: Date?, now: Date) -> Bool {
+        archivedAt == nil && clearedAt == nil && availableAt <= now
+    }
+
+    static func requiresResolution(_ kind: AgentNotificationKind) -> Bool {
+        switch kind {
+        case .lateWork, .scheduledPost, .missedPost, .draftPreparation, .timedTask:
+            true
+        case .daily, .weekly, .focus, .access:
+            false
+        }
+    }
+
+    static func needsAttention(
+        kind: AgentNotificationKind,
+        readAt: Date?,
+        resolvedAt: Date?
+    ) -> Bool {
+        guard resolvedAt == nil else { return false }
+        return readAt == nil || requiresResolution(kind)
+    }
+}
+
+private struct AgentActivitySeed {
+    let notificationID: String
+    let workspaceID: UUID?
+    let kind: AgentNotificationKind
+    let availableAt: Date
+    let title: String
+    let body: String
+    let reason: String
+    let priority: Int
+    let briefID: UUID?
+    let outputID: UUID?
+    let taskID: UUID?
+    let focusDetailID: UUID?
+    let route: AgentNotificationRouteKind
+    let eventDate: Date?
+}
+
+@MainActor
+enum AgentActivityCenterService {
+    static func reconcile(
+        plan: [AgentNotificationPlanItem],
+        context: ModelContext,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws {
+        let workspaces = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+        let workspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: CreatorWorkspacePreferences.activeWorkspaceID,
+            workspaces: workspaces
+        )
+        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
+        }
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
+        }
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>()).filter {
+            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
+        }
+        let briefByID = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
+        let planSeeds = plan.map { seed(from: $0, workspaceID: workspaceID) }
+        let liveSeeds = liveActionSeeds(
+            workspaceID: workspaceID,
+            briefs: briefs,
+            outputs: outputs,
+            tasks: tasks,
+            briefByID: briefByID,
+            now: now,
+            calendar: calendar
+        )
+        let seeds = DuplicateSafeIndex.firstValues((planSeeds + liveSeeds).map { ($0.notificationID, $0) })
+        let stored = try context.fetch(FetchDescriptor<AgentActivityRecord>())
+            .filter { WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces) }
+        var storedByNotificationID: [String: AgentActivityRecord] = [:]
+        for record in stored {
+            if storedByNotificationID[record.notificationID] == nil {
+                storedByNotificationID[record.notificationID] = record
+            } else {
+                context.delete(record)
+            }
+        }
+
+        for seed in seeds.values {
+            if let record = storedByNotificationID[seed.notificationID] {
+                let wasAlreadyAvailable = record.availableAt <= now
+                let movedToASeparateOccurrence = wasAlreadyAvailable &&
+                    abs(record.availableAt.timeIntervalSince(seed.availableAt)) > 60
+                apply(seed, to: record, now: now, resetsState: movedToASeparateOccurrence)
+            } else {
+                let record = AgentActivityRecord(
+                    notificationID: seed.notificationID,
+                    workspaceID: seed.workspaceID,
+                    kind: seed.kind,
+                    availableAt: seed.availableAt,
+                    title: seed.title,
+                    body: seed.body,
+                    reason: seed.reason,
+                    priority: seed.priority,
+                    briefID: seed.briefID,
+                    outputID: seed.outputID,
+                    taskID: seed.taskID,
+                    focusDetailID: seed.focusDetailID,
+                    route: seed.route,
+                    eventDate: seed.eventDate,
+                    createdAt: now
+                )
+                context.insert(record)
+                storedByNotificationID[seed.notificationID] = record
+            }
+        }
+
+        for record in stored where seeds[record.notificationID] == nil && record.availableAt > now {
+            record.archivedAt = now
+            record.updatedAt = now
+        }
+
+        resolveCompletedRecords(
+            storedByNotificationID.values,
+            briefByID: briefByID,
+            outputs: outputs,
+            tasks: tasks,
+            now: now,
+            calendar: calendar
+        )
+        archiveOldResolvedRecords(storedByNotificationID.values, now: now, calendar: calendar)
+        try context.save()
+    }
+
+    static func markRead(_ record: AgentActivityRecord, context: ModelContext, now: Date = Date()) throws {
+        guard record.readAt == nil else { return }
+        record.readAt = now
+        record.updatedAt = now
+        try context.save()
+    }
+
+    static func markUnread(_ record: AgentActivityRecord, context: ModelContext, now: Date = Date()) throws {
+        record.readAt = nil
+        record.updatedAt = now
+        try context.save()
+    }
+
+    static func markAllRead(
+        _ records: [AgentActivityRecord],
+        context: ModelContext,
+        now: Date = Date()
+    ) throws {
+        for record in records where record.readAt == nil {
+            record.readAt = now
+            record.updatedAt = now
+        }
+        try context.save()
+    }
+
+    static func archive(_ record: AgentActivityRecord, context: ModelContext, now: Date = Date()) throws {
+        record.archivedAt = now
+        record.updatedAt = now
+        try context.save()
+    }
+
+    static func clearAll(
+        _ records: [AgentActivityRecord],
+        context: ModelContext,
+        now: Date = Date()
+    ) throws {
+        for record in records where record.clearedAt == nil {
+            record.clearedAt = now
+            if record.readAt == nil {
+                record.readAt = now
+            }
+            record.updatedAt = now
+        }
+        try context.save()
+    }
+
+    static func markRead(notificationID: String, context: ModelContext, now: Date = Date()) throws {
+        guard let record = try context.fetch(FetchDescriptor<AgentActivityRecord>())
+            .first(where: { $0.notificationID == notificationID }) else { return }
+        try markRead(record, context: context, now: now)
+    }
+
+    private static func seed(
+        from item: AgentNotificationPlanItem,
+        workspaceID: UUID?
+    ) -> AgentActivitySeed {
+        AgentActivitySeed(
+            notificationID: item.id,
+            workspaceID: workspaceID,
+            kind: item.kind,
+            availableAt: item.fireDate,
+            title: item.title,
+            body: item.body,
+            reason: item.reason,
+            priority: item.priority,
+            briefID: uuid(item.metadata[AgentNotificationMetadataKey.briefID]),
+            outputID: uuid(item.metadata[AgentNotificationMetadataKey.outputID]),
+            taskID: uuid(item.metadata[AgentNotificationMetadataKey.taskID]),
+            focusDetailID: uuid(item.metadata[AgentNotificationMetadataKey.focusDetailID]),
+            route: routeKind(item.metadata[AgentNotificationMetadataKey.route]),
+            eventDate: item.metadata[AgentNotificationMetadataKey.date].flatMap {
+                ISO8601DateFormatter().date(from: $0)
+            }
+        )
+    }
+
+    private static func liveActionSeeds(
+        workspaceID: UUID?,
+        briefs: [CreativeBrief],
+        outputs: [PlatformOutput],
+        tasks: [CreatorTask],
+        briefByID: [UUID: CreativeBrief],
+        now: Date,
+        calendar: Calendar
+    ) -> [AgentActivitySeed] {
+        var seeds: [AgentActivitySeed] = []
+        let dayStart = calendar.startOfDay(for: now)
+
+        for output in outputs where output.status != .posted {
+            guard let brief = briefByID[output.briefID], brief.status != .archived else { continue }
+            if PostWorkDateStatusPolicy.isLate(
+                workDate: brief.workDate,
+                briefStatus: brief.status,
+                outputStatus: output.status,
+                now: now,
+                calendar: calendar
+            ), let workDate = brief.workDate {
+                seeds.append(AgentActivitySeed(
+                    notificationID: "agentcy.v2.late-work.\(brief.id.uuidString.lowercased())",
+                    workspaceID: workspaceID,
+                    kind: .lateWork,
+                    availableAt: calendar.startOfDay(for: workDate),
+                    title: "Work on this post is late",
+                    body: brief.title,
+                    reason: "Late work",
+                    priority: 85,
+                    briefID: brief.id,
+                    outputID: output.id,
+                    taskID: nil,
+                    focusDetailID: nil,
+                    route: .draft,
+                    eventDate: workDate
+                ))
+            }
+
+            if let targetDate = output.targetDate,
+               calendar.startOfDay(for: targetDate) < dayStart {
+                seeds.append(AgentActivitySeed(
+                    notificationID: "agentcy.v2.missed.\(output.id.uuidString.lowercased())",
+                    workspaceID: workspaceID,
+                    kind: .missedPost,
+                    availableAt: calendar.startOfDay(for: targetDate),
+                    title: "Scheduled post still open",
+                    body: brief.title,
+                    reason: "Missed post check-in",
+                    priority: 80,
+                    briefID: brief.id,
+                    outputID: output.id,
+                    taskID: nil,
+                    focusDetailID: nil,
+                    route: .brief,
+                    eventDate: targetDate
+                ))
+            }
+        }
+
+        for task in tasks where !task.isCompleted && !task.isSkipped && task.parentTaskID == nil {
+            guard let targetDate = task.targetDate else { continue }
+            let isOverdue = task.includesTargetTime
+                ? targetDate < now
+                : calendar.startOfDay(for: targetDate) < dayStart
+            guard isOverdue else { continue }
+            seeds.append(AgentActivitySeed(
+                notificationID: "agentcy.v2.task.\(task.id.uuidString.lowercased())",
+                workspaceID: workspaceID,
+                kind: .timedTask,
+                availableAt: targetDate,
+                title: "Task needs attention",
+                body: task.title,
+                reason: "Overdue task",
+                priority: 90,
+                briefID: task.briefID,
+                outputID: nil,
+                taskID: task.id,
+                focusDetailID: nil,
+                route: .task,
+                eventDate: targetDate
+            ))
+        }
+        return seeds
+    }
+
+    private static func apply(
+        _ seed: AgentActivitySeed,
+        to record: AgentActivityRecord,
+        now: Date,
+        resetsState: Bool
+    ) {
+        record.workspaceID = seed.workspaceID
+        record.kindRaw = seed.kind.rawValue
+        record.availableAt = seed.availableAt
+        record.title = seed.title
+        record.body = seed.body
+        record.reason = seed.reason
+        record.priority = seed.priority
+        record.briefID = seed.briefID
+        record.outputID = seed.outputID
+        record.taskID = seed.taskID
+        record.focusDetailID = seed.focusDetailID
+        record.routeRaw = seed.route.rawValue
+        record.eventDate = seed.eventDate
+        record.archivedAt = nil
+        if resetsState {
+            record.readAt = nil
+            record.resolvedAt = nil
+            record.clearedAt = nil
+            record.createdAt = now
+        }
+        record.updatedAt = now
+    }
+
+    private static func resolveCompletedRecords(
+        _ records: Dictionary<String, AgentActivityRecord>.Values,
+        briefByID: [UUID: CreativeBrief],
+        outputs: [PlatformOutput],
+        tasks: [CreatorTask],
+        now: Date,
+        calendar: Calendar
+    ) {
+        let outputByID = DuplicateSafeIndex.firstValues(outputs.map { ($0.id, $0) })
+        let taskByID = DuplicateSafeIndex.firstValues(tasks.map { ($0.id, $0) })
+        for record in records where record.archivedAt == nil {
+            let resolved: Bool
+            if let taskID = record.taskID {
+                resolved = taskByID[taskID].map { $0.isCompleted || $0.isSkipped } ?? true
+            } else if let outputID = record.outputID {
+                guard let output = outputByID[outputID] else {
+                    record.resolvedAt = record.resolvedAt ?? now
+                    continue
+                }
+                if record.kind == .lateWork, let brief = briefByID[output.briefID] {
+                    resolved = !PostWorkDateStatusPolicy.isLate(
+                        workDate: brief.workDate,
+                        briefStatus: brief.status,
+                        outputStatus: output.status,
+                        now: now,
+                        calendar: calendar
+                    )
+                } else if record.kind == .missedPost {
+                    resolved = output.status == .posted ||
+                        output.targetDate.map { calendar.startOfDay(for: $0) >= calendar.startOfDay(for: now) } == true
+                } else {
+                    resolved = output.status == .posted
+                }
+            } else if let briefID = record.briefID {
+                resolved = briefByID[briefID].map { $0.status == .archived || $0.status == .posted } ?? true
+            } else {
+                resolved = false
+            }
+            if resolved {
+                record.resolvedAt = record.resolvedAt ?? now
+                record.updatedAt = now
+            }
+        }
+    }
+
+    private static func archiveOldResolvedRecords(
+        _ records: Dictionary<String, AgentActivityRecord>.Values,
+        now: Date,
+        calendar: Calendar
+    ) {
+        guard let cutoff = calendar.date(byAdding: .day, value: -30, to: now) else { return }
+        for record in records where record.resolvedAt.map({ $0 < cutoff }) == true {
+            record.archivedAt = record.archivedAt ?? now
+            record.updatedAt = now
+        }
+    }
+
+    private static func uuid(_ value: String?) -> UUID? {
+        value.flatMap(UUID.init(uuidString:))
+    }
+
+    private static func routeKind(_ rawValue: String?) -> AgentNotificationRouteKind {
+        switch rawValue {
+        case "week": .week
+        case "brief": .brief
+        case "draft": .draft
+        case "task": .task
+        case "access": .access
+        default: .day
+        }
+    }
+}
 
 @MainActor
 protocol ReminderServicing {
@@ -62,6 +538,9 @@ final class LocalReminderService: ReminderServicing {
     func requestAuthorization() async throws -> Bool {
         let granted = try await center.requestAuthorization(options: [.alert, .sound])
         guard granted else { throw ReminderServiceError.permissionDenied }
+        if BridgePushRegistrationPolicy.shouldRegisterOnCurrentPlatform {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
         return true
     }
 
@@ -80,6 +559,12 @@ final class LocalReminderService: ReminderServicing {
     func reconcile(context: ModelContext, now: Date = Date()) async throws -> [AgentNotificationPreview] {
         let input = try makePlanningInput(context: context, now: now)
         let plan = AgentNotificationPlanBuilder.build(input)
+        try AgentActivityCenterService.reconcile(
+            plan: plan,
+            context: context,
+            now: now,
+            calendar: calendar
+        )
         await removeManagedPendingRequests()
 
         let authorization = await authorizationStatus()
@@ -194,6 +679,11 @@ final class LocalReminderService: ReminderServicing {
             actions: [UNNotificationAction(identifier: AgentNotificationAction.openAccess, title: "View Access", options: foreground)],
             intentIdentifiers: []
         )
+        let mcpReview = UNNotificationCategory(
+            identifier: AgentNotificationCategory.mcpReview,
+            actions: [UNNotificationAction(identifier: AgentNotificationAction.openMCPReview, title: "Review", options: foreground)],
+            intentIdentifiers: []
+        )
         center.setNotificationCategories([
             daily,
             weekly,
@@ -203,6 +693,7 @@ final class LocalReminderService: ReminderServicing {
             task,
             UNNotificationCategory(identifier: AgentNotificationCategory.focus, actions: [], intentIdentifiers: []),
             access,
+            mcpReview,
         ])
     }
 
@@ -288,6 +779,7 @@ final class LocalReminderService: ReminderServicing {
                     id: $0.id,
                     title: $0.title,
                     status: $0.status,
+                    workDate: $0.workDate,
                     updatedAt: $0.updatedAt,
                     isSavedIdea: IdeaBankPlacementPolicy.includes($0)
                 )

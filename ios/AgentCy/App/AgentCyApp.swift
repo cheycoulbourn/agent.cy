@@ -9,9 +9,12 @@ struct AgentCyApp: App {
     @State private var appModel: AppModel
 
     init() {
+        RootLaunchDiagnostics.begin()
+        AgentNavigationAppearance.configure()
         #if DEBUG
         let usesPreviewData = ProcessInfo.processInfo.arguments.contains("-agentCyPreviewData")
-        container = usesPreviewData
+        let rootFixture = RootRuntimeFixture.resolve()
+        container = usesPreviewData || rootFixture != nil
             ? ModelContainerFactory.make(isStoredInMemoryOnly: true)
             : ModelContainerFactory.shared
         if usesPreviewData {
@@ -20,6 +23,7 @@ struct AgentCyApp: App {
         #else
         container = ModelContainerFactory.shared
         #endif
+        RootLaunchDiagnostics.mark("store_ready")
         do {
             try StoreBootstrapService.run(context: container.mainContext)
             if try MCPBridgeService.migrateStructuredPostFields(context: container.mainContext) {
@@ -28,10 +32,20 @@ struct AgentCyApp: App {
         } catch {
             assertionFailure("The local store could not be prepared: \(error.localizedDescription)")
         }
-        let credentialStore = DeviceOnlyKeychainCredentialStore.shared
+        RootLaunchDiagnostics.mark("bootstrap_complete")
+        let credentialStore: any InstallationCredentialStoring
+        #if DEBUG
+        if let rootFixture {
+            credentialStore = PreviewCredentialStore(identity: rootFixture.identity)
+        } else {
+            credentialStore = DeviceOnlyKeychainCredentialStore.shared
+        }
+        #else
+        credentialStore = DeviceOnlyKeychainCredentialStore.shared
+        #endif
         let liveAI = APIConfiguration.useLiveAI
         #if DEBUG
-        let requiresInstallationInvite = !usesPreviewData && liveAI
+        let requiresInstallationInvite = rootFixture != nil || (!usesPreviewData && liveAI)
         #else
         let requiresInstallationInvite = liveAI
         #endif
@@ -83,8 +97,14 @@ struct AgentCyApp: App {
            let sheet = AppSheet(rawValue: arguments[marker + 1]) {
             model.presentedSheet = sheet
         }
+        if usesPreviewData,
+           AppShellRuntimeFixture.requestsFirstPreviewTask(arguments: arguments),
+           let task = try? container.mainContext.fetch(FetchDescriptor<CreatorTask>()).first {
+            model.requestedTaskID = task.id
+        }
         #endif
         _appModel = State(initialValue: model)
+        RootLaunchDiagnostics.mark("app_model_ready")
     }
 
     var body: some Scene {
@@ -106,3 +126,13 @@ struct AgentCyApp: App {
         }
     }
 }
+
+#if DEBUG
+enum AppShellRuntimeFixture {
+    static func requestsFirstPreviewTask(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        arguments.contains("-agentCyPreviewTaskRoute")
+    }
+}
+#endif

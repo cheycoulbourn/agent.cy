@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -192,8 +193,33 @@ enum APIConfiguration {
     }
 }
 
+enum InstallationInviteInput: Equatable {
+    case invalid(String)
+    case valid(String)
+
+    static func resolve(_ rawValue: String) -> Self {
+        let code = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard code.count >= 6 else {
+            return .invalid("Enter the complete invitation code.")
+        }
+        guard code.count <= 128 else {
+            return .invalid("The invitation code is too long.")
+        }
+        return .valid(code)
+    }
+
+    static func consumeSubmitMarker(
+        in rawValue: String
+    ) -> (code: String, shouldSubmit: Bool) {
+        let shouldSubmit = rawValue.contains(where: \.isNewline)
+        guard shouldSubmit else { return (rawValue, false) }
+        return (String(rawValue.filter { !$0.isNewline }), true)
+    }
+}
+
 private struct InstallationRedeemRequest: Encodable {
     let inviteCode: String
+    let redemptionAttemptId: UUID
     let appBuild: String
     let platform = "ios"
 }
@@ -330,25 +356,98 @@ private struct HTTPErrorEnvelope: Decodable {
     let error: AIWireError
 }
 
-actor InstallationRedemptionClient {
+protocol InstallationRedeeming: Sendable {
+    func redeem(inviteCode: String) async throws -> InstallationIdentity
+}
+
+protocol InstallationRedemptionAttemptStoring: Sendable {
+    func attemptID(for inviteFingerprint: String) async -> UUID
+    func clear(inviteFingerprint: String) async
+}
+
+actor UserDefaultsInstallationRedemptionAttemptStore: InstallationRedemptionAttemptStoring {
+    private let suiteName: String?
+    private let storageKey = "agentcy.pending-installation-redemption-attempts"
+
+    init(suiteName: String? = nil) {
+        self.suiteName = suiteName
+    }
+
+    func attemptID(for inviteFingerprint: String) -> UUID {
+        var attempts = storedAttempts
+        if let rawValue = attempts[inviteFingerprint],
+           let existing = UUID(uuidString: rawValue) {
+            return existing
+        }
+        let created = UUID()
+        attempts[inviteFingerprint] = created.uuidString.lowercased()
+        if attempts.count > 8,
+           let removableKey = attempts.keys.filter({ $0 != inviteFingerprint }).sorted().first {
+            attempts[removableKey] = nil
+        }
+        defaults.set(attempts, forKey: storageKey)
+        return created
+    }
+
+    func clear(inviteFingerprint: String) {
+        var attempts = storedAttempts
+        attempts[inviteFingerprint] = nil
+        if attempts.isEmpty {
+            defaults.removeObject(forKey: storageKey)
+        } else {
+            defaults.set(attempts, forKey: storageKey)
+        }
+    }
+
+    private var defaults: UserDefaults {
+        suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
+    }
+
+    private var storedAttempts: [String: String] {
+        defaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
+    }
+}
+
+actor InstallationRedemptionClient: InstallationRedeeming {
     private let baseURL: URL
     private let session: URLSession
     private let store: any InstallationCredentialStoring
+    private let attemptStore: any InstallationRedemptionAttemptStoring
 
-    init(baseURL: URL = APIConfiguration.baseURL, session: URLSession = .shared, store: any InstallationCredentialStoring = DeviceOnlyKeychainCredentialStore.shared) {
+    init(
+        baseURL: URL = APIConfiguration.baseURL,
+        session: URLSession = .shared,
+        store: any InstallationCredentialStoring = DeviceOnlyKeychainCredentialStore.shared,
+        attemptStore: any InstallationRedemptionAttemptStoring = UserDefaultsInstallationRedemptionAttemptStore()
+    ) {
         self.baseURL = baseURL
         self.session = session
         self.store = store
+        self.attemptStore = attemptStore
     }
 
     func redeem(inviteCode: String) async throws -> InstallationIdentity {
-        let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard code.count >= 6 else { throw AgentCyAPIError.invalidRequest("Enter the complete invitation code.") }
-        guard code.count <= 128 else { throw AgentCyAPIError.invalidRequest("The invitation code is too long.") }
+        let code: String
+        switch InstallationInviteInput.resolve(inviteCode) {
+        case .invalid(let message):
+            throw AgentCyAPIError.invalidRequest(message)
+        case .valid(let normalizedCode):
+            code = normalizedCode
+        }
+        let inviteFingerprint = SHA256.hash(data: Data(code.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let redemptionAttemptID = await attemptStore.attemptID(for: inviteFingerprint)
         var request = URLRequest(url: baseURL.appending(path: "/v1/installations/redeem"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder.agentCy.encode(InstallationRedeemRequest(inviteCode: code, appBuild: APIConfiguration.appBuild))
+        request.httpBody = try JSONEncoder.agentCy.encode(
+            InstallationRedeemRequest(
+                inviteCode: code,
+                redemptionAttemptId: redemptionAttemptID,
+                appBuild: APIConfiguration.appBuild
+            )
+        )
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             if let envelope = try? JSONDecoder.agentCy.decode(HTTPErrorEnvelope.self, from: data) {
@@ -365,6 +464,7 @@ actor InstallationRedemptionClient {
             promotionalEntitlementEndsAt: result.promotionalEntitlementEndsAt
         )
         try await store.save(identity)
+        await attemptStore.clear(inviteFingerprint: inviteFingerprint)
         return identity
     }
 }
@@ -794,7 +894,10 @@ actor AgentCyAPIClient {
         var request = URLRequest(url: baseURL.appending(path: operation.path))
         request.httpMethod = "POST"
         request.httpBody = data
-        request.timeoutInterval = 90
+        // Outlives the server's 90-second upstream generation budget so its
+        // terminal SSE error reaches the creator instead of a client-side
+        // timeout racing it (field-diagnosed 2026-08-19).
+        request.timeoutInterval = 130
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(identity.credential)", forHTTPHeaderField: "Authorization")

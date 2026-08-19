@@ -1,6 +1,7 @@
 import SwiftData
 import SwiftUI
 import OSLog
+import UIKit
 
 private let dashboardWidgetLogger = Logger(
     subsystem: "com.agentcy.app",
@@ -11,6 +12,7 @@ struct HomeDashboardView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var profiles: [CreatorProfile]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
@@ -22,10 +24,12 @@ struct HomeDashboardView: View {
     @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @Query private var allFocusOverrides: [DailyFocusOverride]
     @Query(sort: \BrandPartner.updatedAt, order: .reverse) private var allBrandPartners: [BrandPartner]
+    @Query(sort: \AgentActivityRecord.availableAt, order: .reverse) private var allActivityRecords: [AgentActivityRecord]
     @State private var dashboardLayout = DashboardWidgetLayoutState()
     @State private var isArrangingDashboard = false
-    @State private var showsWeeklyFocusEditor = false
+    @State private var dashboardNow = Date()
     @State private var arrangeFeedback = 0
+    @State private var showsConsistencyGoalEditor = false
     @AppStorage("agentcy.homeDashboardWidgetPreferences") private var storedDashboardWidgetPreferences = ""
     @AppStorage("agentcy.homeDashboardCardOrderByWorkspace") private var legacyDashboardCardOrders = ""
     @AppStorage("agentcy.homeDashboardHiddenCardsByWorkspace") private var legacyHiddenDashboardCards = ""
@@ -44,9 +48,6 @@ struct HomeDashboardView: View {
                 header
 
                 dashboardWidgets
-                #if !targetEnvironment(macCatalyst)
-                weeklyFocusEditorSection
-                #endif
                 dashboardCustomizationFooter
             }
             .padding(.horizontal, AgentLayout.pageMargin)
@@ -57,14 +58,24 @@ struct HomeDashboardView: View {
         .toolbar(.hidden, for: .navigationBar)
         .background(Color.agentCanvas.ignoresSafeArea())
         .onAppear {
+            refreshDashboardClock()
             restoreDashboardCardOrder()
         }
         .onChange(of: appModel.activeWorkspaceID) { _, _ in
             finishArrangingDashboard()
             restoreDashboardCardOrder()
         }
-        .sheet(isPresented: $showsWeeklyFocusEditor) {
-            WeeklyFocusSetupView()
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            refreshDashboardClock()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.significantTimeChangeNotification
+        )) { _ in
+            refreshDashboardClock()
+        }
+        .task {
+            await appModel.refreshReminderSchedule(context: context)
         }
         .sensoryFeedback(.selection, trigger: arrangeFeedback)
     }
@@ -79,26 +90,28 @@ struct HomeDashboardView: View {
 
     private var weeklyFocusEditorSection: some View {
         Button {
-            showsWeeklyFocusEditor = true
+            appModel.presentedSheet = HomeDashboardPresentationPolicy.weeklyFocusSheet
         } label: {
-            HStack(spacing: AgentSpacing.x3) {
-                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                    Text("Weekly focus")
-                        .font(.agentTitle)
-                    Text(weeklyFocusSummary)
-                        .font(.agentSubtext)
-                        .foregroundStyle(Color.agentSecondary)
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                HStack(alignment: .firstTextBaseline) {
+                    MetaLabel("Weekly focus")
+                    Spacer(minLength: AgentSpacing.x3)
+                    Text("Edit")
+                        .font(.agentSubtext.weight(.semibold))
                 }
-
-                Spacer(minLength: AgentSpacing.x3)
-
-                Text("Edit")
-                    .font(.agentSubtext.weight(.semibold))
-                AgentIconView(.forward, size: 12)
+                Text(weeklyFocusSummary)
+                    .font(.agentBody.weight(.semibold))
+                HStack {
+                    Text("Today: \(todayFocusTitle)")
+                        .font(.agentMetadata)
+                        .foregroundStyle(Color.agentSecondary)
+                    Spacer(minLength: AgentSpacing.x3)
+                    AgentIconView(.forward, size: 12)
+                }
             }
             .foregroundStyle(Color.agentText)
-            .padding(.horizontal, AgentSpacing.x4)
-            .frame(maxWidth: .infinity, minHeight: 80)
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 118, alignment: .leading)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -248,7 +261,7 @@ struct HomeDashboardView: View {
     }
 
     private var dashboardCustomizationCards: [HomeDashboardCard] {
-        dashboardLayout.orderedCards.filter(dashboardCardIsRenderable)
+        dashboardLayout.orderedCards.filter { $0 != .cyNoticed && dashboardCardIsRenderable($0) }
     }
 
     private var dashboardCustomizationInstructions: String {
@@ -256,24 +269,35 @@ struct HomeDashboardView: View {
     }
 
     private var availableDashboardCards: [HomeDashboardCard] {
-        HomeDashboardCard.defaultOrder.filter {
-            dashboardCardIsRenderable($0) && !dashboardLayout.orderedCards.contains($0)
+        HomeDashboardCard.allOrder.filter {
+            $0 != .cyNoticed && dashboardCardIsRenderable($0) && !dashboardLayout.orderedCards.contains($0)
         }
     }
 
     private var renderableDashboardCards: [HomeDashboardCard] {
-        dashboardLayout.orderedCards.filter(dashboardCardIsRenderable)
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let marker = arguments.firstIndex(of: "-agentCyPreviewDashboardCard"),
+           arguments.indices.contains(marker + 1),
+           let previewCard = HomeDashboardCard(rawValue: arguments[marker + 1]),
+           dashboardCardIsRenderable(previewCard) {
+            return [previewCard]
+        }
+        #endif
+        return dashboardLayout.orderedCards.filter { $0 != .cyNoticed && dashboardCardIsRenderable($0) }
     }
 
     @ViewBuilder
     private var dashboardWidgets: some View {
         LazyVStack(alignment: .leading, spacing: AgentSpacing.x6) {
+#if !targetEnvironment(macCatalyst)
+            if cyNoticedSummary.needsAttention {
+                cyNoticedSection
+            }
+#endif
             ForEach(renderableDashboardCards) { card in
                 reorderableDashboardCard(card)
             }
-            #if targetEnvironment(macCatalyst)
-            weeklyFocusEditorSection
-            #endif
         }
     }
 
@@ -300,7 +324,391 @@ struct HomeDashboardView: View {
             recentIdeasSection
         case .brandCabinet:
             brandCabinetSection
+        case .pillarUsage:
+            pillarUsageSection
+        case .cyNoticed:
+            cyNoticedSection
+        case .weekAtAGlance:
+            weekAtAGlanceSection
+        case .consistency:
+            consistencySection
+        case .recentlyPosted:
+            recentlyPostedSection
+        case .draftsInProgress:
+            draftsInProgressSection
+        case .weeklyFocus:
+            weeklyFocusEditorSection
         }
+    }
+
+    private var pillarUsageSection: some View {
+        Button {
+            appModel.selectedTab = .pillars
+        } label: {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                HStack(alignment: .firstTextBaseline) {
+                    MetaLabel("Pillar usage")
+                    Spacer()
+                    Text("This week")
+                        .font(.agentSubtext.weight(.medium))
+                        .foregroundStyle(Color.agentSecondary)
+                }
+
+                if pillarUsageItems.isEmpty {
+                    Text("Plan a post this week to see your pillar mix.")
+                        .font(.agentBody)
+                        .foregroundStyle(Color.agentSecondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 54, alignment: .center)
+                } else {
+                    GeometryReader { proxy in
+                        let trackWidth = max(0, proxy.size.width - AgentSpacing.x3)
+                        let widths = WidgetPillarBarLayout.segmentWidths(
+                            percentages: pillarUsageItems.map(\.percentage),
+                            totalWidth: trackWidth
+                        )
+
+                        HStack(spacing: WidgetPillarBarLayout.segmentSpacing) {
+                            ForEach(Array(pillarUsageItems.enumerated()), id: \.element.id) { index, item in
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color(agentHex: item.colorHex))
+                                    .frame(width: widths.indices.contains(index) ? widths[index] : 0)
+                            }
+                        }
+                        .frame(width: trackWidth, alignment: .leading)
+                        .clipped()
+                    }
+                    .frame(height: 14)
+
+                    if let anchorPillarUsageItem {
+                        HStack(spacing: AgentSpacing.x2) {
+                            PillarColorMark(
+                                color: Color(agentHex: anchorPillarUsageItem.colorHex),
+                                diameter: 7,
+                                lineWidth: 1
+                            )
+                            Text(anchorPillarUsageItem.name)
+                                .font(.agentMetadata)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                            Spacer(minLength: AgentSpacing.x2)
+                            Text("\(anchorPillarUsageItem.percentage)%")
+                                .font(.agentMetadata.monospacedDigit())
+                        }
+                    }
+
+                    if !supportingPillarUsageItems.isEmpty {
+                        HStack(spacing: AgentSpacing.x3) {
+                            ForEach(supportingPillarUsageItems) { item in
+                                HStack(spacing: AgentSpacing.x1) {
+                                    PillarColorMark(
+                                        color: Color(agentHex: item.colorHex),
+                                        diameter: 7,
+                                        lineWidth: 1
+                                    )
+                                    Text("\(item.percentage)%")
+                                        .font(.agentMetadata.monospacedDigit())
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+
+                    HStack {
+                        Spacer()
+                        Text("View all")
+                            .font(.agentMetadata)
+                            .foregroundStyle(Color.agentSecondary)
+                        AgentIconView(.arrowRight, size: 12)
+                    }
+                }
+            }
+            .foregroundStyle(Color.agentText)
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+            .contentShape(.rect(cornerRadius: AgentRadius.dashboard))
+        }
+        .buttonStyle(.plain)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+    }
+
+    private var anchorPillarUsageItem: HomePillarUsageItem? {
+        pillarUsageItems.first
+    }
+
+    private var supportingPillarUsageItems: [HomePillarUsageItem] {
+        Array(pillarUsageItems.dropFirst())
+    }
+
+    private var cyNoticedSection: some View {
+        Button {
+            appModel.routeToLateWorkList()
+        } label: {
+            VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                HStack(spacing: AgentSpacing.x2) {
+                    AgentCyLogoMark()
+                    Text("CY NOTICED")
+                        .font(.agentMetadata)
+                        .tracking(1.4)
+                        .foregroundStyle(Color.cyAccent)
+                }
+                Text(cyNoticedSummary.message)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentText)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Text("Show me")
+                        .font(.agentSubtext.weight(.semibold))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color.cyAccent)
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .background(
+                    Color.cyAccent.opacity(0.12),
+                    in: .rect(cornerRadius: AgentRadius.button)
+                )
+            }
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.cyAccent.opacity(0.06), in: .rect(cornerRadius: AgentRadius.panel))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentRadius.panel)
+                    .stroke(Color.cyAccent.opacity(0.4), lineWidth: 0.75)
+            }
+            .contentShape(.rect(cornerRadius: AgentRadius.panel))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the agenda list filtered to late work")
+    }
+
+    private var weekAtAGlanceSection: some View {
+        Button {
+            appModel.requestedPlanMode = .week
+            appModel.selectedTab = .today
+        } label: {
+            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                HStack(alignment: .firstTextBaseline) {
+                    MetaLabel("Week at a glance")
+                    Spacer()
+                    Text("\(weekAtAGlanceDays.reduce(0) { $0 + $1.postCount }) posts")
+                        .font(.agentSubtext.weight(.medium))
+                        .foregroundStyle(Color.agentSecondary)
+                }
+
+                HStack(spacing: AgentSpacing.x2) {
+                    ForEach(weekAtAGlanceDays) { day in
+                        VStack(spacing: AgentSpacing.x2) {
+                            Text(day.date.formatted(.dateTime.weekday(.narrow)))
+                                .font(.agentMetadata.weight(Calendar.current.isDateInToday(day.date) ? .bold : .medium))
+                            PillarColorMark(
+                                color: day.color,
+                                diameter: 8,
+                                lineWidth: day.postCount == 0 ? 1 : 0
+                            )
+                            .opacity(day.postCount == 0 ? 0.28 : 1)
+                            .overlay {
+                                if Calendar.current.isDateInToday(day.date) {
+                                    Circle()
+                                        .stroke(Color.agentText.opacity(0.18), lineWidth: 2)
+                                        .padding(-4)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+
+                HStack {
+                    Text("Open agenda")
+                        .font(.agentSubtext.weight(.semibold))
+                    Spacer()
+                    AgentIconView(.arrowRight, size: 12)
+                }
+            }
+            .foregroundStyle(Color.agentText)
+            .padding(AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 154, alignment: .leading)
+            .contentShape(.rect(cornerRadius: AgentRadius.dashboard))
+        }
+        .buttonStyle(.plain)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+    }
+
+    private var consistencySection: some View {
+        let goal = goalConsistency
+        return ConsistencyGoalCard(
+            snapshot: goal.snapshot,
+            weeklyGoalMet: goal.weeklyGoalMet,
+            streak: goal.streak,
+            onEditGoal: { showsConsistencyGoalEditor = true }
+        )
+        .padding(AgentSpacing.x4)
+        .frame(maxWidth: .infinity, minHeight: 146, alignment: .leading)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+        .contentShape(.rect(cornerRadius: AgentRadius.dashboard))
+        .onTapGesture {
+            if goal.snapshot.goalState != .unset {
+                showsConsistencyGoalEditor = true
+            }
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens the weekly posting goal")
+        .sheet(isPresented: $showsConsistencyGoalEditor) {
+            ConsistencyGoalEditorView(
+                currentGoal: activeWorkspace?.weeklyPostingGoal,
+                onSave: { saveWeeklyPostingGoal($0) },
+                onRemove: { saveWeeklyPostingGoal(nil) },
+                onClose: { showsConsistencyGoalEditor = false }
+            )
+            .presentationDetents([.height(320)])
+            .presentationBackground(Color.agentCanvas)
+            .agentSheetDragIndicator()
+        }
+    }
+
+    private var activeWorkspace: CreatorWorkspace? {
+        workspaces.first { $0.id == activeWorkspaceID }
+    }
+
+    private var goalConsistency: (snapshot: WeeklyConsistencySnapshot, weeklyGoalMet: [Bool], streak: Int) {
+        let calendar = Calendar.current
+        let range = currentWeekRange
+        let index = briefByID
+        let postedDates = outputs.compactMap { output -> Date? in
+            guard index[output.briefID]?.status != .archived,
+                  output.status == .posted || index[output.briefID]?.status == .posted else { return nil }
+            return output.postedAt ?? output.targetDate
+        }
+        let goal = activeWorkspace?.weeklyPostingGoal
+        let snapshot = WeeklyConsistencyPolicy.snapshot(
+            postedDates: postedDates,
+            goal: goal,
+            weekStart: range.start,
+            calendar: calendar,
+            today: today
+        )
+        guard let goal else { return (snapshot, Array(repeating: false, count: 8), 0) }
+        let counts = WeeklyConsistencyPolicy.weeklyPostedDayCounts(
+            postedDates: postedDates,
+            weekCount: 8,
+            currentWeekStart: range.start,
+            calendar: calendar
+        )
+        let met = counts.map { $0 >= goal }
+        return (snapshot, met, WeeklyConsistencyPolicy.goalStreak(weeklyPostedDayCounts: counts, goal: goal))
+    }
+
+    private func saveWeeklyPostingGoal(_ goal: Int?) {
+        guard let workspace = activeWorkspace else { return }
+        workspace.weeklyPostingGoal = goal.map(WeeklyConsistencyPolicy.clampedGoal)
+        workspace.updatedAt = Date()
+        try? context.save()
+        showsConsistencyGoalEditor = false
+    }
+
+    private var recentlyPostedSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(alignment: .firstTextBaseline) {
+                MetaLabel("Recently posted")
+                Spacer()
+                Text("\(recentlyPostedItems.count)")
+                    .font(.agentSubtext.weight(.medium))
+                    .foregroundStyle(Color.agentSecondary)
+            }
+
+            if recentlyPostedItems.isEmpty {
+                Text("Posted work will collect here.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(minHeight: 54, alignment: .leading)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(recentlyPostedItems.prefix(2).enumerated()), id: \.element.id) { index, item in
+                        NavigationLink {
+                            PostOutputDetailView(brief: item.brief, output: item.output)
+                        } label: {
+                            HStack(spacing: AgentSpacing.x3) {
+                                RoundedRectangle(cornerRadius: AgentRadius.control)
+                                    .fill(pillarAccent(for: item.brief).opacity(0.16))
+                                    .frame(width: 44, height: 44)
+                                    .overlay(PillarColorMark(color: pillarAccent(for: item.brief), diameter: 8))
+                                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                                    Text(outputTitle(item.output, brief: item.brief))
+                                        .font(.agentSubtext.weight(.semibold))
+                                        .lineLimit(1)
+                                    Text((item.output.postedAt ?? item.output.targetDate)?.formatted(.dateTime.month(.abbreviated).day()) ?? "Posted")
+                                        .font(.agentMetadata)
+                                        .foregroundStyle(Color.agentSecondary)
+                                }
+                                Spacer()
+                                AgentIconView(.forward, size: 12)
+                            }
+                            .foregroundStyle(Color.agentText)
+                            .frame(minHeight: 54)
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .bottom) {
+                            if index == 0 && recentlyPostedItems.count > 1 {
+                                Rectangle().fill(Color.agentHairline).frame(height: 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
+    }
+
+    private var draftsInProgressSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(alignment: .firstTextBaseline) {
+                MetaLabel("Drafts in progress")
+                Spacer()
+                Text("\(continueWorkingItems.count)")
+                    .font(.agentSubtext.weight(.medium))
+                    .foregroundStyle(Color.agentSecondary)
+            }
+
+            if continueWorkingItems.isEmpty {
+                Text("No drafts are waiting on you.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(minHeight: 54, alignment: .leading)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(continueWorkingItems.prefix(2).enumerated()), id: \.element.id) { index, item in
+                        NavigationLink {
+                            ResumablePostEditorView(brief: item.brief, output: item.output, onSpark: {})
+                        } label: {
+                            HStack(spacing: AgentSpacing.x3) {
+                                PillarColorMark(color: pillarAccent(for: item.brief), diameter: 8)
+                                Text(outputTitle(item.output, brief: item.brief))
+                                    .font(.agentSubtext.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text("\(draftAgeDays(item.output))d")
+                                    .font(.agentMetadata)
+                                    .foregroundStyle(Color.agentSecondary)
+                            }
+                            .foregroundStyle(Color.agentText)
+                            .frame(minHeight: 48)
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .bottom) {
+                            if index == 0 && continueWorkingItems.count > 1 {
+                                Rectangle().fill(Color.agentHairline).frame(height: 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.dashboard))
     }
 
     private var brandCabinetSection: some View {
@@ -390,7 +798,11 @@ struct HomeDashboardView: View {
                 breadcrumb: today.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year()),
                 identity: activeIdentity,
                 openSettings: { appModel.presentedSheet = .settings }
-            )
+            ) {
+                HomeActivityBellButton(unreadCount: unreadActivityCount) {
+                    appModel.presentedSheet = HomeDashboardPresentationPolicy.activityCenterSheet
+                }
+            }
 
             #if !targetEnvironment(macCatalyst)
             Button {
@@ -469,7 +881,7 @@ struct HomeDashboardView: View {
     }
 
     private var todayTasksSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Today’s tasks")
                     .font(.agentTitle)
@@ -481,27 +893,30 @@ struct HomeDashboardView: View {
                 .fill(Color.agentHairline)
                 .frame(height: 1)
 
-            if todayTasks.isEmpty {
+            // One today-tasks derivation per render: the my/post splits share
+            // a single computed list instead of re-deriving it four times.
+            let today = todayTasks
+            if today.isEmpty {
                 Text("Nothing is planned.")
                     .font(.agentBody)
                     .foregroundStyle(Color.agentSecondary)
                 .padding(.vertical, AgentSpacing.x2)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        homeTaskGroup(
-                            title: "Focus tasks",
-                            tasks: todayMyTasks,
-                            totalCount: todayMyTasks.count,
-                            showsHeader: true
-                        )
-                        homeTaskGroup(
-                            title: "Post tasks",
-                            tasks: todayPostTasks,
-                            totalCount: todayPostTasks.count,
-                            showsHeader: true
-                        )
-                    }
+                let myTasks = today.filter { $0.briefID == nil }
+                let postTasks = today.filter { $0.briefID != nil }
+                VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                    homeTaskGroup(
+                        title: "Focus tasks",
+                        tasks: myTasks,
+                        totalCount: myTasks.count,
+                        showsHeader: true
+                    )
+                    homeTaskGroup(
+                        title: "Post tasks",
+                        tasks: postTasks,
+                        totalCount: postTasks.count,
+                        showsHeader: true
+                    )
                 }
             }
         }
@@ -529,6 +944,14 @@ struct HomeDashboardView: View {
             timeText: output.includesTargetTime
                 ? output.targetDate?.formatted(date: .omitted, time: .shortened)
                 : nil,
+            isLate: FinalizedPostPresentation.isMissed(
+                outputStatus: output.status,
+                targetDate: output.targetDate
+            ) || PostWorkDateStatusPolicy.isLate(
+                workDate: brief.workDate,
+                briefStatus: brief.status,
+                outputStatus: output.status
+            ),
             destination: AnyView(PostOutputDetailView(brief: brief, output: output))
         )
     }
@@ -550,46 +973,18 @@ struct HomeDashboardView: View {
                     }
                     .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
-                    .padding(.bottom, AgentSpacing.x1)
+                    .padding(.bottom, AgentSpacing.x2)
                 }
 
                 ForEach(tasks) { task in
-                    homeTaskRow(task)
+                    TaskRow(
+                        task: task,
+                        allTasks: self.tasks,
+                        linkedPostTitle: linkedPostTitle(for: task),
+                        verticalInset: AgentSpacing.x2
+                    )
                 }
             }
-        }
-    }
-
-    private func homeTaskRow(_ task: CreatorTask) -> some View {
-        HStack(spacing: AgentSpacing.x2) {
-            AgentTaskCheckbox(
-                isCompleted: task.isCompleted,
-                color: taskCheckboxColor(task),
-                accessibilityLabel: task.isCompleted
-                    ? "Mark \(task.title) open"
-                    : "Complete \(task.title)"
-            ) {
-                appModel.toggleTask(task, context: context)
-            }
-
-            NavigationLink(value: TaskNavigationRoute(taskID: task.id)) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(task.title)
-                        .font(.agentBody.weight(.semibold))
-                        .lineLimit(2)
-                    if let metadata = taskMetadata(task) {
-                        Text(metadata)
-                            .font(.agentMetadata)
-                            .foregroundStyle(Color.agentSecondary)
-                            .lineLimit(1)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(Color.agentText)
-                .frame(minHeight: 44)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -866,6 +1261,14 @@ struct HomeDashboardView: View {
                                 customStatus: item.brief.resolvedCustomStatusLabel,
                                 ideaBankPlacement: item.brief.ideaBankPlacement
                             ),
+                            isLate: FinalizedPostPresentation.isMissed(
+                                outputStatus: item.output.status,
+                                targetDate: item.output.targetDate
+                            ) || PostWorkDateStatusPolicy.isLate(
+                                workDate: item.brief.workDate,
+                                briefStatus: item.brief.status,
+                                outputStatus: item.output.status
+                            ),
                             destination: AnyView(
                                 ResumablePostEditorView(
                                     brief: item.brief,
@@ -947,14 +1350,84 @@ struct HomeDashboardView: View {
         .contentShape(.rect)
     }
 
-    private var today: Date { Calendar.current.startOfDay(for: Date()) }
+    private var pillarUsageItems: [HomePillarUsageItem] {
+        let activePillars = pillars.filter { !$0.isArchived }
+        let pillarByID = DuplicateSafeIndex.firstValues(activePillars.map { ($0.id, $0) })
+        let summary = PillarUsageSchedulePolicy.summary(
+            pillars: activePillars,
+            briefs: briefs,
+            outputs: outputs,
+            interval: PillarUsageSchedulePolicy.weekInterval(containing: today)
+        )
+        return summary.compactMap { item in
+            guard let pillar = pillarByID[item.pillarID] else { return nil }
+            return HomePillarUsageItem(
+                id: pillar.id,
+                name: pillar.name,
+                colorHex: pillar.resolvedColorHex(in: activePillars),
+                percentage: item.percentage
+            )
+        }
+    }
+
+    private var weekAtAGlanceDays: [HomeWeekAtAGlanceDay] {
+        let range = currentWeekRange
+        let index = briefByID
+        let weekOutputs = outputs
+        return (0..<7).compactMap { offset in
+            guard let date = Calendar.current.date(byAdding: .day, value: offset, to: range.start) else { return nil }
+            let dayOutputs = weekOutputs.filter { output in
+                output.targetDate.map { Calendar.current.isDate($0, inSameDayAs: date) } == true &&
+                    index[output.briefID]?.status != .archived
+            }
+            let color = dayOutputs.first
+                .flatMap { index[$0.briefID] }
+                .map(pillarAccent(for:)) ?? Color.agentSurface
+            return HomeWeekAtAGlanceDay(date: date, postCount: dayOutputs.count, color: color)
+        }
+    }
+
+    private var recentlyPostedItems: [HomeContinueWorkingItem] {
+        let index = briefByID
+        return outputs.compactMap { output -> HomeContinueWorkingItem? in
+            guard let brief = index[output.briefID],
+                  HomeRecentlyPostedPolicy.includes(
+                    briefStatus: brief.status,
+                    outputStatus: output.status
+                  ) else { return nil }
+            return HomeContinueWorkingItem(brief: brief, output: output)
+        }
+        .sorted {
+            ($0.output.postedAt ?? $0.output.targetDate ?? $0.output.createdAt) >
+                ($1.output.postedAt ?? $1.output.targetDate ?? $1.output.createdAt)
+        }
+    }
+
+    private var cyNoticedSummary: CyNoticedReconciliationSummary {
+        CyNoticedReconciliationPolicy.summary(briefs: briefs, outputs: outputs)
+    }
+
+    private var currentWeekRange: (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let offset = (calendar.component(.weekday, from: today) + 5) % 7
+        let start = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
+        return (start, calendar.date(byAdding: .day, value: 7, to: start) ?? start)
+    }
+
+    private func draftAgeDays(_ output: PlatformOutput) -> Int {
+        max(0, Calendar.current.dateComponents([.day], from: output.createdAt, to: Date()).day ?? 0)
+    }
+
+    private func refreshDashboardClock() {
+        dashboardNow = Date()
+    }
+
+    private var today: Date {
+        HomeDashboardClockPolicy.day(for: dashboardNow, calendar: .current)
+    }
 
     private var greeting: String {
-        switch Calendar.current.component(.hour, from: Date()) {
-        case 5..<12: "Good morning"
-        case 12..<17: "Good afternoon"
-        default: "Good evening"
-        }
+        HomeDashboardClockPolicy.greeting(for: dashboardNow, calendar: .current)
     }
 
     private var activeIdentity: ActiveCreatorIdentity {
@@ -963,6 +1436,31 @@ struct HomeDashboardView: View {
             workspaces: workspaces,
             preferredWorkspaceID: appModel.activeWorkspaceID
         )
+    }
+
+    private var activeWorkspaceID: UUID? {
+        WorkspaceScope.activeWorkspaceID(
+            preferredID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        )
+    }
+
+    private var unreadActivityCount: Int {
+        let now = Date()
+        // The badge counts what the Activity sheet can actually show — every
+        // account's records — so a count never points at nothing.
+        return allActivityRecords.filter { record in
+            NotificationActivityScopePolicy.includes(
+                recordWorkspaceID: record.workspaceID,
+                activeWorkspaceID: activeWorkspaceID,
+                workspaces: workspaces
+            ) && AgentActivityPresentationPolicy.isVisible(
+                availableAt: record.availableAt,
+                archivedAt: record.archivedAt,
+                clearedAt: record.clearedAt,
+                now: now
+            ) && record.readAt == nil
+        }.count
     }
 
     private var todayFocus: ResolvedDailyFocus? {
@@ -979,12 +1477,16 @@ struct HomeDashboardView: View {
 
     private var todayTasks: [CreatorTask] {
         tasks.filter { task in
-            !task.isCompleted &&
-                !task.isSkipped &&
-                task.parentTaskID == nil &&
-                [task.targetDate, task.dailyFocusDate]
-                    .compactMap { $0 }
-                    .contains(where: Calendar.current.isDateInToday)
+            HomeTodayTaskPolicy.includes(
+                isCompleted: task.isCompleted,
+                isSkipped: task.isSkipped,
+                isTopLevel: task.parentTaskID == nil,
+                targetDate: task.targetDate,
+                dailyFocusDate: task.dailyFocusDate,
+                isLinkedToArchivedBrief: task.briefID.map(archivedBriefIDs.contains) == true,
+                referenceDate: dashboardNow,
+                calendar: .current
+            )
         }
         .sorted {
             let lhsDate = $0.targetDate ?? $0.dailyFocusDate ?? .distantFuture
@@ -994,20 +1496,17 @@ struct HomeDashboardView: View {
         }
     }
 
-    private var todayMyTasks: [CreatorTask] {
-        todayTasks.filter { $0.briefID == nil }
-    }
-
-    private var todayPostTasks: [CreatorTask] {
-        todayTasks.filter { $0.briefID != nil }
+    private var archivedBriefIDs: Set<UUID> {
+        Set(briefs.lazy.filter { $0.status == .archived }.map(\.id))
     }
 
     private var scheduledTodayOutputs: [PlatformOutput] {
-        outputs.filter { output in
+        let index = briefByID
+        return outputs.filter { output in
             HomeTodayPostPolicy.includes(
                 outputStatus: output.status,
                 targetDate: output.targetDate,
-                briefStatus: brief(for: output)?.status,
+                briefStatus: index[output.briefID]?.status,
                 today: today,
                 calendar: .current
             )
@@ -1016,8 +1515,9 @@ struct HomeDashboardView: View {
     }
 
     private var pastDueOutputs: [PlatformOutput] {
-        outputs.filter { output in
-            guard let brief = brief(for: output), brief.status != .archived else { return false }
+        let index = briefByID
+        return outputs.filter { output in
+            guard let brief = index[output.briefID], brief.status != .archived else { return false }
             return FinalizedPostPresentation.isMissed(
                 outputStatus: output.status,
                 targetDate: output.targetDate
@@ -1037,8 +1537,9 @@ struct HomeDashboardView: View {
     }
 
     private var continueWorkingItems: [HomeContinueWorkingItem] {
+        let index = briefByID
         let candidates = outputs.compactMap { output -> HomeContinueWorkingItem? in
-            guard let brief = brief(for: output),
+            guard let brief = index[output.briefID],
                   ContinueWorkingPostPolicy.includes(
                     briefStatus: brief.status,
                     outputStatus: output.status,
@@ -1063,8 +1564,9 @@ struct HomeDashboardView: View {
 
     private var weekItems: [HomeWeekItem] {
         let calendar = Calendar.current
+        let index = briefByID
         let postItems: [HomeWeekItem] = outputs.compactMap { output in
-            guard let brief = brief(for: output),
+            guard let brief = index[output.briefID],
                   HomeWeekAgendaPolicy.includes(
                     targetDate: output.targetDate,
                     briefStatus: brief.status,
@@ -1080,8 +1582,9 @@ struct HomeDashboardView: View {
 
     private var nextWeekItems: [HomeWeekItem] {
         let calendar = Calendar.current
+        let index = briefByID
         let postItems: [HomeWeekItem] = outputs.compactMap { output in
-            guard let brief = brief(for: output),
+            guard let brief = index[output.briefID],
                   HomeNextWeekAgendaPolicy.includes(
                     targetDate: output.targetDate,
                     briefStatus: brief.status,
@@ -1096,13 +1599,15 @@ struct HomeDashboardView: View {
     }
 
     private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
-        values.filter {
-            WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
-        }
+        HomeWorkspaceScopePolicy.scoped(
+            values,
+            preferredWorkspaceID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        )
+    }
+
+    private var briefByID: [UUID: CreativeBrief] {
+        DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
     }
 
     private func brief(for output: PlatformOutput) -> CreativeBrief? {
@@ -1139,23 +1644,9 @@ struct HomeDashboardView: View {
         return output.platform.title
     }
 
-    private func taskMetadata(_ task: CreatorTask) -> String? {
-        let postTitle = task.briefID.flatMap { id in
+    private func linkedPostTitle(for task: CreatorTask) -> String? {
+        task.briefID.flatMap { id in
             briefs.first { $0.id == id }?.title.nilIfBlank
-        }
-        let time = task.includesTargetTime
-            ? task.targetDate?.formatted(date: .omitted, time: .shortened)
-            : nil
-        let priority = task.priority.normalized == .none ? nil : task.priority.normalized.title
-        let values = [postTitle, time, priority].compactMap { $0 }
-        return values.isEmpty ? nil : values.joined(separator: " · ")
-    }
-
-    private func taskCheckboxColor(_ task: CreatorTask) -> Color {
-        switch task.priority.normalized {
-        case .urgent: .agentDestructive
-        case .high: .orange
-        default: .agentBorder
         }
     }
 
@@ -1259,6 +1750,22 @@ struct HomeDashboardView: View {
 
 }
 
+private struct HomePillarUsageItem: Identifiable {
+    let id: UUID
+    let name: String
+    let colorHex: String
+    let percentage: Int
+}
+
+private struct HomeWeekAtAGlanceDay: Identifiable {
+    let date: Date
+    let postCount: Int
+    let color: Color
+
+    var id: Date { date }
+}
+
+
 enum HomeDashboardCard: String, CaseIterable, Identifiable, Codable, Sendable {
     case scheduledToday
     case continueWorking
@@ -1268,6 +1775,13 @@ enum HomeDashboardCard: String, CaseIterable, Identifiable, Codable, Sendable {
     case pastDuePosts
     case recentIdeas
     case brandCabinet
+    case pillarUsage
+    case cyNoticed
+    case weekAtAGlance
+    case consistency
+    case recentlyPosted
+    case draftsInProgress
+    case weeklyFocus
 
     var id: String { rawValue }
 
@@ -1278,9 +1792,16 @@ enum HomeDashboardCard: String, CaseIterable, Identifiable, Codable, Sendable {
         case .tasks: "Today’s tasks"
         case .weekAhead: "This week"
         case .nextWeek: "Next week"
-        case .pastDuePosts: "Past-due posts"
+        case .pastDuePosts: "Needs a new date"
         case .recentIdeas: "Recent ideas"
         case .brandCabinet: "Brand cabinet"
+        case .pillarUsage: "Pillar usage"
+        case .cyNoticed: "Cy noticed"
+        case .weekAtAGlance: "Week at a glance"
+        case .consistency: "Consistency"
+        case .recentlyPosted: "Recently posted"
+        case .draftsInProgress: "Drafts in progress"
+        case .weeklyFocus: "Weekly focus"
         }
     }
 
@@ -1294,6 +1815,18 @@ enum HomeDashboardCard: String, CaseIterable, Identifiable, Codable, Sendable {
         .nextWeek,
         .brandCabinet
     ]
+
+    static let optionalOrder: [HomeDashboardCard] = [
+        .pillarUsage,
+        .weekAtAGlance,
+        .consistency,
+        .recentlyPosted,
+        .draftsInProgress,
+        .weeklyFocus,
+    ]
+
+    static let systemManagedOrder: [HomeDashboardCard] = [.cyNoticed]
+    static let allOrder = defaultOrder + optionalOrder + systemManagedOrder
 }
 
 struct DashboardWidgetLayoutSnapshot: Codable, Equatable, Sendable {
@@ -1309,17 +1842,19 @@ struct DashboardWidgetLayoutState: Equatable, Sendable {
         savedOrderRawValues: [String] = [],
         savedHiddenRawValues: [String] = []
     ) {
-        let hidden = Set(savedHiddenRawValues.compactMap(HomeDashboardCard.init(rawValue:)))
+        let savedHidden = Set(savedHiddenRawValues.compactMap(HomeDashboardCard.init(rawValue:)))
         let savedCards = savedOrderRawValues.compactMap(HomeDashboardCard.init(rawValue:))
+        let systemManaged = Set(HomeDashboardCard.systemManagedOrder)
         let uniqueSavedCards = savedCards.reduce(into: [HomeDashboardCard]()) { result, card in
-            guard !hidden.contains(card), !result.contains(card) else { return }
+            guard !systemManaged.contains(card), !savedHidden.contains(card), !result.contains(card) else { return }
             result.append(card)
         }
-        let knownCards = Set(uniqueSavedCards).union(hidden)
+        let knownCards = Set(uniqueSavedCards).union(savedHidden)
         let newCards = HomeDashboardCard.defaultOrder.filter { !knownCards.contains($0) }
+        let newOptionalCards = HomeDashboardCard.optionalOrder.filter { !knownCards.contains($0) }
 
         orderedCards = uniqueSavedCards + newCards
-        hiddenCards = hidden
+        hiddenCards = savedHidden.union(newOptionalCards).union(systemManaged)
     }
 
     init(snapshot: DashboardWidgetLayoutSnapshot) {
@@ -1338,6 +1873,7 @@ struct DashboardWidgetLayoutState: Equatable, Sendable {
 
     @discardableResult
     mutating func setCard(_ card: HomeDashboardCard, isVisible: Bool) -> Bool {
+        guard card != .cyNoticed else { return false }
         if isVisible {
             guard hiddenCards.remove(card) != nil || !orderedCards.contains(card) else { return false }
             if !orderedCards.contains(card) {
@@ -1460,12 +1996,637 @@ enum HomeTodayPostPolicy {
     }
 }
 
+enum HomeWorkspaceScopePolicy {
+    /// One-pass scope filter for Home's whole-table queries: resolves the
+    /// active workspace once, with results identical to per-record
+    /// `WorkspaceScope.includes` (which re-resolves — and re-sorts the
+    /// workspace list — for every record).
+    static func scoped<T: WorkspaceScopedRecord>(
+        _ values: [T],
+        preferredWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> [T] {
+        guard let activeID = WorkspaceScope.activeWorkspaceID(
+            preferredID: preferredWorkspaceID,
+            workspaces: workspaces
+        ) else {
+            return values.filter { $0.workspaceID == nil }
+        }
+        let defaultMatchesActive = WorkspaceScope.defaultWorkspace(in: workspaces)?.id == activeID
+        return values.filter { record in
+            if let recordID = record.workspaceID { return recordID == activeID }
+            return defaultMatchesActive
+        }
+    }
+}
+
+enum HomeTodayTaskPolicy {
+    static func includes(
+        isCompleted: Bool,
+        isSkipped: Bool,
+        isTopLevel: Bool,
+        targetDate: Date?,
+        dailyFocusDate: Date?,
+        isLinkedToArchivedBrief: Bool,
+        referenceDate: Date,
+        calendar: Calendar
+    ) -> Bool {
+        guard !isCompleted,
+              !isSkipped,
+              isTopLevel,
+              !isLinkedToArchivedBrief else { return false }
+        return [targetDate, dailyFocusDate]
+            .compactMap { $0 }
+            .contains { calendar.isDate($0, inSameDayAs: referenceDate) }
+    }
+}
+
+enum HomeRecentlyPostedPolicy {
+    static func includes(
+        briefStatus: BriefStatus,
+        outputStatus: PlatformOutputStatus
+    ) -> Bool {
+        briefStatus != .archived &&
+            (briefStatus == .posted || outputStatus == .posted)
+    }
+}
+
+enum HomeDashboardClockPolicy {
+    static func day(for date: Date, calendar: Calendar) -> Date {
+        calendar.startOfDay(for: date)
+    }
+
+    static func greeting(for date: Date, calendar: Calendar) -> String {
+        switch calendar.component(.hour, from: date) {
+        case 5..<12: "Good morning"
+        case 12..<17: "Good afternoon"
+        default: "Good evening"
+        }
+    }
+}
+
+enum HomeDashboardPresentationPolicy {
+    static let weeklyFocusSheet: AppSheet = .weeklyFocus
+    static let activityCenterSheet: AppSheet = .activityCenter
+}
+
 private struct HomeWeekItem: Identifiable {
     let output: PlatformOutput
     let brief: CreativeBrief
 
     var id: UUID { output.id }
     var date: Date { output.targetDate ?? .distantFuture }
+}
+
+enum HomeActivityBadgePolicy {
+    static let maximumDynamicTypeSize: DynamicTypeSize = .large
+
+    static func displayText(unreadCount: Int) -> String {
+        unreadCount > 9 ? "9+" : "\(unreadCount)"
+    }
+}
+
+private struct HomeActivityBellButton: View {
+    let unreadCount: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: .topTrailing) {
+                AgentToolbarIconLabel(icon: .bell)
+
+                if unreadCount > 0 {
+                    Text(HomeActivityBadgePolicy.displayText(unreadCount: unreadCount))
+                        .font(.agentInter(size: 10, weight: .bold, relativeTo: .caption2).monospacedDigit())
+                        .dynamicTypeSize(.xSmall ... HomeActivityBadgePolicy.maximumDynamicTypeSize)
+                        .foregroundStyle(Color.onCyAccent)
+                        .padding(.horizontal, unreadCount > 9 ? 4 : 3)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(Color.cyAccent, in: .capsule)
+                        .overlay {
+                            Capsule().stroke(Color.agentCanvas, lineWidth: 2)
+                        }
+                        .offset(x: 2, y: -2)
+                }
+            }
+            .frame(width: 44, height: 44)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityLabel(unreadCount == 0 ? "Activity" : "Activity, \(unreadCount) unread")
+        .accessibilityHint("Opens reminders and updates that need your attention")
+    }
+}
+
+private enum NotificationActivityFilter: String, CaseIterable, Identifiable {
+    case all
+    case unread
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+enum NotificationActivityScopePolicy {
+    /// Activity is the app's one cross-account surface: iOS delivers
+    /// notifications regardless of which account is open, so the sheet
+    /// includes every non-archived account's records. Records owned by a
+    /// deleted workspace stay hidden.
+    static func includes(
+        recordWorkspaceID: UUID?,
+        activeWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> Bool {
+        guard let recordWorkspaceID else { return true }
+        return workspaces.contains { $0.id == recordWorkspaceID && !$0.isArchived }
+    }
+
+    /// The account name shown on rows that belong to a non-active account;
+    /// nil for the active account and for legacy unowned records.
+    static func accountLabel(
+        recordWorkspaceID: UUID?,
+        activeWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> String? {
+        guard let recordWorkspaceID,
+              let resolvedActive = WorkspaceScope.activeWorkspaceID(
+                  preferredID: activeWorkspaceID,
+                  workspaces: workspaces
+              ),
+              recordWorkspaceID != resolvedActive,
+              let workspace = workspaces.first(where: { $0.id == recordWorkspaceID && !$0.isArchived })
+        else { return nil }
+        return workspace.name
+    }
+}
+
+enum NotificationActivityContentFilter: String, CaseIterable, Identifiable {
+    case all
+    case posts
+    case tasks
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All activity"
+        case .posts: "Posts"
+        case .tasks: "Tasks"
+        }
+    }
+
+    func includes(_ record: AgentActivityRecord) -> Bool {
+        switch self {
+        case .all:
+            true
+        case .posts:
+            record.taskID == nil && (record.briefID != nil || record.outputID != nil)
+        case .tasks:
+            record.taskID != nil
+        }
+    }
+}
+
+struct NotificationActivityCenterView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    @Query(sort: \AgentActivityRecord.availableAt, order: .reverse) private var allRecords: [AgentActivityRecord]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+    @State private var filter: NotificationActivityFilter = .all
+    @State private var contentFilter: NotificationActivityContentFilter = .all
+#if targetEnvironment(macCatalyst)
+    @State private var showsDesktopContentFilter = false
+#endif
+
+    let preferredWorkspaceID: UUID?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    filterRail
+
+                    if displayedRecords.isEmpty {
+                        emptyState
+                    } else {
+                        if !needsAttentionRecords.isEmpty {
+                            activitySection(title: "Needs attention", records: needsAttentionRecords)
+                        }
+                        if !earlierRecords.isEmpty {
+                            activitySection(title: "Earlier", records: earlierRecords)
+                        }
+                    }
+                }
+                .padding(.horizontal, AgentLayout.pageMargin)
+                .padding(.top, AgentSpacing.x4)
+                .padding(.bottom, AgentSpacing.x12)
+            }
+            .scrollIndicators(.hidden)
+            .background(Color.agentCanvas.ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                header
+            }
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    private var header: some View {
+        ZStack {
+            MetaLabel("Activity")
+
+            HStack {
+                AgentToolbarIconButton(title: "Close Activity", icon: .close) {
+                    dismiss()
+                }
+
+                Spacer()
+
+                HStack(spacing: AgentSpacing.x1) {
+#if targetEnvironment(macCatalyst)
+                    Button {
+                        showsDesktopContentFilter.toggle()
+                    } label: {
+                        AgentToolbarIconLabel(icon: .filter)
+                            // An engaged content filter silently narrows every
+                            // tab; the dot keeps that state visible.
+                            .overlay(alignment: .topTrailing) {
+                                Circle()
+                                    .fill(Color.cyAccent)
+                                    .frame(width: 7, height: 7)
+                                    .opacity(contentFilter == .all ? 0 : 1)
+                            }
+                    }
+                    .buttonStyle(AgentPressButtonStyle())
+                    .popover(isPresented: $showsDesktopContentFilter, arrowEdge: .top) {
+                        desktopContentFilterPopover
+                            .frame(width: 230)
+                            .padding(AgentSpacing.x2)
+                            .presentationCompactAdaptation(.popover)
+                            .presentationBackground(Color.agentSurface)
+                    }
+                    .accessibilityLabel("Filter activity")
+                    .accessibilityValue(contentFilter.title)
+                    .accessibilityHint("Filters activity by posts or tasks")
+#else
+                    Menu {
+                        Picker("Activity type", selection: $contentFilter) {
+                            ForEach(NotificationActivityContentFilter.allCases) { option in
+                                Text(option.title)
+                                    .tag(option)
+                            }
+                        }
+                    } label: {
+                        AgentToolbarIconLabel(icon: .filter)
+                            .overlay(alignment: .topTrailing) {
+                                Circle()
+                                    .fill(Color.cyAccent)
+                                    .frame(width: 7, height: 7)
+                                    .opacity(contentFilter == .all ? 0 : 1)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Filter activity")
+                    .accessibilityValue(contentFilter.title)
+                    .accessibilityHint("Filters activity by posts or tasks")
+#endif
+
+                    Menu {
+                        Button("Mark all read", action: markAllRead)
+                            .disabled(unreadRecords.isEmpty)
+                        Button("Clear all", action: clearAll)
+                            .disabled(contentFilteredRecords.isEmpty)
+                    } label: {
+                        AgentToolbarIconLabel(icon: .more)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Activity options")
+                }
+            }
+        }
+        .padding(.horizontal, AgentLayout.pageMargin)
+        .frame(minHeight: 64)
+        .background(Color.agentCanvas)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+        }
+    }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopContentFilterPopover: some View {
+        VStack(spacing: AgentSpacing.x1) {
+            desktopContentFilterRow(.all, icon: .filter)
+            desktopContentFilterRow(.posts, icon: .calendar)
+            desktopContentFilterRow(.tasks, icon: .tasks)
+        }
+    }
+
+    private func desktopContentFilterRow(
+        _ option: NotificationActivityContentFilter,
+        icon: AgentIcon
+    ) -> some View {
+        AgentDesktopMenuRow(
+            title: option.title,
+            icon: icon,
+            isSelected: contentFilter == option
+        ) {
+            contentFilter = option
+            showsDesktopContentFilter = false
+        }
+    }
+#endif
+
+    private var filterRail: some View {
+        HStack(spacing: AgentSpacing.x6) {
+            ForEach(NotificationActivityFilter.allCases) { option in
+                Button {
+                    filter = option
+                } label: {
+                    HStack(spacing: AgentSpacing.x2) {
+                        Text(option.title)
+                        Text("\(option == .all ? contentFilteredRecords.count : unreadRecords.count)")
+                            .foregroundStyle(Color.agentSecondary)
+                            .monospacedDigit()
+                    }
+                    .font(.agentSubtext.weight(filter == option ? .semibold : .medium))
+                    .foregroundStyle(Color.agentText)
+                    .padding(.bottom, AgentSpacing.x2)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(filter == option ? Color.agentText : Color.clear)
+                            .frame(height: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(filter == option ? .isSelected : [])
+            }
+
+            Spacer()
+        }
+    }
+
+    private func activitySection(
+        title: String,
+        records: [AgentActivityRecord]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            MetaLabel(title)
+                .padding(.bottom, AgentSpacing.x2)
+
+            ForEach(Array(records.enumerated()), id: \.element.id) { index, record in
+                activityRow(record)
+
+                if index < records.count - 1 {
+                    Rectangle()
+                        .fill(Color.agentHairline)
+                        .frame(height: 1)
+                        .padding(.leading, AgentSpacing.x5)
+                }
+            }
+        }
+    }
+
+    private func activityRow(_ record: AgentActivityRecord) -> some View {
+        Button {
+            open(record)
+        } label: {
+            HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                Circle()
+                    .fill(record.readAt == nil ? Color.cyAccent : Color.clear)
+                    .frame(width: 7, height: 7)
+                    .padding(.top, 7)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+                        // One title size for every notification: unread and
+                        // category may change the weight, never the size.
+                        Text(record.title)
+                            .font(.agentBody.weight(record.readAt == nil ? .semibold : .medium))
+                            .foregroundStyle(Color.agentText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text(activityTime(record.availableAt))
+                            .font(.agentMetadata.monospacedDigit())
+                            .foregroundStyle(Color.agentSecondary)
+                            .lineLimit(1)
+                    }
+
+                    if !record.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(record.body)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack(spacing: AgentSpacing.x2) {
+                        if let account = NotificationActivityScopePolicy.accountLabel(
+                            recordWorkspaceID: record.workspaceID,
+                            activeWorkspaceID: activeWorkspaceID,
+                            workspaces: workspaces
+                        ) {
+                            Text(account)
+                                .font(.agentMetadata.weight(.semibold))
+                                .foregroundStyle(Color.cyAccent)
+                                .lineLimit(1)
+                        }
+                        Text(record.reason)
+                            .font(.agentMetadata)
+                            .foregroundStyle(record.resolvedAt == nil ? Color.agentSecondary : Color.agentText)
+                        if record.resolvedAt != nil {
+                            Text("Resolved")
+                                .font(.agentMetadata.weight(.semibold))
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        Spacer(minLength: AgentSpacing.x2)
+                        AgentIconView(.forward, size: 12)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                }
+            }
+            .padding(.vertical, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .contextMenu {
+            Button(record.readAt == nil ? "Mark read" : "Mark unread") {
+                toggleRead(record)
+            }
+            Button("Archive", role: .destructive) {
+                archive(record)
+            }
+        }
+        .accessibilityLabel("\(record.readAt == nil ? "Unread. " : "")\(record.title). \(record.body)")
+        .accessibilityHint("Opens the related work")
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: AgentSpacing.x3) {
+            AgentIconView(.bell, size: 22)
+                .foregroundStyle(Color.agentSecondary)
+            Text(emptyStateTitle)
+                .font(.agentTitle)
+            Text(emptyStateMessage)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 260)
+        .padding(.horizontal, AgentSpacing.x8)
+    }
+
+    private var activeWorkspaceID: UUID? {
+        WorkspaceScope.activeWorkspaceID(
+            preferredID: preferredWorkspaceID,
+            workspaces: workspaces
+        )
+    }
+
+    private var visibleRecords: [AgentActivityRecord] {
+        let now = Date()
+        return allRecords.filter { record in
+            NotificationActivityScopePolicy.includes(
+                recordWorkspaceID: record.workspaceID,
+                activeWorkspaceID: activeWorkspaceID,
+                workspaces: workspaces
+            ) && AgentActivityPresentationPolicy.isVisible(
+                availableAt: record.availableAt,
+                archivedAt: record.archivedAt,
+                clearedAt: record.clearedAt,
+                now: now
+            )
+        }
+    }
+
+    private var unreadRecords: [AgentActivityRecord] {
+        contentFilteredRecords.filter { $0.readAt == nil }
+    }
+
+    private var displayedRecords: [AgentActivityRecord] {
+        filter == .unread ? unreadRecords : contentFilteredRecords
+    }
+
+    private var contentFilteredRecords: [AgentActivityRecord] {
+        visibleRecords.filter(contentFilter.includes)
+    }
+
+    private var emptyStateTitle: String {
+        if filter == .unread { return "Nothing unread" }
+        switch contentFilter {
+        case .all: return "You’re caught up"
+        case .posts: return "No post activity"
+        case .tasks: return "No task activity"
+        }
+    }
+
+    private var emptyStateMessage: String {
+        if filter == .unread {
+            return "New reminders will remain in Activity after you clear the iPhone alert."
+        }
+        switch contentFilter {
+        case .all:
+            return "Tasks, late work, and posting reminders that need attention will stay here."
+        case .posts:
+            return "Overdue work dates and posts that still need to be marked posted will appear here."
+        case .tasks:
+            return "Tasks that need your attention will appear here."
+        }
+    }
+
+    private var needsAttentionRecords: [AgentActivityRecord] {
+        displayedRecords.filter {
+            AgentActivityPresentationPolicy.needsAttention(
+                kind: $0.kind,
+                readAt: $0.readAt,
+                resolvedAt: $0.resolvedAt
+            )
+        }
+        .sorted {
+            if $0.priority != $1.priority { return $0.priority > $1.priority }
+            return $0.availableAt > $1.availableAt
+        }
+    }
+
+    private var earlierRecords: [AgentActivityRecord] {
+        let attentionIDs = Set(needsAttentionRecords.map(\.id))
+        return displayedRecords.filter { !attentionIDs.contains($0.id) }
+            .sorted { $0.availableAt > $1.availableAt }
+    }
+
+    private func open(_ record: AgentActivityRecord) {
+        do {
+            try AgentActivityCenterService.markRead(record, context: context)
+            // A record from another account routes into that account: switch
+            // first so the destination exists in the shell it lands in.
+            if let recordWorkspaceID = record.workspaceID,
+               recordWorkspaceID != WorkspaceScope.activeWorkspaceID(
+                   preferredID: activeWorkspaceID,
+                   workspaces: workspaces
+               ),
+               workspaces.contains(where: { $0.id == recordWorkspaceID && !$0.isArchived }) {
+                appModel.switchWorkspace(to: recordWorkspaceID, context: context)
+            }
+            let route = record.route
+            dismiss()
+            Task { @MainActor in
+                await Task.yield()
+                AgentNotificationRouteStore.put(route)
+            }
+        } catch {
+            appModel.notice = .error("That activity could not be opened. Try again.")
+        }
+    }
+
+    private func toggleRead(_ record: AgentActivityRecord) {
+        do {
+            if record.readAt == nil {
+                try AgentActivityCenterService.markRead(record, context: context)
+            } else {
+                try AgentActivityCenterService.markUnread(record, context: context)
+            }
+        } catch {
+            appModel.notice = .error("That activity could not be updated.")
+        }
+    }
+
+    private func markAllRead() {
+        do {
+            try AgentActivityCenterService.markAllRead(contentFilteredRecords, context: context)
+        } catch {
+            appModel.notice = .error("Activity could not be marked read.")
+        }
+    }
+
+    private func archive(_ record: AgentActivityRecord) {
+        do {
+            try AgentActivityCenterService.archive(record, context: context)
+        } catch {
+            appModel.notice = .error("That activity could not be archived.")
+        }
+    }
+
+    private func clearAll() {
+        do {
+            try AgentActivityCenterService.clearAll(contentFilteredRecords, context: context)
+        } catch {
+            appModel.notice = .error("Activity could not be cleared.")
+        }
+    }
+
+    private func activityTime(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        }
+        return date.formatted(.dateTime.month(.abbreviated).day())
+    }
 }
 
 private extension String {

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 enum AgentCyWidgetShared {
@@ -13,7 +14,10 @@ struct AgentCyWidgetSnapshot: Codable, Equatable, Sendable {
     var nextPost: WidgetPostSnapshot?
     var week: [WidgetDaySnapshot]
     var latestIdea: WidgetIdeaSnapshot?
+    var latestVoiceSpark: WidgetIdeaSnapshot? = nil
     var productionTasks: [WidgetTaskSnapshot]
+    var pillarUsage: WidgetPillarUsageSnapshot? = nil
+    var consistency: WidgetConsistencySnapshot? = nil
 
     static let empty = AgentCyWidgetSnapshot(
         generatedAt: .distantPast,
@@ -70,13 +74,48 @@ struct AgentCyWidgetSnapshot: Codable, Equatable, Sendable {
                 pillarColorHex: "5E8069",
                 capturedAt: Date()
             ),
+            latestVoiceSpark: WidgetIdeaSnapshot(
+                id: UUID(),
+                title: "The story about choosing a slower creative rhythm",
+                pillarName: "Lifestyle",
+                pillarColorHex: "5E8069",
+                capturedAt: Date()
+            ),
             productionTasks: [
                 WidgetTaskSnapshot(id: UUID(), title: "Set up the filming corner", kind: "Production", targetDate: nil, isCompleted: true, lane: .production),
                 WidgetTaskSnapshot(id: UUID(), title: "Film two clean takes", kind: "Filming", targetDate: nil, isCompleted: false, lane: .production),
                 WidgetTaskSnapshot(id: UUID(), title: "Capture one B-roll detail", kind: "Filming", targetDate: nil, isCompleted: false, lane: .production),
                 WidgetTaskSnapshot(id: UUID(), title: "Outline three Lifestyle ideas", kind: "Planning", targetDate: nil, isCompleted: false, lane: .pillar),
                 WidgetTaskSnapshot(id: UUID(), title: "Review the Mind Your Business bank", kind: "Planning", targetDate: nil, isCompleted: false, lane: .pillar),
-            ]
+            ],
+            pillarUsage: WidgetPillarUsageSnapshot(
+                segments: [
+                    WidgetPillarSegmentSnapshot(name: "Anchor", colorHex: "8A5A3B", percentage: 44),
+                    WidgetPillarSegmentSnapshot(name: "Business", colorHex: "6B6136", percentage: 24),
+                    WidgetPillarSegmentSnapshot(name: "Lifestyle", colorHex: "AFBCC6", percentage: 20),
+                    WidgetPillarSegmentSnapshot(name: "Community", colorHex: "C9B48D", percentage: 12),
+                ],
+                leadingPillarName: "Anchor",
+                leadingPercentage: 44
+            ),
+            consistency: {
+                let mondayOffset = (calendar.component(.weekday, from: today) + 5) % 7
+                let weekStart = calendar.date(byAdding: .day, value: -mondayOffset, to: today) ?? today
+                let postedOffsets: Set<Int> = [0, 1, 3]
+                let days = (0..<7).compactMap { offset -> WidgetConsistencyDaySnapshot? in
+                    guard let date = calendar.date(byAdding: .day, value: offset, to: weekStart) else { return nil }
+                    return WidgetConsistencyDaySnapshot(date: date, hasPost: postedOffsets.contains(offset))
+                }
+                return WidgetConsistencySnapshot(
+                    completedWeeks: [false, false, false, false, false, true, true, false],
+                    streak: 0,
+                    currentPostedCount: 3,
+                    currentPlannedCount: 4,
+                    days: days,
+                    postedDayCount: 3,
+                    goal: 4
+                )
+            }()
         )
     }()
 
@@ -149,8 +188,130 @@ struct WidgetDaySnapshot: Codable, Equatable, Identifiable, Sendable {
     var date: Date
     var focusTitle: String
     var pillarColorHex: String?
+    var postCount: Int? = nil
 
     var id: Date { date }
+}
+
+struct WidgetPillarUsageSnapshot: Codable, Equatable, Sendable {
+    var segments: [WidgetPillarSegmentSnapshot]
+    var leadingPillarName: String
+    var leadingPercentage: Int
+}
+
+enum WidgetPillarUsagePresentation {
+    static func usage(
+        for snapshot: AgentCyWidgetSnapshot,
+        isPreview: Bool
+    ) -> WidgetPillarUsageSnapshot? {
+        if let usage = snapshot.pillarUsage {
+            return usage
+        }
+        return isPreview ? AgentCyWidgetSnapshot.preview.pillarUsage : nil
+    }
+}
+
+struct WidgetPillarSegmentSnapshot: Codable, Equatable, Identifiable, Sendable {
+    var name: String
+    var colorHex: String
+    var percentage: Int
+
+    var id: String { name }
+}
+
+enum WidgetPillarBarLayout {
+    static let segmentSpacing: CGFloat = 3
+
+    static func segmentWidths(
+        percentages: [Int],
+        totalWidth: CGFloat,
+        minimumWidth: CGFloat = 8
+    ) -> [CGFloat] {
+        let normalized = percentages.map { max(0, $0) }
+        let total = normalized.reduce(0, +)
+        guard total > 0, !normalized.isEmpty else { return [] }
+
+        let gapWidth = segmentSpacing * CGFloat(max(0, normalized.count - 1))
+        let availableWidth = max(0, totalWidth - gapWidth)
+        let reservedWidth = min(availableWidth, minimumWidth * CGFloat(normalized.count))
+        let minimumPerSegment = reservedWidth / CGFloat(normalized.count)
+        let proportionalWidth = max(0, availableWidth - reservedWidth)
+
+        return normalized.map { percentage in
+            minimumPerSegment + proportionalWidth * CGFloat(percentage) / CGFloat(total)
+        }
+    }
+}
+
+/// Legacy fields carry the pre-goal posted-vs-planned week math so installed
+/// widget binaries keep decoding; new installs read the goal fields and fall
+/// back to legacy rendering when a stale snapshot predates them.
+struct WidgetConsistencySnapshot: Codable, Equatable, Sendable {
+    var completedWeeks: [Bool]
+    var streak: Int
+    var currentPostedCount: Int
+    var currentPlannedCount: Int
+    var days: [WidgetConsistencyDaySnapshot]? = nil
+    var postedDayCount: Int? = nil
+    var goal: Int? = nil
+}
+
+struct WidgetConsistencyDaySnapshot: Codable, Equatable, Identifiable, Sendable {
+    var date: Date
+    var hasPost: Bool
+
+    var id: Date { date }
+}
+
+/// Resolves what the consistency tile renders. Goal-aware snapshots mirror the
+/// in-app card; snapshots written before the goal fields keep the legacy
+/// posted-vs-planned tile; production never substitutes preview data.
+enum WidgetConsistencyPresentation {
+    struct DayMarker: Equatable, Identifiable {
+        let date: Date
+        let symbol: String
+        let hasPost: Bool
+        let isToday: Bool
+
+        var id: Date { date }
+    }
+
+    enum Mode: Equatable {
+        case unset
+        case goal(days: [DayMarker], postedDayCount: Int, goal: Int, goalMet: Bool, streak: Int)
+        case legacy(WidgetConsistencySnapshot)
+    }
+
+    static func mode(
+        for snapshot: AgentCyWidgetSnapshot,
+        isPreview: Bool,
+        calendar: Calendar = .current,
+        now: Date = Date()
+    ) -> Mode {
+        let consistency = snapshot.consistency
+            ?? (isPreview ? AgentCyWidgetSnapshot.preview.consistency : nil)
+        guard let consistency else { return .unset }
+        guard let days = consistency.days, let postedDayCount = consistency.postedDayCount else {
+            return .legacy(consistency)
+        }
+        guard let goal = consistency.goal else { return .unset }
+        let symbols = calendar.veryShortStandaloneWeekdaySymbols
+        let markers = days.map { day in
+            DayMarker(
+                date: day.date,
+                symbol: symbols[calendar.component(.weekday, from: day.date) - 1],
+                hasPost: day.hasPost,
+                isToday: calendar.isDate(day.date, inSameDayAs: now)
+            )
+        }
+        return .goal(
+            days: markers,
+            postedDayCount: postedDayCount,
+            goal: goal,
+            goalMet: postedDayCount >= goal,
+            streak: consistency.streak
+        )
+    }
 }
 
 struct WidgetIdeaSnapshot: Codable, Equatable, Identifiable, Sendable {
@@ -202,10 +363,13 @@ enum AgentCyDeepLink: Equatable, Sendable {
     case today
     case agenda(day: Date?)
     case tasks
+    case pillars
     case ideaBank
     case quickIdea
     case quickPost
     case quickTask
+    case voiceSpark
+    case creatorSession
     case brief(UUID)
 
     var url: URL {
@@ -221,6 +385,8 @@ enum AgentCyDeepLink: Equatable, Sendable {
             }
         case .tasks:
             components.host = "tasks"
+        case .pillars:
+            components.host = "pillars"
         case .ideaBank:
             components.host = "idea-bank"
         case .quickIdea:
@@ -232,6 +398,10 @@ enum AgentCyDeepLink: Equatable, Sendable {
         case .quickTask:
             components.host = "capture"
             components.path = "/task"
+        case .voiceSpark:
+            components.host = "voice-spark"
+        case .creatorSession:
+            components.host = "creator-session"
         case .brief(let id):
             components.host = "brief"
             components.path = "/\(id.uuidString.lowercased())"
@@ -250,8 +420,14 @@ enum AgentCyDeepLink: Equatable, Sendable {
             self = .agenda(day: value.flatMap(Self.dayFormatter.date(from:)))
         case "tasks":
             self = .tasks
+        case "pillars":
+            self = .pillars
         case "idea-bank":
             self = .ideaBank
+        case "voice-spark":
+            self = .voiceSpark
+        case "creator-session":
+            self = .creatorSession
         case "capture":
             switch url.path.lowercased() {
             case "/idea": self = .quickIdea

@@ -15,8 +15,13 @@ import {
   AppleAccountAuthorizationResultSchema,
   InspirationShapeRequestSchema,
   InspirationShapeResultSchema,
+  InstallationRedeemRequestSchema,
   McpBridgeSnapshotSchema,
   McpBridgeChangeRequestSchema,
+  McpBridgeEpisodeRevisionSchema,
+  McpBridgeNotificationRequestSchema,
+  McpBridgePushRegistrationRequestSchema,
+  McpBridgeReceiptSchema,
   normalizeAiOperationResult,
   PlatformSchema,
   PrivacyDeleteRequestSchema,
@@ -96,6 +101,30 @@ function readFixture(name: string): unknown {
 }
 
 const composeFixture = readFixture("compose-brief-result.json");
+
+describe("installation invitation contracts", () => {
+  const request = {
+    inviteCode: "PILOT-123",
+    appBuild: "1.0.0 (1)",
+    platform: "ios",
+  } as const;
+
+  it("accepts a retry-safe redemption attempt while preserving old-client compatibility", () => {
+    expect(InstallationRedeemRequestSchema.parse(request)).toEqual(request);
+    expect(
+      InstallationRedeemRequestSchema.parse({
+        ...request,
+        redemptionAttemptId: "fa2cc408-d66f-44c1-9122-c56bc44f201f",
+      }),
+    ).toMatchObject({ redemptionAttemptId: "fa2cc408-d66f-44c1-9122-c56bc44f201f" });
+    expect(
+      InstallationRedeemRequestSchema.safeParse({
+        ...request,
+        redemptionAttemptId: "not-a-uuid",
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("Apple account authorization contracts", () => {
   const request = {
@@ -219,6 +248,29 @@ describe("inspiration shaping contracts", () => {
 });
 
 describe("MCP bridge contracts", () => {
+  it("carries a private notification capability and validates descriptive review pushes", () => {
+    const registration = {
+      deviceToken: "ab".repeat(32),
+      platform: "ios",
+      appBuild: "0.1.0 (202)",
+      showTitles: true,
+    };
+    expect(McpBridgePushRegistrationRequestSchema.parse(registration)).toEqual(registration);
+
+    const notification = {
+      requestId: "8f7f6883-6a5c-4df4-9c03-356b02a00be1",
+      workspaceId: "99999999-9999-4999-8999-999999999999",
+      type: "reschedulePost",
+      subject: "The hidden bill behind cheap data",
+      pendingCount: 12,
+    };
+    expect(McpBridgeNotificationRequestSchema.parse(notification)).toEqual(notification);
+    expect(McpBridgeNotificationRequestSchema.safeParse({
+      ...notification,
+      subject: "x".repeat(501),
+    }).success).toBe(false);
+  });
+
   it("keeps captions and hooks in structured post-draft fields", () => {
     const request = {
       schemaVersion: 1,
@@ -244,7 +296,46 @@ describe("MCP bridge contracts", () => {
     expect(parsed.payload.notes).toBe("Use the arrival footage first.");
   });
 
+  it("records a verified external plan without storing credentials", () => {
+    const request = {
+      schemaVersion: 1,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: "2026-08-17T21:30:00Z",
+      source: "codex",
+      externalPlan: {
+        status: "linked",
+        creatorConfirmed: true,
+        system: "Notion",
+        workspace: "SkipMatrix",
+        destination: "Data Diaries production database",
+        sourceOfTruth: "shared",
+        syncDirection: "bidirectional",
+        externalWritesRequireApproval: true,
+      },
+      type: "createPostDraft",
+      payload: { title: "The hidden bill behind cheap data" },
+    } as const;
+
+    const parsed = McpBridgeChangeRequestSchema.parse(request);
+    expect(parsed.externalPlan).toEqual(request.externalPlan);
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...request,
+      externalPlan: {
+        ...request.externalPlan,
+        externalWritesRequireApproval: false,
+      },
+    }).success).toBe(false);
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...request,
+      externalPlan: {
+        ...request.externalPlan,
+        accessToken: "must-never-be-stored",
+      },
+    }).success).toBe(false);
+  });
+
   it("keeps creation and scheduling in one dated post proposal", () => {
+    const socialAccountId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const parsed = McpBridgeChangeRequestSchema.parse({
       schemaVersion: 1,
       id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -255,6 +346,7 @@ describe("MCP bridge contracts", () => {
         title: "A soft weekend in Charlotte",
         platform: "instagramReels",
         format: "Reel",
+        socialAccountId,
         targetDate: "2026-07-20T04:00:00Z",
         includesTargetTime: false,
       },
@@ -265,6 +357,114 @@ describe("MCP bridge contracts", () => {
     }
     expect(parsed.payload.targetDate).toBe("2026-07-20T04:00:00Z");
     expect(parsed.payload.includesTargetTime).toBe(false);
+    expect(parsed.payload.socialAccountId).toBe(socialAccountId);
+  });
+
+  it("validates series episodes, late-post rescheduling, and brand partners", () => {
+    const envelope = {
+      schemaVersion: 1,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: "2026-08-17T12:00:00Z",
+      source: "codex",
+    } as const;
+
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...envelope,
+      type: "createSeries",
+      payload: { name: "Studio notes", cadence: "weekly", cadenceWeekdays: [2] },
+    }).success).toBe(false);
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...envelope,
+      type: "createSeries",
+      payload: {
+        name: "Studio notes",
+        pillarId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        cadence: "weekly",
+        cadenceWeekdays: [2],
+      },
+    }).success).toBe(true);
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...envelope,
+      type: "createSeriesEpisode",
+      payload: {
+        seriesId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        title: "The studio reset",
+      },
+    }).success).toBe(false);
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...envelope,
+      type: "createSeriesEpisode",
+      payload: {
+        seriesId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        episodeSlotId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        title: "The studio reset",
+      },
+    }).success).toBe(true);
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...envelope,
+      type: "reschedulePost",
+      payload: {
+        postId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        targetDate: "2026-08-20T14:00:00Z",
+      },
+    }).success).toBe(true);
+    expect(McpBridgeChangeRequestSchema.safeParse({
+      ...envelope,
+      type: "createBrandPartner",
+      payload: { name: "Example Brand", brandStage: "talking" },
+    }).success).toBe(true);
+  });
+
+  it("keeps stable series and episode review context across revision receipts", () => {
+    const request = McpBridgeChangeRequestSchema.parse({
+      schemaVersion: 1,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      createdAt: "2026-08-17T12:00:00Z",
+      source: "codex",
+      type: "createSeriesEpisode",
+      payload: {
+        seriesId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        proposedEpisodeSlotId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        episodeReviewId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        revisionNumber: 2,
+        revisionOfRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        title: "The studio reset",
+        workDate: "2026-08-20T14:00:00Z",
+      },
+    });
+    expect(request.type).toBe("createSeriesEpisode");
+
+    const receipt = McpBridgeReceiptSchema.parse({
+      schemaVersion: 1,
+      requestId: request.id,
+      processedAt: "2026-08-17T13:00:00Z",
+      status: "needsRevision",
+      message: "Returned for revision in agent.cy.",
+      workspaceId: null,
+      type: "createSeriesEpisode",
+      seriesId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      episodeReviewId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      episodeSlotId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      revisionNumber: 2,
+      decisionNote: "Make the worked example checkable.",
+      nextAction: "reviseSeriesEpisode",
+    });
+    expect(receipt.nextAction).toBe("reviseSeriesEpisode");
+
+    const revision = McpBridgeEpisodeRevisionSchema.parse({
+      schemaVersion: 1,
+      episodeReviewId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      workspaceId: null,
+      seriesId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      episodeSlotId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      requestId: request.id,
+      revisionNumber: 2,
+      status: "needsRevision",
+      decisionAt: "2026-08-17T13:00:00Z",
+      decisionNote: "Make the worked example checkable.",
+      request,
+    });
+    expect(revision.request.payload.title).toBe("The studio reset");
   });
 
   it("rejects posting dates hidden only in notes and non-catalog formats", () => {
@@ -323,6 +523,10 @@ describe("MCP bridge contracts", () => {
     const snapshot = {
       schemaVersion: 1,
       generatedAt: "2026-07-15T21:30:00Z",
+      notification: {
+        endpoint: "https://agentcy.example/v1/bridge/notifications",
+        token: "notification-capability-token-with-enough-entropy",
+      },
       pillars: [{
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         name: "Lifestyle",
@@ -363,9 +567,11 @@ describe("MCP bridge contracts", () => {
         tasks: [],
       }],
       tasks: [],
+      brandPartners: [],
     };
 
-    expect(McpBridgeSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    const parsed = McpBridgeSnapshotSchema.parse(snapshot);
+    expect(parsed.notification?.endpoint).toBe("https://agentcy.example/v1/bridge/notifications");
   });
 });
 

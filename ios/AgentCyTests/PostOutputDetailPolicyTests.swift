@@ -13,7 +13,45 @@ final class PostOutputDetailPolicyTests: XCTestCase {
         XCTAssertTrue(MCPReviewEditPolicy.allowsEditing(type: "updatePost"))
         XCTAssertTrue(MCPReviewEditPolicy.allowsEditing(type: "schedulePost"))
         XCTAssertTrue(MCPReviewEditPolicy.allowsEditing(type: "createPostDraft"))
+        XCTAssertTrue(MCPReviewEditPolicy.allowsEditing(type: "createSeriesEpisode"))
         XCTAssertFalse(MCPReviewEditPolicy.allowsEditing(type: "addTask"))
+    }
+
+    func testMCPSeriesReviewBundleKeepsSeriesFirstAndOrdersEpisodes() {
+        let seriesID = UUID()
+        let pillarID = UUID()
+        let series = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeries",
+            payload: MCPBridgeRequestPayload(pillarId: pillarID, name: "Data Diaries", seriesId: seriesID)
+        )
+        let second = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(title: "Second", seriesId: seriesID, episodeNumber: 2)
+        )
+        let first = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(title: "First", seriesId: seriesID, episodeNumber: 1)
+        )
+
+        let bundle = MCPSeriesReviewBundle(series: series, episodes: [second, first])
+
+        XCTAssertEqual(bundle.episodes.map(\.payload.episodeNumber), [1, 2])
+        XCTAssertEqual(bundle.requests.map(\.id), [series.id, first.id, second.id])
     }
 
     func testMCPIdeaReviewKeepsItsPillarNameAndIdentifiesMetadataAsAnIdea() {
@@ -67,7 +105,7 @@ final class PostOutputDetailPolicyTests: XCTestCase {
         XCTAssertFalse(PostOutputDetailPolicy.usesFinalizedView(outputStatus: .ready, targetDate: nil))
     }
 
-    func testPastScheduledPostUsesMissedPresentation() {
+    func testPastScheduledPostKeepsItsStatusWhileUsingLatePresentation() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -84,13 +122,33 @@ final class PostOutputDetailPolicyTests: XCTestCase {
             targetDate: yesterday,
             now: now,
             calendar: calendar
-        ), "Missed post")
+        ), "Scheduled post")
         XCTAssertEqual(FinalizedPostPresentation.statusTitle(
             outputStatus: .scheduled,
             targetDate: yesterday,
             now: now,
             calendar: calendar
-        ), "MISSED")
+        ), "SCHEDULED")
+    }
+
+    func testPastReadyPostKeepsReadyStatusWhileUsingLatePresentation() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
+
+        XCTAssertTrue(FinalizedPostPresentation.isMissed(
+            outputStatus: .ready,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertEqual(FinalizedPostPresentation.statusTitle(
+            outputStatus: .ready,
+            targetDate: yesterday,
+            now: now,
+            calendar: calendar
+        ), "READY")
     }
 
     func testPostedPostNeverUsesMissedPresentation() {
@@ -117,6 +175,97 @@ final class PostOutputDetailPolicyTests: XCTestCase {
             now: now,
             calendar: calendar
         ), "POSTED")
+    }
+
+    func testBottomPostActionUsesScheduledDateAndLateTiming() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 17,
+            hour: 12
+        )))
+        let earlierToday = try XCTUnwrap(calendar.date(byAdding: .hour, value: -1, to: now))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: now))
+        let tomorrow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: now))
+
+        XCTAssertEqual(PostBottomActionPolicy.action(
+            outputStatus: .draft,
+            scheduledDate: nil,
+            includesScheduledTime: false,
+            now: now,
+            calendar: calendar
+        ), .schedule)
+        XCTAssertEqual(PostBottomActionPolicy.action(
+            outputStatus: .scheduled,
+            scheduledDate: tomorrow,
+            includesScheduledTime: false,
+            now: now,
+            calendar: calendar
+        ), .markPosted)
+        XCTAssertEqual(PostBottomActionPolicy.action(
+            outputStatus: .scheduled,
+            scheduledDate: yesterday,
+            includesScheduledTime: false,
+            now: now,
+            calendar: calendar
+        ), .markPostedAndReschedule)
+        XCTAssertEqual(PostBottomActionPolicy.action(
+            outputStatus: .scheduled,
+            scheduledDate: earlierToday,
+            includesScheduledTime: false,
+            now: now,
+            calendar: calendar
+        ), .markPosted)
+        XCTAssertEqual(PostBottomActionPolicy.action(
+            outputStatus: .scheduled,
+            scheduledDate: earlierToday,
+            includesScheduledTime: true,
+            now: now,
+            calendar: calendar
+        ), .markPostedAndReschedule)
+        XCTAssertEqual(PostBottomActionPolicy.action(
+            outputStatus: .posted,
+            scheduledDate: yesterday,
+            includesScheduledTime: true,
+            now: now,
+            calendar: calendar
+        ), .markNotPosted)
+    }
+
+    func testSuggestedAgendaDateRemainsAScheduleActionUntilCommitted() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let selectedDay = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 17,
+            hour: 12
+        )))
+        let later = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: selectedDay))
+
+        XCTAssertEqual(PostBottomActionPolicy.action(
+            outputStatus: .draft,
+            scheduledDate: selectedDay,
+            includesScheduledTime: false,
+            hasPersistedScheduledDate: false,
+            now: later,
+            calendar: calendar
+        ), .schedule)
+        XCTAssertEqual(
+            PostScheduleActionPresentation.title(
+                suggestedDate: selectedDay,
+                hasPersistedScheduledDate: false,
+                calendar: calendar,
+                locale: Locale(identifier: "en_US")
+            ),
+            "Schedule for Monday, Aug 17"
+        )
+        XCTAssertTrue(PostScheduleActionPresentation.shouldScheduleImmediately(
+            suggestedDate: selectedDay,
+            hasPersistedScheduledDate: false
+        ))
     }
 
     func testLinkedTaskUsesItsExactPlatformOutput() {

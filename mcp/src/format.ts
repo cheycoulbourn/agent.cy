@@ -10,7 +10,9 @@ export function workspaceSummary(snapshot: McpBridgeSnapshot): string {
   const ideas = activePosts.filter((post) => post.status === "spark");
   return [
     `agent.cy workspace generated ${formatDate(snapshot.generatedAt)}`,
+    `Active workspace: ${snapshot.workspaceName || "Default"}${snapshot.workspaceId ? ` · ${snapshot.workspaceId}` : ""}`,
     `Creator: ${snapshot.profile?.name || "Not set"}`,
+    `Connected social accounts: ${snapshot.socialAccounts.length}`,
     `Pillars: ${snapshot.pillars.length}`,
     `Posts: ${activePosts.length}`,
     `Ideas: ${ideas.length}`,

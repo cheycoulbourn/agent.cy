@@ -991,19 +991,19 @@ struct CyAssistanceSettingsView: View {
 struct CyQuickPromptsSettingsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
-    @Bindable var profile: CreatorProfile
+    @Bindable var workspace: CreatorWorkspace
     @State private var prompts: [String]
 
-    init(profile: CreatorProfile) {
-        self.profile = profile
-        _prompts = State(initialValue: profile.customCyQuickPrompts ?? CreatorProfile.defaultCyQuickPrompts)
+    init(workspace: CreatorWorkspace) {
+        self.workspace = workspace
+        _prompts = State(initialValue: workspace.customCyQuickPrompts ?? CreatorProfile.defaultCyQuickPrompts)
     }
 
     var body: some View {
         SettingsPageShell(
             kicker: "Cy",
             title: "Quick prompts",
-            subtitle: "Choose two shortcuts for starting a new conversation."
+            subtitle: "Choose two shortcuts for starting a new conversation in \(workspace.name)."
         ) {
             VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                 SectionRuleHeader(title: "Your prompts", trailing: "2")
@@ -1061,17 +1061,17 @@ struct CyQuickPromptsSettingsView: View {
 
     private func savePrompts() {
         guard canSave else { return }
-        profile.setCustomCyQuickPrompts(normalizedPrompts)
+        workspace.setCustomCyQuickPrompts(normalizedPrompts)
         do {
             try context.save()
-            appModel.notice = .info("Quick prompts updated.")
+            appModel.notice = .info("Quick prompts updated for \(workspace.name).")
         } catch {
             appModel.notice = .error("Those quick prompts could not be saved.")
         }
     }
 
     private func restoreDefaults() {
-        profile.restoreDefaultCyQuickPrompts()
+        workspace.restoreDefaultCyQuickPrompts()
         prompts = CreatorProfile.defaultCyQuickPrompts
         do {
             try context.save()
@@ -1082,23 +1082,41 @@ struct CyQuickPromptsSettingsView: View {
     }
 }
 
+struct AppearanceSettingsDraftState: Equatable {
+    let initialAppearance: AppearancePreference
+    let initialPalette: CreatorVibePalette?
+    var appearance: AppearancePreference
+    var palette: CreatorVibePalette?
+
+    init(deviceAppearance: AppearancePreference, palette: CreatorVibePalette?) {
+        initialAppearance = deviceAppearance
+        initialPalette = palette
+        appearance = deviceAppearance
+        self.palette = palette
+    }
+
+    var hasChanges: Bool {
+        appearance != initialAppearance || palette != initialPalette
+    }
+}
+
 struct AppearanceSettingsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
-    @Bindable var profile: CreatorProfile
+    @Bindable var workspace: CreatorWorkspace
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
-    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
-    private let initialAppearance: AppearancePreference
-    @State private var draftAppearance: AppearancePreference
-    @State private var draftPalette: CreatorVibePalette?
+    @State private var draft: AppearanceSettingsDraftState
     @State private var didSave = false
 
-    init(profile: CreatorProfile, deviceAppearance: AppearancePreference) {
-        self.profile = profile
-        initialAppearance = deviceAppearance
-        _draftAppearance = State(initialValue: deviceAppearance)
-        _draftPalette = State(initialValue: profile.vibePalette)
+    init(workspace: CreatorWorkspace, deviceAppearance: AppearancePreference) {
+        self.workspace = workspace
+        _draft = State(
+            initialValue: AppearanceSettingsDraftState(
+                deviceAppearance: deviceAppearance,
+                palette: workspace.vibePalette
+            )
+        )
     }
 
     var body: some View {
@@ -1114,7 +1132,7 @@ struct AppearanceSettingsView: View {
                     VStack(spacing: 0) {
                         ForEach(AppearancePreference.allCases) { appearance in
                             Button {
-                                draftAppearance = appearance
+                                draft.appearance = appearance
                                 appModel.appearancePreference = appearance
                                 AgentAppearanceController.apply(appearance)
                             } label: {
@@ -1124,7 +1142,7 @@ struct AppearanceSettingsView: View {
                                         .font(.agentHeadline)
                                         .foregroundStyle(Color.agentText)
                                     Spacer()
-                                    if draftAppearance == appearance {
+                                    if draft.appearance == appearance {
                                         AgentIconView(.check)
                                             .foregroundStyle(Color.agentText)
                                     }
@@ -1181,8 +1199,8 @@ struct AppearanceSettingsView: View {
         }
         .onDisappear {
             guard !didSave else { return }
-            appModel.appearancePreference = initialAppearance
-            AgentAppearanceController.apply(initialAppearance)
+            appModel.appearancePreference = draft.initialAppearance
+            AgentAppearanceController.apply(draft.initialAppearance)
         }
     }
 
@@ -1213,7 +1231,7 @@ struct AppearanceSettingsView: View {
                 }
 
                 AgentIconView(.check, size: 13)
-                    .opacity(draftPalette == palette ? 1 : 0)
+                    .opacity(draft.palette == palette ? 1 : 0)
                     .frame(width: 16)
             }
             .foregroundStyle(Color.agentText)
@@ -1221,37 +1239,33 @@ struct AppearanceSettingsView: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(draftPalette == palette ? .isSelected : [])
+        .accessibilityAddTraits(draft.palette == palette ? .isSelected : [])
     }
 
     private var activeWorkspacePillars: [Pillar] {
         allPillars.filter {
-            !$0.isArchived && WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
+            !$0.isArchived && $0.workspaceID == workspace.id
         }
     }
 
     private func selectPalette(_ palette: CreatorVibePalette) {
-        draftPalette = palette
+        draft.palette = palette
     }
 
     private var hasChanges: Bool {
-        draftAppearance != initialAppearance || draftPalette != profile.vibePalette
+        draft.hasChanges
     }
 
     private func saveAndDismiss() {
-        profile.vibePalette = draftPalette
-        if let draftPalette {
-            PillarPaletteAssignment.apply(draftPalette, to: activeWorkspacePillars)
+        workspace.vibePalette = draft.palette
+        if let palette = draft.palette {
+            PillarPaletteAssignment.apply(palette, to: activeWorkspacePillars)
         }
         do {
             try context.save()
-            DeviceAppearancePreferences.save(draftAppearance)
-            appModel.appearancePreference = draftAppearance
-            AgentAppearanceController.apply(draftAppearance)
+            DeviceAppearancePreferences.save(draft.appearance)
+            appModel.appearancePreference = draft.appearance
+            AgentAppearanceController.apply(draft.appearance)
             WidgetSnapshotService.refresh(context: context)
             didSave = true
             dismiss()
@@ -1354,10 +1368,10 @@ struct PublishingSettingsView: View {
     var body: some View {
         SettingsPageShell(
             kicker: "Publishing",
-            title: "Destinations & formats",
+            title: "Platforms",
             subtitle: "Choose where you publish and the formats you use."
         ) {
-            ForEach(destinations.filter { !$0.isArchived }) { destination in
+            ForEach(visibleDestinations) { destination in
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     HStack {
                         Text(destination.name)
@@ -1376,7 +1390,7 @@ struct PublishingSettingsView: View {
                         Rectangle().fill(Color.agentBorder).frame(height: 1)
                     }
 
-                    ForEach(formats.filter { $0.destinationID == destination.id }) { format in
+                    ForEach(visibleFormats(for: destination)) { format in
                         Toggle(isOn: formatBinding(format)) {
                             VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                                 Text(format.name)
@@ -1405,7 +1419,7 @@ struct PublishingSettingsView: View {
             Button {
                 showNewDestination = true
             } label: {
-                AgentIconLabel(title: "Add destination", icon: .add)
+                AgentIconLabel(title: "Add platform", icon: .add)
             }
             .buttonStyle(AgentSecondaryButtonStyle())
         }
@@ -1415,22 +1429,47 @@ struct PublishingSettingsView: View {
         }
     }
 
+    private var visibleDestinations: [PublishingDestination] {
+        var seen: Set<String> = []
+        return destinations.filter { destination in
+            guard !destination.isArchived else { return false }
+            return seen.insert(PublishingCatalog.logicalKey(for: destination)).inserted
+        }
+    }
+
+    private func visibleFormats(for destination: PublishingDestination) -> [PublishingFormat] {
+        var seen: Set<String> = []
+        return formats.filter { format in
+            guard format.destinationID == destination.id, !format.isArchived else { return false }
+            return seen.insert(PublishingCatalog.normalizedName(format.name)).inserted
+        }
+    }
+
     private func formatBinding(_ format: PublishingFormat) -> Binding<Bool> {
         Binding(
             get: { !format.isArchived },
             set: { enabled in
-                format.isArchived = !enabled
+                for candidate in formats where
+                    candidate.destinationID == format.destinationID &&
+                    PublishingCatalog.normalizedName(candidate.name) == PublishingCatalog.normalizedName(format.name) {
+                    candidate.isArchived = !enabled
+                }
                 try? context.save()
             }
         )
     }
 
     private func remove(_ destination: PublishingDestination) {
-        destination.isArchived = true
-        for format in formats where format.destinationID == destination.id {
+        let matchingDestinationIDs = Set(destinations.filter {
+            PublishingCatalog.logicalKey(for: $0) == PublishingCatalog.logicalKey(for: destination)
+        }.map(\.id))
+        for candidate in destinations where matchingDestinationIDs.contains(candidate.id) {
+            candidate.isArchived = true
+        }
+        for format in formats where matchingDestinationIDs.contains(format.destinationID) {
             format.isArchived = true
         }
-        for account in socialAccounts where account.destinationID == destination.id {
+        for account in socialAccounts where matchingDestinationIDs.contains(account.destinationID) {
             account.isArchived = true
             account.updatedAt = Date()
         }
@@ -1442,6 +1481,7 @@ private struct NewPublishingFormatView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     let destination: PublishingDestination
+    @Query private var formats: [PublishingFormat]
     @State private var name = ""
     @State private var kind: PublishingFormatKind = .shortVideo
 
@@ -1458,6 +1498,10 @@ private struct NewPublishingFormatView: View {
                 }
                 .pickerStyle(.segmented)
                 Button("Add format") {
+                    guard !formats.contains(where: {
+                        $0.destinationID == destination.id &&
+                            PublishingCatalog.normalizedName($0.name) == PublishingCatalog.normalizedName(name)
+                    }) else { return }
                     context.insert(PublishingFormat(
                         destinationID: destination.id,
                         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1570,7 +1614,7 @@ struct CalendarIntegrationSettingsView: View {
                             }
                         }
                         Spacer()
-                        AgentIconView(.moveVertical, size: 12)
+                        AgentIconView(.expand, size: 12)
                             .foregroundStyle(Color.agentSecondary)
                     }
                     .padding(.horizontal, AgentSpacing.x4)
@@ -1734,7 +1778,11 @@ private struct NotificationSettingsContent: View {
                 if settings.draftPrepRemindersEnabled {
                     timeRow("Evening time", selection: timeBinding(hour: \.draftPrepHour, minute: \.draftPrepMinute))
                 }
-                reminderRow(title: "Missed posts", detail: "One calm check-in if a scheduled post is still open.", isOn: $settings.missedPostRemindersEnabled)
+                reminderRow(
+                    title: "Late posts and work dates",
+                    detail: "Check in when a scheduled post is still open or an open post’s work date passes.",
+                    isOn: $settings.missedPostRemindersEnabled
+                )
                 if settings.missedPostRemindersEnabled {
                     timeRow("Untimed post check-in", selection: timeBinding(hour: \.dateOnlyDeadlineHour, minute: \.dateOnlyDeadlineMinute))
                 }

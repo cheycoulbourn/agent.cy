@@ -8,10 +8,11 @@ import { AgentCyWorkspace, resolveDefaultWorkspaceDirectory } from "../src/works
 
 const now = "2026-07-15T12:00:00.000Z";
 
-function snapshot() {
+function snapshot(notification?: { endpoint: string; token: string }) {
   return {
     schemaVersion: 1,
     generatedAt: now,
+    ...(notification ? { notification } : {}),
     workspaceId: "99999999-9999-4999-8999-999999999999",
     workspaceName: "@fromcheywithlove",
     profile: {
@@ -80,6 +81,46 @@ describe("AgentCyWorkspace", () => {
     expect(workspace.readReceipt(request.id)).toBeNull();
   });
 
+  it("pushes a descriptive review notification and records delivery status", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
+    const deliveries: Array<{ url: string; authorization: string | null; body: unknown }> = [];
+    const workspace = new AgentCyWorkspace(directory, async (input, init) => {
+      deliveries.push({
+        url: String(input),
+        authorization: new Headers(init?.headers).get("authorization"),
+        body: JSON.parse(String(init?.body)),
+      });
+      return new Response(JSON.stringify({ accepted: true }), { status: 202 });
+    });
+    workspace.ensureDirectories();
+    writeFileSync(workspace.snapshotPath, JSON.stringify(snapshot({
+      endpoint: "https://agentcy.example/v1/bridge/notifications",
+      token: "notification-capability-token-with-enough-entropy",
+    })));
+    const request = workspace.queueRequest({
+      type: "createPostDraft",
+      payload: { title: "The hidden bill behind cheap data" },
+    }, "codex");
+
+    await workspace.notifyQueuedRequest(request);
+
+    expect(deliveries).toEqual([{
+      url: "https://agentcy.example/v1/bridge/notifications",
+      authorization: "Bearer notification-capability-token-with-enough-entropy",
+      body: {
+        requestId: request.id,
+        workspaceId: "99999999-9999-4999-8999-999999999999",
+        type: "createPostDraft",
+        subject: "The hidden bill behind cheap data",
+        pendingCount: 1,
+      },
+    }]);
+    expect(JSON.parse(readFileSync(workspace.notificationStatusPath, "utf8"))).toMatchObject({
+      status: "delivered",
+      requestId: request.id,
+    });
+  });
+
   it("queues a post caption separately from production notes", () => {
     const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
     const workspace = new AgentCyWorkspace(directory);
@@ -97,6 +138,42 @@ describe("AgentCyWorkspace", () => {
     }
     expect(request.payload.caption).toBe("Asheville, slowly.");
     expect(request.payload.notes).toBe("Use the arrival footage first.");
+  });
+
+  it("queues a series only when its pillar is active in the app snapshot", () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
+    const workspace = new AgentCyWorkspace(directory);
+    workspace.ensureDirectories();
+    const pillarId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    writeFileSync(workspace.snapshotPath, JSON.stringify({
+      ...snapshot(),
+      pillars: [{
+        id: pillarId,
+        parentPillarId: null,
+        name: "SkipMatrix education",
+        colorHex: "A78BFA",
+        role: "anchor",
+        assignedWeekdays: [],
+      }],
+    }));
+
+    const request = workspace.queueRequest({
+      type: "createSeries",
+      payload: { name: "Data Diaries", pillarId },
+    }, "codex");
+
+    if (request.type !== "createSeries") {
+      throw new Error("Expected a create-series request");
+    }
+    expect(request.payload.pillarId).toBe(pillarId);
+    expect(() => workspace.queueRequest({
+      type: "createSeries",
+      payload: {
+        name: "Unfiled series",
+        pillarId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      },
+    }, "codex")).toThrow(/active pillar/);
+    expect(workspace.listPendingRequestIds()).toEqual([request.id]);
   });
 
   it("queues one review request for a newly scheduled post", () => {
@@ -133,5 +210,52 @@ describe("AgentCyWorkspace", () => {
       },
     }, "codex")).toThrow(/targetDate/);
     expect(workspace.listPendingRequestIds()).toEqual([]);
+  });
+
+  it("keeps a denied episode's identity when the creator resubmits a revision", () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentcy-mcp-"));
+    const workspace = new AgentCyWorkspace(directory);
+    const original = workspace.queueRequest({
+      type: "createSeriesEpisode",
+      payload: {
+        seriesId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        title: "The premium-data break-even question",
+        workDate: "2026-09-23T16:00:00.000Z",
+      },
+    }, "codex");
+    if (original.type !== "createSeriesEpisode") {
+      throw new Error("Expected a series-episode request");
+    }
+    expect(original.payload.episodeReviewId).toBeDefined();
+    expect(original.payload.proposedEpisodeSlotId).toBeDefined();
+    expect(original.payload.revisionNumber).toBe(1);
+
+    workspace.recordEpisodeRevision({
+      schemaVersion: 1,
+      episodeReviewId: original.payload.episodeReviewId!,
+      workspaceId: original.workspaceId ?? null,
+      seriesId: original.payload.seriesId,
+      episodeSlotId: original.payload.proposedEpisodeSlotId!,
+      requestId: original.id,
+      revisionNumber: 1,
+      status: "needsRevision",
+      decisionAt: "2026-08-17T13:00:00.000Z",
+      decisionNote: "Show the formula and inputs.",
+      request: original,
+    });
+
+    const revised = workspace.resubmitSeriesEpisode(original.payload.episodeReviewId!, {
+      premise: "Show the inputs, formula, and worked result.",
+    }, "codex");
+    if (revised.type !== "createSeriesEpisode") {
+      throw new Error("Expected a revised series-episode request");
+    }
+    expect(revised.id).not.toBe(original.id);
+    expect(revised.payload.episodeReviewId).toBe(original.payload.episodeReviewId);
+    expect(revised.payload.proposedEpisodeSlotId).toBe(original.payload.proposedEpisodeSlotId);
+    expect(revised.payload.revisionNumber).toBe(2);
+    expect(revised.payload.revisionOfRequestId).toBe(original.id);
+    expect(revised.payload.premise).toBe("Show the inputs, formula, and worked result.");
+    expect(workspace.readEpisodeRevision(original.payload.episodeReviewId!).status).toBe("readyForReview");
   });
 });

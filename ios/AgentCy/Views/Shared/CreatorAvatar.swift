@@ -39,6 +39,7 @@ struct CreatorAvatar: View {
                     .foregroundStyle(Color.agentText)
             }
         }
+        .dynamicTypeSize(...CreatorAvatarPresentationPolicy.maximumDynamicTypeSize)
         .frame(width: size, height: size)
         .clipShape(.circle)
         .overlay { Circle().stroke(Color.agentBorder, lineWidth: 1) }
@@ -60,6 +61,10 @@ struct CreatorAvatar: View {
     }
 }
 
+enum CreatorAvatarPresentationPolicy {
+    static let maximumDynamicTypeSize: DynamicTypeSize = .large
+}
+
 struct ProfileSettingsButton: View {
     let identity: ActiveCreatorIdentity
     let action: () -> Void
@@ -68,17 +73,17 @@ struct ProfileSettingsButton: View {
     var body: some View {
         #if targetEnvironment(macCatalyst)
         Menu {
-            Button {
+            Button("Switch account") {
                 openAccountPage(.switchAccount)
-            } label: {
-                Label("Switch account", systemImage: "person.2")
             }
 
-            Button {
+            Button("Add account") {
                 openAccountPage(.addAccount)
-            } label: {
-                Label("Add account", systemImage: "person.badge.plus")
             }
+
+            Divider()
+
+            Button("Settings", action: action)
         } label: {
             CreatorAvatar(identity: identity)
                 .frame(width: 44, height: 44)

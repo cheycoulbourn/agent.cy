@@ -10,6 +10,10 @@ import {
   HealthResultSchema,
   InspirationExtractRequestSchema,
   InspirationExtractResultSchema,
+  McpBridgeNotificationRequestSchema,
+  McpBridgeNotificationResultSchema,
+  McpBridgePushRegistrationRequestSchema,
+  McpBridgePushRegistrationResultSchema,
   InstallationRedeemRequestSchema,
   InstallationRedeemResultSchema,
   PrivacyDeleteRequestSchema,
@@ -31,6 +35,11 @@ import {
   type OperationDefinition,
 } from "./ai-operations.js";
 import type { ServerConfig } from "./config.js";
+import {
+  ApnsBridgePushSender,
+  UnavailableBridgePushSender,
+  type BridgePushSending,
+} from "./bridge-push.js";
 import { AppError, asAppError } from "./errors.js";
 import { developmentFixtures } from "./fixtures.js";
 import {
@@ -92,6 +101,7 @@ export interface BuildAppOptions {
   readonly clock?: () => Date;
   readonly inspirationExtractor?: InspirationExtracting;
   readonly appleIdentityVerifier?: AppleIdentityVerifying;
+  readonly bridgePushSender?: BridgePushSending;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -109,6 +119,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const appleIdentityVerifier =
     options.appleIdentityVerifier ?? new AppleIdentityVerifier(config.appleClientIds);
   const appleSubjectIdentity = new IdentityService(config.appleSubjectHashSecret);
+  const bridgeNotificationIdentity = new IdentityService(config.bridgeNotificationHashSecret);
+  const bridgePushSender = options.bridgePushSender ?? (
+    config.apns ? new ApnsBridgePushSender(config.apns) : new UnavailableBridgePushSender()
+  );
   const activeInstallations = new Set<string>();
   const idempotencyCache = new Map<string, CachedResult>();
   const inviteRedemptionAttempts = new Map<string, number[]>();
@@ -116,6 +130,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await repository.seedInviteHashes(
     config.inviteCodes.map((inviteCode) => inviteIdentity.hash(inviteCode)),
+    config.inviteExpiresAt,
   );
   if (config.pilotCompedAccess) {
     const promotionStartedAt = clock();
@@ -188,6 +203,72 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
   });
 
+  app.post("/v1/bridge/notifications/register", async (request, reply) => {
+    try {
+      const installation = await authenticate(
+        request,
+        repository,
+        installationIdentity,
+        clock(),
+      );
+      const parsed = McpBridgePushRegistrationRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError("invalid_input", "The notification registration is invalid.", {
+          fieldIssues: safeFieldIssues(parsed.error.issues),
+        });
+      }
+      const rawCapability = bridgeNotificationIdentity.createInstallationToken();
+      await repository.registerBridgePush(
+        installation.id,
+        bridgeNotificationIdentity.hash(rawCapability),
+        parsed.data.deviceToken,
+        parsed.data.platform,
+        parsed.data.showTitles,
+      );
+      return reply.code(201).send(McpBridgePushRegistrationResultSchema.parse({
+        notification: {
+          endpoint: new URL("/v1/bridge/notifications", config.publicBaseUrl).toString(),
+          token: rawCapability,
+        },
+      }));
+    } catch (error) {
+      return sendHttpError(reply, asAppError(error));
+    }
+  });
+
+  app.post("/v1/bridge/notifications", async (request, reply) => {
+    try {
+      const rawCapability = readBearerToken(request.headers.authorization);
+      if (!rawCapability) {
+        throw new AppError("installation_invalid", "The bridge notification capability is missing.");
+      }
+      const installation = await repository.findInstallationByBridgeNotificationCapabilityHash(
+        bridgeNotificationIdentity.hash(rawCapability),
+      );
+      if (!installation || !installation.pushDeviceToken || !installation.pushPlatform) {
+        throw new AppError("installation_invalid", "The bridge notification capability is invalid.");
+      }
+      const parsed = McpBridgeNotificationRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError("invalid_input", "The bridge notification is invalid.", {
+          fieldIssues: safeFieldIssues(parsed.error.issues),
+        });
+      }
+      await bridgePushSender.send({
+        deviceToken: installation.pushDeviceToken,
+        platform: installation.pushPlatform,
+        title: "Agent.cy needs your review",
+        body: bridgeNotificationBody(parsed.data, installation.pushShowTitles),
+        category: "agentcy.mcp-review",
+        collapseId: `agentcy-mcp-${installation.id}`,
+        requestId: parsed.data.requestId,
+      });
+      return reply.code(202).send(McpBridgeNotificationResultSchema.parse({ accepted: true }));
+    } catch (error) {
+      return sendHttpError(reply, asAppError(error));
+    }
+  });
+
   app.post("/v1/installations/redeem", async (request, reply) => {
     try {
       enforceInviteRedemptionRateLimit(
@@ -221,6 +302,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         redeemedAt,
         config.pilotCompedAccess ? "comped" : "freeJourney",
         promotionalEntitlementEndsAt,
+        parsed.data.redemptionAttemptId ?? null,
       );
       const result = InstallationRedeemResultSchema.parse({
         installationId: installation.id,
@@ -1140,4 +1222,41 @@ function enforceInviteRedemptionRateLimit(
 
 function telemetryCutoff(now: Date, retentionDays: number): Date {
   return new Date(now.getTime() - retentionDays * 86_400_000);
+}
+
+function bridgeNotificationBody(
+  request: { readonly type: string; readonly subject: string; readonly pendingCount: number },
+  showTitles: boolean,
+): string {
+  if (!showTitles) {
+    return request.pendingCount === 1
+      ? "A new agent.cy change needs your review."
+      : `${request.pendingCount} agent.cy changes need your review.`;
+  }
+  const change = switchNotificationChange(request.type);
+  if (request.pendingCount === 1) {
+    return `“${request.subject}” ${change} and needs your review.`;
+  }
+  return `${request.pendingCount} changes are waiting. Latest: “${request.subject}” ${change}.`;
+}
+
+function switchNotificationChange(type: string): string {
+  switch (type) {
+    case "schedulePost":
+    case "reschedulePost":
+      return "has a new posting date";
+    case "updatePost":
+      return "has proposed edits";
+    case "markPostPosted":
+      return "has a posted-status change";
+    case "createSeries":
+      return "is ready as a new series";
+    case "createSeriesEpisode":
+      return "is ready as a series episode";
+    case "addTask":
+    case "completeTask":
+      return "has a task change";
+    default:
+      return "is ready";
+  }
 }

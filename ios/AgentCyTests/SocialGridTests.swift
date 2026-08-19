@@ -14,8 +14,6 @@ final class SocialGridTests: XCTestCase {
         let phone = SocialGridPresentation.phone(bottomClearance: 76)
         XCTAssertTrue(phone.isPhone)
         XCTAssertEqual(phone.bottomClearance, 76)
-        XCTAssertTrue(phone.placesArrangeInProfileSummary)
-        XCTAssertFalse(SocialGridPresentation.desktop.placesArrangeInProfileSummary)
     }
 
     func testGridUsesInstagramPortraitPreviewRatio() {
@@ -153,44 +151,4 @@ final class SocialGridTests: XCTestCase {
         )
     }
 
-    func testOrderRepairsMalformedDuplicateAndUnknownStoredIdentifiers() {
-        let first = UUID()
-        let second = UUID()
-        let third = UUID()
-        let state = SocialGridOrderState(
-            savedRawIDs: [second.uuidString, "not-a-uuid", second.uuidString, UUID().uuidString],
-            defaultIDs: [first, second, third]
-        )
-
-        XCTAssertEqual(state.orderedIDs, [first, third, second])
-    }
-
-    func testOrderMovesWithinVisibleFilterAndHonorsBoundaries() {
-        let first = UUID()
-        let hidden = UUID()
-        let second = UUID()
-        var state = SocialGridOrderState(savedRawIDs: [], defaultIDs: [first, hidden, second])
-
-        XCTAssertFalse(state.move(first, by: -1, within: [first, second]))
-        XCTAssertTrue(state.move(first, by: 1, within: [first, second]))
-        XCTAssertEqual(state.orderedIDs, [second, hidden, first])
-        XCTAssertFalse(state.move(first, by: 1, within: [second, first]))
-    }
-
-    func testOrderPreferencesRoundTripPerWorkspace() throws {
-        let firstWorkspace = UUID().uuidString
-        let secondWorkspace = UUID().uuidString
-        let firstPost = UUID().uuidString
-        let secondPost = UUID().uuidString
-        let store = SocialGridOrderPreferencesStore(
-            orderByWorkspace: [
-                firstWorkspace: [firstPost],
-                secondWorkspace: [secondPost],
-            ]
-        )
-
-        let encoded = try XCTUnwrap(store.encoded())
-        XCTAssertEqual(SocialGridOrderPreferencesStore.decode(encoded), store)
-        XCTAssertNil(SocialGridOrderPreferencesStore.decode("not-json"))
-    }
 }

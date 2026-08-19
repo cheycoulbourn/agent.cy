@@ -252,6 +252,7 @@ struct LocalExportService: ExportServicing {
                     "defaultSocialAccountID": series.defaultSocialAccountID?.uuidString ?? NSNull(),
                     "defaultDurationSeconds": series.defaultDurationSeconds ?? NSNull(),
                     "cadence": series.cadence.rawValue,
+                    "cadenceStartDate": series.cadenceStartDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                     "cadenceWeekdays": series.cadenceWeekdays.map(\.rawValue).sorted(),
                     "cadenceMonthDay": series.cadenceMonthDay ?? NSNull(),
                     "cadenceEndDate": series.cadenceEndDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),

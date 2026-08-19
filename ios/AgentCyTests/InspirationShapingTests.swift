@@ -100,6 +100,84 @@ final class InspirationShapingTests: XCTestCase {
         XCTAssertEqual(source.linkedBriefID, brief.id)
     }
 
+    func testSavingAnalyzedSavedPostChangesUpdatesPayloadWithoutCreatingBrief() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let workspaceID = UUID()
+        let pillar = Pillar(name: "Creator Life", colorHex: "D22630")
+        pillar.workspaceID = workspaceID
+        let source = InspirationSource(
+            workspaceID: workspaceID,
+            canonicalURLString: "https://www.instagram.com/reel/editable-reference/",
+            platform: .instagram,
+            status: .shaping
+        )
+        context.insert(pillar)
+        context.insert(source)
+        try context.save()
+        try InspirationShapePersistenceCoordinator.stage(
+            inspirationResult,
+            on: source,
+            context: context
+        )
+
+        var draft = InspirationEditableIdea(result: inspirationResult)
+        draft.title = "My saved take on the reset"
+        draft.pillarID = pillar.id
+        let saved = try InspirationShapePersistenceCoordinator.persistEdits(
+            draft,
+            result: inspirationResult,
+            to: source,
+            context: context
+        )
+
+        let payload = try XCTUnwrap(source.shapePayloadJSON.data(using: .utf8))
+        let decoded = try JSONDecoder.agentCy.decode(InspirationShapeResultWire.self, from: payload)
+        XCTAssertEqual(saved, decoded)
+        XCTAssertEqual(decoded.idea.title, draft.title)
+        XCTAssertEqual(decoded.suggestedPillarId, pillar.id)
+        XCTAssertEqual(source.pillarID, pillar.id)
+        XCTAssertEqual(source.status, .ready)
+        XCTAssertNil(source.linkedBriefID)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
+    }
+
+    func testIncompleteManualSavedPostDraftRoundTripsWithoutCreatingBrief() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let workspaceID = UUID()
+        let pillar = Pillar(name: "Behind the Scenes", colorHex: "D22630")
+        pillar.workspaceID = workspaceID
+        let source = InspirationSource(
+            workspaceID: workspaceID,
+            canonicalURLString: "https://example.com/unfinished-reference",
+            platform: .web,
+            status: .pending
+        )
+        context.insert(pillar)
+        context.insert(source)
+        try context.save()
+        let draft = ManualInspirationIdeaDraft(
+            premise: "Tell the story from my own experience.",
+            pillarID: pillar.id
+        )
+
+        let saved = try InspirationShapePersistenceCoordinator.persistManualDraft(
+            draft,
+            to: source,
+            context: context
+        )
+        let restored = InspirationShapePersistenceCoordinator.manualDraft(for: source)
+
+        XCTAssertEqual(saved, restored)
+        XCTAssertEqual(restored.premise, draft.premise)
+        XCTAssertTrue(restored.title.isEmpty)
+        XCTAssertEqual(restored.pillarID, pillar.id)
+        XCTAssertEqual(source.pillarID, pillar.id)
+        XCTAssertNil(source.linkedBriefID)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
+    }
+
     func testManualIdeaCreatesOneLinkedPostWithoutCyOrChangingTheReference() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext

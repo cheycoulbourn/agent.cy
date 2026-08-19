@@ -136,6 +136,35 @@ struct CyProUpsellView: View {
     }
 }
 
+/// The idea composer's optional platform and format tags. A format only makes
+/// sense under its platform, so the selection collapses whenever the platform
+/// no longer supports it.
+enum IdeaPlatformChoicePolicy {
+    static func availableFormats(
+        destinationID: UUID?,
+        formats: [PublishingFormat]
+    ) -> [PublishingFormat] {
+        guard let destinationID else { return [] }
+        return formats
+            .filter { $0.destinationID == destinationID && !$0.isArchived }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    static func normalizedSelection(
+        destinationID: UUID?,
+        formatID: UUID?,
+        destinations: [PublishingDestination],
+        formats: [PublishingFormat]
+    ) -> (destinationID: UUID?, formatID: UUID?) {
+        guard let destinationID,
+              destinations.contains(where: { $0.id == destinationID && !$0.isArchived })
+        else { return (nil, nil) }
+        let formatID = availableFormats(destinationID: destinationID, formats: formats)
+            .first { $0.id == formatID }?.id
+        return (destinationID, formatID)
+    }
+}
+
 @MainActor
 struct QuickCaptureView: View {
     private enum CaptureKind: String, CaseIterable, Identifiable {
@@ -149,6 +178,19 @@ struct QuickCaptureView: View {
         case post
         case focus
     }
+
+#if targetEnvironment(macCatalyst)
+    private enum DesktopInlinePicker: Hashable {
+        case ideaPillar
+        case ideaPlatform
+        case ideaFormat
+        case taskFocus
+        case taskPillar
+        case taskPriority
+        case taskDue
+        case taskRecurrence
+    }
+#endif
 
     private let onExit: (() -> Void)?
 
@@ -165,6 +207,8 @@ struct QuickCaptureView: View {
     @State private var ideaTitle = ""
     @State private var ideaNotes = ""
     @State private var ideaPillarID: UUID?
+    @State private var ideaDestinationID: UUID?
+    @State private var ideaFormatID: UUID?
     @State private var postTitle = ""
     @State private var postNotes = ""
     @State private var postPillarID: UUID?
@@ -173,6 +217,7 @@ struct QuickCaptureView: View {
     @State private var postSocialAccountID: UUID?
     @State private var postDurationSeconds = ContentFormat.shortForm.defaultDuration
     @State private var postIncludesTime = false
+    @State private var hasPostTargetDate = false
     @State private var taskTitle = ""
     @State private var taskNotes = ""
     @State private var taskPillarID: UUID?
@@ -202,6 +247,9 @@ struct QuickCaptureView: View {
     @State private var showPostDevelopment = false
     @State private var showAccess = false
     @State private var selectedDetent: PresentationDetent = .large
+#if targetEnvironment(macCatalyst)
+    @State private var desktopInlinePicker: DesktopInlinePicker?
+#endif
     @FocusState private var focusedWritingField: WritingField?
 
     init(onExit: (() -> Void)? = nil) {
@@ -230,7 +278,7 @@ struct QuickCaptureView: View {
             if onExit == nil {
                 captureNavigation
                     .presentationDetents([.height(620), .large], selection: $selectedDetent)
-                    .presentationDragIndicator(.visible)
+                    .agentSheetDragIndicator()
             } else {
                 captureNavigation
             }
@@ -252,9 +300,12 @@ struct QuickCaptureView: View {
                             output: quickPostDraft.output,
                             contextLabel: "New post",
                             bottomActionClearance: AgentSpacing.x3,
+                            showsDesktopDetailRail: false,
                             onSpark: { showPostDevelopment = true }
                         )
                     }
+                    .frame(maxWidth: AgentQuickAddLayout.desktopEditorWidth, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
@@ -278,6 +329,8 @@ struct QuickCaptureView: View {
                         .padding(.horizontal, AgentLayout.pageMargin)
                         .padding(.top, AgentSpacing.x4)
                         .agentBottomNavigationClearance()
+                        .frame(maxWidth: AgentQuickAddLayout.desktopContentWidth, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .top)
                     }
                     .scrollDismissesKeyboard(.interactively)
                 }
@@ -300,34 +353,25 @@ struct QuickCaptureView: View {
                 }
                 .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .confirmationAction) {
-                    if !showingCySuggestions,
-                       kind == .spark || (kind == .task && quickTaskType == .focus) {
-                        Button {
+                    if !showingCySuggestions {
+                        HStack(spacing: AgentSpacing.x1) {
                             if kind == .spark {
-                                saveIdea()
-                            } else {
-                                saveTask()
+                                newIdeaSparkToolbarButton
                             }
-                        } label: {
-                            AgentIconView(.check, size: 15)
-                                .foregroundStyle(Color.agentPureBlack)
-                                .frame(width: 18, height: 18)
+                            if kind == .spark || (kind == .task && quickTaskType == .focus) {
+                                saveCaptureToolbarButton
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.circle)
-                        .controlSize(.large)
-                        .tint(Color(uiColor: AgentColorPalette.pureWhite.uiColor))
-                        .disabled(!canSaveToolbarItem)
-                        .opacity(canSaveToolbarItem ? 1 : 0.4)
-                        .accessibilityLabel(kind == .spark ? "Save idea" : "Save task")
                     }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
             .background(Color.agentCanvas.ignoresSafeArea())
             .foregroundStyle(Color.agentText)
             .task {
                 if let plannedDate = appModel.quickCaptureTargetDate {
                     targetDate = plannedDate
+                    hasPostTargetDate = true
                 }
                 if let suggestedPillarID = appModel.quickCapturePillarID,
                    pillars.contains(where: { $0.id == suggestedPillarID && !$0.isArchived }) {
@@ -389,11 +433,13 @@ struct QuickCaptureView: View {
             .sheet(isPresented: $showPostDevelopment) {
                 if let quickPostDraft {
                     DevelopBriefView(brief: quickPostDraft.brief, output: quickPostDraft.output)
+                        .agentDesktopWorkspaceModal()
                 }
             }
             .sheet(isPresented: $showAccess) {
                 NavigationStack { AccessSettingsView() }
                     .presentationDetents([.large])
+                    .agentDesktopWorkspaceModal()
             }
             .sheet(isPresented: $showTaskDueDatePicker) {
                 CaptureTaskDueDateSheet(
@@ -402,6 +448,7 @@ struct QuickCaptureView: View {
                     includesTime: $taskIncludesTime
                 )
                 .presentationDetents([.large])
+                .agentDesktopWorkspaceModal()
             }
             .sheet(isPresented: $showPostTaskCreation, onDismiss: {
                 if didSavePostTask {
@@ -414,7 +461,8 @@ struct QuickCaptureView: View {
                     didSavePostTask = true
                 }
                 .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .agentSheetDragIndicator()
+                .agentDesktopWorkspaceModal()
             }
         }
     }
@@ -430,32 +478,52 @@ struct QuickCaptureView: View {
 
             Spacer(minLength: AgentSpacing.x4)
 
-            if !showingCySuggestions,
-               kind == .spark || (kind == .task && quickTaskType == .focus) {
-                Button {
+            if !showingCySuggestions {
+                HStack(spacing: AgentSpacing.x1) {
                     if kind == .spark {
-                        saveIdea()
-                    } else {
-                        saveTask()
+                        newIdeaSparkToolbarButton
                     }
-                } label: {
-                    Text(kind == .spark ? "Save idea" : "Save task")
-                        .font(.agentSubtext.weight(.semibold))
-                        .foregroundStyle(Color.onCyAccent)
-                        .padding(.horizontal, AgentSpacing.x4)
-                        .frame(minHeight: 40)
-                        .background(Color.cyAccent, in: .capsule)
+                    if kind == .spark || (kind == .task && quickTaskType == .focus) {
+                        saveCaptureToolbarButton
+                    }
                 }
-                .buttonStyle(AgentPressButtonStyle())
-                .disabled(!canSaveToolbarItem)
-                .opacity(canSaveToolbarItem ? 1 : 0.42)
             }
         }
-        .padding(.horizontal, AgentSpacing.x6)
-        .frame(height: 64)
-        .background(.ultraThinMaterial)
-        .shadow(color: Color.agentPureBlack.opacity(0.045), radius: 10, y: 5)
+        .padding(.horizontal, AgentSpacing.x5)
+        .agentQuickAddHeaderSurface()
         .zIndex(1)
+    }
+
+    private var newIdeaSparkToolbarButton: some View {
+        Button {
+            Task { await loadIdeas() }
+        } label: {
+            CyAsterisk(color: .cyAccent, size: 16, strokeWidth: 1.5)
+                .frame(width: 18, height: 18)
+                .frame(width: 44, height: 44)
+                .glassEffect(.clear.interactive(), in: .circle)
+                .overlay {
+                    Circle().stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
+                }
+                .contentShape(.circle)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityLabel("Spark new ideas")
+        .accessibilityHint("Asks Cy for three ideas")
+    }
+
+    private var saveCaptureToolbarButton: some View {
+        AgentToolbarIconButton(
+            title: kind == .spark ? "Save idea" : "Save task",
+            icon: .check,
+            isEnabled: canSaveToolbarItem
+        ) {
+            if kind == .spark {
+                saveIdea()
+            } else {
+                saveTask()
+            }
+        }
     }
 
     private var captureKindRail: some View {
@@ -632,6 +700,12 @@ struct QuickCaptureView: View {
 
     private func friendlyCyFailureMessage(_ message: String) -> String {
         let normalized = message.lowercased()
+        // Credit and quota messages are actionable — the server's own words
+        // beat a generic apology (field-diagnosed 2026-08-19: exhausted
+        // provider credits surfaced as "couldn't finish the request").
+        if normalized.contains("credit") || normalized.contains("quota") {
+            return message
+        }
         if normalized.contains("ended before") || normalized.contains("complete result") {
             return "Cy’s response stopped early. Nothing was saved."
         }
@@ -643,27 +717,7 @@ struct QuickCaptureView: View {
 
     private var sparkComposer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
-            HStack {
-                MetaLabel("New idea")
-                Spacer()
-                Button {
-                    Task { await loadIdeas() }
-                } label: {
-                    HStack(spacing: AgentSpacing.x2) {
-                        CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
-                        Text("Spark")
-                    }
-                    .font(.agentSubtext.weight(.semibold))
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 40)
-                    .foregroundStyle(Color.cyAccent)
-                    .background(Color.cyAccent.opacity(0.06), in: .capsule)
-                    .overlay(Capsule().stroke(Color.cyAccent.opacity(0.18), lineWidth: 1))
-                    .shadow(color: Color.cyAccent.opacity(0.16), radius: 12, y: 4)
-                }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityHint("Asks Cy for three ideas")
-            }
+            MetaLabel("New idea")
 
             TextField("Idea title", text: $ideaTitle, axis: .vertical)
                 .font(.paperInter(size: 28, weight: .bold, relativeTo: .title))
@@ -671,6 +725,43 @@ struct QuickCaptureView: View {
                 .lineLimit(1...3)
 
             VStack(spacing: 0) {
+#if targetEnvironment(macCatalyst)
+                Button {
+                    toggleDesktopPicker(.ideaPillar)
+                } label: {
+                    IdeaCaptureSetupRow(
+                        label: "Pillar",
+                        value: selectedIdeaPillar?.name ?? "No pillar",
+                        color: selectedIdeaPillar.map {
+                            Color(agentHex: $0.resolvedColorHex(in: activePillars))
+                        },
+                        trailingIcon: desktopInlinePicker == .ideaPillar ? .collapse : .expand
+                    )
+                }
+                .buttonStyle(.plain)
+
+                if desktopInlinePicker == .ideaPillar {
+                    desktopChoicePanel {
+                        desktopChoiceRow(
+                            title: "No pillar",
+                            isSelected: ideaPillarID == nil
+                        ) {
+                            ideaPillarID = nil
+                            desktopInlinePicker = nil
+                        }
+                        ForEach(activePillars) { pillar in
+                            desktopChoiceRow(
+                                title: pillar.name,
+                                color: Color(agentHex: pillar.resolvedColorHex(in: activePillars)),
+                                isSelected: ideaPillarID == pillar.id
+                            ) {
+                                ideaPillarID = pillar.id
+                                desktopInlinePicker = nil
+                            }
+                        }
+                    }
+                }
+#else
                 Menu {
                     Button("No pillar") { ideaPillarID = nil }
                     ForEach(activePillars) { pillar in
@@ -693,6 +784,109 @@ struct QuickCaptureView: View {
                         }
                     )
                 }
+#endif
+
+#if targetEnvironment(macCatalyst)
+                Button {
+                    toggleDesktopPicker(.ideaPlatform)
+                } label: {
+                    IdeaCaptureSetupRow(
+                        label: "Platform",
+                        value: selectedIdeaDestination?.name ?? "No platform",
+                        trailingIcon: desktopInlinePicker == .ideaPlatform ? .collapse : .expand
+                    )
+                }
+                .buttonStyle(.plain)
+
+                if desktopInlinePicker == .ideaPlatform {
+                    desktopChoicePanel {
+                        desktopChoiceRow(
+                            title: "No platform",
+                            isSelected: ideaDestinationID == nil
+                        ) {
+                            selectIdeaDestination(nil)
+                            desktopInlinePicker = nil
+                        }
+                        ForEach(activeIdeaDestinations) { destination in
+                            desktopChoiceRow(
+                                title: destination.name,
+                                isSelected: ideaDestinationID == destination.id
+                            ) {
+                                selectIdeaDestination(destination.id)
+                                desktopInlinePicker = nil
+                            }
+                        }
+                    }
+                }
+
+                if ideaDestinationID != nil {
+                    Button {
+                        toggleDesktopPicker(.ideaFormat)
+                    } label: {
+                        IdeaCaptureSetupRow(
+                            label: "Format",
+                            value: selectedIdeaFormat?.name ?? "No format",
+                            trailingIcon: desktopInlinePicker == .ideaFormat ? .collapse : .expand
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if desktopInlinePicker == .ideaFormat {
+                        desktopChoicePanel {
+                            desktopChoiceRow(
+                                title: "No format",
+                                isSelected: ideaFormatID == nil
+                            ) {
+                                ideaFormatID = nil
+                                desktopInlinePicker = nil
+                            }
+                            ForEach(ideaAvailableFormats) { format in
+                                desktopChoiceRow(
+                                    title: format.name,
+                                    isSelected: ideaFormatID == format.id
+                                ) {
+                                    ideaFormatID = format.id
+                                    desktopInlinePicker = nil
+                                }
+                            }
+                        }
+                    }
+                }
+#else
+                Menu {
+                    Button("No platform") { selectIdeaDestination(nil) }
+                    ForEach(activeIdeaDestinations) { destination in
+                        Button {
+                            selectIdeaDestination(destination.id)
+                        } label: {
+                            Text(ideaDestinationID == destination.id ? "\(destination.name) ✓" : destination.name)
+                        }
+                    }
+                } label: {
+                    IdeaCaptureSetupRow(
+                        label: "Platform",
+                        value: selectedIdeaDestination?.name ?? "No platform"
+                    )
+                }
+
+                if ideaDestinationID != nil {
+                    Menu {
+                        Button("No format") { ideaFormatID = nil }
+                        ForEach(ideaAvailableFormats) { format in
+                            Button {
+                                ideaFormatID = format.id
+                            } label: {
+                                Text(ideaFormatID == format.id ? "\(format.name) ✓" : format.name)
+                            }
+                        }
+                    } label: {
+                        IdeaCaptureSetupRow(
+                            label: "Format",
+                            value: selectedIdeaFormat?.name ?? "No format"
+                        )
+                    }
+                }
+#endif
             }
             .overlay(alignment: .top) {
                 Rectangle().fill(Color.agentText.opacity(0.08)).frame(height: 1)
@@ -720,6 +914,77 @@ struct QuickCaptureView: View {
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
     private var selectedIdeaPillar: Pillar? { activePillars.first { $0.id == ideaPillarID } }
     private var selectedTaskPillar: Pillar? { activePillars.first { $0.id == taskPillarID } }
+
+    private var activeIdeaDestinations: [PublishingDestination] { destinations.filter { !$0.isArchived } }
+    private var selectedIdeaDestination: PublishingDestination? {
+        activeIdeaDestinations.first { $0.id == ideaDestinationID }
+    }
+    private var ideaAvailableFormats: [PublishingFormat] {
+        IdeaPlatformChoicePolicy.availableFormats(destinationID: ideaDestinationID, formats: formats)
+    }
+    private var selectedIdeaFormat: PublishingFormat? {
+        ideaAvailableFormats.first { $0.id == ideaFormatID }
+    }
+
+    private func selectIdeaDestination(_ destinationID: UUID?) {
+        let selection = IdeaPlatformChoicePolicy.normalizedSelection(
+            destinationID: destinationID,
+            formatID: ideaFormatID,
+            destinations: destinations,
+            formats: formats
+        )
+        ideaDestinationID = selection.destinationID
+        ideaFormatID = selection.formatID
+    }
+
+#if targetEnvironment(macCatalyst)
+    private func toggleDesktopPicker(_ picker: DesktopInlinePicker) {
+        desktopInlinePicker = desktopInlinePicker == picker ? nil : picker
+    }
+
+    private func desktopChoicePanel<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 0) {
+            content()
+        }
+        .padding(.vertical, AgentSpacing.x1)
+        .background(Color.agentSelectionFill)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
+    }
+
+    private func desktopChoiceRow(
+        title: String,
+        color: Color? = nil,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: AgentSpacing.x3) {
+                if let color {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 8, height: 8)
+                }
+                Text(title)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentText)
+                Spacer(minLength: AgentSpacing.x3)
+                if isSelected {
+                    AgentIconView(.check, size: 12)
+                        .foregroundStyle(Color.agentText)
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(minHeight: 42)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .agentHoverRow(cornerRadius: 0)
+    }
+#endif
 
     private var cyIdeaDirections: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
@@ -927,6 +1192,31 @@ struct QuickCaptureView: View {
                     if let taskFocusAssignment {
                         IdeaCaptureSetupRow(label: "Focus", value: taskFocusAssignment.title)
                     } else {
+#if targetEnvironment(macCatalyst)
+                        Button {
+                            toggleDesktopPicker(.taskFocus)
+                        } label: {
+                            IdeaCaptureSetupRow(
+                                label: "Focus",
+                                value: taskKind.title,
+                                trailingIcon: desktopInlinePicker == .taskFocus ? .collapse : .expand
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        if desktopInlinePicker == .taskFocus {
+                            desktopChoicePanel {
+                                ForEach(CreatorTaskKind.allCases) { kind in
+                                    desktopChoiceRow(
+                                        title: kind.title,
+                                        isSelected: taskKind == kind
+                                    ) {
+                                        taskKind = kind
+                                        desktopInlinePicker = nil
+                                    }
+                                }
+                            }
+                        }
+#else
                         Menu {
                             ForEach(CreatorTaskKind.allCases) { kind in
                                 Button(kind.title) { taskKind = kind }
@@ -934,8 +1224,45 @@ struct QuickCaptureView: View {
                         } label: {
                             IdeaCaptureSetupRow(label: "Focus", value: taskKind.title)
                         }
+#endif
                     }
                 } else {
+#if targetEnvironment(macCatalyst)
+                    Button {
+                        toggleDesktopPicker(.taskPillar)
+                    } label: {
+                        IdeaCaptureSetupRow(
+                            label: "Pillar",
+                            value: selectedTaskPillar?.name ?? "No pillar",
+                            color: selectedTaskPillar.map {
+                                Color(agentHex: $0.resolvedColorHex(in: activePillars))
+                            },
+                            trailingIcon: desktopInlinePicker == .taskPillar ? .collapse : .expand
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    if desktopInlinePicker == .taskPillar {
+                        desktopChoicePanel {
+                            desktopChoiceRow(
+                                title: "No pillar",
+                                isSelected: taskPillarID == nil
+                            ) {
+                                taskPillarID = nil
+                                desktopInlinePicker = nil
+                            }
+                            ForEach(activePillars) { pillar in
+                                desktopChoiceRow(
+                                    title: pillar.name,
+                                    color: Color(agentHex: pillar.resolvedColorHex(in: activePillars)),
+                                    isSelected: taskPillarID == pillar.id
+                                ) {
+                                    taskPillarID = pillar.id
+                                    desktopInlinePicker = nil
+                                }
+                            }
+                        }
+                    }
+#else
                     Menu {
                         Button("No pillar") { taskPillarID = nil }
                         ForEach(activePillars) { pillar in
@@ -958,8 +1285,34 @@ struct QuickCaptureView: View {
                             }
                         )
                     }
+#endif
                 }
 
+#if targetEnvironment(macCatalyst)
+                Button {
+                    toggleDesktopPicker(.taskPriority)
+                } label: {
+                    IdeaCaptureSetupRow(
+                        label: "Priority",
+                        value: taskPriority.title,
+                        trailingIcon: desktopInlinePicker == .taskPriority ? .collapse : .expand
+                    )
+                }
+                .buttonStyle(.plain)
+                if desktopInlinePicker == .taskPriority {
+                    desktopChoicePanel {
+                        ForEach(TaskPriority.selectableCases) { priority in
+                            desktopChoiceRow(
+                                title: priority.title,
+                                isSelected: taskPriority == priority
+                            ) {
+                                taskPriority = priority
+                                desktopInlinePicker = nil
+                            }
+                        }
+                    }
+                }
+#else
                 Menu {
                     ForEach(TaskPriority.selectableCases) { priority in
                         Button(priority.title) { taskPriority = priority }
@@ -967,15 +1320,57 @@ struct QuickCaptureView: View {
                 } label: {
                     IdeaCaptureSetupRow(label: "Priority", value: taskPriority.title)
                 }
+#endif
 
+#if targetEnvironment(macCatalyst)
+                Button {
+                    toggleDesktopPicker(.taskDue)
+                } label: {
+                    IdeaCaptureSetupRow(
+                        label: "Due",
+                        value: taskDueDateLabel,
+                        trailingIcon: desktopInlinePicker == .taskDue ? .collapse : .expand
+                    )
+                }
+                .buttonStyle(.plain)
+                if desktopInlinePicker == .taskDue {
+                    desktopTaskDueEditor
+                }
+#else
                 Button {
                     showTaskDueDatePicker = true
                 } label: {
                     IdeaCaptureSetupRow(label: "Due", value: taskDueDateLabel)
                 }
                 .buttonStyle(.plain)
+#endif
 
                 if taskLane == .production {
+#if targetEnvironment(macCatalyst)
+                    Button {
+                        toggleDesktopPicker(.taskRecurrence)
+                    } label: {
+                        IdeaCaptureSetupRow(
+                            label: "Repeat",
+                            value: taskRecurrence.title,
+                            trailingIcon: desktopInlinePicker == .taskRecurrence ? .collapse : .expand
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    if desktopInlinePicker == .taskRecurrence {
+                        desktopChoicePanel {
+                            ForEach(TaskRecurrenceFrequency.allCases) { recurrence in
+                                desktopChoiceRow(
+                                    title: recurrence.title,
+                                    isSelected: taskRecurrence == recurrence
+                                ) {
+                                    taskRecurrence = recurrence
+                                    desktopInlinePicker = nil
+                                }
+                            }
+                        }
+                    }
+#else
                     Menu {
                         ForEach(TaskRecurrenceFrequency.allCases) { recurrence in
                             Button(recurrence.title) { taskRecurrence = recurrence }
@@ -983,6 +1378,7 @@ struct QuickCaptureView: View {
                     } label: {
                         IdeaCaptureSetupRow(label: "Repeat", value: taskRecurrence.title)
                     }
+#endif
                 }
             }
             .overlay(alignment: .top) {
@@ -1015,6 +1411,119 @@ struct QuickCaptureView: View {
             if lane != .production { taskRecurrence = .none }
         }
     }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopTaskDueEditor: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            PillarCalendarDatePicker(
+                date: $targetDate,
+                pillarMarkers: [],
+                cellHeight: 38,
+                dayDiameter: 32
+            )
+
+            if taskIncludesTime {
+                HStack(alignment: .top, spacing: AgentSpacing.x4) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                        MetaLabel("Time")
+                        Text(targetDate.formatted(date: .omitted, time: .shortened))
+                            .font(.agentTitle)
+                            .monospacedDigit()
+                    }
+                    Spacer(minLength: AgentSpacing.x4)
+                    desktopTaskTimeAdjustment(
+                        title: "Hour",
+                        value: String(format: "%02d", Calendar.current.component(.hour, from: targetDate)),
+                        component: .hour
+                    )
+                    desktopTaskTimeAdjustment(
+                        title: "Minute",
+                        value: String(format: "%02d", Calendar.current.component(.minute, from: targetDate)),
+                        component: .minute
+                    )
+                }
+            }
+
+            HStack(spacing: AgentSpacing.x3) {
+                Toggle("Include a time", isOn: $taskIncludesTime)
+                    .font(.agentSubtext.weight(.semibold))
+                    .tint(Color.actionAccent)
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                Button("Remove") {
+                    addTarget = false
+                    taskIncludesTime = false
+                    desktopInlinePicker = nil
+                }
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentDestructive)
+                .buttonStyle(.plain)
+
+                Button("Set date") {
+                    addTarget = true
+                    desktopInlinePicker = nil
+                }
+                .font(.agentSubtext.weight(.semibold))
+                .foregroundStyle(Color.onCyAccent)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(minHeight: 40)
+                .background(Color.cyAccent, in: .capsule)
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSelectionFill)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
+    }
+
+    private func desktopTaskTimeAdjustment(
+        title: String,
+        value: String,
+        component: Calendar.Component
+    ) -> some View {
+        HStack(spacing: AgentSpacing.x2) {
+            Button {
+                adjustTaskTime(component, by: -1)
+            } label: {
+                Text("−")
+                    .font(.agentSubtext.weight(.semibold))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .background(Color.agentSurface, in: .circle)
+            .overlay(Circle().stroke(Color.agentBorder, lineWidth: 1))
+
+            VStack(spacing: 1) {
+                Text(value)
+                    .font(.agentSubtext.weight(.semibold))
+                    .monospacedDigit()
+                Text(title)
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            .frame(minWidth: 42)
+
+            Button {
+                adjustTaskTime(component, by: 1)
+            } label: {
+                Text("+")
+                    .font(.agentSubtext.weight(.semibold))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .background(Color.agentSurface, in: .circle)
+            .overlay(Circle().stroke(Color.agentBorder, lineWidth: 1))
+        }
+    }
+
+    private func adjustTaskTime(_ component: Calendar.Component, by value: Int) {
+        guard let adjustedDate = Calendar.current.date(byAdding: component, value: value, to: targetDate) else { return }
+        targetDate = adjustedDate
+    }
+#endif
 
     private func saveTask() {
         if let task = appModel.createTask(
@@ -1111,14 +1620,26 @@ struct QuickCaptureView: View {
                 AgentDurationPicker(seconds: $postDurationSeconds, format: contentFormat)
             }
 
-            DatePicker("Date", selection: $targetDate, displayedComponents: .date)
+            DatePicker(
+                "Scheduled",
+                selection: Binding(
+                    get: { targetDate },
+                    set: { newDate in
+                        targetDate = newDate
+                        hasPostTargetDate = true
+                    }
+                ),
+                displayedComponents: .date
+            )
 
-            Toggle("Include a time", isOn: $postIncludesTime)
-                .font(.agentBody.weight(.semibold))
-                .tint(Color.actionAccent)
+            if hasPostTargetDate {
+                Toggle("Include a time", isOn: $postIncludesTime)
+                    .font(.agentBody.weight(.semibold))
+                    .tint(Color.actionAccent)
 
-            if postIncludesTime {
-                DatePicker("Time", selection: $targetDate, displayedComponents: .hourAndMinute)
+                if postIncludesTime {
+                    DatePicker("Time", selection: $targetDate, displayedComponents: .hourAndMinute)
+                }
             }
 
             Button {
@@ -1254,12 +1775,20 @@ struct QuickCaptureView: View {
             return
         }
         let notes = ideaNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let platformChoice = IdeaPlatformChoicePolicy.normalizedSelection(
+            destinationID: ideaDestinationID,
+            formatID: ideaFormatID,
+            destinations: destinations,
+            formats: formats
+        )
         savedBrief = appModel.createSpark(
             text: notes.isEmpty ? title : notes,
             source: .text,
             title: title,
             notes: notes,
             pillarID: ideaPillarID,
+            preferredDestinationID: platformChoice.destinationID,
+            preferredFormatID: platformChoice.formatID,
             targetDate: appModel.quickCaptureTargetDate,
             context: context
         )
@@ -1301,10 +1830,18 @@ struct QuickCaptureView: View {
         let title = ideaTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         let notes = ideaNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let platformChoice = IdeaPlatformChoicePolicy.normalizedSelection(
+            destinationID: ideaDestinationID,
+            formatID: ideaFormatID,
+            destinations: destinations,
+            formats: formats
+        )
         savedBrief.title = title
         savedBrief.notes = notes
         savedBrief.premise = notes.isEmpty ? title : notes
         savedBrief.pillarID = ideaPillarID
+        savedBrief.preferredDestinationID = platformChoice.destinationID
+        savedBrief.preferredFormatID = platformChoice.formatID
         savedBrief.updatedAt = Date()
         try? context.save()
     }
@@ -1319,8 +1856,8 @@ struct QuickCaptureView: View {
             formatID: postFormatID,
             socialAccountID: postSocialAccountID,
             durationSeconds: postDurationSeconds,
-            targetDate: targetDate,
-            includesTargetTime: postIncludesTime,
+            targetDate: hasPostTargetDate ? targetDate : nil,
+            includesTargetTime: hasPostTargetDate && postIncludesTime,
             context: context
         )
         didSavePost = savedBrief != nil
@@ -1336,8 +1873,8 @@ struct QuickCaptureView: View {
             formatID: postFormatID,
             socialAccountID: postSocialAccountID,
             durationSeconds: postDurationSeconds,
-            targetDate: targetDate,
-            includesTargetTime: postIncludesTime,
+            targetDate: hasPostTargetDate ? targetDate : nil,
+            includesTargetTime: hasPostTargetDate && postIncludesTime,
             context: context
         ) else { return }
 
@@ -1415,8 +1952,8 @@ struct QuickCaptureView: View {
                 formatID: postFormatID,
                 socialAccountID: postSocialAccountID,
                 durationSeconds: postDurationSeconds,
-                targetDate: targetDate,
-                includesTargetTime: postIncludesTime,
+                targetDate: hasPostTargetDate ? targetDate : nil,
+                includesTargetTime: hasPostTargetDate && postIncludesTime,
                 context: context
             ) != nil
         }
@@ -1476,7 +2013,7 @@ struct DraftSubtaskComposer: View {
             }
 
             if isAddingSubtask {
-                HStack(spacing: AgentSpacing.x2) {
+                HStack(alignment: AgentTaskCheckboxMetrics.rowAlignment, spacing: AgentSpacing.x2) {
                     AgentTaskCheckboxPlaceholder()
 
                     PersistentSubmitTextField(
@@ -1518,7 +2055,7 @@ struct DraftCaptureSubtaskRow: View {
     @Binding var subtask: DraftCaptureSubtask
 
     var body: some View {
-        HStack(spacing: AgentSpacing.x3) {
+        HStack(alignment: AgentTaskCheckboxMetrics.rowAlignment, spacing: AgentSpacing.x3) {
             AgentTaskCheckbox(
                 isCompleted: subtask.isCompleted,
                 color: Color.agentText,
@@ -1653,11 +2190,14 @@ private struct IdeaCaptureSetupRow: View {
     let label: String
     let value: String
     var color: Color?
+    var trailingIcon: AgentIcon = .forward
 
     var body: some View {
         HStack(spacing: 14) {
+            // Wide enough for the longest tracked label ("PLATFORM",
+            // "PRIORITY") on device — 68 wrapped the final letter.
             MetaLabel(label)
-                .frame(width: 68, alignment: .leading)
+                .frame(width: 92, alignment: .leading)
             HStack(spacing: AgentSpacing.x2) {
                 if let color {
                     Circle().fill(color).frame(width: 8, height: 8)
@@ -1667,7 +2207,7 @@ private struct IdeaCaptureSetupRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: AgentSpacing.x2)
-            AgentIconView(.forward, size: 12)
+            AgentIconView(trailingIcon, size: 12)
         }
         .foregroundStyle(Color.agentText)
         .frame(maxWidth: .infinity, minHeight: 58)

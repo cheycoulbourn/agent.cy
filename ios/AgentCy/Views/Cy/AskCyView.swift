@@ -1,6 +1,36 @@
 import SwiftData
 import SwiftUI
-import UIKit
+
+enum MCPReviewLayoutPolicy {
+    static func usesSplitView(availableWidth: CGFloat) -> Bool {
+        availableWidth >= 900
+    }
+}
+
+struct MCPReviewRefreshableScrollView<Content: View>: View {
+    let showsIndicators: Bool
+    let refresh: () async -> Void
+    private let content: Content
+
+    init(
+        showsIndicators: Bool = true,
+        refresh: @escaping () async -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.showsIndicators = showsIndicators
+        self.refresh = refresh
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView(showsIndicators: showsIndicators) {
+            content
+        }
+        .refreshable {
+            await refresh()
+        }
+    }
+}
 
 private struct CyPlateItem: Identifiable {
     let id: String
@@ -41,7 +71,87 @@ enum CyChatActionPolicy {
         let text = "\(suggestion.label) \(suggestion.prompt)"
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
-        return text.contains("send to post") || text.contains("add to post")
+        return text.contains("create this post")
+            || text.contains("create post")
+            || text.contains("send to post")
+            || text.contains("add to post")
+    }
+}
+
+enum CyTopRailPresentationPolicy {
+    /// At accessibility sizes the inline rail truncates the availability
+    /// label; the status must stack under the kicker to stay readable.
+    static func stacksAvailability(for size: DynamicTypeSize) -> Bool {
+        size.isAccessibilitySize
+    }
+}
+
+enum CyConversationScopePolicy {
+    /// Cy may only display and write into a conversation owned by the active
+    /// workspace. Returns the current thread when it still qualifies, the
+    /// newest open in-scope conversation otherwise, or nil when the caller
+    /// must create a fresh thread for this workspace.
+    static func resolvedThread(
+        current: ConversationThread?,
+        threads: [ConversationThread],
+        activeWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> ConversationThread? {
+        func qualifies(_ thread: ConversationThread) -> Bool {
+            !thread.isArchived &&
+                thread.briefID == nil &&
+                thread.contextKind == .none &&
+                WorkspaceScope.includes(
+                    thread.workspaceID,
+                    activeWorkspaceID: activeWorkspaceID,
+                    workspaces: workspaces
+                )
+        }
+        if let current, qualifies(current) { return current }
+        return threads.first(where: qualifies)
+    }
+}
+
+enum CyBriefReferencePolicy {
+    static func explicitlyReferencedBrief(
+        in message: String,
+        briefs: [CreativeBrief]
+    ) -> CreativeBrief? {
+        let normalizedMessage = normalized(message)
+        return briefs.first { brief in
+            let title = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard title.count >= 3 else { return false }
+            return normalizedMessage.contains(normalized(title))
+        }
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: .current
+        )
+    }
+}
+
+enum CyPostCreationPolicy {
+    static func canCreate(
+        actionKind: ChatProposedActionKindWire?,
+        referencedBriefID: UUID?,
+        alreadyCreated: Bool
+    ) -> Bool {
+        guard !alreadyCreated else { return false }
+        switch actionKind {
+        case .developSpark:
+            return true
+        case .reviseBrief:
+            return referencedBriefID != nil
+        default:
+            return false
+        }
+    }
+
+    static func shouldCopySource(actionKind: ChatProposedActionKindWire?) -> Bool {
+        actionKind == .reviseBrief
     }
 }
 
@@ -216,7 +326,7 @@ enum CyMarkdownParser {
             } else if let bullet = prefixedText(in: line, prefixes: ["- ", "* ", "• "]) {
                 flushParagraph()
                 append(.bullet, bullet)
-            } else if let numbered = numberedText(in: line) {
+            } else if let numbered = numberedText(in: line) ?? emphasizedNumberedText(in: line) {
                 flushParagraph()
                 append(.numbered(marker: numbered.marker), numbered.text)
             } else if line.hasPrefix("> ") {
@@ -265,6 +375,65 @@ enum CyMarkdownParser {
         let textStart = line.index(after: separator)
         guard textStart < line.endIndex, line[textStart] == " " else { return nil }
         return (String(marker), String(line[line.index(after: textStart)...]))
+    }
+
+    private static func emphasizedNumberedText(in line: String) -> (marker: String, text: String)? {
+        // Some providers occasionally put the opening bold marker before the
+        // list number (`**2. Title`) instead of after it (`2. **Title**`).
+        // Recover the list structure and move a matching closing marker back
+        // around the title. If there is no match, prefer clean readable text
+        // over exposing raw Markdown punctuation.
+        guard line.hasPrefix("**"),
+              let numbered = numberedText(in: String(line.dropFirst(2))) else {
+            return nil
+        }
+
+        var text = numbered.text
+        if !text.hasPrefix("**"), text.contains("**") {
+            text = "**" + text
+        } else if !text.contains("**") {
+            text = emphasizeLeadingQuotedTitle(in: text)
+        }
+        return (numbered.marker, CyInlineMarkdownSanitizer.readable(text))
+    }
+
+    private static func emphasizeLeadingQuotedTitle(in text: String) -> String {
+        guard let openingQuote = text.first,
+              openingQuote == "\"" || openingQuote == "“" else {
+            return text
+        }
+        let closingQuote: Character = openingQuote == "“" ? "”" : "\""
+        let afterOpening = text.index(after: text.startIndex)
+        guard let quoteEnd = text[afterOpening...].firstIndex(of: closingQuote) else {
+            return text
+        }
+
+        var titleEnd = text.index(after: quoteEnd)
+        var scan = titleEnd
+        while scan < text.endIndex, text[scan].isWhitespace {
+            scan = text.index(after: scan)
+        }
+        if scan < text.endIndex,
+           text[scan] == "(",
+           let closingParenthesis = text[scan...].firstIndex(of: ")") {
+            titleEnd = text.index(after: closingParenthesis)
+        }
+
+        return "**\(text[..<titleEnd])**\(text[titleEnd...])"
+    }
+}
+
+enum CyInlineMarkdownSanitizer {
+    static func readable(_ source: String) -> String {
+        var result = source
+        for delimiter in ["**", "__"] where occurrenceCount(of: delimiter, in: result) % 2 != 0 {
+            result = result.replacingOccurrences(of: delimiter, with: "")
+        }
+        return result
+    }
+
+    private static func occurrenceCount(of delimiter: String, in source: String) -> Int {
+        source.components(separatedBy: delimiter).count - 1
     }
 }
 
@@ -339,11 +508,13 @@ struct CyMarkdownResponseView: View {
     }
 
     private func inlineMarkdown(_ text: String) -> AttributedString {
+        let readableText = CyInlineMarkdownSanitizer.readable(text)
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        return (try? AttributedString(markdown: readableText, options: options))
+            ?? AttributedString(readableText)
     }
 }
 
@@ -361,12 +532,14 @@ struct AskCyView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \ConversationThread.updatedAt, order: .reverse) private var allThreads: [ConversationThread]
     @Query(sort: \ConversationMessage.createdAt) private var allMessages: [ConversationMessage]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query private var allOutputs: [PlatformOutput]
     @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
     @Query private var allPillars: [Pillar]
+    @Query private var allSeriesRecords: [ContentSeries]
     @Query private var profiles: [CreatorProfile]
     @Query private var subscriptions: [SubscriptionState]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
@@ -375,12 +548,18 @@ struct AskCyView: View {
     @State private var isSending = false
     @State private var pendingReviews: [MCPBridgeChangeRequest] = []
     @State private var reviewingRequest: MCPBridgeChangeRequest?
+    @State private var reviewingSeries: MCPSeriesReviewBundle?
     @State private var isSelectingReviews = false
     @State private var selectedReviewIDs: Set<UUID> = []
     @State private var isBatchReviewing = false
     @State private var batchDecisionToConfirm: BatchReviewDecision?
     @State private var reviewError: String?
     @State private var hasLoadedPendingReviews = false
+    @State private var isRefreshingReviews = false
+    @State private var lastReviewRefreshAt: Date?
+    @State private var desktopSelectedReviewID: UUID?
+    @State private var showsDesktopReviewWorkspace = false
+    @State private var refreshSpin: Double = 0
     @State private var showReviewCompletion = false
     @State private var showConversationHistory = false
     @State private var showProUpsell = false
@@ -388,6 +567,7 @@ struct AskCyView: View {
     @State private var cyAvailability: CyAvailabilityState = .unavailable
     @State private var sendTask: Task<Void, Never>?
     @State private var activeSendID: UUID?
+    @State private var activeSendThreadID: UUID?
     @State private var sentToPostMessageIDs: Set<UUID> = []
     @State private var postDraftToOpen: CyPostDraftRoute?
     @FocusState private var composerIsFocused: Bool
@@ -426,6 +606,22 @@ struct AskCyView: View {
         briefs.first { $0.status == .spark || $0.status == .developing }
     }
 
+    private func refreshPendingReviews() async {
+        guard !isRefreshingReviews else { return }
+        guard MCPBridgePreferences.isConnected else {
+            clearPendingReviews()
+            return
+        }
+        isRefreshingReviews = true
+        defer { isRefreshingReviews = false }
+        let requests = await Task.detached(priority: .utility) {
+            try? await MCPBridgeService.refreshPendingRequests()
+        }.value
+        guard let requests else { return }
+        applyPendingReviews(requests)
+        lastReviewRefreshAt = Date()
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             topRail
@@ -433,21 +629,68 @@ struct AskCyView: View {
                 .padding(.top, AgentSpacing.x8)
                 .padding(.bottom, AgentSpacing.x4)
 
+            // The header and the content below it were separated only by a
+            // fill change, which reads as one surface. A hairline gives the
+            // two sections a real boundary.
+            Rectangle()
+                .fill(Color.agentHairline)
+                .frame(height: 1)
+
             if showReviewCompletion {
                 reviewCompletionContent
+            } else if showsDesktopReviewWorkspace {
+                // Rendered inside Cy's own surface: stacking a second sheet on
+                // top of this modal left no clear way back out.
+                MCPDesktopReviewView(
+                    requests: pendingReviews,
+                    onClose: { showsDesktopReviewWorkspace = false },
+                    onQueueChanged: { Task { await refreshPendingReviews() } }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if pendingReviews.isEmpty {
                 conversationContent
             } else {
+                // Desktop keeps the conversation. A queue used to replace the
+                // whole feed, so Cy was unusable until every item was cleared.
+                // Reviews are opened deliberately from the banner instead.
+                #if targetEnvironment(macCatalyst)
+                conversationContent
+                #else
                 pendingReviewContent
+                #endif
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if showsConversation { composer }
+            VStack(spacing: 0) {
+                #if targetEnvironment(macCatalyst)
+                if !pendingReviews.isEmpty, !showReviewCompletion, !showsDesktopReviewWorkspace {
+                    desktopReviewBanner
+                }
+                #endif
+                if showsConversation { composer }
+            }
         }
+
         .toolbar(.hidden, for: .navigationBar)
+        #if targetEnvironment(macCatalyst)
+        // Only the review workspace needs the wider footprint; chat keeps the
+        // standard one so the extra width does not read as empty space.
+        //
+        // Same shape as the creation hub: the content lays out once at its
+        // target size with animation suppressed, and the cheap outer frame
+        // animates over it. Animating the content frame relayouts the whole
+        // sidebar and detail pane every frame, which is what stuttered.
+        .frame(width: desktopModalWidth, height: DesktopLayoutPolicy.workspaceModalMetrics.height)
+        .transaction { $0.animation = nil }
+        .frame(width: desktopModalWidth, height: DesktopLayoutPolicy.workspaceModalMetrics.height)
+        .animation(
+            reduceMotion ? nil : AgentModalResize.animation,
+            value: showsDesktopReviewWorkspace
+        )
+        #endif
         .task {
             loadThread()
-            reloadPendingReviews()
+            await refreshPendingReviews()
             if let pending = appModel.pendingCyPrompt {
                 prompt = pending
                 appModel.pendingCyPrompt = nil
@@ -461,12 +704,7 @@ struct AskCyView: View {
                 // the main thread stutters an in-flight scroll, so the poll
                 // fetches off-main and only applies results that changed.
                 if MCPBridgePreferences.isConnected {
-                    let requests = await Task.detached(priority: .utility) {
-                        try? MCPBridgeService.pendingRequests()
-                    }.value
-                    if let requests {
-                        applyPendingReviews(requests)
-                    }
+                    await refreshPendingReviews()
                 } else {
                     clearPendingReviews()
                 }
@@ -480,22 +718,40 @@ struct AskCyView: View {
             appModel.pendingCyPrompt = nil
             composerIsFocused = true
         }
+        .onChange(of: appModel.activeWorkspaceID) { _, _ in
+            // Conversations stay with their account: a workspace switch must
+            // re-resolve the thread or the transcript, sends, and the
+            // workspace-scoped history contradict each other.
+            loadThread()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .agentCyMCPInboxChanged)) { _ in
+            Task { await refreshPendingReviews() }
+        }
         .sheet(item: $reviewingRequest) { request in
             NavigationStack {
                 MCPBridgeRequestReviewView(
                     request: request,
                     approve: { reviewedRequest in
                         try MCPBridgeService.approve(reviewedRequest, context: context)
-                        reloadPendingReviews()
+                        Task { await refreshPendingReviews() }
                     },
-                    decline: {
-                        try MCPBridgeService.reject(request)
-                        reloadPendingReviews()
+                    decline: { declinedRequest, note in
+                        try MCPBridgeService.reject(declinedRequest, decisionNote: note)
+                        Task { await refreshPendingReviews() }
                     }
                 )
             }
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .agentSheetDragIndicator()
+        }
+        .sheet(item: $reviewingSeries) { bundle in
+            NavigationStack {
+                MCPSeriesReviewFlow(bundle: bundle) {
+                    Task { await refreshPendingReviews() }
+                }
+            }
+            .presentationDetents([.large])
+            .agentSheetDragIndicator()
         }
         .sheet(isPresented: $showConversationHistory) {
             CyConversationHistoryView(
@@ -506,7 +762,7 @@ struct AskCyView: View {
                 deleteThread: deleteThreadFromHistory
             )
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .agentSheetDragIndicator()
         }
         .sheet(item: $postDraftToOpen) { route in
             NavigationStack {
@@ -532,7 +788,7 @@ struct AskCyView: View {
                 .agentKeyboardDismissal()
             }
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .agentSheetDragIndicator()
         }
         .sheet(isPresented: $showProUpsell) {
             NavigationStack {
@@ -560,7 +816,7 @@ struct AskCyView: View {
                 .agentScreen()
             }
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .agentSheetDragIndicator()
         }
         .alert("agent.cy", isPresented: Binding(
             get: { reviewError != nil },
@@ -582,7 +838,7 @@ struct AskCyView: View {
             case .deny:
                 Alert(
                     title: Text(batchDenyConfirmationTitle),
-                    message: Text("Denied proposals are removed without changing your app."),
+                    message: Text("Series episodes move to Needs revision with their context intact. Other proposals are declined without changing your app."),
                     primaryButton: .destructive(Text(batchDenyActionTitle), action: denySelectedReviews),
                     secondaryButton: .cancel(Text("Cancel"))
                 )
@@ -594,7 +850,7 @@ struct AskCyView: View {
 
     private var conversationContent: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            MCPReviewRefreshableScrollView(refresh: refreshPendingReviews) {
                 // A plain VStack: conversations are small, and LazyVStack's
                 // deferred row measurement makes the bottom-edge bounce snap
                 // when content height re-estimates mid-rubber-band.
@@ -610,7 +866,10 @@ struct AskCyView: View {
                             messageView(message)
                                 .id(message.id)
                         }
-                        if isSending { typingIndicator }
+                        // The reply lands in the thread that sent it; after a
+                        // workspace switch mid-send the indicator must not
+                        // promise a reply to an unrelated thread.
+                        if isSending, activeSendThreadID == thread?.id { typingIndicator }
                     }
                     Color.clear
                         .frame(height: 1)
@@ -640,6 +899,20 @@ struct AskCyView: View {
     }
 
     private var pendingReviewContent: some View {
+        GeometryReader { proxy in
+            #if targetEnvironment(macCatalyst)
+            if MCPReviewLayoutPolicy.usesSplitView(availableWidth: proxy.size.width) {
+                desktopPendingReviewContent
+            } else {
+                compactPendingReviewContent
+            }
+            #else
+            compactPendingReviewContent
+            #endif
+        }
+    }
+
+    private var compactPendingReviewContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 HStack(spacing: AgentSpacing.x2) {
@@ -655,6 +928,7 @@ struct AskCyView: View {
                     .foregroundStyle(Color.agentSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.top, AgentSpacing.x6)
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.bottom, AgentSpacing.x6)
 
@@ -668,7 +942,10 @@ struct AskCyView: View {
                     .padding(.bottom, AgentSpacing.x3)
             }
 
-            ScrollView {
+            MCPReviewRefreshableScrollView(
+                showsIndicators: false,
+                refresh: refreshPendingReviews
+            ) {
                 LazyVStack(alignment: .leading, spacing: AgentSpacing.x4) {
                     ForEach(pendingReviews) { request in
                         HStack(alignment: .top, spacing: AgentSpacing.x2) {
@@ -695,7 +972,11 @@ struct AskCyView: View {
                             }
 
                             Button {
-                                reviewingRequest = request
+                                if let bundle = seriesBundle(for: request) {
+                                    reviewingSeries = bundle
+                                } else {
+                                    reviewingRequest = request
+                                }
                             } label: {
                                 reviewCard(for: request)
                             }
@@ -708,9 +989,159 @@ struct AskCyView: View {
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.bottom, bottomClearance + AgentSpacing.x8)
             }
-            .scrollIndicators(.hidden)
         }
     }
+
+    #if targetEnvironment(macCatalyst)
+    private var desktopPendingReviewContent: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x2) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                        MetaLabel("REVIEW INBOX")
+                            .foregroundStyle(Color.cyAccent)
+                        Text("\(pendingReviews.count) waiting")
+                            .font(.agentTitle)
+                    }
+                    Spacer()
+                    AgentToolbarIconButton(
+                        title: isRefreshingReviews ? "Checking for proposals" : "Refresh",
+                        icon: .refresh,
+                        isEnabled: !isRefreshingReviews
+                    ) {
+                        Task { await refreshPendingReviews() }
+                    }
+                    .rotationEffect(.degrees(refreshSpin))
+                    .onChange(of: isRefreshingReviews) { _, checking in
+                        if checking {
+                            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                                refreshSpin = 360
+                            }
+                        } else {
+                            withAnimation(.easeOut(duration: 0.2)) { refreshSpin = 0 }
+                        }
+                    }
+                }
+                .padding(.horizontal, AgentSpacing.x5)
+                .padding(.vertical, AgentSpacing.x4)
+
+                if let lastReviewRefreshAt {
+                    Text("Last checked \(lastReviewRefreshAt, style: .relative)")
+                        .font(.agentMetadata)
+                        .foregroundStyle(Color.agentSecondary)
+                        .padding(.horizontal, AgentSpacing.x5)
+                        .padding(.bottom, AgentSpacing.x3)
+                }
+
+                Rectangle().fill(Color.agentBorder).frame(height: 1)
+
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        ForEach(pendingReviews) { request in
+                            Button {
+                                desktopSelectedReviewID = request.id
+                            } label: {
+                                reviewCard(for: request)
+                                    .padding(AgentSpacing.x1)
+                                    .background(
+                                        desktopSelectedReviewID == request.id
+                                            ? Color.cyAccent.opacity(0.08)
+                                            : Color.clear,
+                                        in: .rect(cornerRadius: AgentRadius.card)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(AgentSpacing.x4)
+                }
+                .refreshable { await refreshPendingReviews() }
+            }
+            .frame(minWidth: 320, idealWidth: 360, maxWidth: 420)
+            .background(Color.agentSurface)
+
+            Rectangle().fill(Color.agentBorder).frame(width: 1)
+
+            desktopReviewDetail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.agentCanvas)
+        }
+        .onAppear {
+            if desktopSelectedReviewID == nil {
+                desktopSelectedReviewID = pendingReviews.first?.id
+            }
+        }
+        .onChange(of: pendingReviews.map(\.id)) { _, ids in
+            if desktopSelectedReviewID.map({ !ids.contains($0) }) != false {
+                desktopSelectedReviewID = ids.first
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopReviewDetail: some View {
+        if let request = pendingReviews.first(where: { $0.id == desktopSelectedReviewID }) {
+            if let bundle = seriesBundle(for: request) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                        MetaLabel("SERIES PACKAGE")
+                            .foregroundStyle(Color.cyAccent)
+                        Text(bundle.series.summary)
+                            .font(.agentDisplay)
+                        Text("\(bundle.episodes.count) episodes are attached. Open the package to inspect, edit, approve, or deny every item.")
+                            .font(.agentBody)
+                            .foregroundStyle(Color.agentSecondary)
+                        Button("Review series and episodes") {
+                            reviewingSeries = bundle
+                        }
+                        .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
+
+                        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                            SectionRuleHeader(title: "Episodes")
+                            ForEach(bundle.episodes) { episode in
+                                Button {
+                                    reviewingRequest = episode
+                                } label: {
+                                    reviewCard(for: episode)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding(AgentSpacing.x8)
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                }
+            } else {
+                NavigationStack {
+                    MCPBridgeRequestReviewView(
+                        request: request,
+                        showsCloseButton: false,
+                        approve: { reviewedRequest in
+                            try MCPBridgeService.approve(reviewedRequest, context: context)
+                            Task { await refreshPendingReviews() }
+                        },
+                        decline: { declinedRequest, note in
+                            try MCPBridgeService.reject(declinedRequest, decisionNote: note)
+                            Task { await refreshPendingReviews() }
+                        }
+                    )
+                }
+            }
+        } else {
+            VStack(spacing: AgentSpacing.x3) {
+                AgentIconView(.branch, size: 24)
+                    .foregroundStyle(Color.agentSecondary)
+                Text("Choose a proposal")
+                    .font(.agentTitle)
+                Text("Select an item in the review inbox to inspect it here.")
+                    .font(.agentBody)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+    #endif
 
     private var pendingReviewHeader: some View {
         HStack(alignment: .center, spacing: AgentSpacing.x2) {
@@ -740,6 +1171,9 @@ struct AskCyView: View {
                     .foregroundStyle(Color.agentSecondary)
             }
         }
+        // Padding comes before the overlay so the rule sits at the bottom of the
+        // padded frame, giving the label room instead of hugging it.
+        .padding(.bottom, AgentSpacing.x3)
         .overlay(alignment: .bottom) {
             Rectangle().fill(Color.agentBorder).frame(height: 1)
         }
@@ -792,7 +1226,7 @@ struct AskCyView: View {
             Button("Back to Cy") {
                 showReviewCompletion = false
             }
-            .buttonStyle(AgentCyPrimaryButtonStyle())
+            .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
 
             Spacer(minLength: 0)
         }
@@ -804,23 +1238,24 @@ struct AskCyView: View {
 
     private var topRail: some View {
         HStack(alignment: .center, spacing: AgentSpacing.x1) {
-            HStack(spacing: AgentSpacing.x2) {
-                MetaLabel("Agent (Cy)")
+            Group {
+                if CyTopRailPresentationPolicy.stacksAvailability(for: dynamicTypeSize) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                        MetaLabel("Agent (Cy)")
+                        availabilityStatus
+                    }
+                } else {
+                    HStack(spacing: AgentSpacing.x2) {
+                        MetaLabel("Agent (Cy)")
 
-                Text("|")
-                    .font(.agentMetadata)
-                    .foregroundStyle(Color.agentBorder)
-                    .accessibilityHidden(true)
+                        Text("|")
+                            .font(.agentMetadata)
+                            .foregroundStyle(Color.agentBorder)
+                            .accessibilityHidden(true)
 
-                Circle()
-                    .fill(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-
-                Text(cyAvailability.label)
-                    .font(.agentMetadata)
-                    .foregroundStyle(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
-                    .lineLimit(1)
+                        availabilityStatus
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
@@ -869,7 +1304,21 @@ struct AskCyView: View {
             )
             #endif
         }
-        .frame(height: 44)
+        .frame(minHeight: 44)
+    }
+
+    private var availabilityStatus: some View {
+        HStack(spacing: AgentSpacing.x2) {
+            Circle()
+                .fill(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+
+            Text(cyAvailability.label)
+                .font(.agentMetadata)
+                .foregroundStyle(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
+                .lineLimit(CyTopRailPresentationPolicy.stacksAvailability(for: dynamicTypeSize) ? 2 : 1)
+        }
     }
 
     @MainActor
@@ -1207,7 +1656,7 @@ struct AskCyView: View {
                 } label: {
                     HStack(spacing: AgentSpacing.x2) {
                         CyAsterisk(color: .cyAccent, size: 13, strokeWidth: 1.4)
-                        Text(sentToPostMessageIDs.contains(message.id) ? "Post created" : "Send to post")
+                        Text(sentToPostMessageIDs.contains(message.id) ? "Post created" : "Create this post")
                             .font(.agentSubtext.weight(.semibold))
                         Spacer(minLength: AgentSpacing.x2)
                         AgentIconView(sentToPostMessageIDs.contains(message.id) ? .check : .arrowRight)
@@ -1251,11 +1700,21 @@ struct AskCyView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x2) {
             ZStack(alignment: .bottomTrailing) {
-                TextField("", text: $prompt, axis: .vertical)
+                Group {
+                    #if targetEnvironment(macCatalyst)
+                    TextField("", text: $prompt)
+                        .submitLabel(.send)
+                        .onSubmit(send)
+                    #else
+                    TextField("", text: $prompt, axis: .vertical)
+                        .lineLimit(1...4)
+                    #endif
+                }
                 .font(.agentBody)
                 .foregroundStyle(Color.agentText)
-                .lineLimit(1...4)
                 .focused($composerIsFocused)
+                .accessibilityLabel("Ask Cy anything")
+                .accessibilityIdentifier("cy-composer-input")
                 .padding(.leading, AgentSpacing.x4)
                 .padding(.trailing, AgentSpacing.x12 + AgentSpacing.x3)
                 .padding(.vertical, AgentSpacing.x2)
@@ -1314,6 +1773,9 @@ struct AskCyView: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .accessibilityLabel(isSending ? "Stop Cy" : "Send")
+#if targetEnvironment(macCatalyst)
+        .help(isSending ? "Stop Cy" : "Send (Return)")
+#endif
     }
 
     private var activeIdentity: ActiveCreatorIdentity {
@@ -1322,6 +1784,14 @@ struct AskCyView: View {
             workspaces: workspaces,
             preferredWorkspaceID: appModel.activeWorkspaceID
         )
+    }
+
+    private var activeWorkspace: CreatorWorkspace? {
+        guard let activeID = WorkspaceScope.activeWorkspaceID(
+            preferredID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        ) else { return nil }
+        return workspaces.first { $0.id == activeID && !$0.isArchived }
     }
 
     private var onYourPlateItems: [CyPlateItem] {
@@ -1450,7 +1920,7 @@ struct AskCyView: View {
     }
 
     private var starterPrompts: [String] {
-        profiles.first?.customCyQuickPrompts ?? [
+        activeWorkspace?.customCyQuickPrompts ?? [
             primaryStarter,
             CreatorProfile.defaultCyQuickPrompts[1]
         ]
@@ -1518,7 +1988,12 @@ struct AskCyView: View {
         for request: MCPBridgeChangeRequest,
         brief: CreativeBrief?
     ) -> Pillar? {
-        let pillarID = request.payload.pillarId ?? brief?.pillarID
+        // An episode carries no pillar of its own; it inherits the one on its
+        // series. Without this the review cards all read "Unfiled".
+        let seriesPillarID = request.payload.seriesId.flatMap { id in
+            allSeriesRecords.first(where: { $0.id == id })?.pillarID
+        }
+        let pillarID = request.payload.pillarId ?? brief?.pillarID ?? seriesPillarID
         return pillarID.flatMap { id in activePillars.first { $0.id == id } }
     }
 
@@ -1584,10 +2059,8 @@ struct AskCyView: View {
         }
 
         do {
-            for request in requests {
-                try MCPBridgeService.approve(request, context: context)
-                selectedReviewIDs.remove(request.id)
-            }
+            try MCPBridgeService.approve(requests, context: context)
+            selectedReviewIDs.subtract(requests.map(\.id))
         } catch {
             reviewError = CreatorFacingErrorMapper.presentation(
                 for: error,
@@ -1616,6 +2089,20 @@ struct AskCyView: View {
                 action: "The selected proposals"
             ).message
         }
+    }
+
+    private func seriesBundle(for request: MCPBridgeChangeRequest) -> MCPSeriesReviewBundle? {
+        guard ["createSeries", "createSeriesEpisode"].contains(request.type),
+              let seriesID = request.payload.seriesId,
+              let seriesRequest = pendingReviews.first(where: {
+                  $0.type == "createSeries" && $0.payload.seriesId == seriesID
+              }) else {
+            return nil
+        }
+        let episodes = pendingReviews.filter {
+            $0.type == "createSeriesEpisode" && $0.payload.seriesId == seriesID
+        }
+        return MCPSeriesReviewBundle(series: seriesRequest, episodes: episodes)
     }
 
     private func reloadPendingReviews() {
@@ -1655,8 +2142,43 @@ struct AskCyView: View {
         hasLoadedPendingReviews = true
     }
 
+    #if targetEnvironment(macCatalyst)
+    private var desktopModalWidth: CGFloat {
+        showsDesktopReviewWorkspace
+            ? DesktopLayoutPolicy.cyReviewModalMetrics.width
+            : DesktopLayoutPolicy.workspaceModalMetrics.width
+    }
+    #endif
+
     private var showsConversation: Bool {
-        pendingReviews.isEmpty && !showReviewCompletion
+        #if targetEnvironment(macCatalyst)
+        // The queue never takes the composer away on desktop, but the review
+        // workspace is a full surface of its own.
+        return !showReviewCompletion && !showsDesktopReviewWorkspace
+        #else
+        return pendingReviews.isEmpty && !showReviewCompletion
+        #endif
+    }
+
+    /// Opt-in entry to the review workspace. Replaces the old behaviour where a
+    /// pending queue forced the review surface open over the conversation.
+    private var desktopReviewBanner: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            Text(pendingReviews.count == 1
+                 ? "1 proposal is waiting for review"
+                 : "\(pendingReviews.count) proposals are waiting for review")
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+            Spacer()
+            Button("Open review") { showsDesktopReviewWorkspace = true }
+                .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
+        }
+        .padding(.horizontal, AgentSpacing.x5)
+        .padding(.vertical, AgentSpacing.x3)
+        .background(Color.agentSurface)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+        }
     }
 
     private var canSend: Bool {
@@ -1696,8 +2218,13 @@ struct AskCyView: View {
     }
 
     private func loadThread() {
-        if let current = threads.first(where: { !$0.isArchived && $0.briefID == nil && $0.contextKind == .none }) {
-            thread = current
+        if let resolved = CyConversationScopePolicy.resolvedThread(
+            current: thread,
+            threads: threads,
+            activeWorkspaceID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        ) {
+            thread = resolved
         } else { startNewThread() }
     }
 
@@ -1740,8 +2267,15 @@ struct AskCyView: View {
     }
 
     private func send() {
+        // The Catalyst composer's Return submit bypasses the send/stop
+        // button, so a repeat submit must not race the in-flight task.
+        guard !isSending else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let thread else { return }
+        guard !text.isEmpty else { return }
+        // A send must never write into another workspace's conversation,
+        // even if a switch happened since the thread was resolved.
+        loadThread()
+        guard let thread else { return }
         let priorMessages = messages
         prompt = ""
         composerIsFocused = false
@@ -1756,6 +2290,7 @@ struct AskCyView: View {
 
         let sendID = UUID()
         activeSendID = sendID
+        activeSendThreadID = thread.id
         isSending = true
         let conversation = Array((priorMessages + [creatorMessage]).suffix(24)).map {
             ConversationMessageWire(messageId: $0.id, role: $0.role == .creator ? .user : .assistant, content: $0.text)
@@ -1782,6 +2317,7 @@ struct AskCyView: View {
             }
             guard activeSendID == sendID else { return }
             activeSendID = nil
+            activeSendThreadID = nil
             sendTask = nil
             isSending = false
         }
@@ -1789,31 +2325,22 @@ struct AskCyView: View {
 
     private func stopSending() {
         activeSendID = nil
+        activeSendThreadID = nil
         sendTask?.cancel()
         sendTask = nil
         isSending = false
     }
 
     private func referencedBrief(for message: String) -> CreativeBrief? {
-        let normalizedMessage = message.folding(
-            options: [.caseInsensitive, .diacriticInsensitive],
-            locale: .current
-        )
-        let namedBrief = briefs.first { brief in
-            let title = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard title.count >= 3 else { return false }
-            return normalizedMessage.contains(title.folding(
-                options: [.caseInsensitive, .diacriticInsensitive],
-                locale: .current
-            ))
-        }
-        return namedBrief ?? currentDraft
+        CyBriefReferencePolicy.explicitlyReferencedBrief(in: message, briefs: briefs)
     }
 
     private func canSendResponseToPost(_ message: ConversationMessage) -> Bool {
-        guard !sentToPostMessageIDs.contains(message.id),
-              message.referencedBriefID != nil else { return false }
-        return message.proposedActionKind == .reviseBrief || message.proposedActionKind == .developSpark
+        CyPostCreationPolicy.canCreate(
+            actionKind: message.proposedActionKind,
+            referencedBriefID: message.referencedBriefID,
+            alreadyCreated: sentToPostMessageIDs.contains(message.id)
+        )
     }
 
     private func proposedTask(for message: ConversationMessage) -> ChatTaskProposalWire? {
@@ -1862,8 +2389,15 @@ struct AskCyView: View {
     }
 
     private func sendResponseToPost(_ message: ConversationMessage) {
-        guard let sourceBriefID = message.referencedBriefID,
-              let sourceBrief = briefs.first(where: { $0.id == sourceBriefID }) else {
+        let shouldCopySource = CyPostCreationPolicy.shouldCopySource(
+            actionKind: message.proposedActionKind
+        )
+        let sourceBrief = shouldCopySource
+            ? message.referencedBriefID.flatMap { sourceBriefID in
+                briefs.first(where: { $0.id == sourceBriefID })
+            }
+            : nil
+        if shouldCopySource, sourceBrief == nil {
             appModel.notice = .error("The source post could not be found.")
             return
         }
@@ -1871,10 +2405,10 @@ struct AskCyView: View {
         let cleanResponse = plainText(from: message.text)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanResponse.isEmpty else { return }
-        let pillarID = sourceBrief.pillarID
+        let pillarID = sourceBrief?.pillarID
         guard let draft = appModel.createPostDraftFromCyResponse(
             cleanResponse,
-            suggestedTitle: sourceBrief.title,
+            suggestedTitle: sourceBrief?.title,
             sourceBrief: sourceBrief,
             pillarID: pillarID,
             context: context
@@ -1914,7 +2448,13 @@ private struct ReviewBatchButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.agentBorder, lineWidth: 1)
             }
-            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.38)
+            .opacity(isEnabled
+                ? AgentButtonPressFeedback.value(
+                    resting: 1.0,
+                    pressed: 0.7,
+                    isPressed: configuration.isPressed
+                )
+                : 0.38)
             .frame(minHeight: 44)
             .contentShape(.rect)
     }
@@ -2136,7 +2676,7 @@ private struct CyConversationTranscriptView: View {
                 Button(isCurrent ? "Return to conversation" : "Continue conversation") {
                     continueConversation()
                 }
-                .buttonStyle(AgentCyPrimaryButtonStyle())
+                .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
                 .padding(.top, AgentSpacing.x4)
             }
             .padding(.horizontal, AgentLayout.pageMargin)

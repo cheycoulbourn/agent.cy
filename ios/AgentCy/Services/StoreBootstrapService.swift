@@ -50,6 +50,26 @@ enum PublishingCatalog {
         default: nil
         }
     }
+
+    static func normalizedName(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    static func logicalKey(for destination: PublishingDestination) -> String {
+        if let builtInKind = destination.builtInKind {
+            return "built-in:\(builtInKind.rawValue)"
+        }
+        return "custom:\(normalizedName(destination.name))"
+    }
+
+    static func logicalKey(for format: PublishingFormat) -> String {
+        "\(format.destinationID.uuidString):\(normalizedName(format.name))"
+    }
 }
 
 @MainActor
@@ -171,6 +191,10 @@ enum StoreBootstrapService {
         }
 
         guard let defaultWorkspace = WorkspaceScope.defaultWorkspace(in: workspaces) else { return }
+        if defaultWorkspace.customCyQuickPrompts == nil,
+           let legacyPrompts = profile.customCyQuickPrompts {
+            defaultWorkspace.setCustomCyQuickPrompts(legacyPrompts)
+        }
         for workspace in workspaces where !workspace.hasCustomIdentity {
             workspace.creatorName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
             workspace.avatarImageData = profile.avatarImageData
@@ -214,6 +238,11 @@ enum StoreBootstrapService {
 
         let pillars = try context.fetch(FetchDescriptor<Pillar>())
         for pillar in pillars where pillar.workspaceID == nil { pillar.workspaceID = defaultWorkspace.id }
+        migrateWorkspacePalettes(
+            profile: profile,
+            workspaces: workspaces,
+            pillars: pillars
+        )
         let pillarWorkspaceByID = pillars.reduce(into: [UUID: UUID]()) { result, pillar in
             if let workspaceID = pillar.workspaceID { result[pillar.id] = workspaceID }
         }
@@ -256,15 +285,49 @@ enum StoreBootstrapService {
         }
     }
 
+    private static func migrateWorkspacePalettes(
+        profile: CreatorProfile,
+        workspaces: [CreatorWorkspace],
+        pillars: [Pillar]
+    ) {
+        let activeWorkspaceID = CreatorWorkspacePreferences.activeWorkspaceID
+        for workspace in workspaces where workspace.vibePalette == nil {
+            let colors = pillars
+                .filter { $0.workspaceID == workspace.id && !$0.isArchived }
+                .sorted {
+                    if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                .map(\.colorHex)
+            if let inferred = CreatorVibePalette.matchingPalette(for: colors) {
+                workspace.vibePalette = inferred
+            } else if workspace.id == activeWorkspaceID {
+                // The former profile-level value represented the last account
+                // edited. Keep it only for that active account instead of
+                // copying the same theme into every workspace.
+                workspace.vibePalette = profile.vibePalette
+            }
+        }
+    }
+
     private static func deduplicateCatalog(destinations: [PublishingDestination], formats: [PublishingFormat], context: ModelContext) throws {
         let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
         let socialAccounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>())
         let profiles = try context.fetch(FetchDescriptor<CreatorProfile>())
-        for kind in BuiltInDestinationKind.allCases {
-            let matches = destinations.filter { $0.builtInKind == kind }.sorted { $0.createdAt < $1.createdAt }
-            let canonicalID = PublishingCatalog.destinationSeeds.first(where: { $0.2 == kind })?.0
-            guard let keeper = matches.first(where: { $0.id == canonicalID }) ?? matches.first else { continue }
-            for duplicate in matches where duplicate.id != keeper.id {
+        let destinationGroups = Dictionary(grouping: destinations, by: PublishingCatalog.logicalKey)
+
+        for matches in destinationGroups.values {
+            let ordered = matches.sorted { lhs, rhs in
+                if lhs.isArchived != rhs.isArchived { return !lhs.isArchived }
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            let canonicalID = ordered.first?.builtInKind.flatMap { kind in
+                PublishingCatalog.destinationSeeds.first(where: { $0.2 == kind })?.0
+            }
+            guard let keeper = ordered.first(where: { $0.id == canonicalID }) ?? ordered.first else { continue }
+            keeper.isArchived = ordered.allSatisfy(\.isArchived)
+            for duplicate in ordered where duplicate !== keeper {
                 for format in formats where format.destinationID == duplicate.id { format.destinationID = keeper.id }
                 for output in outputs where output.destinationID == duplicate.id { output.destinationID = keeper.id }
                 for account in socialAccounts where account.destinationID == duplicate.id { account.destinationID = keeper.id }
@@ -274,6 +337,27 @@ enum StoreBootstrapService {
                         profile.selectedDestinationIDs.map { $0 == duplicate.id ? keeper.id : $0 }
                     )
                 }
+                context.delete(duplicate)
+            }
+        }
+
+        let formatGroups = Dictionary(grouping: formats, by: PublishingCatalog.logicalKey)
+        for matches in formatGroups.values {
+            let ordered = matches.sorted { lhs, rhs in
+                if lhs.isArchived != rhs.isArchived { return !lhs.isArchived }
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            let canonicalID = ordered.first.flatMap { candidate in
+                PublishingCatalog.formatSeeds.first(where: {
+                    $0.1 == candidate.destinationID &&
+                        PublishingCatalog.normalizedName($0.2) == PublishingCatalog.normalizedName(candidate.name)
+                })?.0
+            }
+            guard let keeper = ordered.first(where: { $0.id == canonicalID }) ?? ordered.first else { continue }
+            keeper.isArchived = ordered.allSatisfy(\.isArchived)
+            for duplicate in ordered where duplicate !== keeper {
+                for output in outputs where output.formatID == duplicate.id { output.formatID = keeper.id }
                 context.delete(duplicate)
             }
         }

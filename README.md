@@ -51,6 +51,7 @@ The production proxy can be built from the repository root with the included `Do
 
 ## Source of truth
 
+- [Design system](design.md)
 - [Product requirements](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Data dictionary](docs/DATA_DICTIONARY.md)

@@ -18,6 +18,7 @@ enum AgentNotificationAuthorization: String, Sendable {
 enum AgentNotificationKind: String, Codable, CaseIterable, Sendable {
     case daily
     case weekly
+    case lateWork
     case scheduledPost
     case missedPost
     case draftPreparation
@@ -35,6 +36,7 @@ enum AgentNotificationCategory {
     static let task = "AGENTCY_TASK"
     static let focus = "AGENTCY_FOCUS"
     static let access = "AGENTCY_ACCESS"
+    static let mcpReview = "agentcy.mcp-review"
 }
 
 enum AgentNotificationAction {
@@ -48,6 +50,7 @@ enum AgentNotificationAction {
     static let pauseTask = "AGENTCY_PAUSE_TASK"
     static let openTask = "AGENTCY_OPEN_TASK"
     static let openAccess = "AGENTCY_OPEN_ACCESS"
+    static let openMCPReview = "AGENTCY_OPEN_MCP_REVIEW"
 }
 
 enum AgentNotificationMetadataKey {
@@ -58,6 +61,8 @@ enum AgentNotificationMetadataKey {
     static let focusDetailID = "focusDetailID"
     static let date = "date"
     static let route = "route"
+    static let remoteRoute = "agentcy_route"
+    static let requestID = "agentcy_request_id"
 }
 
 struct AgentNotificationPlanItem: Identifiable, Equatable, Sendable {
@@ -113,6 +118,7 @@ struct NotificationBriefSnapshot: Equatable, Sendable {
     let id: UUID
     let title: String
     let status: BriefStatus
+    let workDate: Date?
     let updatedAt: Date
     let isSavedIdea: Bool
 
@@ -120,12 +126,14 @@ struct NotificationBriefSnapshot: Equatable, Sendable {
         id: UUID,
         title: String,
         status: BriefStatus,
+        workDate: Date? = nil,
         updatedAt: Date,
         isSavedIdea: Bool? = nil
     ) {
         self.id = id
         self.title = title
         self.status = status
+        self.workDate = workDate
         self.updatedAt = updatedAt
         self.isSavedIdea = isSavedIdea ?? (status == .spark || status == .developing)
     }
@@ -266,6 +274,32 @@ enum AgentNotificationPlanBuilder {
                     }
                 }
             }
+
+            if input.settings.missedPostRemindersEnabled {
+                for brief in input.briefs {
+                    guard let workDate = brief.workDate,
+                          brief.status != .archived,
+                          brief.status != .scheduled,
+                          brief.status != .posted,
+                          let output = input.outputs.first(where: {
+                              $0.briefID == brief.id && $0.status != .scheduled && $0.status != .posted
+                          }),
+                          let overdueDay = calendar.date(
+                              byAdding: .day,
+                              value: 1,
+                              to: calendar.startOfDay(for: workDate)
+                          ) else { continue }
+                    let fireDate = adjustedForQuietHours(overdueDay, input: input)
+                    if fireDate > input.now, fireDate <= horizonEnd {
+                        automatic.append(lateWorkReminder(
+                            output: output,
+                            brief: brief,
+                            fireDate: fireDate,
+                            input: input
+                        ))
+                    }
+                }
+            }
         }
 
         if input.settings.taskRemindersEnabled {
@@ -403,6 +437,35 @@ enum AgentNotificationPlanBuilder {
             isCreatorRequested: false,
             priority: 80,
             metadata: metadata(kind: .missedPost, date: output.targetDate, briefID: brief.id, outputID: output.id, route: "brief")
+        )
+    }
+
+    private static func lateWorkReminder(
+        output: NotificationOutputSnapshot,
+        brief: NotificationBriefSnapshot,
+        fireDate: Date,
+        input: NotificationPlanningInput
+    ) -> AgentNotificationPlanItem {
+        AgentNotificationPlanItem(
+            id: "agentcy.v2.late-work.\(brief.id.uuidString.lowercased())",
+            kind: .lateWork,
+            fireDate: fireDate,
+            title: "This post’s work date passed",
+            body: input.settings.showTitles
+                ? "\(brief.title). Open it to continue or choose a new work date."
+                : "Open the post to continue or choose a new work date.",
+            reason: "Late work",
+            categoryIdentifier: AgentNotificationCategory.draft,
+            playsSound: true,
+            isCreatorRequested: false,
+            priority: 85,
+            metadata: metadata(
+                kind: .lateWork,
+                date: brief.workDate,
+                briefID: brief.id,
+                outputID: output.id,
+                route: "draft"
+            )
         )
     }
 

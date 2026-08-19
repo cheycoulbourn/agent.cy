@@ -5,6 +5,7 @@ import UserNotifications
 extension Notification.Name {
     static let agentCyNotificationRouteReady = Notification.Name("agentCyNotificationRouteReady")
     static let agentCyNotificationContentChanged = Notification.Name("agentCyNotificationContentChanged")
+    static let agentCyMCPInboxChanged = Notification.Name("agentCyMCPInboxChanged")
 }
 
 enum AgentNotificationRouteKind: String, Codable {
@@ -15,12 +16,46 @@ enum AgentNotificationRouteKind: String, Codable {
     case draft
     case task
     case access
+    case mcpReview
 }
 
 struct AgentNotificationRoute: Codable, Equatable {
     let kind: AgentNotificationRouteKind
     let objectID: UUID?
     let date: Date?
+}
+
+enum AgentNotificationRouteResolver {
+    static func route(
+        from metadata: [String: String],
+        overridingKind: AgentNotificationRouteKind? = nil
+    ) -> AgentNotificationRoute {
+        let routeValue = metadata[AgentNotificationMetadataKey.remoteRoute]
+            ?? metadata[AgentNotificationMetadataKey.route]
+        let resolvedKind: AgentNotificationRouteKind = switch routeValue {
+        case "week": .week
+        case "cyWeek": .cyWeek
+        case "brief": .brief
+        case "draft": .draft
+        case "task": .task
+        case "access": .access
+        case "mcpReview": .mcpReview
+        default: .day
+        }
+        let kind = overridingKind ?? resolvedKind
+        let objectID: UUID? = switch kind {
+        case .brief, .draft:
+            metadata[AgentNotificationMetadataKey.briefID].flatMap(UUID.init(uuidString:))
+        case .task:
+            metadata[AgentNotificationMetadataKey.taskID].flatMap(UUID.init(uuidString:))
+        default:
+            nil
+        }
+        let date = metadata[AgentNotificationMetadataKey.date].flatMap {
+            ISO8601DateFormatter().date(from: $0)
+        }
+        return AgentNotificationRoute(kind: kind, objectID: objectID, date: date)
+    }
 }
 
 enum AgentNotificationRouteStore {
@@ -103,7 +138,72 @@ final class AgentCyApplicationDelegate: NSObject, UIApplicationDelegate, @precon
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         LocalReminderService.registerCategories(center: center)
+        if BridgePushRegistrationPolicy.shouldRegisterOnCurrentPlatform {
+            Task { @MainActor in
+                let settings = await center.notificationSettings()
+                switch settings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral:
+                    application.registerForRemoteNotifications()
+                default:
+                    break
+                }
+            }
+        }
         return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        Task { @MainActor in
+            let context = ModelContainerFactory.shared.mainContext
+            let existingCapability = MCPBridgePushPreferences.capability
+            guard BridgePushRegistrationPolicy.shouldRequestCapability(
+                existing: existingCapability,
+                registeredDeviceToken: MCPBridgePushPreferences.registeredDeviceToken,
+                currentDeviceToken: deviceToken
+            ) else {
+                try? MCPBridgeService.sync(context: context)
+                NotificationCenter.default.post(name: .agentCyMCPInboxChanged, object: nil)
+                return
+            }
+            let showTitles = (try? context.fetch(FetchDescriptor<ReminderSettings>()).first?.showNotificationTitles) ?? true
+            do {
+                let capability = try await BridgePushRegistrationClient()
+                    .register(deviceToken: deviceToken, showTitles: showTitles)
+                MCPBridgePushPreferences.capability = capability
+                MCPBridgePushPreferences.registeredDeviceToken = deviceToken
+                try? MCPBridgeService.sync(context: context)
+                NotificationCenter.default.post(name: .agentCyMCPInboxChanged, object: nil)
+            } catch {
+                // Registration is retried at the next launch or permission change.
+            }
+        }
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        // The review queue remains available through foreground and manual refresh.
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task { @MainActor in
+            guard MCPBridgePreferences.isConnected else {
+                completionHandler(.noData)
+                return
+            }
+            let before = (try? MCPBridgeService.pendingRequests().map(\.id)) ?? []
+            let after = (try? await MCPBridgeService.refreshPendingRequests().map(\.id)) ?? before
+            NotificationCenter.default.post(name: .agentCyMCPInboxChanged, object: nil)
+            completionHandler(before == after ? .noData : .newData)
+        }
     }
 
     func userNotificationCenter(
@@ -114,6 +214,9 @@ final class AgentCyApplicationDelegate: NSObject, UIApplicationDelegate, @precon
         // this notification do main-actor SwiftData work, so hop first.
         await MainActor.run {
             NotificationCenter.default.post(name: .agentCyNotificationContentChanged, object: nil)
+            if notification.request.content.categoryIdentifier == AgentNotificationCategory.mcpReview {
+                NotificationCenter.default.post(name: .agentCyMCPInboxChanged, object: nil)
+            }
         }
         return []
     }
@@ -131,6 +234,10 @@ final class AgentCyApplicationDelegate: NSObject, UIApplicationDelegate, @precon
         Task { @MainActor in
             defer { completionHandler() }
             do {
+                try? AgentActivityCenterService.markRead(
+                    notificationID: response.notification.request.identifier,
+                    context: ModelContainerFactory.shared.mainContext
+                )
                 let mutation = NotificationActionMutationService()
                 switch response.actionIdentifier {
                 case AgentNotificationAction.markPosted:
@@ -149,6 +256,8 @@ final class AgentCyApplicationDelegate: NSObject, UIApplicationDelegate, @precon
                     route(.task, metadata: metadata)
                 case AgentNotificationAction.openAccess:
                     route(.access, metadata: metadata)
+                case AgentNotificationAction.openMCPReview:
+                    route(.mcpReview, metadata: metadata)
                 case UNNotificationDefaultActionIdentifier:
                     routeFromMetadata(metadata)
                 default:
@@ -163,30 +272,14 @@ final class AgentCyApplicationDelegate: NSObject, UIApplicationDelegate, @precon
 
     @MainActor
     private func routeFromMetadata(_ metadata: [String: String]) {
-        let routeValue = metadata[AgentNotificationMetadataKey.route]
-        let kind: AgentNotificationRouteKind = switch routeValue {
-        case "week": .week
-        case "brief": .brief
-        case "draft": .draft
-        case "task": .task
-        case "access": .access
-        default: .day
-        }
-        route(kind, metadata: metadata)
+        AgentNotificationRouteStore.put(AgentNotificationRouteResolver.route(from: metadata))
     }
 
     @MainActor
     private func route(_ kind: AgentNotificationRouteKind, metadata: [String: String]) {
-        let objectID: UUID? = switch kind {
-        case .brief, .draft:
-            uuid(metadata[AgentNotificationMetadataKey.briefID])
-        case .task:
-            uuid(metadata[AgentNotificationMetadataKey.taskID])
-        default:
-            nil
-        }
-        let date = metadata[AgentNotificationMetadataKey.date].flatMap { ISO8601DateFormatter().date(from: $0) }
-        AgentNotificationRouteStore.put(AgentNotificationRoute(kind: kind, objectID: objectID, date: date))
+        AgentNotificationRouteStore.put(
+            AgentNotificationRouteResolver.route(from: metadata, overridingKind: kind)
+        )
     }
 
     private func uuid(_ value: String?) -> UUID? {

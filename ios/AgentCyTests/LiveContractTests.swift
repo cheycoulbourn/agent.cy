@@ -522,6 +522,59 @@ final class LiveContractTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.lastRequest?.httpMethod, "POST")
     }
 
+    func testBridgePushRegistrationUsesInstallationAuthAndReturnsPrivateCapability() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let credential = String(repeating: "n", count: 48)
+        let identity = InstallationIdentity(
+            installationID: UUID(),
+            credential: credential,
+            access: .comped,
+            credentialExpiresAt: nil,
+            promotionalEntitlementEndsAt: nil
+        )
+        let store = PreviewCredentialStore(identity: identity)
+        StubURLProtocol.handler = { request in
+            let data = try XCTUnwrap(StubURLProtocol.bodyData(for: request))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(object["deviceToken"] as? String, String(repeating: "ab", count: 32))
+            XCTAssertEqual(object["platform"] as? String, "ios")
+            XCTAssertEqual(object["appBuild"] as? String, "0.1 (202)")
+            XCTAssertEqual(object["showTitles"] as? Bool, true)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential)")
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 201,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let responseData = try JSONSerialization.data(withJSONObject: [
+                "notification": [
+                    "endpoint": "https://agentcy.example/v1/bridge/notifications",
+                    "token": "notification-capability-token-with-enough-entropy"
+                ]
+            ])
+            return (response, responseData)
+        }
+        defer { StubURLProtocol.handler = nil }
+        let client = BridgePushRegistrationClient(
+            baseURL: URL(string: "https://unit.test")!,
+            session: session,
+            store: store,
+            appBuild: "0.1 (202)"
+        )
+
+        let capability = try await client.register(
+            deviceToken: Data(repeating: 0xAB, count: 32),
+            showTitles: true
+        )
+
+        XCTAssertEqual(capability.endpoint.absoluteString, "https://agentcy.example/v1/bridge/notifications")
+        XCTAssertEqual(StubURLProtocol.lastRequest?.url?.path, "/v1/bridge/notifications/register")
+    }
+
     private func creatorContext() -> CreatorContextWire {
         CreatorContextWire(
             name: "Ari",

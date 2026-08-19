@@ -14,6 +14,7 @@ import { AiErrorCodeSchema, AiOperationSchema } from "./sse.js";
 export const InstallationRedeemRequestSchema = z
   .object({
     inviteCode: z.string().trim().min(6).max(128),
+    redemptionAttemptId: z.uuid().optional(),
     appBuild: AppBuildSchema,
     platform: z.literal("ios"),
     appAttestAssertion: z.string().trim().min(1).max(16_384).optional(),

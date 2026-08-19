@@ -64,55 +64,6 @@ enum SocialGridProjectionPolicy {
     }
 }
 
-struct SocialGridOrderState: Equatable, Sendable {
-    private(set) var orderedIDs: [UUID]
-
-    init(savedRawIDs: [String], defaultIDs: [UUID]) {
-        let available = Set(defaultIDs)
-        let saved = savedRawIDs.compactMap(UUID.init(uuidString:))
-        let uniqueSaved = saved.reduce(into: [UUID]()) { result, id in
-            guard available.contains(id), !result.contains(id) else { return }
-            result.append(id)
-        }
-        let newlyAvailable = defaultIDs.filter { !uniqueSaved.contains($0) }
-        orderedIDs = newlyAvailable + uniqueSaved
-    }
-
-    @discardableResult
-    mutating func move(_ id: UUID, by offset: Int, within eligibleIDs: [UUID]) -> Bool {
-        let eligibleSet = Set(eligibleIDs)
-        var eligibleOrder = orderedIDs.filter { eligibleSet.contains($0) }
-        guard let sourceIndex = eligibleOrder.firstIndex(of: id), !eligibleOrder.isEmpty else { return false }
-
-        let destinationIndex = min(max(sourceIndex + offset, 0), eligibleOrder.count - 1)
-        guard destinationIndex != sourceIndex else { return false }
-
-        let moved = eligibleOrder.remove(at: sourceIndex)
-        eligibleOrder.insert(moved, at: destinationIndex)
-        var iterator = eligibleOrder.makeIterator()
-        orderedIDs = orderedIDs.map { current in
-            eligibleSet.contains(current) ? (iterator.next() ?? current) : current
-        }
-        return true
-    }
-}
-
-struct SocialGridOrderPreferencesStore: Codable, Equatable, Sendable {
-    var orderByWorkspace: [String: [String]] = [:]
-
-    static func decode(_ value: String) -> Self? {
-        guard !value.isEmpty,
-              let data = value.data(using: .utf8)
-        else { return nil }
-        return try? JSONDecoder().decode(Self.self, from: data)
-    }
-
-    func encoded() -> String? {
-        guard let data = try? JSONEncoder().encode(self) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-}
-
 enum SocialGridURLPolicy {
     static func instagramURL(from rawValue: String) -> URL? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,6 +86,105 @@ enum SocialGridURLPolicy {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !firstLine.isEmpty else { return "Instagram post" }
         return String(firstLine.prefix(96))
+    }
+}
+
+struct LivePostLinkDescriptor: Equatable {
+    let url: URL
+    let sourcePlatform: InspirationPlatform
+    let creatorPlatform: CreatorPlatform
+    let destinationID: UUID
+    let formatID: UUID
+    let fallbackTitle: String
+}
+
+enum LivePostLinkScope: Equatable {
+    /// Agenda and the Creation Hub record live posts for every platform.
+    case allPlatforms
+    /// The Feed grid previews Instagram only; links it can never show are
+    /// rejected honestly instead of saving invisible records.
+    case instagramOnly
+
+    func allows(_ descriptor: LivePostLinkDescriptor) -> Bool {
+        switch self {
+        case .allPlatforms: true
+        case .instagramOnly: descriptor.sourcePlatform == .instagram
+        }
+    }
+
+    var prompt: String {
+        switch self {
+        case .allPlatforms:
+            "Paste an Instagram, TikTok, or YouTube link, then choose when it went live. agent.cy will place it on the right day and pull any available thumbnail."
+        case .instagramOnly:
+            "Paste an Instagram link, then choose when it went live. agent.cy will place it on this grid and pull any available thumbnail."
+        }
+    }
+
+    var invalidLinkMessage: String {
+        switch self {
+        case .allPlatforms: "Paste a valid Instagram, TikTok, or YouTube link."
+        case .instagramOnly: "Paste a valid Instagram link."
+        }
+    }
+
+    var rejectionMessage: String {
+        "This grid previews Instagram only. Add TikTok or YouTube posts from the Agenda or the create menu."
+    }
+}
+
+enum LivePostURLPolicy {
+    static func descriptor(from rawValue: String) -> LivePostLinkDescriptor? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidate = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        // The canonicalizer accepts https only; pasted http links stay valid.
+        if candidate.lowercased().hasPrefix("http://") {
+            candidate = "https://" + candidate.dropFirst("http://".count)
+        }
+        guard let url = try? InspirationLinkCanonicalizer.canonicalize(candidate) else { return nil }
+
+        switch InspirationLinkCanonicalizer.platform(for: url) {
+        case .instagram:
+            return LivePostLinkDescriptor(
+                url: url,
+                sourcePlatform: .instagram,
+                creatorPlatform: .instagramReels,
+                destinationID: PublishingCatalog.instagramID,
+                formatID: PublishingCatalog.instagramReelID,
+                fallbackTitle: "Instagram post"
+            )
+        case .tiktok:
+            return LivePostLinkDescriptor(
+                url: url,
+                sourcePlatform: .tiktok,
+                creatorPlatform: .tiktok,
+                destinationID: PublishingCatalog.tiktokID,
+                formatID: PublishingCatalog.tiktokShortID,
+                fallbackTitle: "TikTok post"
+            )
+        case .youtube:
+            return LivePostLinkDescriptor(
+                url: url,
+                sourcePlatform: .youtube,
+                creatorPlatform: .youtubeVideo,
+                destinationID: PublishingCatalog.youtubeID,
+                formatID: PublishingCatalog.youtubeVideoID,
+                fallbackTitle: "YouTube post"
+            )
+        case .threads, .web:
+            return nil
+        }
+    }
+
+    static func defaultPostedAt(for suggestedDay: Date, now: Date = Date(), calendar: Calendar = .current) -> Date {
+        let components = calendar.dateComponents([.hour, .minute], from: now)
+        let suggested = calendar.date(
+            bySettingHour: components.hour ?? 12,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: suggestedDay
+        ) ?? suggestedDay
+        return min(suggested, now)
     }
 }
 
@@ -175,7 +225,6 @@ enum SocialGridPresentation: Equatable {
         return 0
     }
 
-    var placesArrangeInProfileSummary: Bool { isPhone }
 }
 
 struct SocialGridView: View {
@@ -192,11 +241,9 @@ struct SocialGridView: View {
     @Query(sort: \PublishingDestination.sortOrder) private var allDestinations: [PublishingDestination]
     @State private var selectedFilter: SocialGridFilter = .all
     @State private var presentedSheet: SocialGridSheet?
-    @State private var isArranging = false
     @State private var attemptedThumbnailOutputIDs: Set<UUID> = []
     @State private var isRefreshingFeed = false
     @State private var isHydratingThumbnails = false
-    @AppStorage("agentcy.socialGridOrderByWorkspace") private var storedGridOrderPreferences = ""
     let presentation: SocialGridPresentation
 
     init(presentation: SocialGridPresentation = .desktop) {
@@ -250,65 +297,56 @@ struct SocialGridView: View {
         }
         .onChange(of: appModel.workspaceRevision) { _, _ in
             attemptedThumbnailOutputIDs = []
-            isArranging = false
         }
     }
 
     @ViewBuilder
     private var pageRail: some View {
         if presentation.isPhone {
-            HStack(alignment: .center, spacing: AgentSpacing.x1) {
-                Button {
-                    dismiss()
-                } label: {
-                    AgentIconView(.back, size: 18)
-                        .foregroundStyle(Color.agentText)
+            HStack(alignment: .center, spacing: AgentSpacing.x2) {
+                AgentToolbarIconButton(title: "Back to Plan", icon: .back, action: dismiss.callAsFunction)
+
+                Spacer(minLength: AgentSpacing.x4)
+
+                HStack(spacing: AgentSpacing.x2) {
+                    AgentToolbarIconButton(title: "Add live post", icon: .link) {
+                        presentedSheet = .addLivePost
+                    }
+                    .accessibilityHint("Adds a published Instagram post to this grid")
+
+                    Button {
+                        Task { await refreshFeed() }
+                    } label: {
+                        Group {
+                            if isRefreshingFeed {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(Color.agentText)
+                            } else {
+                                AgentIconView(.refresh, size: 16)
+                                    .foregroundStyle(Color.agentText)
+                            }
+                        }
                         .frame(width: 44, height: 44)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back to Plan")
-
-                MetaLabel("Feed")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button {
-                    Task { await refreshFeed() }
-                } label: {
-                    Group {
-                        if isRefreshingFeed {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color.agentText)
-                        } else {
-                            AgentIconView(.refresh, size: 16)
-                                .foregroundStyle(Color.agentText)
+                        .contentShape(.circle)
+                        .glassEffect(.clear.interactive(), in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
+                                .allowsHitTesting(false)
                         }
                     }
-                    .frame(width: 44, height: 44)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .disabled(isRefreshingFeed)
-                .accessibilityLabel(isRefreshingFeed ? "Refreshing feed" : "Refresh feed")
-                .accessibilityHint("Loads newly synced posts and retries missing live post thumbnails")
+                    .buttonStyle(.plain)
+                    .disabled(isRefreshingFeed)
+                    .opacity(isRefreshingFeed ? 0.72 : 1)
+                    .accessibilityLabel(isRefreshingFeed ? "Refreshing feed" : "Refresh feed")
+                    .accessibilityHint("Loads newly synced posts and retries missing live post thumbnails")
 
-                Button {
-                    presentedSheet = .addLivePost
-                } label: {
-                    AgentIconView(.link, size: 16)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 44, height: 44)
-                        .contentShape(.rect)
+                    ProfileSettingsButton(
+                        identity: activeIdentity,
+                        action: { appModel.presentedSheet = .settings }
+                    )
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add live post")
-                .accessibilityHint("Adds a published Instagram post to this grid")
-
-                ProfileSettingsButton(
-                    identity: activeIdentity,
-                    action: { appModel.presentedSheet = .settings }
-                )
             }
             .frame(height: 44)
         } else {
@@ -364,47 +402,24 @@ struct SocialGridView: View {
             plannedCount: allItems.filter { $0.output.status == .scheduled }.count,
             liveCount: allItems.filter { $0.output.status == .posted }.count,
             mediaCount: allItems.filter { $0.attachment != nil }.count,
-            isCompact: presentation.isPhone,
-            showsArrange: presentation.placesArrangeInProfileSummary,
-            isArranging: isArranging,
-            canArrange: isArranging || visibleItems.count > 1,
-            toggleArrangement: { isArranging.toggle() }
+            isCompact: presentation.isPhone
         )
     }
 
     private var gridControls: some View {
-        HStack(spacing: AgentSpacing.x4) {
-            Picker("Feed posts", selection: $selectedFilter) {
-                ForEach(SocialGridFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: presentation.isPhone ? .infinity : 320)
-
-            if !presentation.placesArrangeInProfileSummary {
-                Spacer(minLength: AgentSpacing.x3)
-
-                Button(isArranging ? "Done" : "Arrange") {
-                    isArranging.toggle()
-                }
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.actionAccent)
-                .buttonStyle(.plain)
-                .frame(minWidth: 72, minHeight: 40)
-                .accessibilityHint(
-                    isArranging
-                        ? "Finishes arranging the social grid"
-                        : "Shows controls to move posts earlier or later in the grid"
-                )
+        Picker("Feed posts", selection: $selectedFilter) {
+            ForEach(SocialGridFilter.allCases) { filter in
+                Text(filter.title).tag(filter)
             }
         }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: presentation.isPhone ? .infinity : 320)
     }
 
     @ViewBuilder
     private var addLivePostSheet: some View {
-        let content = SocialGridAddLivePostView()
+        let content = AddLivePostView(linkScope: .instagramOnly)
             .environment(appModel)
             .modelContext(modelContext)
             .background(Color.agentCanvas)
@@ -413,24 +428,19 @@ struct SocialGridView: View {
         if presentation.isPhone {
             content
                 .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .agentSheetDragIndicator()
         } else {
             content
-                .frame(width: 560, height: 470)
+                .frame(width: 660, height: 720)
         }
     }
 
     private var grid: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 3) {
-            ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
+            ForEach(visibleItems) { item in
                 SocialGridTile(
                     item: item,
-                    pillarColorHex: item.brief.pillarID.flatMap { pillarIndex[$0]?.colorHex },
-                    isArranging: isArranging,
-                    canMoveEarlier: index > 0,
-                    canMoveLater: index < visibleItems.count - 1,
-                    moveEarlier: { move(item.output.id, by: -1) },
-                    moveLater: { move(item.output.id, by: 1) }
+                    pillarColorHex: item.brief.pillarID.flatMap { pillarIndex[$0]?.colorHex }
                 )
             }
         }
@@ -548,23 +558,21 @@ struct SocialGridView: View {
                 if $0.kind != $1.kind { return $0.kind == .photo }
                 return $0.createdAt < $1.createdAt
             }
-        return DuplicateSafeIndex.firstValues(
-            media.compactMap { attachment in
-                attachment.platformOutputID.map { ($0, attachment) }
-            }
-        )
-    }
-
-    private var orderState: SocialGridOrderState {
-        let preferences = SocialGridOrderPreferencesStore.decode(storedGridOrderPreferences)
-        return SocialGridOrderState(
-            savedRawIDs: preferences?.orderByWorkspace[workspaceStorageKey] ?? [],
-            defaultIDs: defaultOutputIDs
-        )
+        let mediaByOutputID = Dictionary(grouping: media) { $0.platformOutputID! }
+        return defaultOutputIDs.reduce(into: [:]) { result, outputID in
+            guard let candidates = mediaByOutputID[outputID],
+                  let output = outputIndex[outputID]
+            else { return }
+            let coverID = PostMediaPresentationPolicy.resolvedCoverID(
+                preferredID: output.coverAttachmentID,
+                mediaIDs: candidates.map(\.id)
+            )
+            result[outputID] = candidates.first { $0.id == coverID }
+        }
     }
 
     private var allItems: [SocialGridDisplayItem] {
-        orderState.orderedIDs.compactMap { outputID in
+        defaultOutputIDs.compactMap { outputID in
             guard let output = outputIndex[outputID],
                   let brief = briefIndex[output.briefID]
             else { return nil }
@@ -613,21 +621,6 @@ struct SocialGridView: View {
                     activeWorkspaceID: appModel.activeWorkspaceID,
                     workspaces: workspaces
                 )
-        }
-    }
-
-    private func move(_ outputID: UUID, by offset: Int) {
-        var updatedState = orderState
-        guard updatedState.move(outputID, by: offset, within: visibleItems.map(\.id)) else { return }
-
-        var preferences = SocialGridOrderPreferencesStore.decode(storedGridOrderPreferences) ?? .init()
-        preferences.orderByWorkspace[workspaceStorageKey] = updatedState.orderedIDs.map(\.uuidString)
-        guard let encoded = preferences.encoded() else { return }
-
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            storedGridOrderPreferences = encoded
         }
     }
 
@@ -689,31 +682,14 @@ struct SocialGridView: View {
         for item in thumbnailCandidates.prefix(8) {
             guard !Task.isCancelled,
                   attemptedThumbnailOutputIDs.insert(item.output.id).inserted,
-                  let url = SocialGridURLPolicy.instagramURL(from: item.output.publishedURLString)
+                  SocialGridURLPolicy.instagramURL(from: item.output.publishedURLString) != nil
             else { continue }
 
-            guard let metadata = try? await PostLinkMetadataService().fetch(url: url, platform: .instagram),
-                  let thumbnailData = metadata.thumbnailData,
-                  !allAttachments.contains(where: {
-                      $0.ownerKind == .postMedia && $0.platformOutputID == item.output.id
-                  })
-            else { continue }
-
-            let attachment = CreatorAttachment(
-                ownerKind: .postMedia,
-                briefID: item.brief.id,
-                platformOutputID: item.output.id,
-                fileName: "published-thumbnail-\(item.output.id.uuidString.prefix(8)).jpg",
-                kind: .photo,
-                uniformTypeIdentifier: "public.image",
-                byteCount: Int64(thumbnailData.count),
-                localRelativePath: "",
-                cloudData: thumbnailData,
-                syncState: .synced
+            await PublishedPostThumbnailHydrator().hydrate(
+                brief: item.brief,
+                output: item.output,
+                context: modelContext
             )
-            attachment.workspaceID = item.output.workspaceID ?? item.brief.workspaceID ?? activeWorkspaceID
-            modelContext.insert(attachment)
-            try? modelContext.save()
         }
     }
 
@@ -734,33 +710,12 @@ private struct SocialGridProfileSummary: View {
     let liveCount: Int
     let mediaCount: Int
     let isCompact: Bool
-    let showsArrange: Bool
-    let isArranging: Bool
-    let canArrange: Bool
-    let toggleArrangement: () -> Void
 
     var body: some View {
         Group {
             if isCompact {
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                    HStack(alignment: .top, spacing: AgentSpacing.x3) {
-                        identityRow
-                        Spacer(minLength: AgentSpacing.x3)
-                        if showsArrange {
-                            Button(isArranging ? "Done" : "Arrange", action: toggleArrangement)
-                                .font(.agentSubtext.weight(.semibold))
-                                .foregroundStyle(Color.actionAccent)
-                                .buttonStyle(.plain)
-                                .frame(minWidth: 72, minHeight: 40, alignment: .trailing)
-                                .disabled(!canArrange)
-                                .opacity(canArrange ? 1 : 0.42)
-                                .accessibilityHint(
-                                    isArranging
-                                        ? "Finishes arranging the social grid"
-                                        : "Shows controls to move posts earlier or later in the grid"
-                                )
-                        }
-                    }
+                    identityRow
 
                     HStack(spacing: 0) {
                         SocialGridStat(value: plannedCount, label: "Planned", isCompact: true)
@@ -832,49 +787,20 @@ private struct SocialGridTile: View {
     @Environment(\.colorScheme) private var colorScheme
     let item: SocialGridDisplayItem
     let pillarColorHex: String?
-    let isArranging: Bool
-    let canMoveEarlier: Bool
-    let canMoveLater: Bool
-    let moveEarlier: () -> Void
-    let moveLater: () -> Void
 
     var body: some View {
         // The geometry reader owns the exact 3:4 cell. Constraining the composed
         // tile—not only the image—prevents portrait media from drawing outside
         // its LazyVGrid row.
         GeometryReader { proxy in
-            ZStack {
-                NavigationLink {
-                    ScheduledPostDetailView(brief: item.brief, output: item.output)
-                } label: {
-                    tileVisual(size: proxy.size)
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .buttonStyle(.plain)
-                .disabled(isArranging)
-                .accessibilityHidden(isArranging)
-                .accessibilityLabel(accessibilityLabel)
-
-                if isArranging {
-                    Color.agentPureBlack.opacity(0.38)
-
-                    HStack(spacing: AgentSpacing.x3) {
-                        SocialGridMoveButton(
-                            title: "Move earlier",
-                            icon: .back,
-                            isEnabled: canMoveEarlier,
-                            action: moveEarlier
-                        )
-                        SocialGridMoveButton(
-                            title: "Move later",
-                            icon: .forward,
-                            isEnabled: canMoveLater,
-                            action: moveLater
-                        )
-                    }
-                }
+            NavigationLink {
+                ScheduledPostDetailView(brief: item.brief, output: item.output)
+            } label: {
+                tileVisual(size: proxy.size)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilityLabel)
             .clipped()
         }
         .aspectRatio(SocialGridLayoutPolicy.tileWidthToHeightRatio, contentMode: .fit)
@@ -894,7 +820,8 @@ private struct SocialGridTile: View {
     @ViewBuilder
     private func tileVisual(size: CGSize) -> some View {
         ZStack(alignment: .bottomLeading) {
-            if let data = item.attachment?.cloudData, let image = UIImage(data: data) {
+            if let data = item.attachment?.previewData ?? item.attachment?.cloudData,
+               let image = UIImage(data: data) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -953,43 +880,30 @@ private struct SocialGridTile: View {
     }
 }
 
-private struct SocialGridMoveButton: View {
-    let title: String
-    let icon: AgentIcon
-    let isEnabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            AgentIconView(icon, size: 14)
-                .foregroundStyle(Color.agentPureWhite)
-                .frame(width: 40, height: 40)
-                .contentShape(.circle)
-        }
-        .buttonStyle(.plain)
-        .frame(width: 40, height: 40)
-        .glassEffect(.clear.interactive(), in: .circle)
-        .overlay {
-            Circle()
-                .stroke(Color.agentPureWhite.opacity(0.26), lineWidth: 0.5)
-                .allowsHitTesting(false)
-        }
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.36)
-        .accessibilityLabel(title)
-    }
-}
-
-private struct SocialGridAddLivePostView: View {
+struct AddLivePostView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @Query private var allOutputs: [PlatformOutput]
+    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
+    private let onDismiss: (() -> Void)?
+    private let linkScope: LivePostLinkScope
     @State private var urlText = ""
+    @State private var postedAt: Date
     @State private var isSaving = false
     @State private var errorMessage: String?
     @FocusState private var urlIsFocused: Bool
+
+    init(
+        suggestedPostedAt: Date = Date(),
+        linkScope: LivePostLinkScope = .allPlatforms,
+        onDismiss: (() -> Void)? = nil
+    ) {
+        self.onDismiss = onDismiss
+        self.linkScope = linkScope
+        _postedAt = State(initialValue: LivePostURLPolicy.defaultPostedAt(for: suggestedPostedAt))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -997,74 +911,245 @@ private struct SocialGridAddLivePostView: View {
                 Text("Add live post")
                     .font(.agentHeadline)
                 Spacer()
-                AgentToolbarIconButton(title: "Close", icon: .close) {
-                    dismiss()
+                Button(action: close) {
+                    AgentIconView(.close, size: 16)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 40, height: 40)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                        .contentShape(.circle)
                 }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Close")
             }
-            .padding(.horizontal, AgentSpacing.x6)
-            .padding(.top, AgentSpacing.x5)
-            .padding(.bottom, AgentSpacing.x4)
+            .padding(.horizontal, AgentSpacing.x5)
+            .agentQuickAddHeaderSurface()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    Text(linkScope.prompt)
+                        .font(.agentBody)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                        MetaLabel("Post link")
+                        TextField("https://…", text: $urlText)
+                            .font(.agentBody)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: AgentRadius.control)
+                                    .stroke(errorMessage == nil ? Color.agentBorder : Color.agentDestructive, lineWidth: 1)
+                            }
+                            .focused($urlIsFocused)
+
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(.agentMetadata)
+                                .foregroundStyle(Color.agentDestructive)
+                        }
+                    }
+
+                    publishedDateEditor
+                }
+                .padding(AgentSpacing.x6)
+                .frame(maxWidth: AgentQuickAddLayout.desktopContentWidth, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .scrollIndicators(.hidden)
 
             Rectangle().fill(Color.agentHairline).frame(height: 1)
 
-            VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                EditorialHeader(
-                    kicker: "Already published",
-                    title: "Bring it into your grid.",
-                    subtitle: "Paste an Instagram post or Reel link. agent.cy will pull its available thumbnail and keep the original link attached."
-                )
-
-                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    MetaLabel("Instagram link")
-                    TextField("https://www.instagram.com/p/…", text: $urlText)
-                        .font(.agentBody)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .padding(.horizontal, AgentSpacing.x4)
-                        .frame(minHeight: 52)
-                        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: AgentRadius.control)
-                                .stroke(errorMessage == nil ? Color.agentBorder : Color.agentDestructive, lineWidth: 1)
-                        }
-                        .focused($urlIsFocused)
-
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.agentMetadata)
-                            .foregroundStyle(Color.agentDestructive)
-                    }
-                }
-
-                Spacer(minLength: 0)
-
+            HStack(spacing: AgentSpacing.x3) {
+#if targetEnvironment(macCatalyst)
+                Button("Cancel", action: close)
+                    .font(.agentSubtext.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .frame(minWidth: 100, minHeight: 44)
+                    .buttonStyle(.plain)
+                    .background(Color.agentSurface, in: .capsule)
+                    .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
+                Spacer(minLength: AgentSpacing.x4)
+#endif
                 Button {
                     Task { await addPost() }
                 } label: {
                     HStack(spacing: AgentSpacing.x3) {
                         if isSaving { ProgressView().controlSize(.small) }
-                        Text(isSaving ? "Adding post" : "Add to grid")
+                        Text(isSaving ? "Saving post" : "Save live post")
                     }
-                    .font(.agentBody.weight(.semibold))
-                    .foregroundStyle(Color.onAccent)
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(Color.actionAccent, in: .rect(cornerRadius: AgentRadius.control))
                 }
-                .buttonStyle(AgentPressButtonStyle())
-                .disabled(isSaving || urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(AgentPrimaryButtonStyle())
+                .disabled(isSaving)
+#if targetEnvironment(macCatalyst)
+                .frame(width: 190)
+#endif
             }
-            .padding(AgentSpacing.x6)
+            .padding(.horizontal, AgentSpacing.x6)
+            .padding(.vertical, AgentSpacing.x4)
         }
+        .background(Color.agentCanvas)
+#if targetEnvironment(macCatalyst)
+        .frame(minWidth: 640, idealWidth: 680, maxWidth: 780, minHeight: 580, idealHeight: 680)
+#endif
         .task {
             urlIsFocused = true
         }
     }
 
+    @ViewBuilder
+    private var publishedDateEditor: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            HStack(alignment: .firstTextBaseline) {
+                MetaLabel("Published")
+                Spacer()
+                Text(postedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentSecondary)
+                    .monospacedDigit()
+            }
+
+#if targetEnvironment(macCatalyst)
+            HStack(alignment: .top, spacing: AgentSpacing.x5) {
+                PillarCalendarDatePicker(
+                    date: $postedAt,
+                    pillarMarkers: [],
+                    maximumDate: Date(),
+                    cellHeight: 38,
+                    dayDiameter: 32
+                )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    MetaLabel("Time")
+                    Text(postedAt.formatted(date: .omitted, time: .shortened))
+                        .font(.agentTitle)
+                        .monospacedDigit()
+
+                    timeAdjustment(
+                        title: "Hour",
+                        value: String(format: "%02d", Calendar.current.component(.hour, from: postedAt))
+                    ) {
+                        adjustTime(.hour, by: -1)
+                    } increment: {
+                        adjustTime(.hour, by: 1)
+                    }
+
+                    timeAdjustment(
+                        title: "Minute",
+                        value: String(format: "%02d", Calendar.current.component(.minute, from: postedAt))
+                    ) {
+                        adjustTime(.minute, by: -1)
+                    } increment: {
+                        adjustTime(.minute, by: 1)
+                    }
+
+                    Text("Use the time the post became public.")
+                        .font(.agentMetadata)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(width: 180, alignment: .leading)
+                .padding(.top, AgentSpacing.x1)
+            }
+#else
+            DatePicker(
+                "Published date",
+                selection: $postedAt,
+                in: ...Date(),
+                displayedComponents: .date
+            )
+            .labelsHidden()
+            .datePickerStyle(.graphical)
+
+            HStack {
+                MetaLabel("Time")
+                Spacer()
+                DatePicker(
+                    "Published time",
+                    selection: $postedAt,
+                    in: ...Date(),
+                    displayedComponents: .hourAndMinute
+                )
+                .labelsHidden()
+            }
+            .frame(minHeight: 44)
+#endif
+        }
+        .padding(AgentSpacing.x4)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.panel)
+                .stroke(Color.agentBorder, lineWidth: 1)
+        }
+    }
+
+#if targetEnvironment(macCatalyst)
+    private func timeAdjustment(
+        title: String,
+        value: String,
+        decrement: @escaping () -> Void,
+        increment: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: AgentSpacing.x2) {
+            Text(title)
+                .font(.agentMetadata)
+                .foregroundStyle(Color.agentSecondary)
+            Spacer(minLength: AgentSpacing.x2)
+            Button(action: decrement) {
+                Text("−")
+                    .font(.agentHeadline)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .background(Color.agentCanvas, in: .circle)
+            .overlay(Circle().stroke(Color.agentBorder, lineWidth: 1))
+
+            Text(value)
+                .font(.agentSubtext.weight(.semibold))
+                .monospacedDigit()
+                .frame(minWidth: 38)
+
+            Button(action: increment) {
+                Text("+")
+                    .font(.agentHeadline)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .background(Color.agentCanvas, in: .circle)
+            .overlay(Circle().stroke(Color.agentBorder, lineWidth: 1))
+        }
+        .frame(minHeight: 40)
+    }
+
+    private func adjustTime(_ component: Calendar.Component, by value: Int) {
+        guard let adjusted = Calendar.current.date(byAdding: component, value: value, to: postedAt) else { return }
+        postedAt = min(adjusted, Date())
+    }
+#endif
+
     @MainActor
     private func addPost() async {
         guard !isSaving else { return }
-        guard let url = SocialGridURLPolicy.instagramURL(from: urlText) else {
-            errorMessage = "Paste a valid Instagram post or Reel link."
+        guard let descriptor = LivePostURLPolicy.descriptor(from: urlText) else {
+            errorMessage = linkScope.invalidLinkMessage
+            urlIsFocused = true
+            return
+        }
+        guard linkScope.allows(descriptor) else {
+            errorMessage = linkScope.rejectionMessage
+            urlIsFocused = true
+            return
+        }
+        guard PostedDatePolicy.isValid(postedAt) else {
+            errorMessage = "A live post cannot have a future posted date."
             return
         }
         let workspaceID = WorkspaceScope.activeWorkspaceID(
@@ -1072,14 +1157,14 @@ private struct SocialGridAddLivePostView: View {
             workspaces: workspaces
         ) ?? appModel.resolvedWorkspaceID(context: modelContext)
         guard !allOutputs.contains(where: {
-            $0.publishedURLString.trimmingCharacters(in: .whitespacesAndNewlines) == url.absoluteString
+            $0.publishedURLString.trimmingCharacters(in: .whitespacesAndNewlines) == descriptor.url.absoluteString
                 && WorkspaceScope.includes(
                     $0.workspaceID,
                     activeWorkspaceID: workspaceID,
                     workspaces: workspaces
                 )
         }) else {
-            errorMessage = "That post is already in your grid."
+            errorMessage = "That live post is already saved."
             return
         }
 
@@ -1087,27 +1172,44 @@ private struct SocialGridAddLivePostView: View {
         errorMessage = nil
         defer { isSaving = false }
 
-        let metadata = try? await PostLinkMetadataService().fetch(url: url, platform: .instagram)
+        let metadata = try? await PostLinkMetadataService().fetch(
+            url: descriptor.url,
+            platform: descriptor.sourcePlatform
+        )
         let now = Date()
 
         let brief = CreativeBrief(
-            title: SocialGridURLPolicy.title(from: metadata?.title),
+            title: metadataTitle(metadata?.title, fallback: descriptor.fallbackTitle),
             source: .text,
             status: .posted,
             createdAt: now
         )
         brief.workspaceID = workspaceID
         brief.ideaBankPlacement = .post
+        brief.agendaDate = postedAt
 
         let output = PlatformOutput(
             briefID: brief.id,
-            platform: .instagramReels,
+            platform: descriptor.creatorPlatform,
+            destinationID: descriptor.destinationID,
+            formatID: descriptor.formatID,
             status: .posted,
             createdAt: now
         )
         output.workspaceID = workspaceID
-        output.postedAt = now
-        output.publishedURLString = url.absoluteString
+        output.targetDate = postedAt
+        output.includesTargetTime = true
+        output.postedAt = postedAt
+        output.publishedURLString = descriptor.url.absoluteString
+        output.socialAccountID = allSocialAccounts.first(where: {
+            $0.destinationID == descriptor.destinationID &&
+                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces) &&
+                $0.isPrimary && !$0.isArchived
+        })?.id ?? allSocialAccounts.first(where: {
+            $0.destinationID == descriptor.destinationID &&
+                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces) &&
+                !$0.isArchived
+        })?.id
 
         modelContext.insert(brief)
         modelContext.insert(output)
@@ -1126,15 +1228,30 @@ private struct SocialGridAddLivePostView: View {
                 syncState: .synced
             )
             attachment.workspaceID = workspaceID
+            output.coverAttachmentID = attachment.id
             modelContext.insert(attachment)
         }
 
         do {
             try modelContext.save()
-            dismiss()
+            WidgetSnapshotService.refresh(context: modelContext, workspaceID: workspaceID)
+            close()
         } catch {
             modelContext.rollback()
             errorMessage = "This post could not be added. Try again."
         }
+    }
+
+    private func close() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func metadataTitle(_ value: String?, fallback: String) -> String {
+        let title = SocialGridURLPolicy.title(from: value)
+        return title == "Instagram post" ? fallback : title
     }
 }

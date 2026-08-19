@@ -183,7 +183,7 @@ final class InspirationLifecycleTests: XCTestCase {
         XCTAssertEqual(preview.map(\.id), Array(sources.prefix(5)).map(\.id))
     }
 
-    func testSavedPostAnalysisActionMovesThroughToolbarStates() {
+    func testSavedPostAnalysisActionMovesThroughInlineStates() {
         XCTAssertEqual(
             InspirationReviewAnalysisAction.resolve(
                 status: .pending,
@@ -229,8 +229,8 @@ final class InspirationLifecycleTests: XCTestCase {
             ),
             .hidden
         )
-        XCTAssertNil(InspirationReviewAnalysisAction.analyze.title)
-        XCTAssertNil(InspirationReviewAnalysisAction.retry.title)
+        XCTAssertEqual(InspirationReviewAnalysisAction.analyze.title, "Analyze with Cy")
+        XCTAssertEqual(InspirationReviewAnalysisAction.retry.title, "Try Cy again")
     }
 
     func testSavedPostFailurePresentationExplainsTheRightRecovery() {
@@ -240,7 +240,7 @@ final class InspirationLifecycleTests: XCTestCase {
         XCTAssertEqual(missingContent.title, "Cy needs the post content")
         XCTAssertEqual(
             missingContent.message,
-            "The link is saved. Share the post again with its caption or video, then tap Cy above."
+            "The link is saved. Share the post again with its caption or video, then try Cy again."
         )
 
         let temporaryFailure = InspirationReviewFailurePresentation.resolve(
@@ -249,7 +249,7 @@ final class InspirationLifecycleTests: XCTestCase {
         XCTAssertEqual(temporaryFailure.title, "Cy couldn’t finish the analysis")
         XCTAssertEqual(
             temporaryFailure.message,
-            "Your saved post is safe. Tap Cy above to try again."
+            "Your saved post is safe. Try Cy again when you’re ready."
         )
     }
 

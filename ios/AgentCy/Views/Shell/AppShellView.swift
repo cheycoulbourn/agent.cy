@@ -2,6 +2,30 @@ import SwiftData
 import SwiftUI
 import UIKit
 
+enum AppShellNavigationPolicy {
+    static func shouldResetPath(current: AppTab, tapped: AppTab) -> Bool {
+        current == tapped
+    }
+}
+
+enum AppShellMotionPolicy {
+    static func shouldRunContinuousPlanningCue(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+}
+
+enum AppShellMCPReviewPolicy {
+    static func shouldPresent(
+        requestIDs: Set<UUID>,
+        presentedRequestIDs: Set<UUID>,
+        hasGlobalPresentation: Bool
+    ) -> Bool {
+        !hasGlobalPresentation &&
+            !requestIDs.isEmpty &&
+            !requestIDs.subtracting(presentedRequestIDs).isEmpty
+    }
+}
+
 struct AppShellView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var modelContext
@@ -62,6 +86,19 @@ struct AppShellView: View {
                     .zIndex(model.walkthroughStep == nil ? 10 : 13)
                 }
 
+                if CreatorSessionFeatureAvailability.isEnabled,
+                   !isKeyboardVisible,
+                   model.walkthroughStep == nil {
+                    ActiveCreatorSessionFloatingTimer(
+                        isEnabled: model.presentedSheet != .creatorSession
+                    ) {
+                        model.presentedSheet = .creatorSession
+                    }
+                    .padding(.horizontal, AgentLayout.pageMargin + AgentSpacing.x3)
+                    .padding(.bottom, 84)
+                    .zIndex(9)
+                }
+
                 if !isKeyboardVisible, let undo = appModel.taskCompletionUndo {
                     taskCompletionUndoToast(undo)
                         .padding(.horizontal, AgentLayout.pageMargin + AgentSpacing.x1)
@@ -118,8 +155,32 @@ struct AppShellView: View {
                 switch sheet {
                 case .creationHub: CreationHubView()
                 case .quickCapture: QuickCaptureView()
+                case .voiceSpark:
+                    #if targetEnvironment(macCatalyst)
+                    EmptyView()
+                    #else
+                    VoiceSparkView()
+                    #endif
+                case .creatorSession:
+                    if CreatorSessionFeatureAvailability.isEnabled {
+                        #if targetEnvironment(macCatalyst)
+                        EmptyView()
+                        #else
+                        CreatorSessionView()
+                        #endif
+                    } else {
+                        EmptyView()
+                    }
                 case .askCy: AskCyView()
                 case .settings: SettingsView()
+                case .weeklyFocus: WeeklyFocusSetupView()
+                case .activityCenter:
+                    NotificationActivityCenterView(
+                        preferredWorkspaceID: appModel.activeWorkspaceID
+                    )
+                    .agentDesktopWorkspaceModal()
+                    .presentationDetents([.large])
+                    .presentationBackground(Color.agentCanvas)
                 }
             }
         }
@@ -156,7 +217,6 @@ struct AppShellView: View {
                 context: modelContext,
                 presentsImportedSource: false
             )
-            presentedMCPRequestIDs = []
             while !Task.isCancelled {
                 await presentMCPApprovalsIfNeeded()
                 try? await Task.sleep(for: .seconds(4))
@@ -224,7 +284,7 @@ struct AppShellView: View {
 
     private func setWalkthroughStep(_ step: AppWalkthroughStep, tab: AppTab) {
         let changes = {
-            appModel.presentedSheet = nil
+            appModel.dismissGlobalPresentation()
             appModel.selectedTab = tab
             appModel.walkthroughStep = step
         }
@@ -247,6 +307,7 @@ struct AppShellView: View {
         completedWalkthroughVersion = AppWalkthrough.currentVersion
         walkthroughIsWaitingForQuickAddDismissal = false
         let changes = {
+            appModel.dismissGlobalPresentation()
             appModel.walkthroughStep = nil
             appModel.selectedTab = .home
             appModel.presentedSheet = openCreationHub ? .creationHub : nil
@@ -288,31 +349,38 @@ struct AppShellView: View {
     }
 
     private func selectTab(_ tab: AppTab) {
-        appModel.presentedSheet = nil
-        switch tab {
-        case .home:
-            homePath = NavigationPath()
-        case .today:
-            planPath = NavigationPath()
-        case .tasks:
-            tasksPath = NavigationPath()
-        case .pillars:
-            pillarsPath = NavigationPath()
-        case .ideaBank:
-            ideaBankPath = NavigationPath()
-        case .cy:
-            cyPath = NavigationPath()
+        let shouldResetPath = AppShellNavigationPolicy.shouldResetPath(
+            current: appModel.selectedTab,
+            tapped: tab
+        )
+        appModel.dismissGlobalPresentation()
+        if shouldResetPath {
+            switch tab {
+            case .home:
+                homePath = NavigationPath()
+            case .today:
+                planPath = NavigationPath()
+            case .tasks:
+                tasksPath = NavigationPath()
+            case .pillars:
+                pillarsPath = NavigationPath()
+            case .ideaBank:
+                ideaBankPath = NavigationPath()
+            case .cy:
+                cyPath = NavigationPath()
+            }
+        }
+        if tab == .cy {
             cyPlanningWeekOpened = WeeklyPlanningCue.weekKey(for: Date())
         }
         appModel.selectedTab = tab
     }
 
     private func openRequestedTaskIfNeeded() {
-        guard let taskID = appModel.requestedTaskID else { return }
+        guard let taskID = appModel.consumeRequestedTaskRoute() else { return }
         appModel.selectedTab = .tasks
         tasksPath = NavigationPath()
         tasksPath.append(TaskNavigationRoute(taskID: taskID))
-        appModel.requestedTaskID = nil
     }
 
     private func presentMCPApprovalsIfNeeded() async {
@@ -325,7 +393,7 @@ struct AppShellView: View {
         // thread and leave @State untouched when nothing changed, or the
         // 4-second poll hitches whatever the creator is scrolling.
         let fetched = await Task.detached(priority: .utility) {
-            try? MCPBridgeService.pendingRequests()
+            try? await MCPBridgeService.refreshPendingRequests()
         }.value
         guard let requests = fetched else {
             return
@@ -338,17 +406,17 @@ struct AppShellView: View {
             if !presentedMCPRequestIDs.isEmpty { presentedMCPRequestIDs = [] }
             return
         }
-        guard !requestIDs.subtracting(presentedMCPRequestIDs).isEmpty else { return }
-
-        // Never yank the creator out of in-progress work: while a sheet is up,
-        // the Cy tab badge carries the signal and this poll retries once the
-        // sheet closes (presentedMCPRequestIDs is only marked after navigating).
-        guard appModel.presentedSheet == nil else { return }
+        // Never yank the creator out of in-progress work. The badge carries
+        // the signal while any global presentation is active, and already
+        // presented requests stay suppressed across scene re-entry.
+        guard AppShellMCPReviewPolicy.shouldPresent(
+            requestIDs: requestIDs,
+            presentedRequestIDs: presentedMCPRequestIDs,
+            hasGlobalPresentation: appModel.hasGlobalPresentation
+        ) else { return }
         presentedMCPRequestIDs = requestIDs
 
-        appModel.requestedSettingsPage = nil
-        cyPath = NavigationPath()
-        appModel.selectedTab = .cy
+        appModel.presentMCPReview()
     }
 
 }
@@ -581,8 +649,14 @@ private struct WalkthroughPrimaryButtonStyle: ButtonStyle {
                 radius: isFinalStep ? 12 : 0,
                 y: isFinalStep ? 4 : 0
             )
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -761,7 +835,8 @@ private struct PaperBottomNavigation: View {
     private func tabIcon(for tab: AppTab) -> some View {
         if tab == .cy {
             if hasPendingCyReview {
-                CyPendingReviewAsterisk(color: foreground(for: tab))
+                CyPendingReviewLogo(color: foreground(for: tab))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 CyAsterisk(color: foreground(for: tab), size: 20, strokeWidth: 1.8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -779,45 +854,36 @@ private struct PaperBottomNavigation: View {
     }
 }
 
-private struct CyPendingReviewAsterisk: View {
-    let color: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isRotating = false
-
-    var body: some View {
-        CyAsterisk(color: color, size: 20, strokeWidth: 1.8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
-            .animation(
-                reduceMotion ? nil : .linear(duration: 1.8).repeatForever(autoreverses: false),
-                value: isRotating
-            )
-            .onAppear { isRotating = true }
-            .accessibilityHidden(true)
-    }
-}
-
 private struct CyWeeklyPlanningPulse: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let progress = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 1.8) / 1.8
-            let wave = CGFloat((sin(progress * .pi * 2) + 1) / 2)
-
-            Circle()
-                .fill(Color.cyAccent.opacity(reduceMotion ? 0.18 : 0.12 + (wave * 0.14)))
-                .frame(width: 42, height: 42)
-                .scaleEffect(reduceMotion ? 1.05 : 0.94 + (wave * 0.18))
-                .shadow(
-                    color: Color.cyAccent.opacity(reduceMotion ? 0.28 : 0.24 + (wave * 0.34)),
-                    radius: reduceMotion ? 8 : 7 + (wave * 7)
-                )
+        Group {
+            if AppShellMotionPolicy.shouldRunContinuousPlanningCue(reduceMotion: reduceMotion) {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                    let progress = timeline.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: 1.8) / 1.8
+                    let wave = CGFloat((sin(progress * .pi * 2) + 1) / 2)
+                    planningCueCircle(wave: wave)
+                }
+            } else {
+                planningCueCircle(wave: 0.5)
+            }
         }
         .frame(width: 46, height: 46)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    private func planningCueCircle(wave: CGFloat) -> some View {
+        Circle()
+            .fill(Color.cyAccent.opacity(reduceMotion ? 0.18 : 0.12 + (wave * 0.14)))
+            .frame(width: 42, height: 42)
+            .scaleEffect(reduceMotion ? 1.05 : 0.94 + (wave * 0.18))
+            .shadow(
+                color: Color.cyAccent.opacity(reduceMotion ? 0.28 : 0.24 + (wave * 0.34)),
+                radius: reduceMotion ? 8 : 7 + (wave * 7)
+            )
     }
 }
 

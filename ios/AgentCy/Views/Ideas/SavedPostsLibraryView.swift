@@ -10,6 +10,16 @@ enum SavedPostsPreviewPolicy {
     }
 }
 
+enum SavedPostRowAccessibilityPolicy {
+    static func titleLineLimit(dynamicTypeSize: DynamicTypeSize) -> Int {
+        dynamicTypeSize.isAccessibilitySize ? 4 : 2
+    }
+
+    static func metadataLineLimit(dynamicTypeSize: DynamicTypeSize) -> Int {
+        dynamicTypeSize.isAccessibilitySize ? 3 : 1
+    }
+}
+
 enum SavedPostPresentation {
     static func title(for source: InspirationSource) -> String {
         if source.saveMode != .originalOnly,
@@ -60,6 +70,7 @@ enum SavedPostPresentation {
 }
 
 struct SavedPostRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let source: InspirationSource
     let pillarName: String?
     let pillarColorHex: String?
@@ -67,54 +78,51 @@ struct SavedPostRow: View {
     let open: () -> Void
     let openOriginal: () -> Void
     let requestDeletion: () -> Void
+    var isSelecting = false
+    var isSelected = false
+    var toggleSelection: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: AgentSpacing.x2) {
-            Button(action: open) {
-                HStack(spacing: AgentSpacing.x3) {
-                    thumbnail
-                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                        Text(SavedPostPresentation.title(for: source))
-                            .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
-                            .foregroundStyle(Color.agentText)
-                            .lineLimit(2)
-                        Text(SavedPostPresentation.metadata(for: source))
-                            .font(.agentMetadata)
-                            .foregroundStyle(Color.agentSecondary)
-                            .textCase(.uppercase)
-                            .lineLimit(1)
-                        if let pillarName, let pillarColorHex {
-                            HStack(spacing: AgentSpacing.x2) {
-                                PillarColorMark(color: Color(agentHex: pillarColorHex), diameter: 9)
-                                Text(pillarName)
-                                    .font(.agentMetadata)
-                                    .foregroundStyle(Color.agentSecondary)
-                                    .lineLimit(1)
-                            }
-                        }
+        HStack(spacing: AgentSpacing.x3) {
+            if isSelecting {
+                Button(action: toggleSelection) {
+                    HStack(spacing: AgentSpacing.x3) {
+                        AgentSelectionIndicator(isSelected: isSelected)
+                        rowContent
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open saved post")
-            .accessibilityValue(SavedPostPresentation.title(for: source))
-
-            Menu {
-                Button(action: openOriginal) {
-                    AgentIconLabel(title: "Open original post", icon: .external)
-                }
-                Button(role: .destructive, action: requestDeletion) {
-                    AgentIconLabel(title: "Delete saved post", icon: .trash)
-                }
-            } label: {
-                AgentIconView(.more, size: 17)
-                    .foregroundStyle(Color.agentSecondary)
-                    .frame(width: 44, height: 44)
                     .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .agentHoverRow(cornerRadius: AgentRadius.control, bleed: AgentSpacing.x1)
+                .accessibilityLabel(SavedPostPresentation.title(for: source))
+                .accessibilityValue(isSelected ? "Selected" : "Not selected")
+                .accessibilityHint("Toggles this saved post’s selection")
+            } else {
+                Button(action: open) {
+                    rowContent
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .agentHoverRow(cornerRadius: AgentRadius.control, bleed: AgentSpacing.x1)
+                .accessibilityLabel(SavedPostPresentation.title(for: source))
+                .accessibilityValue(SavedPostPresentation.metadata(for: source))
+                .accessibilityHint("Opens this saved post")
+
+                Menu {
+                    Button(action: openOriginal) {
+                        AgentIconLabel(title: "Open original post", icon: .external)
+                    }
+                    Button(role: .destructive, action: requestDeletion) {
+                        AgentIconLabel(title: "Delete saved post", icon: .trash)
+                    }
+                } label: {
+                    AgentIconView(.more, size: 17)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
+                }
+                .accessibilityLabel("Saved post actions")
             }
-            .accessibilityLabel("Saved post actions")
         }
         .padding(.vertical, AgentSpacing.x3)
         .overlay(alignment: .bottom) {
@@ -124,20 +132,68 @@ struct SavedPostRow: View {
         }
     }
 
+    private var rowContent: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            thumbnail
+            VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                Text(SavedPostPresentation.title(for: source))
+                    .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(SavedPostRowAccessibilityPolicy.titleLineLimit(
+                        dynamicTypeSize: dynamicTypeSize
+                    ))
+                Text(SavedPostPresentation.metadata(for: source))
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentSecondary)
+                    .textCase(.uppercase)
+                    .lineLimit(SavedPostRowAccessibilityPolicy.metadataLineLimit(
+                        dynamicTypeSize: dynamicTypeSize
+                    ))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let pillarName, let pillarColorHex {
+                    HStack(spacing: AgentSpacing.x2) {
+                        PillarColorMark(color: Color(agentHex: pillarColorHex), diameter: 9)
+                        Text(pillarName)
+                            .font(.agentMetadata)
+                            .foregroundStyle(Color.agentSecondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     @ViewBuilder
     private var thumbnail: some View {
         if let data = source.thumbnailData, let image = UIImage(data: data) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 58, height: 72)
+                .frame(width: thumbnailWidth, height: thumbnailHeight)
                 .clipShape(.rect(cornerRadius: AgentRadius.control))
         } else {
             AgentIconView(.link, size: 15)
                 .foregroundStyle(Color.actionAccent)
-                .frame(width: 58, height: 72)
+                .frame(width: thumbnailWidth, height: thumbnailHeight)
                 .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
         }
+    }
+
+    private var thumbnailWidth: CGFloat {
+#if targetEnvironment(macCatalyst)
+        72
+#else
+        58
+#endif
+    }
+
+    private var thumbnailHeight: CGFloat {
+#if targetEnvironment(macCatalyst)
+        90
+#else
+        72
+#endif
     }
 }
 
@@ -152,6 +208,8 @@ struct SavedPostsLibraryView: View {
     @State private var search = ""
     @State private var pendingDeletion: InspirationSource?
     @State private var confirmsDeletion = false
+    @State private var attemptedThumbnailSourceIDs: Set<UUID> = []
+    @State private var showsLinkCapture = false
 
     private var sources: [InspirationSource] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -186,6 +244,9 @@ struct SavedPostsLibraryView: View {
                 #endif
                 searchField
                 SectionRuleHeader(title: "Saved Posts", trailing: "\(sources.count)")
+                AgentBlockAddActionButton(title: "Save a post") {
+                    showsLinkCapture = true
+                }
                 if sources.isEmpty {
                     AgentEmptyState(
                         title: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -240,6 +301,15 @@ struct SavedPostsLibraryView: View {
         } message: { _ in
             Text("The saved reference will be removed. Any idea you already created from it will stay in your Idea Bank.")
         }
+        .task(id: thumbnailHydrationKey) {
+            await hydrateMissingThumbnails()
+        }
+        .sheet(isPresented: $showsLinkCapture) {
+            SavedPostLinkCaptureView()
+                .environment(appModel)
+                .presentationDetents([.medium, .large])
+                .agentSheetDragIndicator()
+        }
     }
 
     private var activeIdentity: ActiveCreatorIdentity {
@@ -291,5 +361,195 @@ struct SavedPostsLibraryView: View {
             appModel.presentCreatorError(error, action: "This saved post")
         }
         pendingDeletion = nil
+    }
+
+    private var thumbnailHydrationKey: String {
+        SavedPostThumbnailHydrationPolicy.taskKey(
+            workspaceKey: appModel.activeWorkspaceID?.uuidString ?? "legacy",
+            missingSourceIDs: sources.filter { $0.thumbnailData == nil }.map(\.id)
+        )
+    }
+
+    @MainActor
+    private func hydrateMissingThumbnails() async {
+        for source in sources where source.thumbnailData == nil {
+            guard !Task.isCancelled,
+                  attemptedThumbnailSourceIDs.insert(source.id).inserted
+            else { continue }
+            await SavedPostThumbnailHydrator().hydrate(source: source, context: context)
+        }
+    }
+}
+
+/// In-app "Save a post": a pasted link goes through the same canonicalization
+/// as a shared one, and a link already saved to this account reopens the
+/// existing reference instead of duplicating it.
+enum SavedPostLinkCapturePolicy {
+    enum Outcome: Equatable {
+        case invalid
+        case duplicate(existingID: UUID)
+        case save(canonicalURLString: String, platform: InspirationPlatform)
+    }
+
+    static func outcome(
+        rawLink: String,
+        workspaceID: UUID?,
+        existing sources: [InspirationSource]
+    ) -> Outcome {
+        var candidate = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        if candidate.lowercased().hasPrefix("http://") {
+            candidate = "https://" + candidate.dropFirst("http://".count)
+        }
+        guard let url = try? InspirationLinkCanonicalizer.canonicalize(candidate) else {
+            return .invalid
+        }
+        if let existing = sources.first(where: {
+            $0.workspaceID == workspaceID && $0.canonicalURLString == url.absoluteString
+        }) {
+            return .duplicate(existingID: existing.id)
+        }
+        return .save(
+            canonicalURLString: url.absoluteString,
+            platform: InspirationLinkCanonicalizer.platform(for: url)
+        )
+    }
+}
+
+struct SavedPostLinkCaptureView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    @Query(sort: \InspirationSource.updatedAt, order: .reverse) private var allSources: [InspirationSource]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+    @State private var urlText = ""
+    @State private var errorMessage: String?
+    @FocusState private var linkIsFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Save a post")
+                    .font(.agentHeadline)
+                Spacer()
+                Button(action: { dismiss() }) {
+                    AgentIconView(.close, size: 16)
+                        .foregroundStyle(Color.agentText)
+                        .frame(width: 40, height: 40)
+                        .background(Color.agentSurface, in: .circle)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                        .contentShape(.circle)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Close")
+            }
+            .padding(.horizontal, AgentSpacing.x5)
+            .agentQuickAddHeaderSurface()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    Text("Paste an Instagram, TikTok, or YouTube link. agent.cy keeps it in Saved Posts and pulls any available thumbnail.")
+                        .font(.agentBody)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                        MetaLabel("Post link")
+                        TextField("https://…", text: $urlText)
+                            .font(.agentBody)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: AgentRadius.control)
+                                    .stroke(errorMessage == nil ? Color.agentBorder : Color.agentDestructive, lineWidth: 1)
+                            }
+                            .focused($linkIsFocused)
+                            .onSubmit(save)
+
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(.agentMetadata)
+                                .foregroundStyle(Color.agentDestructive)
+                        }
+                    }
+                }
+                .padding(AgentSpacing.x6)
+                .frame(maxWidth: AgentQuickAddLayout.desktopContentWidth, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .scrollIndicators(.hidden)
+
+            Rectangle().fill(Color.agentHairline).frame(height: 1)
+
+            HStack(spacing: AgentSpacing.x3) {
+#if targetEnvironment(macCatalyst)
+                Button("Cancel") { dismiss() }
+                    .font(.agentSubtext.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .frame(minWidth: 100, minHeight: 44)
+                    .buttonStyle(.plain)
+                    .background(Color.agentSurface, in: .capsule)
+                    .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
+                Spacer(minLength: AgentSpacing.x4)
+#endif
+                Button(action: save) {
+                    Text("Save post")
+                }
+                .buttonStyle(AgentPrimaryButtonStyle())
+#if targetEnvironment(macCatalyst)
+                .frame(width: 190)
+#endif
+            }
+            .padding(.horizontal, AgentSpacing.x6)
+            .padding(.vertical, AgentSpacing.x4)
+        }
+        .background(Color.agentCanvas)
+#if targetEnvironment(macCatalyst)
+        .frame(minWidth: 560, idealWidth: 620, maxWidth: 720, minHeight: 360, idealHeight: 400)
+#endif
+        .task {
+            linkIsFocused = true
+        }
+    }
+
+    private func save() {
+        let workspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        )
+        switch SavedPostLinkCapturePolicy.outcome(
+            rawLink: urlText,
+            workspaceID: workspaceID,
+            existing: allSources
+        ) {
+        case .invalid:
+            errorMessage = "Paste a valid Instagram, TikTok, or YouTube link."
+        case .duplicate(let existingID):
+            dismiss()
+            if let existing = allSources.first(where: { $0.id == existingID }) {
+                appModel.notice = .info("Already saved — opening it.")
+                appModel.openInspiration(existing)
+            }
+        case .save(let canonicalURLString, let platform):
+            let source = InspirationSource(
+                workspaceID: workspaceID,
+                canonicalURLString: canonicalURLString,
+                platform: platform
+            )
+            context.insert(source)
+            do {
+                try context.save()
+                appModel.notice = .info("Post saved.")
+                dismiss()
+            } catch {
+                context.delete(source)
+                appModel.presentCreatorError(error, action: "Saving this post")
+            }
+        }
     }
 }

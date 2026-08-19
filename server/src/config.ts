@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import type { ApnsBridgePushConfig } from "./bridge-push.js";
 
 export type ProviderKind = "anthropic" | "fixture";
 
@@ -9,12 +10,15 @@ export interface ServerConfig {
   readonly anthropicApiKey: string | undefined;
   readonly model: "claude-sonnet-5";
   readonly dataFile: string;
+  readonly publicBaseUrl: string;
   readonly inviteHashSecret: string;
   /** First value signs new credentials; later values verify credentials minted before rotation. */
   readonly installationHashSecrets: readonly [string, ...string[]];
   readonly appleSubjectHashSecret: string;
+  readonly bridgeNotificationHashSecret: string;
   readonly appleClientIds: readonly [string, ...string[]];
   readonly inviteCodes: readonly string[];
+  readonly inviteExpiresAt: Date | null;
   readonly pilotCompedAccess: boolean;
   readonly pilotCompedDurationDays: number;
   readonly revenueCatWebhookSecret: string | undefined;
@@ -25,6 +29,7 @@ export interface ServerConfig {
   readonly dailyOperationLimit: number;
   readonly dailyCostLimitMicros: number;
   readonly telemetryRetentionDays: number;
+  readonly apns: ApnsBridgePushConfig | null;
 }
 
 function integer(
@@ -63,6 +68,18 @@ function boolean(
   }
 }
 
+function optionalDateTime(
+  value: string | undefined,
+  name: string,
+): Date | null {
+  if (value === undefined || value.trim() === "") return null;
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || !value.includes("T")) {
+    throw new Error(`${name} must be an ISO-8601 date-time`);
+  }
+  return parsed;
+}
+
 export function loadConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): ServerConfig {
@@ -86,6 +103,9 @@ export function loadConfig(
   const appleSubjectHashSecret =
     environment.APPLE_SUBJECT_HASH_SECRET ??
     (production ? undefined : "agent-cy-local-apple-subject-hash-secret-only");
+  const bridgeNotificationHashSecret =
+    environment.BRIDGE_NOTIFICATION_HASH_SECRET ??
+    (production ? undefined : "agent-cy-local-bridge-notification-hash-secret-only");
   if (!inviteHashSecret) {
     throw new Error("INVITE_HASH_SECRET is required in production");
   }
@@ -94,6 +114,9 @@ export function loadConfig(
   }
   if (!appleSubjectHashSecret) {
     throw new Error("APPLE_SUBJECT_HASH_SECRET is required in production");
+  }
+  if (!bridgeNotificationHashSecret) {
+    throw new Error("BRIDGE_NOTIFICATION_HASH_SECRET is required in production");
   }
   const previousInstallationHashSecrets = (
     environment.PREVIOUS_INSTALLATION_HASH_SECRETS ?? ""
@@ -110,6 +133,7 @@ export function loadConfig(
     for (const [name, secret] of [
       ["INVITE_HASH_SECRET", inviteHashSecret],
       ["APPLE_SUBJECT_HASH_SECRET", appleSubjectHashSecret],
+      ["BRIDGE_NOTIFICATION_HASH_SECRET", bridgeNotificationHashSecret],
       ...installationHashSecrets.map(
         (secret, index) => [
           index === 0
@@ -124,6 +148,10 @@ export function loadConfig(
       }
     }
   }
+  const inviteExpiresAt = optionalDateTime(
+    environment.INVITE_EXPIRES_AT,
+    "INVITE_EXPIRES_AT",
+  );
   if (new Set(installationHashSecrets).size !== installationHashSecrets.length) {
     throw new Error("Installation hash secrets must be unique");
   }
@@ -140,6 +168,45 @@ export function loadConfig(
       "APPLE_SUBJECT_HASH_SECRET must differ from invite and installation hash secrets",
     );
   }
+  if (
+    bridgeNotificationHashSecret === inviteHashSecret ||
+    bridgeNotificationHashSecret === appleSubjectHashSecret ||
+    installationHashSecrets.includes(bridgeNotificationHashSecret)
+  ) {
+    throw new Error(
+      "BRIDGE_NOTIFICATION_HASH_SECRET must differ from invite, Apple subject, and installation hash secrets",
+    );
+  }
+
+  const publicBaseUrl = environment.PUBLIC_BASE_URL ??
+    (production ? "https://agentcy-production.up.railway.app" : "http://127.0.0.1:3000");
+  const parsedPublicBaseUrl = URL.parse(publicBaseUrl);
+  if (!parsedPublicBaseUrl || !["http:", "https:"].includes(parsedPublicBaseUrl.protocol)) {
+    throw new Error("PUBLIC_BASE_URL must be an absolute HTTP or HTTPS URL");
+  }
+  const apnsValues = {
+    teamId: environment.APNS_TEAM_ID,
+    keyId: environment.APNS_KEY_ID,
+    privateKey: environment.APNS_PRIVATE_KEY,
+    topic: environment.APNS_TOPIC,
+  };
+  const configuredApnsValues = Object.values(apnsValues).filter((value) => value !== undefined && value !== "");
+  if (configuredApnsValues.length > 0 && configuredApnsValues.length < Object.keys(apnsValues).length) {
+    throw new Error("APNS_TEAM_ID, APNS_KEY_ID, APNS_PRIVATE_KEY, and APNS_TOPIC must be configured together");
+  }
+  const apnsEnvironment = environment.APNS_ENVIRONMENT ?? (production ? "production" : "development");
+  if (apnsEnvironment !== "development" && apnsEnvironment !== "production") {
+    throw new Error("APNS_ENVIRONMENT must be development or production");
+  }
+  const apns: ApnsBridgePushConfig | null = configuredApnsValues.length === 0
+    ? null
+    : {
+        teamId: apnsValues.teamId!,
+        keyId: apnsValues.keyId!,
+        privateKey: apnsValues.privateKey!,
+        topic: apnsValues.topic!,
+        environment: apnsEnvironment,
+      };
 
   const appleClientIds = (environment.APPLE_CLIENT_IDS ?? "com.agentcy.app")
     .split(",")
@@ -204,11 +271,14 @@ export function loadConfig(
     anthropicApiKey,
     model: "claude-sonnet-5",
     dataFile: resolve(environment.DATA_FILE ?? "./data/agent-cy-state.json"),
+    publicBaseUrl: parsedPublicBaseUrl.toString(),
     inviteHashSecret,
     installationHashSecrets,
     appleSubjectHashSecret,
+    bridgeNotificationHashSecret,
     appleClientIds: appleClientIds as [string, ...string[]],
     inviteCodes,
+    inviteExpiresAt,
     // The current external pilot is intentionally promotional. Set this to
     // false when the production App Store billing cohort begins.
     pilotCompedAccess: boolean(
@@ -242,5 +312,6 @@ export function loadConfig(
       "DAILY_COST_LIMIT_MICROS",
     ),
     telemetryRetentionDays,
+    apns,
   };
 }

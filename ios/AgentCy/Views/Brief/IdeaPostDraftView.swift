@@ -79,6 +79,7 @@ struct IdeaPostDraftView: View {
         }
         .sheet(isPresented: $showDevelopment) {
             DevelopBriefView(brief: brief, output: draftOutput)
+                .agentDesktopWorkspaceModal()
         }
         .agentScreen()
     }

@@ -132,11 +132,12 @@ enum WidgetSnapshotService {
                 overrides: focusOverrides,
                 calendar: calendar
             )
-            let dayOutput = outputs
+            let dayOutputs = outputs
                 .filter { output in
                     output.targetDate.map { calendar.isDate($0, inSameDayAs: day) } == true && briefByID[output.briefID] != nil
                 }
                 .sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
+            let dayOutput = dayOutputs
                 .first
             let outputPillar = dayOutput
                 .flatMap { briefByID[$0.briefID]?.pillarID }
@@ -149,12 +150,85 @@ enum WidgetSnapshotService {
             return WidgetDaySnapshot(
                 date: day,
                 focusTitle: focus?.title ?? "Rest",
-                pillarColorHex: pillar?.resolvedColorHex(in: pillars)
+                pillarColorHex: pillar?.resolvedColorHex(in: pillars),
+                postCount: dayOutputs.count
             )
         }
 
+        let weekEnd = calendar.date(byAdding: .day, value: 7, to: weekStart) ?? weekStart
+        let pillarUsageSummary = PillarUsageSchedulePolicy.summary(
+            pillars: pillars,
+            briefs: briefs,
+            outputs: outputs,
+            interval: DateInterval(start: weekStart, end: weekEnd)
+        )
+        let pillarUsage: WidgetPillarUsageSnapshot? = {
+            guard !pillarUsageSummary.isEmpty else { return nil }
+            let segments = pillarUsageSummary.compactMap { item -> WidgetPillarSegmentSnapshot? in
+                guard let pillar = pillarByID[item.pillarID] else { return nil }
+                return WidgetPillarSegmentSnapshot(
+                    name: pillar.name,
+                    colorHex: pillar.resolvedColorHex(in: pillars),
+                    percentage: item.percentage
+                )
+            }
+            guard let anchorSegment = segments.first else { return nil }
+            return WidgetPillarUsageSnapshot(
+                segments: segments,
+                leadingPillarName: anchorSegment.name,
+                leadingPercentage: anchorSegment.percentage
+            )
+        }()
+
+        let weeklyGoal = workspaces.first { $0.id == activeID }?.weeklyPostingGoal
+        let postedDates = outputs.compactMap { output -> Date? in
+            guard let brief = briefByID[output.briefID],
+                  output.status == .posted || brief.status == .posted else { return nil }
+            return output.postedAt ?? output.targetDate
+        }
+        let goalSnapshot = WeeklyConsistencyPolicy.snapshot(
+            postedDates: postedDates,
+            goal: weeklyGoal,
+            weekStart: weekStart,
+            calendar: calendar,
+            today: today
+        )
+        let weeklyCounts = WeeklyConsistencyPolicy.weeklyPostedDayCounts(
+            postedDates: postedDates,
+            weekCount: 8,
+            currentWeekStart: weekStart,
+            calendar: calendar
+        )
+        let consistency = WidgetConsistencySnapshot(
+            completedWeeks: goalSnapshot.goal.map { goal in weeklyCounts.map { $0 >= goal } }
+                ?? weeklyCounts.map { _ in false },
+            streak: goalSnapshot.goal.map {
+                WeeklyConsistencyPolicy.goalStreak(weeklyPostedDayCounts: weeklyCounts, goal: $0)
+            } ?? 0,
+            currentPostedCount: goalSnapshot.postedDayCount,
+            currentPlannedCount: goalSnapshot.goal ?? 0,
+            days: goalSnapshot.days.map { WidgetConsistencyDaySnapshot(date: $0.date, hasPost: $0.hasPost) },
+            postedDayCount: goalSnapshot.postedDayCount,
+            goal: goalSnapshot.goal
+        )
+
         let latestIdea = briefs
             .filter(IdeaBankPlacementPolicy.includes)
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .first
+            .map { brief in
+                let pillar = brief.pillarID.flatMap { pillarByID[$0] }
+                return WidgetIdeaSnapshot(
+                    id: brief.id,
+                    title: brief.title,
+                    pillarName: pillar?.name,
+                    pillarColorHex: pillar?.resolvedColorHex(in: pillars),
+                    capturedAt: brief.updatedAt
+                )
+            }
+
+        let latestVoiceSpark = briefs
+            .filter { $0.source == .voiceTranscript && IdeaBankPlacementPolicy.includes($0) }
             .sorted { $0.updatedAt > $1.updatedAt }
             .first
             .map { brief in
@@ -190,7 +264,10 @@ enum WidgetSnapshotService {
             nextPost: nextPost,
             week: week,
             latestIdea: latestIdea,
-            productionTasks: widgetTasks
+            latestVoiceSpark: latestVoiceSpark,
+            productionTasks: widgetTasks,
+            pillarUsage: pillarUsage,
+            consistency: consistency
         )
     }
 

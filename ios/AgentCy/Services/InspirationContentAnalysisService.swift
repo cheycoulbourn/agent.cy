@@ -161,6 +161,10 @@ struct PostLinkMetadata: Sendable {
     let thumbnailData: Data?
 }
 
+protocol PostLinkMetadataFetching: Sendable {
+    func fetch(url: URL, platform: InspirationPlatform) async throws -> PostLinkMetadata
+}
+
 struct PostLinkMetadataService: Sendable {
     private let session: URLSession
 
@@ -285,6 +289,8 @@ struct PostLinkMetadataService: Sendable {
         }
     }
 }
+
+extension PostLinkMetadataService: PostLinkMetadataFetching {}
 
 struct SharedVideoAnalysis: Sendable {
     let transcript: String?

@@ -48,7 +48,7 @@ enum LocalCyError: LocalizedError, Equatable {
     }
 }
 
-struct LocalCyRuntimeStatus: Codable, Equatable {
+struct LocalCyRuntimeStatus: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let status: String
     let updatedAt: Date

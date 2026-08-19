@@ -3,40 +3,135 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 
-@MainActor
-struct OnboardingView: View {
-    private enum Step: Int, CaseIterable, Identifiable {
-        case welcome
-        case name
-        case vibe
-        case pillars
+struct OnboardingCompletionAlert: Identifiable, Equatable {
+    enum Recovery: String, Equatable {
         case platforms
-        case ai
-        case notifications
         case ready
-
-        var id: Int { rawValue }
-
-        var label: String {
-            switch self {
-            case .welcome: "Welcome"
-            case .name: "About you"
-            case .vibe: "Your vibe"
-            case .pillars: "Your content"
-            case .platforms: "Where you post"
-            case .ai: "Your AI"
-            case .notifications: "Notifications"
-            case .ready: "Ready"
-            }
-        }
     }
 
+    let message: String
+    let recovery: Recovery
+
+    var id: String { "\(recovery.rawValue):\(message)" }
+
+    static func resolve(notice: AppNotice?) -> Self {
+        switch notice {
+        case .info(let message):
+            Self(message: message, recovery: .platforms)
+        case .error(let message):
+            Self(message: message, recovery: .ready)
+        case nil:
+            Self(
+                message: "Setup couldn’t finish. Review your choices and try again.",
+                recovery: .ready
+            )
+        }
+    }
+}
+
+enum OnboardingNotificationPermissionPolicy {
+    static func shouldRequestAuthorization(
+        dailyEnabled: Bool,
+        weeklyEnabled: Bool,
+        canSchedule: Bool,
+        previewOnly: Bool
+    ) -> Bool {
+        (dailyEnabled || weeklyEnabled) && !canSchedule && !previewOnly
+    }
+}
+
+enum OnboardingAccessibility {
+    static let goalFieldLabel = "What are you working toward?"
+
+    static func selectionValue(isSelected: Bool) -> String {
+        isSelected ? "Selected" : "Not selected"
+    }
+
+    static func pillarColorLabel(index: Int, count: Int) -> String {
+        "Pillar color \(index + 1) of \(count)"
+    }
+}
+
+enum OnboardingVibeLayout {
+    static func columnCount(isAccessibilitySize: Bool) -> Int {
+        isAccessibilitySize ? 1 : 2
+    }
+}
+
+enum OnboardingPillarColorPolicy {
+    static func choices(for palette: CreatorVibePalette?) -> [String] {
+        palette?.pillarColorHexes ?? CreatorVibePalette.fallbackPillarColorHexes
+    }
+
+    static func initialColor(
+        for palette: CreatorVibePalette?,
+        existingPillarCount: Int
+    ) -> String {
+        let colors = choices(for: palette)
+        return colors[existingPillarCount % colors.count]
+    }
+
+    static func shouldRetheme(
+        from currentPalette: CreatorVibePalette?,
+        to selectedPalette: CreatorVibePalette
+    ) -> Bool {
+        currentPalette != selectedPalette
+    }
+}
+
+enum OnboardingCompletionAttempt {
+    @MainActor
+    static func prepare(_ appModel: AppModel) {
+        appModel.notice = nil
+    }
+}
+
+enum OnboardingPersistencePolicy {
+    static func shouldPersist(previewOnly: Bool) -> Bool {
+        !previewOnly
+    }
+}
+
+enum OnboardingStep: Int, CaseIterable, Identifiable {
+    case welcome
+    case name
+    case vibe
+    case pillars
+    case platforms
+    case postingGoal
+    case ai
+    case notifications
+    case ready
+
+    var id: Int { rawValue }
+    var scrollResetID: Int { rawValue }
+    var previous: Self? { Self(rawValue: rawValue - 1) }
+    var next: Self? { Self(rawValue: rawValue + 1) }
+
+    var label: String {
+        switch self {
+        case .welcome: "Welcome"
+        case .name: "About you"
+        case .vibe: "Your vibe"
+        case .pillars: "Your content"
+        case .platforms: "Where you post"
+        case .postingGoal: "Your rhythm"
+        case .ai: "Your AI"
+        case .notifications: "Notifications"
+        case .ready: "Ready"
+        }
+    }
+}
+
+@MainActor
+struct OnboardingView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let previewOnly: Bool
-    @State private var step: Step = .welcome
+    @State private var step: OnboardingStep = .welcome
     @State private var draft: OnboardingDraft
     @State private var transitionEdge: Edge = .trailing
     @State private var pillarEditorDraft: OnboardingPillarDraft?
@@ -44,6 +139,7 @@ struct OnboardingView: View {
     @State private var bridgeStatus: MCPBridgeConnectionStatus?
     @State private var localCyStatus: LocalCyRuntimeStatus?
     @State private var bridgeNotice: String?
+    @State private var completionAlert: OnboardingCompletionAlert?
     @State private var copiedCommand: String?
     @State private var showsBridgeSetupDetails = false
 
@@ -65,6 +161,7 @@ struct OnboardingView: View {
                     .padding(.bottom, AgentSpacing.x12)
             }
             .scrollDismissesKeyboard(.interactively)
+            .id(step.scrollResetID)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             navigationControls
@@ -78,12 +175,12 @@ struct OnboardingView: View {
                 pillar: editingDraft,
                 role: pillarRole(for: editingDraft.id),
                 canDelete: draft.pillars.contains(where: { $0.id == editingDraft.id }),
-                paletteHexes: draft.vibePalette?.pillarColorHexes ?? CreatorVibePalette.fallbackPillarColorHexes,
+                paletteHexes: OnboardingPillarColorPolicy.choices(for: draft.vibePalette),
                 onSave: savePillar,
                 onDelete: { deletePillar(id: editingDraft.id) }
             )
             .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .agentSheetDragIndicator()
         }
         .fileImporter(
             isPresented: $chooseMCPFolder,
@@ -94,7 +191,7 @@ struct OnboardingView: View {
                 guard let folder = try result.get().first else { return }
                 try MCPBridgePreferences.connect(to: folder)
                 try? MCPBridgeService.sync(context: context)
-                refreshBridgeStatus()
+                Task { await refreshBridgeStatus() }
             } catch {
                 bridgeNotice = CreatorFacingErrorMapper.presentation(
                     for: error,
@@ -109,6 +206,21 @@ struct OnboardingView: View {
             Button("Close", role: .cancel) { bridgeNotice = nil }
         } message: {
             Text(bridgeNotice ?? "")
+        }
+        .alert(item: $completionAlert) { alert in
+            Alert(
+                title: Text("Setup couldn’t finish"),
+                message: Text(alert.message),
+                primaryButton: .default(Text(
+                    alert.recovery == .platforms ? "Review platforms" : "Try again"
+                )) {
+                    if alert.recovery == .platforms {
+                        transitionEdge = .leading
+                        setStep(.platforms)
+                    }
+                },
+                secondaryButton: .cancel(Text("Close"))
+            )
         }
         .agentScreen()
         .preferredColorScheme(draft.appearance?.colorSchemeOverride)
@@ -125,8 +237,12 @@ struct OnboardingView: View {
         .task(id: step) {
             guard step == .ai else { return }
             while !Task.isCancelled, step == .ai {
-                refreshBridgeStatus()
-                try? await Task.sleep(for: .seconds(3))
+                await refreshBridgeStatus()
+                do {
+                    try await Task.sleep(for: .seconds(3))
+                } catch {
+                    return
+                }
             }
         }
     }
@@ -134,7 +250,7 @@ struct OnboardingView: View {
     private var progressHeader: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(spacing: 6) {
-                ForEach(Step.allCases) { item in
+                ForEach(OnboardingStep.allCases) { item in
                     Capsule()
                         .fill(item.rawValue <= step.rawValue ? Color.agentText : Color.agentHairline)
                         .frame(maxWidth: .infinity, minHeight: 2, maxHeight: 2)
@@ -145,7 +261,7 @@ struct OnboardingView: View {
                     .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
                     .tracking(1.1)
                 Spacer()
-                Text("\(step.rawValue + 1) / \(Step.allCases.count)")
+                Text("\(step.rawValue + 1) / \(OnboardingStep.allCases.count)")
                     .font(.paperMetadata(size: 10, weight: .regular, relativeTo: .caption))
                     .tracking(0.8)
                     .foregroundStyle(Color.agentSecondary)
@@ -181,6 +297,8 @@ struct OnboardingView: View {
             pillarsStep
         case .platforms:
             platformsStep
+        case .postingGoal:
+            postingGoalStep
         case .ai:
             aiStep
         case .notifications:
@@ -259,6 +377,7 @@ struct OnboardingView: View {
                 TextField("", text: $draft.goal, axis: .vertical)
                     .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
                     .lineLimit(2...4)
+                    .accessibilityLabel(OnboardingAccessibility.goalFieldLabel)
                     .padding(AgentSpacing.x4)
                     .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
                     .background(Color.agentSurface, in: .rect(cornerRadius: 16))
@@ -283,10 +402,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                 PaperFieldLabel("Pillar colors")
                 LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: AgentSpacing.x3),
-                        GridItem(.flexible(), spacing: AgentSpacing.x3)
-                    ],
+                    columns: vibePaletteColumns,
                     spacing: AgentSpacing.x3
                 ) {
                     ForEach(CreatorVibePalette.onboardingPalettes) { palette in
@@ -340,7 +456,7 @@ struct OnboardingView: View {
                 Text(palette.detail)
                     .font(.paperInter(size: 12, weight: .regular, relativeTo: .caption))
                     .foregroundStyle(Color.agentSecondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(AgentSpacing.x4)
             .frame(maxWidth: .infinity, minHeight: 102, alignment: .topLeading)
@@ -353,6 +469,15 @@ struct OnboardingView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(palette.title), \(palette.detail)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var vibePaletteColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(), spacing: AgentSpacing.x3),
+            count: OnboardingVibeLayout.columnCount(
+                isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+            )
+        )
     }
 
     private func vibeAppearanceButton(_ appearance: AppearancePreference) -> some View {
@@ -501,6 +626,55 @@ struct OnboardingView: View {
             .padding(AgentSpacing.x4)
             .background(Color.agentSurface, in: .rect(cornerRadius: 14))
             .agentSurfaceChrome(cornerRadius: 14)
+        }
+    }
+
+    private var postingGoalStep: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x8) {
+            PaperOnboardingPrompt(
+                title: "How often do you want to post?",
+                subtitle: "Pick a days-per-week goal and the Consistency card will keep the score. Multiple posts on one day count as one day."
+            )
+
+            HStack(spacing: AgentSpacing.x2) {
+                ForEach(Array(WeeklyConsistencyPolicy.goalRange), id: \.self) { value in
+                    Button {
+                        draft.weeklyPostingGoal = draft.weeklyPostingGoal == value ? nil : value
+                    } label: {
+                        VStack(spacing: AgentSpacing.x1) {
+                            Text("\(value)")
+                                .font(.agentHeadline)
+                            Text(value == 1 ? "day" : "days")
+                                .font(.agentMetadata)
+                                .foregroundStyle(Color.agentSecondary)
+                        }
+                        .foregroundStyle(Color.agentText)
+                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .background(
+                            draft.weeklyPostingGoal == value ? Color.agentSelectionFill : Color.agentSurface,
+                            in: .rect(cornerRadius: AgentRadius.control)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AgentRadius.control)
+                                .stroke(
+                                    draft.weeklyPostingGoal == value
+                                        ? Color.agentText.opacity(0.4)
+                                        : Color.agentBorder,
+                                    lineWidth: 1
+                                )
+                        }
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(AgentPressButtonStyle())
+                    .accessibilityLabel("\(value) days a week")
+                    .accessibilityAddTraits(draft.weeklyPostingGoal == value ? .isSelected : [])
+                }
+            }
+
+            Text("Skip if you’re not sure — you can set it anytime from the Consistency card.")
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -964,20 +1138,31 @@ struct OnboardingView: View {
     private var navigationControls: some View {
         VStack(spacing: AgentSpacing.x2) {
             if step == .ready {
-                Button {
-                    finish(startWalkthrough: true)
-                } label: {
-                    HStack(spacing: AgentSpacing.x2) {
-                        if appModel.isWorking {
-                            ProgressView().tint(Color.onAccent)
-                        }
-                        Text("Show me around")
-                        AgentIconView(.forward, size: 16)
+                HStack(spacing: AgentSpacing.x3) {
+                    Button {
+                        moveBack()
+                    } label: {
+                        AgentIconView(.back, size: 17)
+                            .frame(width: 56, height: 56)
                     }
-                    .frame(maxWidth: .infinity)
+                    .buttonStyle(PaperOnboardingSecondaryButtonStyle())
+                    .accessibilityLabel("Back")
+
+                    Button {
+                        finish(startWalkthrough: true)
+                    } label: {
+                        HStack(spacing: AgentSpacing.x2) {
+                            if appModel.isWorking {
+                                ProgressView().tint(Color.onAccent)
+                            }
+                            Text("Show me around")
+                            AgentIconView(.forward, size: 16)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PaperOnboardingPrimaryButtonStyle())
+                    .disabled(appModel.isWorking)
                 }
-                .buttonStyle(PaperOnboardingPrimaryButtonStyle())
-                .disabled(appModel.isWorking)
 
                 Button("Go to dashboard") {
                     finish(startWalkthrough: false)
@@ -1049,7 +1234,7 @@ struct OnboardingView: View {
         case .ai where draft.aiProvider == .claudeOrCodex && bridgeStatus?.isRecentlyConnected == true:
             "Use Claude & Codex"
         case .ai: "Continue"
-        case .notifications: appModel.notificationAuthorization.canSchedule ? "Continue" : "Turn on notifications"
+        case .notifications: shouldRequestNotificationAuthorization ? "Turn on notifications" : "Continue"
         case .ready: "Show me around"
         default: "Continue"
         }
@@ -1059,6 +1244,7 @@ struct OnboardingView: View {
         step == .vibe ||
             (step == .pillars && draft.pillars.isEmpty) ||
             (step == .platforms && draft.platforms.isEmpty) ||
+            (step == .postingGoal && draft.weeklyPostingGoal == nil) ||
             step == .notifications
     }
 
@@ -1073,7 +1259,7 @@ struct OnboardingView: View {
             draft.vibePalette != nil && draft.appearance != nil
         case .ready:
             true
-        case .pillars, .platforms, .ai, .notifications:
+        case .pillars, .platforms, .postingGoal, .ai, .notifications:
             true
         }
     }
@@ -1131,7 +1317,7 @@ struct OnboardingView: View {
             finish(startWalkthrough: true)
             return
         }
-        guard step == .notifications, !previewOnly, !appModel.notificationAuthorization.canSchedule else {
+        guard step == .notifications, shouldRequestNotificationAuthorization else {
             moveForward()
             return
         }
@@ -1139,6 +1325,15 @@ struct OnboardingView: View {
             _ = await appModel.requestNotificationPermission(context: context)
             moveForward()
         }
+    }
+
+    private var shouldRequestNotificationAuthorization: Bool {
+        OnboardingNotificationPermissionPolicy.shouldRequestAuthorization(
+            dailyEnabled: draft.dailyReminderEnabled,
+            weeklyEnabled: draft.weeklyReminderEnabled,
+            canSchedule: appModel.notificationAuthorization.canSchedule,
+            previewOnly: previewOnly
+        )
     }
 
     private var selectedDestinationKinds: [BuiltInDestinationKind] {
@@ -1152,18 +1347,18 @@ struct OnboardingView: View {
     }
 
     private func moveForward() {
-        guard let next = Step(rawValue: step.rawValue + 1) else { return }
+        guard let next = step.next else { return }
         transitionEdge = .trailing
         setStep(next)
     }
 
     private func moveBack() {
-        guard let previous = Step(rawValue: step.rawValue - 1) else { return }
+        guard let previous = step.previous else { return }
         transitionEdge = .leading
         setStep(previous)
     }
 
-    private func setStep(_ value: Step) {
+    private func setStep(_ value: OnboardingStep) {
         if reduceMotion {
             step = value
         } else {
@@ -1172,7 +1367,7 @@ struct OnboardingView: View {
     }
 
     private func finish(startWalkthrough: Bool) {
-        if previewOnly {
+        if !OnboardingPersistencePolicy.shouldPersist(previewOnly: previewOnly) {
             if startWalkthrough {
                 appModel.startWalkthrough()
             } else {
@@ -1181,9 +1376,14 @@ struct OnboardingView: View {
             dismiss()
             return
         }
+        OnboardingCompletionAttempt.prepare(appModel)
         Task {
             let completed = await appModel.completeOnboarding(draft, context: context)
-            guard completed else { return }
+            guard completed else {
+                completionAlert = .resolve(notice: appModel.notice)
+                appModel.notice = nil
+                return
+            }
             if startWalkthrough {
                 appModel.startWalkthrough()
             } else {
@@ -1202,11 +1402,17 @@ struct OnboardingView: View {
     }
 
     private var nextPillarColorHex: String {
-        guard let colors = draft.vibePalette?.pillarColorHexes, !colors.isEmpty else { return "55705B" }
-        return colors[draft.pillars.count % colors.count]
+        OnboardingPillarColorPolicy.initialColor(
+            for: draft.vibePalette,
+            existingPillarCount: draft.pillars.count
+        )
     }
 
     private func selectVibePalette(_ palette: CreatorVibePalette) {
+        guard OnboardingPillarColorPolicy.shouldRetheme(
+            from: draft.vibePalette,
+            to: palette
+        ) else { return }
         draft.vibePalette = palette
         let colors = palette.pillarColorHexes
         for index in draft.pillars.indices {
@@ -1246,11 +1452,17 @@ struct OnboardingView: View {
         copiedCommand = command
     }
 
-    private func refreshBridgeStatus() {
-        bridgeStatus = try? MCPBridgeService.connectionStatus()
-        Task {
-            localCyStatus = try? await LocalCyAIClient.shared.runtimeStatus()
-        }
+    private func refreshBridgeStatus() async {
+        let refreshedBridgeStatus = await Task.detached(priority: .utility) {
+            try? MCPBridgeService.connectionStatus()
+        }.value
+        guard !Task.isCancelled else { return }
+
+        let refreshedLocalCyStatus = try? await LocalCyAIClient.shared.runtimeStatus()
+        guard !Task.isCancelled else { return }
+
+        bridgeStatus = refreshedBridgeStatus
+        localCyStatus = refreshedLocalCyStatus
     }
 
     private func checkBridgeConnection() {
@@ -1259,11 +1471,14 @@ struct OnboardingView: View {
             return
         }
         try? MCPBridgeService.sync(context: context)
-        refreshBridgeStatus()
-        if bridgeStatus?.isRecentlyConnected == true || localCyStatus?.isRecentlyAvailable == true {
-            bridgeNotice = "Claude or Codex is connected."
-        } else {
-            bridgeNotice = "The shared folder is connected. On your computer, ask Claude or Codex to call bridge_status, then check again."
+        Task {
+            await refreshBridgeStatus()
+            guard !Task.isCancelled else { return }
+            if bridgeStatus?.isRecentlyConnected == true || localCyStatus?.isRecentlyAvailable == true {
+                bridgeNotice = "Claude or Codex is connected."
+            } else {
+                bridgeNotice = "The shared folder is connected. On your computer, ask Claude or Codex to call bridge_status, then check again."
+            }
         }
     }
 }
@@ -1423,6 +1638,8 @@ private struct PaperPlatformCard: View {
                 .frame(minHeight: 68)
             }
             .buttonStyle(.plain)
+            .accessibilityValue(OnboardingAccessibility.selectionValue(isSelected: selected))
+            .accessibilityAddTraits(selected ? .isSelected : [])
 
             if selected {
                 Rectangle().fill(Color.agentText.opacity(0.1)).frame(height: 1)
@@ -1482,6 +1699,8 @@ private struct PaperYouTubeCard: View {
                 .frame(minHeight: 68)
             }
             .buttonStyle(.plain)
+            .accessibilityValue(OnboardingAccessibility.selectionValue(isSelected: selected))
+            .accessibilityAddTraits(selected ? .isSelected : [])
 
             if selected {
                 Rectangle().fill(Color.agentText.opacity(0.1)).frame(height: 1)
@@ -1525,6 +1744,8 @@ private struct PaperYouTubeCard: View {
                 .background(isSelected ? Color.actionAccent : Color.agentCanvas, in: .capsule)
         }
         .buttonStyle(.plain)
+        .accessibilityValue(OnboardingAccessibility.selectionValue(isSelected: isSelected))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -1664,7 +1885,7 @@ private struct OnboardingColorChooser: View {
 
     var body: some View {
         HStack(spacing: AgentSpacing.x2) {
-            ForEach(colors, id: \.self) { hex in
+            ForEach(Array(colors.enumerated()), id: \.offset) { index, hex in
                 Button { selectedHex = hex } label: {
                     Circle()
                         .fill(Color(agentHex: hex))
@@ -1679,8 +1900,13 @@ private struct OnboardingColorChooser: View {
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Pillar color")
-                .accessibilityValue(selectedHex.caseInsensitiveCompare(hex) == .orderedSame ? "Selected" : "Not selected")
+                .accessibilityLabel(OnboardingAccessibility.pillarColorLabel(index: index, count: colors.count))
+                .accessibilityValue(OnboardingAccessibility.selectionValue(
+                    isSelected: selectedHex.caseInsensitiveCompare(hex) == .orderedSame
+                ))
+                .accessibilityAddTraits(
+                    selectedHex.caseInsensitiveCompare(hex) == .orderedSame ? .isSelected : []
+                )
             }
             ColorPicker("Custom color", selection: customColor, supportsOpacity: false)
                 .labelsHidden()
@@ -1738,9 +1964,21 @@ private struct PaperOnboardingPrimaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: 56)
             .foregroundStyle(Color.onAccent)
             .background(Color.actionAccent, in: .capsule)
-            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.36)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(isEnabled
+                ? AgentButtonPressFeedback.value(
+                    resting: 1.0,
+                    pressed: 0.78,
+                    isPressed: configuration.isPressed
+                )
+                : 0.36)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -1752,9 +1990,19 @@ private struct PaperOnboardingSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.agentText)
             .background(Color.agentSurface, in: .circle)
             .overlay { Circle().stroke(Color.agentBorder, lineWidth: 1) }
-            .opacity(configuration.isPressed ? 0.72 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(AgentButtonPressFeedback.value(
+                resting: 1.0,
+                pressed: 0.72,
+                isPressed: configuration.isPressed
+            ))
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -1773,9 +2021,21 @@ private struct PaperOnboardingOutlineButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(Color.agentBorder, lineWidth: 1)
             }
-            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(isEnabled
+                ? AgentButtonPressFeedback.value(
+                    resting: 1.0,
+                    pressed: 0.72,
+                    isPressed: configuration.isPressed
+                )
+                : 0.42)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 

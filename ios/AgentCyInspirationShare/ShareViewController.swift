@@ -70,6 +70,7 @@ final class ShareViewController: UIViewController {
                 model.previewImage = UIImage(data: data)
             }
             model.stage = .ready
+            await model.prepareLinkThumbnailIfNeeded()
         } catch {
             model.errorMessage = (error as? LocalizedError)?.errorDescription
                 ?? "Share one public HTTPS post link at a time."
@@ -180,6 +181,7 @@ private final class InspirationShareViewModel: ObservableObject {
     private let mediaAnalyzer = InspirationShareMediaAnalyzer()
     private var preparedEnvelope: InspirationShareEnvelope?
     private var hasQueuedEnvelope = false
+    private var linkExtractionTask: Task<ShareExtraction, Error>?
 
     func analyze() async {
         guard let url else {
@@ -194,8 +196,7 @@ private final class InspirationShareViewModel: ObservableObject {
             guard let snapshot = try InspirationShareCreatorSnapshotStore.load() else {
                 throw InspirationShareAPIError.invalidCreatorContext
             }
-            let extraction = try await apiClient.extract(url: url)
-            self.extraction = extraction
+            let extraction = try await loadExtraction(for: url)
 
             progressTitle = "Studying the video"
             progressDetail = "Reviewing the spoken message, on-screen text, and content format."
@@ -272,12 +273,13 @@ private final class InspirationShareViewModel: ObservableObject {
         }
     }
 
-    func saveLinkOnly() {
+    func saveLinkOnly() async {
         guard let url else { return }
         guard let normalizedSaveTitle else {
             errorMessage = "Add a title before saving this post."
             return
         }
+        await prepareLinkThumbnailIfNeeded()
         do {
             let envelope = InspirationShareEnvelope(
                 id: captureID,
@@ -312,8 +314,29 @@ private final class InspirationShareViewModel: ObservableObject {
         normalizedSaveTitle != nil
     }
 
+    func prepareLinkThumbnailIfNeeded() async {
+        guard previewImage == nil,
+              sharedThumbnailFilename == nil,
+              let url,
+              let extraction = try? await loadExtraction(for: url)
+        else { return }
+        await acquireThumbnail(from: extraction)
+    }
+
     private var normalizedSaveTitle: String? {
         InspirationSavedPostTitlePolicy.normalized(saveTitle)
+    }
+
+    private func loadExtraction(for url: URL) async throws -> ShareExtraction {
+        if let extraction { return extraction }
+        if let linkExtractionTask { return try await linkExtractionTask.value }
+
+        let task = Task { try await apiClient.extract(url: url) }
+        linkExtractionTask = task
+        defer { linkExtractionTask = nil }
+        let extraction = try await task.value
+        self.extraction = extraction
+        return extraction
     }
 
     private func acquireThumbnail(from extraction: ShareExtraction) async {
@@ -535,7 +558,7 @@ private struct InspirationShareView: View {
 
                 Button("Save post link without analyzing") {
                     guard validateSaveTitle() else { return }
-                    model.saveLinkOnly()
+                    Task { await model.saveLinkOnly() }
                 }
                 .buttonStyle(ShareSecondaryButtonStyle())
             }

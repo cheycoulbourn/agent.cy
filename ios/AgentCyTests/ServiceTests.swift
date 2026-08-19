@@ -1,10 +1,85 @@
 import Foundation
 import SwiftData
+import SwiftUI
+import UIKit
 import XCTest
 @testable import AgentCy
 
 @MainActor
 final class ServiceTests: XCTestCase {
+    func testMCPBridgeBookmarkPolicyUsesSecurityScopeOnlyForMacCatalyst() {
+        XCTAssertEqual(
+            MCPBridgeBookmarkPolicy.strategy(isMacCatalyst: true),
+            .securityScoped
+        )
+        XCTAssertEqual(
+            MCPBridgeBookmarkPolicy.strategy(isMacCatalyst: false),
+            .minimal
+        )
+    }
+
+    func testBridgePushRegistrationUsesPhoneAsTheSingleNotificationDestination() {
+        XCTAssertTrue(BridgePushRegistrationPolicy.shouldRegister(isMacCatalyst: false))
+        XCTAssertFalse(BridgePushRegistrationPolicy.shouldRegister(isMacCatalyst: true))
+    }
+
+    func testDesktopSnapshotPreservesPhoneCapabilityInsteadOfPublishingStaleMacCapability() throws {
+        let phoneCapability = MCPBridgePushCapability(
+            endpoint: try XCTUnwrap(URL(string: "https://agentcy.example/v1/bridge/notifications")),
+            token: String(repeating: "p", count: 48)
+        )
+        let staleMacCapability = MCPBridgePushCapability(
+            endpoint: try XCTUnwrap(URL(string: "https://agentcy.example/v1/bridge/notifications")),
+            token: String(repeating: "m", count: 48)
+        )
+
+        XCTAssertEqual(
+            BridgePushRegistrationPolicy.snapshotCapability(
+                isMacCatalyst: true,
+                local: staleMacCapability,
+                existing: phoneCapability
+            ),
+            phoneCapability
+        )
+        XCTAssertEqual(
+            BridgePushRegistrationPolicy.snapshotCapability(
+                isMacCatalyst: false,
+                local: phoneCapability,
+                existing: staleMacCapability
+            ),
+            phoneCapability
+        )
+    }
+
+    func testBridgePushRegistrationReusesAnExistingPrivateCapability() throws {
+        let capability = MCPBridgePushCapability(
+            endpoint: try XCTUnwrap(URL(string: "https://agentcy.example/v1/bridge/notifications")),
+            token: String(repeating: "c", count: 48)
+        )
+        let currentDeviceToken = Data([0x01, 0x02, 0x03])
+
+        XCTAssertTrue(BridgePushRegistrationPolicy.shouldRequestCapability(
+            existing: nil,
+            registeredDeviceToken: nil,
+            currentDeviceToken: currentDeviceToken
+        ))
+        XCTAssertTrue(BridgePushRegistrationPolicy.shouldRequestCapability(
+            existing: capability,
+            registeredDeviceToken: nil,
+            currentDeviceToken: currentDeviceToken
+        ))
+        XCTAssertFalse(BridgePushRegistrationPolicy.shouldRequestCapability(
+            existing: capability,
+            registeredDeviceToken: currentDeviceToken,
+            currentDeviceToken: currentDeviceToken
+        ))
+        XCTAssertTrue(BridgePushRegistrationPolicy.shouldRequestCapability(
+            existing: capability,
+            registeredDeviceToken: Data([0xFF]),
+            currentDeviceToken: currentDeviceToken
+        ))
+    }
+
     func testSparkContextUsesVisiblePostContentWhenLegacyPremiseIsEmpty() {
         let brief = CreativeBrief(title: "Anatomy of a rough hit rate")
         brief.spokenHook = "The number is not the whole story."
@@ -641,6 +716,103 @@ final class ServiceTests: XCTestCase {
         XCTAssertTrue(encodedTasks.first?["parentTaskId"] is NSNull)
     }
 
+    func testMCPBridgeSnapshotPublishesPrivateNotificationCapability() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let capability = MCPBridgePushCapability(
+            endpoint: try XCTUnwrap(URL(string: "https://agentcy.example/v1/bridge/notifications")),
+            token: String(repeating: "a", count: 48)
+        )
+        MCPBridgePushPreferences.capability = capability
+        defer { MCPBridgePushPreferences.capability = nil }
+
+        let snapshot = try MCPBridgeService.makeSnapshot(context: container.mainContext)
+
+        XCTAssertEqual(snapshot.notification, capability)
+    }
+
+    func testMCPBridgeSyncPreservesExistingNotificationCapabilityWhenCurrentClientHasNone() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-notification-handoff-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let capability = MCPBridgePushCapability(
+            endpoint: try XCTUnwrap(URL(string: "https://agentcy.example/v1/bridge/notifications")),
+            token: String(repeating: "b", count: 48)
+        )
+        MCPBridgePushPreferences.capability = capability
+        let existingSnapshot = try MCPBridgeService.makeSnapshot(context: container.mainContext)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(existingSnapshot).write(to: directory.appending(path: "snapshot.json"))
+        MCPBridgePushPreferences.capability = nil
+        defer { MCPBridgePushPreferences.capability = nil }
+
+        try MCPBridgeService.sync(context: container.mainContext, directory: directory)
+
+        let data = try Data(contentsOf: directory.appending(path: "snapshot.json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let refreshedSnapshot = try decoder.decode(MCPBridgeWorkspaceSnapshot.self, from: data)
+        XCTAssertEqual(refreshedSnapshot.notification, capability)
+    }
+
+    func testMCPBridgeRefreshReturnsNewlyQueuedRequest() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-refresh-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let requests = directory.appending(path: "requests", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: requests, withIntermediateDirectories: true)
+        let id = UUID()
+        let json = """
+        {
+          "schemaVersion": 1,
+          "id": "\(id.uuidString)",
+          "createdAt": "2026-08-17T16:00:00Z",
+          "source": "codex",
+          "type": "createIdea",
+          "payload": { "title": "A newly delivered request" }
+        }
+        """
+        try Data(json.utf8).write(to: requests.appending(path: "\(id.uuidString).json"))
+
+        let refreshed = try await MCPBridgeService.refreshPendingRequests(directory: directory)
+
+        XCTAssertEqual(refreshed.map(\.id), [id])
+    }
+
+    func testMCPReviewPushMetadataRoutesToCyReviewInbox() {
+        let route = AgentNotificationRouteResolver.route(from: [
+            AgentNotificationMetadataKey.remoteRoute: "mcpReview",
+        ])
+
+        XCTAssertEqual(route.kind, .mcpReview)
+        XCTAssertNil(route.objectID)
+    }
+
+    func testMCPReviewLayoutUsesTwoPanesOnlyAtDesktopWidth() {
+        XCTAssertFalse(MCPReviewLayoutPolicy.usesSplitView(availableWidth: 760))
+        XCTAssertTrue(MCPReviewLayoutPolicy.usesSplitView(availableWidth: 1_000))
+    }
+
+    func testMCPReviewRefreshContainerProvidesRefreshActionWhenInboxIsEmpty() async {
+        let view = MCPReviewRefreshableScrollView(refresh: {}) {
+            Color.clear.frame(height: 1)
+        }
+        let host = UIHostingController(rootView: view)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.layoutIfNeeded()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let scrollViews = host.view.agentDescendants.compactMap { $0 as? UIScrollView }
+        XCTAssertTrue(scrollViews.contains { $0.refreshControl != nil })
+    }
+
     func testMCPBridgeReadsFractionalSecondCLIRequestsFromFiles() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "agentcy-mcp-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -666,6 +838,49 @@ final class ServiceTests: XCTestCase {
         XCTAssertEqual(pending.first?.summary, "A CLI idea")
     }
 
+    func testMCPBridgeSkipsUnreadableRequestsOwnedByAnotherWorkspace() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-mcp-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let requests = directory.appending(path: "requests", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: requests, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let currentWorkspaceID = UUID()
+        let otherWorkspaceID = UUID()
+        let currentRequestID = UUID()
+        let otherRequestID = UUID()
+        let currentJSON = """
+        {
+          "schemaVersion": 1,
+          "id": "\(currentRequestID.uuidString)",
+          "createdAt": "2026-08-17T19:00:00Z",
+          "source": "codex",
+          "workspaceId": "\(currentWorkspaceID.uuidString)",
+          "type": "createIdea",
+          "payload": { "title": "Current workspace review" }
+        }
+        """
+        let unreadableOtherWorkspaceJSON = """
+        {
+          "schemaVersion": 1,
+          "id": "\(otherRequestID.uuidString)",
+          "createdAt": "2026-08-17T18:00:00Z",
+          "source": "codex",
+          "workspaceId": "\(otherWorkspaceID.uuidString)",
+          "type": "createSeries",
+          "payload": "temporarily unavailable"
+        }
+        """
+        try Data(currentJSON.utf8).write(to: requests.appending(path: "current.json"))
+        try Data(unreadableOtherWorkspaceJSON.utf8).write(to: requests.appending(path: "other.json"))
+
+        let pending = try MCPBridgeService.pendingRequests(
+            directory: directory,
+            workspaceID: currentWorkspaceID
+        )
+
+        XCTAssertEqual(pending.map(\.id), [currentRequestID])
+    }
+
     func testMCPBridgeQueuesReusableDemoDraftForReview() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -682,6 +897,469 @@ final class ServiceTests: XCTestCase {
         XCTAssertEqual(pending.first?.payload.pillarId, pillar.id)
         XCTAssertFalse(pending.first?.payload.caption?.isEmpty ?? true)
         XCTAssertNotEqual(pending.first?.payload.caption, pending.first?.payload.notes)
+    }
+
+    func testCyNoticedOnlyReportsUnreconciledLateWorkAndOverduePosts() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let lateWork = CreativeBrief(title: "Late work", status: .developing)
+        lateWork.workDate = now.addingTimeInterval(-86_400)
+        let lateWorkOutput = PlatformOutput(briefID: lateWork.id, status: .draft)
+
+        let overduePost = CreativeBrief(title: "Overdue post", status: .scheduled)
+        let overdueOutput = PlatformOutput(briefID: overduePost.id, status: .scheduled)
+        overdueOutput.targetDate = now.addingTimeInterval(-86_400)
+
+        let summary = CyNoticedReconciliationPolicy.summary(
+            briefs: [lateWork, overduePost],
+            outputs: [lateWorkOutput, overdueOutput],
+            now: now
+        )
+        XCTAssertTrue(summary.needsAttention)
+        XCTAssertEqual(summary.lateWorkCount, 1)
+        XCTAssertEqual(summary.overduePostCount, 1)
+
+        lateWork.workDate = now.addingTimeInterval(86_400)
+        overdueOutput.status = .posted
+        let reconciled = CyNoticedReconciliationPolicy.summary(
+            briefs: [lateWork, overduePost],
+            outputs: [lateWorkOutput, overdueOutput],
+            now: now
+        )
+        XCTAssertFalse(reconciled.needsAttention)
+        XCTAssertEqual(reconciled.message, "")
+    }
+
+    func testMCPBridgeCreatesSeriesEpisodeAndBrandPartnerChanges() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let pillar = Pillar(role: .anchor, name: "Creator systems", colorHex: "A78BFA")
+        let series = ContentSeries(name: "Studio notes", pillarID: pillar.id)
+        context.insert(pillar)
+        context.insert(series)
+        let workDate = Date(timeIntervalSince1970: 1_800_100_000)
+        let episodeRequest = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "What changed in the studio",
+                seriesId: series.id,
+                episodeLabel: "Studio reset",
+                workDate: workDate,
+                includesWorkTime: false
+            )
+        )
+        try MCPBridgeService.apply(episodeRequest, context: context)
+
+        let episode = try XCTUnwrap(
+            context.fetch(FetchDescriptor<CreativeBrief>()).first(where: { $0.seriesID == series.id })
+        )
+        XCTAssertEqual(episode.title, "What changed in the studio")
+        XCTAssertEqual(episode.workDate, workDate)
+        XCTAssertEqual(episode.episodeLabel, "Studio reset")
+        XCTAssertEqual(episode.pillarID, pillar.id)
+
+        let partnerRequest = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createBrandPartner",
+            payload: MCPBridgeRequestPayload(
+                name: "Example Brand",
+                brandType: BrandPartnerType.brand.rawValue,
+                brandStage: BrandPartnerStage.talking.rawValue,
+                socialHandle: "@example"
+            )
+        )
+        try MCPBridgeService.apply(partnerRequest, context: context)
+
+        let partner = try XCTUnwrap(context.fetch(FetchDescriptor<BrandPartner>()).first)
+        XCTAssertEqual(partner.name, "Example Brand")
+        XCTAssertEqual(partner.stage, .talking)
+        XCTAssertEqual(partner.socialHandle, "@example")
+    }
+
+    func testMCPBridgeDeniedSeriesEpisodeKeepsContextAndApprovedRevisionUsesTheSameSlot() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let pillar = Pillar(role: .anchor, name: "SkipMatrix education", colorHex: "A78BFA")
+        let series = ContentSeries(name: "Data Diaries", pillarID: pillar.id)
+        context.insert(pillar)
+        context.insert(series)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-episode-revision-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let requests = directory.appending(path: "requests", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: requests, withIntermediateDirectories: true)
+        let episodeReviewID = UUID()
+        let proposedSlotID = UUID()
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "The premium-data break-even question",
+                premise: "Show the break-even calculation.",
+                seriesId: series.id,
+                proposedEpisodeSlotId: proposedSlotID,
+                episodeReviewId: episodeReviewID,
+                revisionNumber: 1,
+                episodeNumber: 2,
+                workDate: Date(timeIntervalSince1970: 1_800_100_000),
+                includesWorkTime: false
+            )
+        )
+        try Data("{}".utf8).write(
+            to: requests.appending(path: "\(request.id.uuidString.lowercased()).json")
+        )
+
+        try MCPBridgeService.reject(
+            request,
+            decisionNote: "Show every input and make the result checkable.",
+            directory: directory
+        )
+
+        let denied = try XCTUnwrap(MCPBridgeService.episodeRevisions(directory: directory).first)
+        XCTAssertEqual(denied.status, "needsRevision")
+        XCTAssertEqual(denied.episodeReviewId, episodeReviewID)
+        XCTAssertEqual(denied.episodeSlotId, proposedSlotID)
+        XCTAssertEqual(denied.decisionNote, "Show every input and make the result checkable.")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: requests.appending(path: "\(request.id.uuidString.lowercased()).json").path
+        ))
+
+        var revisedPayload = denied.request.payload
+        revisedPayload.premise = "Show the inputs, formula, and worked result."
+        revisedPayload.revisionNumber = 2
+        revisedPayload.revisionOfRequestId = request.id
+        let revisedRequest = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: revisedPayload
+        )
+
+        try MCPBridgeService.approve(revisedRequest, context: context, directory: directory)
+
+        let slot = try XCTUnwrap(context.fetch(FetchDescriptor<SeriesEpisodeSlot>()).first)
+        let episode = try XCTUnwrap(context.fetch(FetchDescriptor<CreativeBrief>()).first)
+        XCTAssertEqual(slot.id, proposedSlotID)
+        XCTAssertEqual(slot.status, .converted)
+        XCTAssertEqual(slot.convertedBriefID, episode.id)
+        XCTAssertEqual(episode.premise, "Show the inputs, formula, and worked result.")
+        XCTAssertEqual(episode.pillarID, pillar.id)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).count, 1)
+        XCTAssertEqual(try MCPBridgeService.episodeRevisions(directory: directory).first?.status, "approved")
+
+        let receiptData = try Data(contentsOf: directory.appending(
+            path: "responses/\(revisedRequest.id.uuidString.lowercased()).json"
+        ))
+        let receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: receiptData) as? [String: Any])
+        XCTAssertEqual(receipt["status"] as? String, "approved")
+        XCTAssertEqual(receipt["episodeReviewId"] as? String, episodeReviewID.uuidString)
+        XCTAssertEqual(receipt["episodeSlotId"] as? String, proposedSlotID.uuidString)
+        XCTAssertEqual(receipt["resultPostId"] as? String, episode.id.uuidString)
+    }
+
+    func testMCPBridgeRejectsAnMCPSeriesWithoutAnActivePillar() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeries",
+            payload: MCPBridgeRequestPayload(name: "Unfiled series", seriesId: UUID())
+        )
+
+        XCTAssertThrowsError(try MCPBridgeService.apply(request, context: context)) { error in
+            guard let bridgeError = error as? MCPBridgeError else {
+                return XCTFail("Expected an MCP bridge validation error.")
+            }
+            guard case .invalidRequest(let message) = bridgeError else {
+                return XCTFail("Expected the missing pillar to invalidate the series request.")
+            }
+            XCTAssertTrue(message.contains("Choose a pillar"))
+        }
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ContentSeries>()).isEmpty)
+    }
+
+    func testMCPBridgeSeriesBundleApprovalRollsBackEverythingWhenOneEpisodeFails() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let pillar = Pillar(role: .anchor, name: "SkipMatrix education", colorHex: "A78BFA")
+        context.insert(pillar)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-series-bundle-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let seriesID = UUID()
+        let seriesRequest = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeries",
+            payload: MCPBridgeRequestPayload(pillarId: pillar.id, name: "Data Diaries", seriesId: seriesID)
+        )
+        let firstWorkDate = Date(timeIntervalSince1970: 1_800_100_000)
+        let firstEpisode = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "The hidden bill behind cheap data",
+                targetDate: firstWorkDate.addingTimeInterval(86_400),
+                seriesId: seriesID,
+                proposedEpisodeSlotId: UUID(),
+                episodeReviewId: UUID(),
+                revisionNumber: 1,
+                workDate: firstWorkDate
+            )
+        )
+        let invalidEpisode = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "The premium-data break-even question",
+                targetDate: firstWorkDate.addingTimeInterval(-86_400),
+                seriesId: seriesID,
+                proposedEpisodeSlotId: UUID(),
+                episodeReviewId: UUID(),
+                revisionNumber: 1,
+                workDate: firstWorkDate
+            )
+        )
+
+        XCTAssertThrowsError(try MCPBridgeService.approve(
+            [seriesRequest, firstEpisode, invalidEpisode],
+            context: context,
+            directory: directory
+        ))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<ContentSeries>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<SeriesEpisodeSlot>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PlatformOutput>()).isEmpty)
+    }
+
+    func testMCPBridgePersistsEditedPendingEpisodeBeforeFinalApproval() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-edited-episode-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "Original title",
+                seriesId: UUID(),
+                proposedEpisodeSlotId: UUID(),
+                episodeReviewId: UUID(),
+                revisionNumber: 1,
+                episodeNumber: 1,
+                workDate: Date(timeIntervalSince1970: 1_800_100_000)
+            )
+        )
+        var editedPayload = request.payload
+        editedPayload.title = "Edited title"
+        editedPayload.premise = "Edited premise"
+
+        try MCPBridgeService.updatePendingRequest(
+            request.replacingPayload(editedPayload),
+            directory: directory
+        )
+
+        let persisted = try XCTUnwrap(MCPBridgeService.pendingRequests(directory: directory).first)
+        XCTAssertEqual(persisted.id, request.id)
+        XCTAssertEqual(persisted.payload.title, "Edited title")
+        XCTAssertEqual(persisted.payload.premise, "Edited premise")
+    }
+
+    func testMCPBridgeSeriesBundleApprovalCreatesOneSeriesAndEveryEpisode() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let pillar = Pillar(role: .anchor, name: "SkipMatrix education", colorHex: "A78BFA")
+        context.insert(pillar)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-series-bundle-success-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let seriesID = UUID()
+        let seriesRequest = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeries",
+            payload: MCPBridgeRequestPayload(pillarId: pillar.id, name: "Data Diaries", seriesId: seriesID)
+        )
+        let workDate = Date(timeIntervalSince1970: 1_800_100_000)
+        let episodes = [2, 1].map { number in
+            MCPBridgeChangeRequest(
+                schemaVersion: 1,
+                id: UUID(),
+                createdAt: Date(),
+                source: "codex",
+                workspaceId: nil,
+                type: "createSeriesEpisode",
+                payload: MCPBridgeRequestPayload(
+                    title: "Episode \(number)",
+                    seriesId: seriesID,
+                    proposedEpisodeSlotId: UUID(),
+                    episodeReviewId: UUID(),
+                    revisionNumber: 1,
+                    episodeNumber: number,
+                    workDate: workDate.addingTimeInterval(Double(number) * 86_400)
+                )
+            )
+        }
+
+        try MCPBridgeService.approve(
+            [episodes[0], seriesRequest, episodes[1]],
+            context: context,
+            directory: directory
+        )
+
+        let approvedSeries = try XCTUnwrap(context.fetch(FetchDescriptor<ContentSeries>()).first)
+        XCTAssertEqual(approvedSeries.id, seriesID)
+        XCTAssertEqual(approvedSeries.pillarID, pillar.id)
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<CreativeBrief>()).compactMap(\.episodeNumber).sorted(),
+            [1, 2]
+        )
+        XCTAssertEqual(
+            Set(try context.fetch(FetchDescriptor<CreativeBrief>()).compactMap(\.pillarID)),
+            [pillar.id]
+        )
+        XCTAssertEqual(try context.fetch(FetchDescriptor<SeriesEpisodeSlot>()).count, 2)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PlatformOutput>()).count, 2)
+    }
+
+    func testMCPBridgeSingleEpisodeApprovalKeepsSeriesProposalForFinalReview() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let pillar = Pillar(role: .anchor, name: "SkipMatrix education", colorHex: "A78BFA")
+        context.insert(pillar)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "agentcy-single-episode-approval-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let seriesID = UUID()
+        let seriesRequest = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeries",
+            payload: MCPBridgeRequestPayload(pillarId: pillar.id, name: "Data Diaries", seriesId: seriesID)
+        )
+        let episodeRequest = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "The premium-data break-even question",
+                seriesId: seriesID,
+                proposedEpisodeSlotId: UUID(),
+                episodeReviewId: UUID(),
+                revisionNumber: 1,
+                episodeNumber: 2,
+                workDate: Date(timeIntervalSince1970: 1_800_100_000)
+            )
+        )
+        try MCPBridgeService.updatePendingRequest(seriesRequest, directory: directory)
+        try MCPBridgeService.updatePendingRequest(episodeRequest, directory: directory)
+
+        try MCPBridgeService.approveEpisodeInBundle(
+            episodeRequest,
+            seriesRequest: seriesRequest,
+            context: context,
+            directory: directory
+        )
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ContentSeries>()).map(\.id), [seriesID])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).first?.pillarID, pillar.id)
+        XCTAssertEqual(try MCPBridgeService.pendingRequests(directory: directory).map(\.id), [seriesRequest.id])
+
+        try MCPBridgeService.approve(
+            try MCPBridgeService.pendingRequests(directory: directory),
+            context: context,
+            directory: directory
+        )
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ContentSeries>()).count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreativeBrief>()).count, 1)
+    }
+
+    func testMCPBridgeScheduledSeriesEpisodeAppearsAsAnAgendaPost() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let pillar = Pillar(role: .anchor, name: "Creator systems", colorHex: "A78BFA")
+        let series = ContentSeries(name: "Studio notes", pillarID: pillar.id)
+        context.insert(pillar)
+        context.insert(series)
+        let workDate = Date(timeIntervalSince1970: 1_800_100_000)
+        let targetDate = workDate.addingTimeInterval(86_400)
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "What changed in the studio",
+                targetDate: targetDate,
+                includesTargetTime: false,
+                seriesId: series.id,
+                episodeLabel: "Studio reset",
+                workDate: workDate,
+                includesWorkTime: false
+            )
+        )
+
+        try MCPBridgeService.apply(request, context: context)
+
+        let episode = try XCTUnwrap(
+            context.fetch(FetchDescriptor<CreativeBrief>()).first(where: { $0.seriesID == series.id })
+        )
+        let output = try XCTUnwrap(
+            context.fetch(FetchDescriptor<PlatformOutput>()).first(where: { $0.briefID == episode.id })
+        )
+        XCTAssertEqual(episode.ideaBankPlacement, .post)
+        XCTAssertEqual(episode.status, .scheduled)
+        XCTAssertEqual(episode.agendaDate, targetDate)
+        XCTAssertEqual(episode.pillarID, pillar.id)
+        XCTAssertEqual(output.status, .scheduled)
+        XCTAssertEqual(output.targetDate, targetDate)
+        XCTAssertTrue(
+            AgendaOpenPostPolicy.includes(
+                briefStatus: episode.status,
+                outputStatus: output.status,
+                ideaBankPlacement: episode.ideaBankPlacement
+            )
+        )
     }
 
     func testMCPBridgeDoesNotSilentlyDropUnreadableRequestFiles() throws {
@@ -849,6 +1527,94 @@ final class ServiceTests: XCTestCase {
         XCTAssertEqual(output.formatID, PublishingCatalog.instagramReelID)
     }
 
+    func testMCPBridgeRequiresExplicitAccountWhenAPlatformHasMultipleAccounts() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let first = CreatorSocialAccount(
+            profileID: UUID(),
+            destinationID: PublishingCatalog.instagramID,
+            label: "@main",
+            profileURLString: "",
+            isPrimary: true
+        )
+        let second = CreatorSocialAccount(
+            profileID: UUID(),
+            destinationID: PublishingCatalog.instagramID,
+            label: "@studio",
+            profileURLString: ""
+        )
+        context.insert(first)
+        context.insert(second)
+
+        let ambiguous = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createPostDraft",
+            payload: MCPBridgeRequestPayload(
+                title: "Choose the right account",
+                platform: CreatorPlatform.instagramReels.rawValue
+            )
+        )
+
+        XCTAssertThrowsError(try MCPBridgeService.apply(ambiguous, context: context)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("multiple social accounts"))
+        }
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PlatformOutput>()).isEmpty)
+
+        let explicit = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createPostDraft",
+            payload: MCPBridgeRequestPayload(
+                title: "Choose the right account",
+                platform: CreatorPlatform.instagramReels.rawValue,
+                socialAccountId: second.id
+            )
+        )
+        try MCPBridgeService.apply(explicit, context: context)
+
+        let output = try XCTUnwrap(context.fetch(FetchDescriptor<PlatformOutput>()).first)
+        XCTAssertEqual(output.socialAccountID, second.id)
+        let snapshot = try MCPBridgeService.makeSnapshot(context: context)
+        XCTAssertEqual(Set(snapshot.socialAccounts.map(\.id)), Set([first.id, second.id]))
+        XCTAssertEqual(snapshot.posts.first?.outputs.first?.socialAccountId, second.id)
+    }
+
+    func testMCPBridgeRejectsAProposalForADifferentCreatorWorkspace() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profileID = UUID()
+        let active = CreatorWorkspace(profileID: profileID, name: "Main")
+        let other = CreatorWorkspace(profileID: profileID, name: "Second")
+        context.insert(active)
+        context.insert(other)
+        let priorWorkspaceID = CreatorWorkspacePreferences.activeWorkspaceID
+        CreatorWorkspacePreferences.activeWorkspaceID = active.id
+        defer { CreatorWorkspacePreferences.activeWorkspaceID = priorWorkspaceID }
+
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: other.id,
+            type: "createIdea",
+            payload: MCPBridgeRequestPayload(title: "Wrong workspace")
+        )
+
+        XCTAssertThrowsError(try MCPBridgeService.apply(request, context: context)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Switch to the account"))
+        }
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
+    }
+
     func testMCPBridgeInvalidFormatLeavesNoPartialPost() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -966,6 +1732,12 @@ final class ServiceTests: XCTestCase {
             librarySummaries: [],
             taskSummaries: []
         )
+    }
+}
+
+private extension UIView {
+    var agentDescendants: [UIView] {
+        subviews + subviews.flatMap(\.agentDescendants)
     }
 }
 

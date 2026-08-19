@@ -63,13 +63,38 @@ final class DesktopNavigationTests: XCTestCase {
     }
 
     func testDesktopSheetSizingMakesQuickActionsAWorkspaceInsteadOfAPhoneCard() {
+        let approvedMetrics = DesktopSheetMetrics(width: 900, height: 860)
+        XCTAssertEqual(DesktopLayoutPolicy.workspaceModalMetrics, approvedMetrics)
+        XCTAssertEqual(DesktopLayoutPolicy.sheetMetrics(for: .quickCapture), approvedMetrics)
+        XCTAssertEqual(DesktopLayoutPolicy.sheetMetrics(for: .settings), approvedMetrics)
+        XCTAssertEqual(DesktopLayoutPolicy.sheetMetrics(for: .askCy), approvedMetrics)
+    }
+
+    // Creator feedback 2026-08-19: post cards in the Cy review sidebar
+    // truncated their pillar names at the standard 900pt width. Cy hosts a
+    // sidebar plus a detail pane, so it is the one sheet that needs more room.
+    func testCySizesItselfAndOnlyTheReviewWorkspaceIsWider() {
+        XCTAssertTrue(DesktopLayoutPolicy.sizesItself(.askCy))
+        XCTAssertFalse(DesktopLayoutPolicy.sizesItself(.settings))
+
+        let review = DesktopLayoutPolicy.cyReviewModalMetrics
+        XCTAssertEqual(review, DesktopSheetMetrics(width: 1_180, height: 860))
+        XCTAssertGreaterThan(review.width, DesktopLayoutPolicy.workspaceModalMetrics.width)
+        XCTAssertEqual(review.height, DesktopLayoutPolicy.workspaceModalMetrics.height)
+        // Chat keeps the standard footprint.
+        XCTAssertEqual(DesktopLayoutPolicy.sheetMetrics(for: .askCy), DesktopLayoutPolicy.workspaceModalMetrics)
+    }
+
+    // Creator feedback 2026-08-19: the Quick Add modal felt oversized and
+    // uncentered. The menu stage is a compact choice card sized to its five
+    // options; only the embedded capture flows need the canonical workspace
+    // footprint.
+    func testQuickAddMenuIsACompactCardAndCaptureKeepsTheWorkspaceFootprint() {
+        let menu = DesktopLayoutPolicy.creationHubMetrics(stage: .menu)
+        XCTAssertEqual(menu, DesktopSheetMetrics(width: 600, height: 560))
         XCTAssertEqual(
-            DesktopLayoutPolicy.sheetMetrics(for: .creationHub),
-            DesktopSheetMetrics(width: 780, height: 720)
-        )
-        XCTAssertEqual(
-            DesktopLayoutPolicy.sheetMetrics(for: .askCy),
-            DesktopSheetMetrics(width: 900, height: 860)
+            DesktopLayoutPolicy.creationHubMetrics(stage: .capture),
+            DesktopLayoutPolicy.workspaceModalMetrics
         )
     }
 
@@ -99,25 +124,31 @@ final class DesktopNavigationTests: XCTestCase {
         let hiddenWidgets: Set<DesktopUtilityWidget> = [.upcomingPosts, .tasks]
         let storageValue = DesktopUtilityWidgetVisibilityPolicy.storageValue(for: hiddenWidgets)
 
-        XCTAssertEqual(storageValue, "tasks,upcomingPosts")
+        XCTAssertEqual(storageValue, "v2:tasks,upcomingPosts")
         XCTAssertEqual(
             DesktopUtilityWidgetVisibilityPolicy.hiddenWidgets(from: storageValue),
             hiddenWidgets
         )
-        XCTAssertEqual(
-            DesktopUtilityWidgetVisibilityPolicy.hiddenWidgets(
-                from: "tasks,savedPosts,pillars"
-            ),
-            [.tasks]
+        let legacyHidden = DesktopUtilityWidgetVisibilityPolicy.hiddenWidgets(
+            from: "tasks,savedPosts,pillars"
         )
+        XCTAssertTrue(legacyHidden.contains(.tasks))
+        XCTAssertTrue(DesktopUtilityWidget.optionalWidgets.isSubset(of: legacyHidden))
     }
 
     func testDesktopUtilitySidebarOffersFocusedPlanningAndLibraryWidgets() {
         XCTAssertEqual(
             DesktopUtilityWidget.allCases,
-            [.tasks, .upcomingPosts, .ideas]
+            [
+                .tasks, .upcomingPosts, .ideas, .pillarUsage, .needsNewDate,
+                .cyNoticed, .weekAtAGlance, .consistency, .recentlyPosted,
+                .draftsInProgress, .brandCabinet, .weeklyFocus,
+            ]
         )
         XCTAssertEqual(DesktopUtilityWidgetContentPolicy.ideaPreviewLimit, 3)
+        XCTAssertEqual(DesktopUtilityWidgetContentPolicy.taskPreviewLimit, 3)
+        XCTAssertFalse(DesktopUtilityWidget.optionalWidgets.contains(.cyNoticed))
+        XCTAssertNil(DesktopUtilityWidget.cyNoticed.icon)
     }
 
     func testDesktopUtilityWidgetOrderRestoresSavedOrderAndAddsNewWidgets() {
@@ -125,7 +156,11 @@ final class DesktopNavigationTests: XCTestCase {
             DesktopUtilityWidgetOrderPolicy.orderedWidgets(
                 from: "savedPosts,pillars,tasks,ideas"
             ),
-            [.tasks, .ideas, .upcomingPosts]
+            [
+                .tasks, .ideas, .upcomingPosts, .pillarUsage, .needsNewDate,
+                .cyNoticed, .weekAtAGlance, .consistency, .recentlyPosted,
+                .draftsInProgress, .brandCabinet, .weeklyFocus,
+            ]
         )
     }
 
@@ -134,10 +169,13 @@ final class DesktopNavigationTests: XCTestCase {
         let stored = DesktopUtilityWidgetOrderPolicy.storageValue(for: widgets)
 
         XCTAssertEqual(stored, "ideas,tasks,upcomingPosts")
-        XCTAssertEqual(DesktopUtilityWidgetOrderPolicy.orderedWidgets(from: stored), widgets)
+        XCTAssertEqual(
+            DesktopUtilityWidgetOrderPolicy.orderedWidgets(from: stored),
+            widgets + DesktopUtilityWidget.allCases.filter { !widgets.contains($0) }
+        )
         XCTAssertEqual(
             DesktopUtilityWidgetOrderPolicy.orderedWidgets(from: "tasks,tasks"),
-            [.tasks, .upcomingPosts, .ideas]
+            [.tasks] + DesktopUtilityWidget.allCases.filter { $0 != .tasks }
         )
     }
 

@@ -451,6 +451,7 @@ struct DailyFocusDetailView: View {
 
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Query private var allTemplates: [DailyFocusTemplateEntry]
     @Query private var allOverrides: [DailyFocusOverride]
     @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
@@ -521,6 +522,37 @@ struct DailyFocusDetailView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+#if targetEnvironment(macCatalyst)
+            desktopFocusRail
+#endif
+            detailScroll
+        }
+#if targetEnvironment(macCatalyst)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+#else
+        .navigationTitle("Focus")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") { showFocusEditor = true }
+            }
+        }
+#endif
+        .sheet(isPresented: $showFocusEditor) {
+            DailyFocusEditorView(date: date)
+        }
+        .onAppear(perform: loadDetails)
+        .onChange(of: note) { _, _ in persistDetails(scheduleReminder: false) }
+        .onChange(of: reminderEnabled) { _, _ in persistDetails(scheduleReminder: true) }
+        .onChange(of: reminderDate) { _, _ in persistDetails(scheduleReminder: reminderEnabled) }
+        .onDisappear { persistDetails(scheduleReminder: reminderEnabled) }
+        .agentScreen()
+        .agentKeyboardDismissal()
+    }
+
+    private var detailScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 EditorialHeader(
@@ -612,24 +644,20 @@ struct DailyFocusDetailView: View {
             .padding(.top, AgentSpacing.x6)
             .agentBottomNavigationClearance()
         }
-        .navigationTitle("Focus")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Edit") { showFocusEditor = true }
-            }
-        }
-        .sheet(isPresented: $showFocusEditor) {
-            DailyFocusEditorView(date: date)
-        }
-        .onAppear(perform: loadDetails)
-        .onChange(of: note) { _, _ in persistDetails(scheduleReminder: false) }
-        .onChange(of: reminderEnabled) { _, _ in persistDetails(scheduleReminder: true) }
-        .onChange(of: reminderDate) { _, _ in persistDetails(scheduleReminder: reminderEnabled) }
-        .onDisappear { persistDetails(scheduleReminder: reminderEnabled) }
-        .agentScreen()
-        .agentKeyboardDismissal()
     }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopFocusRail: some View {
+        AgentDesktopDetailRail(title: "Focus", backAction: dismiss.callAsFunction) {
+            Button("Edit") { showFocusEditor = true }
+                .font(.agentSubtext.weight(.medium))
+                .foregroundStyle(Color.agentText)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(.rect)
+                .buttonStyle(AgentPressButtonStyle())
+        }
+    }
+#endif
 
     private func detailValue(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x1) {

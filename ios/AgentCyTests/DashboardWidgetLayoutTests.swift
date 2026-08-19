@@ -6,7 +6,10 @@ final class DashboardWidgetLayoutTests: XCTestCase {
         let layout = DashboardWidgetLayoutState()
 
         XCTAssertEqual(layout.orderedCards, HomeDashboardCard.defaultOrder)
-        XCTAssertTrue(layout.hiddenCards.isEmpty)
+        XCTAssertEqual(
+            layout.hiddenCards,
+            Set(HomeDashboardCard.optionalOrder + HomeDashboardCard.systemManagedOrder)
+        )
         assertValid(layout)
     }
 
@@ -28,7 +31,12 @@ final class DashboardWidgetLayoutTests: XCTestCase {
         XCTAssertEqual(layout.orderedCards.first, .tasks)
         XCTAssertFalse(layout.orderedCards.contains(.scheduledToday))
         XCTAssertFalse(layout.orderedCards.contains(.recentIdeas))
-        XCTAssertEqual(layout.hiddenCards, [.scheduledToday, .recentIdeas])
+        XCTAssertEqual(
+            layout.hiddenCards,
+            Set([.scheduledToday, .recentIdeas])
+                .union(HomeDashboardCard.optionalOrder)
+                .union(HomeDashboardCard.systemManagedOrder)
+        )
         assertValid(layout)
     }
 
@@ -49,7 +57,7 @@ final class DashboardWidgetLayoutTests: XCTestCase {
             _ = layout.setCard(card, isVisible: false)
         }
         XCTAssertTrue(layout.orderedCards.isEmpty)
-        XCTAssertEqual(layout.hiddenCards, Set(HomeDashboardCard.defaultOrder))
+        XCTAssertEqual(layout.hiddenCards, Set(HomeDashboardCard.allOrder))
         assertValid(layout)
     }
 
@@ -61,6 +69,19 @@ final class DashboardWidgetLayoutTests: XCTestCase {
         XCTAssertFalse(layout.moveCard(.brandCabinet, by: 1, within: eligibleCards))
         XCTAssertTrue(layout.moveCard(.tasks, by: -1, within: eligibleCards))
         XCTAssertEqual(layout.orderedCards.prefix(3), [.scheduledToday, .tasks, .continueWorking])
+        assertValid(layout)
+    }
+
+    func testCyNoticedCannotBeAddedRemovedOrReorderedByCustomization() {
+        var layout = DashboardWidgetLayoutState(
+            savedOrderRawValues: [HomeDashboardCard.cyNoticed.rawValue]
+        )
+
+        XCTAssertFalse(layout.orderedCards.contains(.cyNoticed))
+        XCTAssertTrue(layout.hiddenCards.contains(.cyNoticed))
+        XCTAssertFalse(layout.setCard(.cyNoticed, isVisible: true))
+        XCTAssertFalse(layout.setCard(.cyNoticed, isVisible: false))
+        XCTAssertFalse(layout.moveCard(.cyNoticed, by: 1, within: layout.orderedCards))
         assertValid(layout)
     }
 
@@ -133,7 +154,7 @@ final class DashboardWidgetLayoutTests: XCTestCase {
         XCTAssertTrue(Set(layout.orderedCards).isDisjoint(with: layout.hiddenCards), file: file, line: line)
         XCTAssertEqual(
             Set(layout.orderedCards).union(layout.hiddenCards),
-            Set(HomeDashboardCard.defaultOrder),
+            Set(HomeDashboardCard.allOrder),
             file: file,
             line: line
         )

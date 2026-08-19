@@ -318,6 +318,16 @@ struct BrandPartnerDetailView: View {
                                     metadata: output?.platform.title ?? "Post",
                                     timeText: output?.targetDate?.formatted(.dateTime.month(.abbreviated).day()),
                                     statusTextOverride: statusOverride(for: brief, output: output),
+                                    isLate: output.map { output in
+                                        FinalizedPostPresentation.isMissed(
+                                            outputStatus: output.status,
+                                            targetDate: output.targetDate
+                                        ) || PostWorkDateStatusPolicy.isLate(
+                                            workDate: brief.workDate,
+                                            briefStatus: brief.status,
+                                            outputStatus: output.status
+                                        )
+                                    } ?? false,
                                     destination: postDestination(for: brief, output: output)
                                 )
                             }

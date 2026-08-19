@@ -1,5 +1,7 @@
+import os
 import SwiftData
 import SwiftUI
+import UIKit
 
 enum RootDestination: Equatable {
     case launch
@@ -26,7 +28,114 @@ enum RootDestination: Equatable {
         }
         return .app
     }
+
+    fileprivate var diagnosticName: String {
+        switch self {
+        case .launch: "launch"
+        case .onboarding: "onboarding"
+        case .accountAccess: "account_access"
+        case .restoringAccount: "restoring_account"
+        case .app: "app"
+        }
+    }
 }
+
+@MainActor
+enum RootLaunchDiagnostics {
+    private static let logger = Logger(subsystem: "com.agentcy.app", category: "RootLaunch")
+    private static let signposter = OSSignposter(logger: logger)
+    private static var signpostID: OSSignpostID?
+    private static var intervalState: OSSignpostIntervalState?
+    private static var startedAt: TimeInterval?
+    private static var didFinish = false
+
+    static func begin() {
+        guard startedAt == nil else { return }
+        let id = signposter.makeSignpostID()
+        signpostID = id
+        startedAt = ProcessInfo.processInfo.systemUptime
+        intervalState = signposter.beginInterval("Root Launch", id: id)
+        mark("process_initialized")
+    }
+
+    static func mark(_ milestone: String) {
+        guard let startedAt, let signpostID else { return }
+        let elapsedMilliseconds = (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+        signposter.emitEvent(
+            "Root Milestone",
+            id: signpostID,
+            "milestone=\(milestone, privacy: .public) elapsed_ms=\(elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+        logger.notice(
+            "milestone=\(milestone, privacy: .public) elapsed_ms=\(elapsedMilliseconds, format: .fixed(precision: 1))"
+        )
+    }
+
+    static func destinationPresented(_ destination: RootDestination) {
+        mark("destination_\(destination.diagnosticName)")
+        guard destination != .launch,
+              !didFinish,
+              let intervalState else { return }
+        signposter.endInterval(
+            "Root Launch",
+            intervalState,
+            "destination=\(destination.diagnosticName, privacy: .public)"
+        )
+        self.intervalState = nil
+        didFinish = true
+    }
+}
+
+#if DEBUG
+enum RootRuntimeFixture: String, Equatable {
+    case restoringAccount
+    case restoringThenApp
+
+    static func resolve(arguments: [String] = ProcessInfo.processInfo.arguments) -> Self? {
+        guard let marker = arguments.firstIndex(of: "-agentCyRootFixture"),
+              arguments.indices.contains(marker + 1) else {
+            return nil
+        }
+        return Self(rawValue: arguments[marker + 1])
+    }
+
+    var identity: InstallationIdentity {
+        InstallationIdentity(
+            installationID: UUID(uuidString: "B5E49C45-5D32-4E89-B50A-59AC6C3C29E9")!,
+            credential: String(repeating: "r", count: 48),
+            access: .comped,
+            credentialExpiresAt: Date().addingTimeInterval(3_600),
+            promotionalEntitlementEndsAt: nil,
+            accountID: UUID(uuidString: "8B662D34-0707-45F0-84FE-9CD5984AA19A")!
+        )
+    }
+
+    @MainActor
+    func scheduleProfileArrival(context: ModelContext) {
+        guard self == .restoringThenApp else { return }
+        Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(900))
+            } catch {
+                return
+            }
+            guard ((try? context.fetch(FetchDescriptor<CreatorProfile>())) ?? []).isEmpty else { return }
+            context.insert(
+                CreatorProfile(
+                    name: "Restored creator",
+                    goal: "Keep creating",
+                    adultConfirmed: true,
+                    onboardingCompleted: true
+                )
+            )
+            if ((try? context.fetch(FetchDescriptor<SubscriptionState>())) ?? []).isEmpty {
+                context.insert(SubscriptionState(access: .comped))
+            }
+            try? context.save()
+        }
+    }
+}
+#endif
 
 struct RootView: View {
     @Query private var profiles: [CreatorProfile]
@@ -49,16 +158,31 @@ struct RootView: View {
             destinationView
             #endif
         }
+        .onAppear {
+            RootLaunchDiagnostics.destinationPresented(destination)
+        }
         .onChange(of: appModel.appearancePreference, initial: true) { _, preference in
             AgentAppearanceController.apply(preference)
         }
         .task {
+            RootLaunchDiagnostics.mark("root_task_started")
+            #if DEBUG
+            RootRuntimeFixture.resolve()?.scheduleProfileArrival(context: context)
+            #endif
+            if !CreatorSessionFeatureAvailability.isEnabled {
+                if appModel.presentedSheet == .creatorSession {
+                    appModel.presentedSheet = nil
+                }
+                await CreatorSessionActivityController.retireUnavailableFeature()
+            }
             appModel.removeLegacySimplifyPrefixes(context: context)
             try? FocusTaskRecurrenceService.reconcile(context: context)
             let repairedPostTasks = (try? PostTaskScheduleRepairService.reconcileOnce(context: context)) ?? 0
             let removedAccidentalSeriesPosts =
                 (try? AccidentalRecurringPostRepairService.reconcileOnce(context: context)) ?? 0
+            RootLaunchDiagnostics.mark("precredential_work_complete")
             await appModel.refreshInstallationCredentialStatus(context: context)
+            RootLaunchDiagnostics.mark("credential_status_resolved")
             appModel.refreshInspirationShareCreatorSnapshot(context: context)
             DevelopmentSubscriptionAccess.applyLocalCyPro(context: context)
             appModel.applyPendingWidgetTaskCompletions(context: context)
@@ -72,10 +196,19 @@ struct RootView: View {
                 appModel.notice = .info("Removed \(removedAccidentalSeriesPosts) accidental repeat posts.")
             }
             handlePendingNotificationRoute()
+            handlePendingPhoneFeatureLaunch()
         }
         .onOpenURL(perform: openWidgetDestination)
         .onReceive(NotificationCenter.default.publisher(for: .agentCyNotificationRouteReady)) { _ in
             handlePendingNotificationRoute()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            handlePendingPhoneFeatureLaunch()
+        }
+        .onChange(of: destination) { _, newDestination in
+            RootLaunchDiagnostics.destinationPresented(newDestination)
+            guard newDestination == .app else { return }
+            handlePendingPhoneFeatureLaunch()
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentCyNotificationContentChanged).receive(on: DispatchQueue.main)) { _ in
             WidgetSnapshotService.refresh(context: context)
@@ -97,7 +230,9 @@ struct RootView: View {
         case .accountAccess:
             AccountAccessGate()
         case .restoringAccount:
-            AccountRestoreView()
+            AccountRestoreView(
+                localOnlyFallback: ModelContainerFactory.didFallBackToLocalOnlyStore
+            )
         case .app:
             #if targetEnvironment(macCatalyst)
             DesktopAppShellView()
@@ -119,7 +254,7 @@ struct RootView: View {
 
     private func openWidgetDestination(_ url: URL) {
         guard let destination = AgentCyDeepLink(url: url) else { return }
-        appModel.presentedSheet = nil
+        appModel.dismissGlobalPresentation()
         appModel.widgetAgendaDay = nil
         appModel.widgetBriefID = nil
         appModel.widgetBriefOpensEditor = false
@@ -133,6 +268,8 @@ struct RootView: View {
             appModel.requestedPlanMode = .week
         case .tasks:
             appModel.selectedTab = .tasks
+        case .pillars:
+            appModel.selectedTab = .pillars
         case .ideaBank:
             appModel.selectedTab = .ideaBank
         case .brief(let id):
@@ -146,12 +283,27 @@ struct RootView: View {
             prepareQuickCapture(.post)
         case .quickTask:
             prepareQuickCapture(.task)
+        case .voiceSpark:
+            #if !targetEnvironment(macCatalyst)
+            appModel.presentedSheet = .voiceSpark
+            #endif
+        case .creatorSession:
+            break
         }
+    }
+
+    private func handlePendingPhoneFeatureLaunch() {
+        guard destination == .app else { return }
+        #if !targetEnvironment(macCatalyst)
+        guard let route = PhoneFeatureLaunchRequestStore.take() else { return }
+        guard route == .voiceSpark else { return }
+        appModel.presentedSheet = .voiceSpark
+        #endif
     }
 
     private func handlePendingNotificationRoute() {
         guard let route = AgentNotificationRouteStore.take() else { return }
-        appModel.presentedSheet = nil
+        appModel.dismissGlobalPresentation()
         switch route.kind {
         case .day:
             appModel.selectedTab = .today
@@ -176,6 +328,8 @@ struct RootView: View {
         case .access:
             appModel.requestedSettingsPage = .access
             appModel.presentedSheet = .settings
+        case .mcpReview:
+            appModel.presentMCPReview()
         }
     }
 
@@ -221,6 +375,7 @@ struct InstallationInviteGate: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @State private var inviteCode = ""
+    @FocusState private var inviteCodeIsFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -228,17 +383,30 @@ struct InstallationInviteGate: View {
                 EditorialHeader(
                     kicker: "Connect Cy",
                     title: "Enter your invite.",
-                    subtitle: "Connect this iPhone to Cy. Your saved work stays here."
+                    subtitle: "Connect this iPhone to Cy with the invitation code you received."
                 )
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                         MetaLabel("Invitation code")
-                        TextField("Enter your pilot code", text: $inviteCode)
-                            .agentSingleLineSubmit()
-                            .font(.agentBody)
+                            .accessibilityHidden(true)
+                        TextField("Enter your pilot code", text: $inviteCode, axis: .vertical)
+                            .font(.agentBody.monospaced())
+                            .lineLimit(1...3)
+                            .submitLabel(.go)
+                            .onSubmit { submit() }
+                            .onChange(of: inviteCode) { _, updatedCode in
+                                let keyboardSubmit = InstallationInviteInput.consumeSubmitMarker(
+                                    in: updatedCode
+                                )
+                                guard keyboardSubmit.shouldSubmit else { return }
+                                inviteCode = keyboardSubmit.code
+                                submit()
+                            }
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled()
+                            .textContentType(.oneTimeCode)
+                            .focused($inviteCodeIsFocused)
                             .padding(AgentSpacing.x4)
                             .background(Color.agentSurface)
                             .clipShape(.rect(cornerRadius: AgentRadius.control))
@@ -246,33 +414,22 @@ struct InstallationInviteGate: View {
                                 RoundedRectangle(cornerRadius: AgentRadius.control)
                                     .stroke(Color.agentBorder, lineWidth: 1)
                             }
+                            .accessibilityLabel("Invitation code")
+                            .accessibilityHint(invitationCodeHint)
+                            .accessibilityIdentifier("installation-invite-code")
                     }
 
-                    Button {
-                        Task {
-                            if await appModel.redeemInstallationInvite(inviteCode, context: context) {
-                                dismiss()
-                            }
-                        }
-                    } label: {
+                    Button(action: submit) {
                         AgentIconLabel(title: "Connect Cy", icon: .key)
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(AgentPrimaryButtonStyle())
-                    .disabled(
-                        appModel.isRedeemingInvite ||
-                            inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).count < 6
-                    )
+                    .disabled(appModel.isRedeemingInvite)
 
-                    if appModel.isRedeemingInvite {
-                        ProgressView("Connecting…")
-                            .font(.agentBody)
-                    }
-
-                    if let notice = appModel.notice {
-                        Text(notice.message)
-                            .font(.agentBody)
-                            .foregroundStyle(Color.agentSecondary)
+                    if appModel.installationInviteStatus.message != nil {
+                        InstallationInviteStatusView(
+                            status: appModel.installationInviteStatus
+                        )
                     }
                 }
 
@@ -287,11 +444,80 @@ struct InstallationInviteGate: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .agentKeyboardDismissal()
+        .interactiveDismissDisabled(appModel.isRedeemingInvite)
+        .onAppear { appModel.prepareInstallationInviteEntry() }
+        .onDisappear { appModel.resetInstallationInviteState() }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Close") { dismiss() }
+                Button("Close") {
+                    appModel.resetInstallationInviteState()
+                    dismiss()
+                }
+                .disabled(appModel.isRedeemingInvite)
             }
         }
+    }
+
+    private var invitationCodeHint: String {
+        if case .error(let message) = appModel.installationInviteStatus {
+            return message
+        }
+        return "Enter the code you received with your invitation."
+    }
+
+    private func submit() {
+        guard !appModel.isRedeemingInvite else { return }
+        Task {
+            let outcome = await appModel.redeemInstallationInvite(
+                inviteCode,
+                context: context
+            )
+            switch outcome {
+            case .redeemed:
+                AgentKeyboard.dismiss()
+                dismiss()
+            case .validationFailed:
+                inviteCodeIsFocused = true
+            case .failed, .duplicateIgnored:
+                break
+            }
+        }
+    }
+}
+
+private struct InstallationInviteStatusView: View {
+    let status: InstallationInviteStatus
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
+            if status.showsProgress {
+                ProgressView()
+            }
+            if let message = status.message {
+                Text(message)
+                    .font(.agentSubtext)
+                    .foregroundStyle(status.isUrgent ? Color.agentDestructive : Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(status.message ?? "")
+        .accessibilityIdentifier("installation-invite-status")
+        .onAppear { announce(status) }
+        .onChange(of: status) { _, status in
+            announce(status)
+        }
+    }
+
+    private func announce(_ status: InstallationInviteStatus) {
+        guard let messageText = status.message else { return }
+        let message = NSMutableAttributedString(string: messageText)
+        message.addAttribute(
+            .accessibilitySpeechAnnouncementPriority,
+            value: status.isUrgent ? UIAccessibilityPriority.high : UIAccessibilityPriority.low,
+            range: NSRange(location: 0, length: message.length)
+        )
+        UIAccessibility.post(notification: .announcement, argument: message)
     }
 }
 

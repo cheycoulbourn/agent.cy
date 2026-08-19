@@ -293,7 +293,7 @@ struct InspirationEditableIdea: Equatable, Sendable {
     }
 }
 
-struct ManualInspirationIdeaDraft: Equatable, Sendable {
+struct ManualInspirationIdeaDraft: Codable, Equatable, Sendable {
     var title: String
     var premise: String
     var spokenHook: String
@@ -434,6 +434,106 @@ enum InspirationShapePersistenceCoordinator {
             context.rollback()
             throw error
         }
+    }
+
+    /// Saves changes to an analyzed Saved Post without creating an Idea Bank post.
+    static func persistEdits(
+        _ draft: InspirationEditableIdea,
+        result: InspirationShapeResultWire,
+        to source: InspirationSource,
+        context: ModelContext
+    ) throws -> InspirationShapeResultWire {
+        guard source.status == .ready, source.linkedBriefID == nil else {
+            throw InspirationShapingError.invalidSourceState
+        }
+        guard draft.isValid else { throw InspirationShapingError.invalidResult }
+        try InspirationShapeValidator.validate(result)
+
+        let pillars = try context.fetch(FetchDescriptor<Pillar>())
+        let selectedPillarID = draft.pillarID.flatMap { pillarID in
+            pillars.first {
+                $0.id == pillarID && !$0.isArchived && $0.workspaceID == source.workspaceID
+            }?.id
+        }
+        let editedResult = InspirationShapeResultWire(
+            sourceSummary: result.sourceSummary,
+            keyPoints: result.keyPoints,
+            interpretedMechanic: result.interpretedMechanic,
+            originalityGuardrails: result.originalityGuardrails,
+            idea: InspirationIdeaWire(
+                title: draft.title,
+                premise: draft.premise,
+                audience: draft.audience,
+                takeaway: draft.takeaway,
+                spokenHook: draft.spokenHook,
+                firstFrameText: draft.firstFrameText,
+                filmingApproach: draft.filmingApproach,
+                recommendedFormat: result.idea.recommendedFormat,
+                durationSeconds: result.idea.durationSeconds
+            ),
+            suggestedPillarId: selectedPillarID,
+            assumptions: result.assumptions
+        )
+        try InspirationShapeValidator.validate(editedResult)
+        let payload = try JSONEncoder.agentCy.encode(editedResult)
+        source.shapePayloadJSON = String(decoding: payload, as: UTF8.self)
+        source.pillarID = selectedPillarID
+        source.updatedAt = Date()
+
+        do {
+            try context.save()
+            return editedResult
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    /// Saves an incomplete creator-authored draft on the reference itself.
+    /// A title is intentionally not required until the creator makes a post.
+    static func persistManualDraft(
+        _ draft: ManualInspirationIdeaDraft,
+        to source: InspirationSource,
+        context: ModelContext
+    ) throws -> ManualInspirationIdeaDraft {
+        guard source.linkedBriefID == nil,
+              draft.title.utf16.count <= 160,
+              [draft.premise, draft.spokenHook, draft.takeaway, draft.filmingApproach]
+              .allSatisfy({ $0.utf16.count <= 2_000 }) else {
+            throw InspirationShapingError.invalidResult
+        }
+
+        let pillars = try context.fetch(FetchDescriptor<Pillar>())
+        let selectedPillarID = draft.pillarID.flatMap { pillarID in
+            pillars.first {
+                $0.id == pillarID && !$0.isArchived && $0.workspaceID == source.workspaceID
+            }?.id
+        }
+        var persistedDraft = draft
+        persistedDraft.pillarID = selectedPillarID
+        let payload = try JSONEncoder.agentCy.encode(persistedDraft)
+        source.manualDraftPayloadJSON = String(decoding: payload, as: UTF8.self)
+        source.pillarID = selectedPillarID
+        source.updatedAt = Date()
+
+        do {
+            try context.save()
+            return persistedDraft
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    static func manualDraft(for source: InspirationSource) -> ManualInspirationIdeaDraft {
+        guard let data = source.manualDraftPayloadJSON.data(using: .utf8),
+              let decoded = try? JSONDecoder.agentCy.decode(
+                  ManualInspirationIdeaDraft.self,
+                  from: data
+              ) else {
+            return ManualInspirationIdeaDraft(pillarID: source.pillarID)
+        }
+        return decoded
     }
 
     static func saveManual(

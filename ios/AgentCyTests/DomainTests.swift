@@ -1,7 +1,16 @@
 import SwiftData
+import SwiftUI
 import UIKit
 import XCTest
 @testable import AgentCy
+
+private struct StubPostLinkMetadataFetcher: PostLinkMetadataFetching {
+    let metadata: PostLinkMetadata
+
+    func fetch(url _: URL, platform _: InspirationPlatform) async throws -> PostLinkMetadata {
+        metadata
+    }
+}
 
 @MainActor
 final class DomainTests: XCTestCase {
@@ -46,6 +55,19 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(DeviceAppearancePreferences.load(defaults: desktopDefaults), .light)
     }
 
+    func testAppearanceSettingsDraftKeepsOriginalBaselineAfterLivePreview() {
+        var draft = AppearanceSettingsDraftState(
+            deviceAppearance: .dark,
+            palette: .neutral
+        )
+
+        draft.appearance = .light
+
+        XCTAssertEqual(draft.initialAppearance, .dark)
+        XCTAssertEqual(draft.appearance, .light)
+        XCTAssertTrue(draft.hasChanges)
+    }
+
     func testDuplicateSafeIndexKeepsTheFirstCloudSyncedValue() {
         let id = UUID()
 
@@ -72,6 +94,20 @@ final class DomainTests: XCTestCase {
                 "Missing semantic icon asset: \(icon.rawValue)"
             )
         }
+    }
+
+    func testPillarEducationKeepsTheAnchorWithinTheApprovedPlanningRange() {
+        XCTAssertEqual(PillarEducationContent.anchorShareRange.lowerBound, 40)
+        XCTAssertEqual(PillarEducationContent.anchorShareRange.upperBound, 60)
+        XCTAssertTrue(PillarEducationContent.anchorGuidance.contains("40–60%"))
+        XCTAssertTrue(PillarEducationContent.popoverDefinition.contains("anchor"))
+        XCTAssertTrue(PillarEducationContent.popoverDefinition.contains("secondary pillars"))
+    }
+
+    func testEveryBackControlUsesTheCanonicalNucleoIndicatorGeometry() {
+        XCTAssertEqual(AgentNavigationAppearance.backIndicatorAssetName, AgentIcon.back.rawValue)
+        XCTAssertEqual(AgentNavigationIconMetrics.backGlyphSide, 12.8)
+        XCTAssertEqual(AgentNavigationIconMetrics.nativeBackCanvasSide, 18)
     }
 
     func testIdeaBankPlacementUsesExplicitIntentAndLegacyFallback() {
@@ -213,6 +249,30 @@ final class DomainTests: XCTestCase {
         )
     }
 
+    func testAgendaOpenPostsIncludeScheduledEpisodesUntilTheyArePosted() {
+        XCTAssertTrue(
+            AgendaOpenPostPolicy.includes(
+                briefStatus: .scheduled,
+                outputStatus: .scheduled,
+                ideaBankPlacement: .post
+            )
+        )
+        XCTAssertFalse(
+            AgendaOpenPostPolicy.includes(
+                briefStatus: .posted,
+                outputStatus: .posted,
+                ideaBankPlacement: .post
+            )
+        )
+        XCTAssertFalse(
+            AgendaOpenPostPolicy.includes(
+                briefStatus: .spark,
+                outputStatus: .draft,
+                ideaBankPlacement: .idea
+            )
+        )
+    }
+
     func testWorkspaceRemembersCustomPostStatusesWithoutDuplicates() {
         let workspace = CreatorWorkspace(profileID: UUID(), name: "Creator")
 
@@ -230,6 +290,73 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(workspace.forgetCustomPostStatus("to BE FILMED"), "To be filmed")
         XCTAssertEqual(workspace.customPostStatuses, ["For review"])
         XCTAssertNil(workspace.forgetCustomPostStatus("Missing"))
+    }
+
+    func testWorkspacePaletteDoesNotLeakBetweenAccounts() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profileID = UUID()
+        let first = CreatorWorkspace(profileID: profileID, name: "First")
+        let second = CreatorWorkspace(profileID: profileID, name: "Second")
+
+        first.vibePalette = .pastel
+        second.vibePalette = .soho
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let saved = try context.fetch(FetchDescriptor<CreatorWorkspace>())
+        let savedByID = DuplicateSafeIndex.firstValues(saved.map { ($0.id, $0) })
+
+        XCTAssertEqual(savedByID[first.id]?.vibePalette, .pastel)
+        XCTAssertEqual(savedByID[second.id]?.vibePalette, .soho)
+    }
+
+    func testWorkspacePaletteUpgradePreservesLegacyCustomStatuses() {
+        let workspace = CreatorWorkspace(profileID: UUID(), name: "Creator")
+        workspace.customPostStatusesRaw = "To be filmed\nFor review"
+
+        workspace.vibePalette = .tooCool
+
+        XCTAssertEqual(workspace.vibePalette, .tooCool)
+        XCTAssertEqual(workspace.customPostStatuses, ["To be filmed", "For review"])
+
+        workspace.customPostStatuses = ["For review"]
+        XCTAssertEqual(workspace.vibePalette, .tooCool)
+        XCTAssertEqual(workspace.customPostStatuses, ["For review"])
+    }
+
+    func testWorkspacePaletteMigrationRecoversEachAccountsPillarTheme() throws {
+        let previousWorkspaceID = CreatorWorkspacePreferences.activeWorkspaceID
+        defer { CreatorWorkspacePreferences.activeWorkspaceID = previousWorkspaceID }
+
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey")
+        profile.vibePalette = .midnight
+        let first = CreatorWorkspace(profileID: profile.id, name: "First", sortOrder: 0)
+        let second = CreatorWorkspace(profileID: profile.id, name: "Second", sortOrder: 1)
+        CreatorWorkspacePreferences.activeWorkspaceID = second.id
+
+        context.insert(profile)
+        context.insert(first)
+        context.insert(second)
+        for (index, color) in CreatorVibePalette.soho.pillarColorHexes.prefix(3).enumerated() {
+            let pillar = Pillar(name: "First \(index)", colorHex: color)
+            pillar.workspaceID = first.id
+            context.insert(pillar)
+        }
+        for (index, color) in CreatorVibePalette.midnight.pillarColorHexes.prefix(2).enumerated() {
+            let pillar = Pillar(name: "Second \(index)", colorHex: color)
+            pillar.workspaceID = second.id
+            context.insert(pillar)
+        }
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+
+        XCTAssertEqual(first.vibePalette, .soho)
+        XCTAssertEqual(second.vibePalette, .midnight)
     }
 
     func testApplyingCustomPostStatusKeepsPostInWorkingPipeline() throws {
@@ -326,6 +453,32 @@ final class DomainTests: XCTestCase {
         guard case .week? = model.requestedPlanMode else {
             return XCTFail("Weekly agenda mode was not requested")
         }
+    }
+
+    func testLateWorkRouteRequestsTheFilteredAgendaList() {
+        let model = AppModel()
+        model.selectedTab = .cy
+        model.presentedSheet = .askCy
+        let originalReset = model.requestedPlanNavigationReset
+        let originalLateWorkRequest = model.requestedLateWorkList
+
+        model.routeToLateWorkList()
+
+        XCTAssertNil(model.presentedSheet)
+        XCTAssertEqual(model.selectedTab, .today)
+        XCTAssertEqual(model.requestedPlanNavigationReset, originalReset + 1)
+        XCTAssertEqual(model.requestedLateWorkList, originalLateWorkRequest + 1)
+    }
+
+    func testMCPReviewOpensTheCyWindowWithoutReplacingTheCurrentPage() {
+        let model = AppModel()
+        model.selectedTab = .tasks
+        model.presentedSheet = .settings
+
+        model.presentMCPReview()
+
+        XCTAssertEqual(model.presentedSheet, .askCy)
+        XCTAssertEqual(model.selectedTab, .tasks)
     }
 
     func testPillarCollectionAllowsSixActivePillarsButNotSeven() {
@@ -528,9 +681,9 @@ final class DomainTests: XCTestCase {
         )
     }
 
-    func testPostActionRemovesDuplicateSendToPostSuggestion() {
+    func testPostActionRemovesDuplicateCreateThisPostSuggestion() {
         let suggestions = [
-            ChatSuggestionWire(label: "Send to post", prompt: "Send this to a post"),
+            ChatSuggestionWire(label: "Create this post", prompt: "Create this post"),
             ChatSuggestionWire(label: "Make the hook shorter", prompt: "Shorten the hook")
         ]
 
@@ -554,6 +707,58 @@ final class DomainTests: XCTestCase {
             ).map(\.label),
             ["Send to post"]
         )
+    }
+
+    func testNewThoughtDoesNotFallBackToMostRecentDraft() {
+        let existingDraft = CreativeBrief(
+            title: "Anatomy of a rough hit rate",
+            premise: "The older recommended post",
+            status: .developing
+        )
+
+        XCTAssertNil(CyBriefReferencePolicy.explicitlyReferencedBrief(
+            in: "Expand a new thought about building trust through transparency",
+            briefs: [existingDraft]
+        ))
+    }
+
+    func testNamedPostIsStillResolvedAsAnExplicitReference() {
+        let existingDraft = CreativeBrief(
+            title: "Anatomy of a rough hit rate",
+            premise: "The older recommended post",
+            status: .developing
+        )
+
+        XCTAssertEqual(
+            CyBriefReferencePolicy.explicitlyReferencedBrief(
+                in: "Keep shaping Anatomy of a rough hit rate",
+                briefs: [existingDraft]
+            )?.id,
+            existingDraft.id
+        )
+    }
+
+    func testNewPostActionDoesNotRequireAnExistingPostReference() {
+        XCTAssertTrue(CyPostCreationPolicy.canCreate(
+            actionKind: .developSpark,
+            referencedBriefID: nil,
+            alreadyCreated: false
+        ))
+        XCTAssertFalse(CyPostCreationPolicy.shouldCopySource(actionKind: .developSpark))
+    }
+
+    func testRevisionActionRequiresAndCopiesItsExistingPostReference() {
+        XCTAssertFalse(CyPostCreationPolicy.canCreate(
+            actionKind: .reviseBrief,
+            referencedBriefID: nil,
+            alreadyCreated: false
+        ))
+        XCTAssertTrue(CyPostCreationPolicy.canCreate(
+            actionKind: .reviseBrief,
+            referencedBriefID: UUID(),
+            alreadyCreated: false
+        ))
+        XCTAssertTrue(CyPostCreationPolicy.shouldCopySource(actionKind: .reviseBrief))
     }
 
     func testSuggestedPostDateUsesTheNextAssignedPillarDay() throws {
@@ -826,6 +1031,52 @@ final class DomainTests: XCTestCase {
         XCTAssertNil(profile.customCyQuickPrompts)
     }
 
+    func testCyQuickPromptsStayScopedToCreatorWorkspace() {
+        let profileID = UUID()
+        let first = CreatorWorkspace(profileID: profileID, name: "@first")
+        let second = CreatorWorkspace(profileID: profileID, name: "@second")
+
+        first.setCustomCyQuickPrompts([
+            "Plan the first account",
+            "Shape the first idea"
+        ])
+        second.setCustomCyQuickPrompts([
+            "Plan the second account",
+            "Shape the second idea"
+        ])
+
+        XCTAssertEqual(first.customCyQuickPrompts, [
+            "Plan the first account",
+            "Shape the first idea"
+        ])
+        XCTAssertEqual(second.customCyQuickPrompts, [
+            "Plan the second account",
+            "Shape the second idea"
+        ])
+
+        first.restoreDefaultCyQuickPrompts()
+        XCTAssertEqual(first.customCyQuickPrompts, CreatorProfile.defaultCyQuickPrompts)
+        XCTAssertNotNil(second.customCyQuickPrompts)
+    }
+
+    func testLegacyProfileQuickPromptsMigrateToDefaultWorkspaceOnly() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey")
+        profile.setCustomCyQuickPrompts(["Plan my main account", "Shape my main idea"])
+        let first = CreatorWorkspace(profileID: profile.id, name: "@main", sortOrder: 0)
+        let second = CreatorWorkspace(profileID: profile.id, name: "@second", sortOrder: 1)
+        context.insert(profile)
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+
+        XCTAssertEqual(first.customCyQuickPrompts, ["Plan my main account", "Shape my main idea"])
+        XCTAssertNil(second.customCyQuickPrompts)
+    }
+
     func testCyTaskAttentionUsesTaskPageVisibilityAndSeparatesPastDue() {
         let calendar = Calendar(identifier: .gregorian)
         let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 12))!
@@ -836,7 +1087,7 @@ final class DomainTests: XCTestCase {
 
         let visible = CreatorTask(briefID: activeBriefID, title: "Visible", targetDate: visibleDate)
         let pastDue = CreatorTask(title: "Past due", targetDate: pastDate)
-        let hiddenFuture = CreatorTask(briefID: activeBriefID, title: "Future", targetDate: futureDate)
+        let futurePostTask = CreatorTask(briefID: activeBriefID, title: "Future", targetDate: futureDate)
         let hiddenRecurring = CreatorTask(title: "Future focus", targetDate: futureDate)
         hiddenRecurring.focusTaskTemplateID = UUID()
         let completed = CreatorTask(title: "Completed", targetDate: visibleDate)
@@ -845,7 +1096,7 @@ final class DomainTests: XCTestCase {
         skipped.isSkipped = true
 
         let result = CyTaskAttentionPolicy.visibleOpenTasks(
-            tasks: [visible, pastDue, hiddenFuture, hiddenRecurring, completed, skipped],
+            tasks: [visible, pastDue, futurePostTask, hiddenRecurring, completed, skipped],
             activeBriefIDs: [activeBriefID],
             outputs: [],
             briefs: [],
@@ -853,7 +1104,7 @@ final class DomainTests: XCTestCase {
             calendar: calendar
         )
 
-        XCTAssertEqual(Set(result.map(\.title)), ["Visible", "Past due"])
+        XCTAssertEqual(Set(result.map(\.title)), ["Visible", "Past due", "Future"])
         XCTAssertEqual(result.filter { CyTaskAttentionPolicy.isPastDue($0, now: now, calendar: calendar) }.count, 1)
     }
 
@@ -1131,6 +1382,14 @@ final class DomainTests: XCTestCase {
         XCTAssertTrue(slots.allSatisfy {
             calendar.component(.hour, from: $0.plannedDate) == 12
         })
+        XCTAssertEqual(
+            series.cadenceStartDate,
+            RecurringPostSchedule.normalizedTargetDate(
+                firstDate,
+                includesTime: false,
+                calendar: calendar
+            )
+        )
     }
 
     func testConvertingEpisodeSlotCreatesOneDraftWithSeriesDefaultsOnly() throws {
@@ -1505,6 +1764,25 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(
             TodayOutputPresentation.section(outputStatus: .posted, briefStatus: .posted),
             .goingLive
+        )
+    }
+
+    func testDayAgendaGroupsProductionBeforeScheduledPosts() {
+        XCTAssertEqual(
+            DayAgendaPostGrouping.group(outputStatus: .draft, briefStatus: .spark),
+            .production
+        )
+        XCTAssertEqual(
+            DayAgendaPostGrouping.group(outputStatus: .scheduled, briefStatus: .developing),
+            .production
+        )
+        XCTAssertEqual(
+            DayAgendaPostGrouping.group(outputStatus: .scheduled, briefStatus: .scheduled),
+            .scheduled
+        )
+        XCTAssertEqual(
+            DayAgendaPostGrouping.group(outputStatus: .posted, briefStatus: .posted),
+            .scheduled
         )
     }
 
@@ -2094,6 +2372,55 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(profile.selectedDestinationIDs, [PublishingCatalog.instagramID])
     }
 
+    func testStoreBootstrapDeduplicatesCustomPlatformsAndFormatsAndRewiresOutputs() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let olderPlatform = PublishingDestination(
+            name: "  Newsletter ",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let duplicatePlatform = PublishingDestination(
+            name: "newsletter",
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        let olderFormat = PublishingFormat(
+            destinationID: olderPlatform.id,
+            name: "Article",
+            kind: .nonVideo,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let duplicateFormat = PublishingFormat(
+            destinationID: duplicatePlatform.id,
+            name: " article ",
+            kind: .nonVideo,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        let brief = CreativeBrief(title: "Launch")
+        let output = PlatformOutput(
+            briefID: brief.id,
+            destinationID: duplicatePlatform.id,
+            formatID: duplicateFormat.id
+        )
+        context.insert(olderPlatform)
+        context.insert(duplicatePlatform)
+        context.insert(olderFormat)
+        context.insert(duplicateFormat)
+        context.insert(brief)
+        context.insert(output)
+        try context.save()
+
+        try StoreBootstrapService.run(context: context)
+
+        let customPlatforms = try context.fetch(FetchDescriptor<PublishingDestination>())
+            .filter { $0.builtInKind == nil }
+        let customFormats = try context.fetch(FetchDescriptor<PublishingFormat>())
+            .filter { $0.destinationID == olderPlatform.id }
+        XCTAssertEqual(customPlatforms.count, 1)
+        XCTAssertEqual(customFormats.count, 1)
+        XCTAssertEqual(output.destinationID, olderPlatform.id)
+        XCTAssertEqual(output.formatID, olderFormat.id)
+    }
+
     func testStoreBootstrapDoesNotLetNewerFreeDuplicateErasePaidAccess() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -2404,6 +2731,65 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(draft.output.formatID, PublishingCatalog.instagramReelID)
     }
 
+    func testQuickPostDraftDoesNotAssignTodayWithoutAnExplicitDate() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        let draft = try XCTUnwrap(model.beginPostDraft(
+            pillarID: nil,
+            platform: .instagramReels,
+            durationSeconds: 45,
+            targetDate: nil,
+            context: context
+        ))
+
+        XCTAssertNil(draft.brief.agendaDate)
+        XCTAssertNil(draft.output.targetDate)
+        XCTAssertFalse(draft.output.includesTargetTime)
+    }
+
+    func testPlanningDatesPreserveStatusAndUseWorkDateForOpenTasks() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        let model = AppModel(reminderService: PreviewReminderService())
+        let draft = try XCTUnwrap(model.beginPostDraft(
+            pillarID: nil,
+            platform: .instagramReels,
+            durationSeconds: 45,
+            targetDate: nil,
+            context: context
+        ))
+        let task = CreatorTask(
+            briefID: draft.brief.id,
+            platformOutputID: draft.output.id,
+            title: "Film the post"
+        )
+        context.insert(task)
+        let originalBriefStatus = draft.brief.status
+        let originalOutputStatus = draft.output.status
+        let workDate = Date(timeIntervalSince1970: 1_787_000_000)
+        let scheduledDate = workDate.addingTimeInterval(172_800)
+
+        XCTAssertTrue(model.updatePostPlanDates(
+            brief: draft.brief,
+            output: draft.output,
+            workDate: workDate,
+            includesWorkTime: false,
+            scheduledDate: scheduledDate,
+            includesScheduledTime: false,
+            context: context
+        ))
+
+        XCTAssertEqual(draft.brief.status, originalBriefStatus)
+        XCTAssertEqual(draft.output.status, originalOutputStatus)
+        XCTAssertEqual(draft.brief.workDate, workDate)
+        XCTAssertEqual(draft.output.targetDate, scheduledDate)
+        XCTAssertEqual(task.targetDate, Calendar.current.startOfDay(for: workDate))
+    }
+
     func testPostDraftDuplicateCreatesAnIndependentEditableCopy() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -2443,7 +2829,7 @@ final class DomainTests: XCTestCase {
             priority: .high
         )
         context.insert(task)
-        context.insert(CreatorAttachment(
+        let originalCover = CreatorAttachment(
             ownerKind: .postMedia,
             briefID: original.brief.id,
             platformOutputID: original.output.id,
@@ -2453,8 +2839,12 @@ final class DomainTests: XCTestCase {
             byteCount: 3,
             localRelativePath: "",
             cloudData: Data([1, 2, 3]),
+            previewData: Data([4, 5]),
+            isCoverOnly: true,
             syncState: .synced
-        ))
+        )
+        original.output.coverAttachmentID = originalCover.id
+        context.insert(originalCover)
         try context.save()
 
         let duplicated = try XCTUnwrap(model.duplicatePostDraft(
@@ -2493,6 +2883,58 @@ final class DomainTests: XCTestCase {
         ))
         XCTAssertEqual(copiedAttachments.count, 1)
         XCTAssertEqual(copiedAttachments.first?.platformOutputID, duplicated.output.id)
+        XCTAssertEqual(copiedAttachments.first?.previewData, Data([4, 5]))
+        XCTAssertTrue(copiedAttachments.first?.isCoverOnly == true)
+        XCTAssertEqual(duplicated.output.coverAttachmentID, copiedAttachments.first?.id)
+    }
+
+    func testPostMediaCoverAndSourceAspectRatioPoliciesUseUploadedDimensions() {
+        let firstID = UUID()
+        let secondID = UUID()
+
+        XCTAssertEqual(
+            PostMediaPresentationPolicy.resolvedCoverID(
+                preferredID: secondID,
+                mediaIDs: [firstID, secondID]
+            ),
+            secondID
+        )
+        XCTAssertEqual(
+            PostMediaPresentationPolicy.resolvedCoverID(
+                preferredID: UUID(),
+                mediaIDs: [firstID, secondID]
+            ),
+            firstID
+        )
+        XCTAssertEqual(
+            PostMediaPresentationPolicy.sourceAspectRatio(
+                pixelWidth: 1_920,
+                pixelHeight: 1_080
+            ),
+            16.0 / 9.0,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            PostMediaPresentationPolicy.sourceAspectRatio(
+                pixelWidth: 1_080,
+                pixelHeight: 1_920
+            ),
+            9.0 / 16.0,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            PostMediaPresentationPolicy.sourceAspectRatio(pixelWidth: 1_080, pixelHeight: 1_080),
+            1,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            PostMediaPresentationPolicy.sourceAspectRatio(pixelWidth: 0, pixelHeight: 1_080),
+            1
+        )
+        XCTAssertEqual(
+            PostMediaPresentationPolicy.sourceAspectRatio(pixelWidth: 1_080, pixelHeight: 0),
+            1
+        )
     }
 
     func testOnlyCompletelyEmptyDraftOffersDirectTrashAction() {
@@ -2819,6 +3261,48 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(branch.resolvedAnchor(in: [branch]).id, branch.id)
     }
 
+    func testPromotingSecondaryPillarSwapsRolesWithoutMovingContent() {
+        let anchor = Pillar(role: .anchor, name: "Lifestyle")
+        let candidate = Pillar(parentPillarID: anchor.id, role: .supporting, name: "Fashion")
+        let sibling = Pillar(parentPillarID: anchor.id, role: .supporting, name: "Beauty")
+        let archivedSibling = Pillar(parentPillarID: anchor.id, role: .supporting, name: "Archived")
+        archivedSibling.isArchived = true
+        let candidateBrief = CreativeBrief(title: "Capsule wardrobe")
+        candidateBrief.pillarID = candidate.id
+        let anchorBrief = CreativeBrief(title: "Morning routine")
+        anchorBrief.pillarID = anchor.id
+        let candidateTask = CreatorTask(pillarID: candidate.id, title: "Film the outfits", lane: .pillar)
+
+        let promoted = PillarAnchorPromotionService.promote(
+            candidate,
+            pillars: [anchor, candidate, sibling, archivedSibling]
+        )
+
+        XCTAssertTrue(promoted)
+        XCTAssertEqual(candidate.role, .anchor)
+        XCTAssertNil(candidate.parentPillarID)
+        XCTAssertEqual(anchor.role, .supporting)
+        XCTAssertEqual(anchor.parentPillarID, candidate.id)
+        XCTAssertEqual(sibling.parentPillarID, candidate.id)
+        XCTAssertEqual(archivedSibling.parentPillarID, candidate.id)
+        XCTAssertEqual(candidateBrief.pillarID, candidate.id)
+        XCTAssertEqual(anchorBrief.pillarID, anchor.id)
+        XCTAssertEqual(candidateTask.pillarID, candidate.id)
+        XCTAssertEqual([anchor, candidate, sibling].filter { $0.role == .anchor }.map(\.id), [candidate.id])
+    }
+
+    func testPromotingAnchorOrArchivedPillarDoesNothing() {
+        let anchor = Pillar(role: .anchor, name: "Lifestyle")
+        let archived = Pillar(parentPillarID: anchor.id, role: .supporting, name: "Archived")
+        archived.isArchived = true
+
+        XCTAssertFalse(PillarAnchorPromotionService.promote(anchor, pillars: [anchor, archived]))
+        XCTAssertFalse(PillarAnchorPromotionService.promote(archived, pillars: [anchor, archived]))
+        XCTAssertEqual(anchor.role, .anchor)
+        XCTAssertNil(anchor.parentPillarID)
+        XCTAssertEqual(archived.parentPillarID, anchor.id)
+    }
+
     func testRemovingAnchorArchivesItsBranchesAndKeepsTheirWorkUnfiled() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -3006,7 +3490,102 @@ final class DomainTests: XCTestCase {
         ))
     }
 
-    func testTasksPageLimitsPostTasksToCurrentMondayThroughSunday() throws {
+    func testPillarUsageDistributionTotalsOneHundredUsingLargestRemainders() {
+        XCTAssertEqual(
+            PillarUsageDistribution.percentages(weights: [3, 2, 1]),
+            [50, 33, 17]
+        )
+        XCTAssertEqual(
+            PillarUsageDistribution.percentages(weights: [1, 1, 1]),
+            [34, 33, 33]
+        )
+        XCTAssertEqual(
+            PillarUsageDistribution.percentages(weights: [0, -1, 0]),
+            [0, 0, 0]
+        )
+    }
+
+    func testPillarUsageSegmentsFillTheTrackAndKeepEveryPillarVisible() {
+        let widths = PillarUsageDistribution.segmentWidths(
+            weights: [44, 32, 24],
+            totalWidth: 302
+        )
+
+        XCTAssertEqual(widths.count, 3)
+        XCTAssertEqual(widths.reduce(0, +), 296, accuracy: 0.001)
+        XCTAssertTrue(widths.allSatisfy { $0 >= 4 })
+        XCTAssertTrue(PillarUsageDistribution.segmentWidths(
+            weights: [0, 0, 0],
+            totalWidth: 302
+        ).isEmpty)
+    }
+
+    func testPillarUsageUsesMondayWeekAndOnlyScheduledOrPostedPosts() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let sunday = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 16,
+            hour: 12
+        )))
+        let interval = PillarUsageSchedulePolicy.weekInterval(
+            containing: sunday,
+            calendar: calendar
+        )
+        XCTAssertEqual(
+            interval.start,
+            try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 10)))
+        )
+        XCTAssertEqual(
+            interval.end,
+            try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 17)))
+        )
+
+        let anchor = Pillar(role: .anchor, name: "Anchor")
+        let supporting = Pillar(parentPillarID: anchor.id, role: .supporting, name: "Supporting")
+        let scheduled = CreativeBrief(title: "Scheduled", status: .scheduled)
+        scheduled.pillarID = anchor.id
+        let posted = CreativeBrief(title: "Posted", status: .posted)
+        posted.pillarID = supporting.id
+        let working = CreativeBrief(title: "Working", status: .developing)
+        working.pillarID = supporting.id
+        working.agendaDate = sunday
+        let ready = CreativeBrief(title: "Ready", status: .ready)
+        ready.pillarID = supporting.id
+        let nextWeek = CreativeBrief(title: "Next week", status: .scheduled)
+        nextWeek.pillarID = supporting.id
+
+        func output(
+            for brief: CreativeBrief,
+            status: PlatformOutputStatus,
+            date: Date
+        ) -> PlatformOutput {
+            let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: status)
+            output.targetDate = date
+            return output
+        }
+
+        let monday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 10, hour: 9)))
+        let saturday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 15, hour: 9)))
+        let nextMonday = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 17, hour: 9)))
+        let counts = PillarUsageSchedulePolicy.scheduledBriefCountsByPillar(
+            briefs: [scheduled, posted, working, ready, nextWeek],
+            outputs: [
+                output(for: scheduled, status: .scheduled, date: monday),
+                output(for: scheduled, status: .scheduled, date: saturday),
+                output(for: posted, status: .posted, date: saturday),
+                output(for: working, status: .draft, date: sunday),
+                output(for: ready, status: .ready, date: sunday),
+                output(for: nextWeek, status: .scheduled, date: nextMonday),
+            ],
+            interval: interval
+        )
+
+        XCTAssertEqual(counts, [anchor.id: 1, supporting.id: 1])
+    }
+
+    func testTasksPageKeepsPostTasksReachableAcrossWeeks() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
         let now = try XCTUnwrap(calendar.date(from: DateComponents(
@@ -3038,7 +3617,7 @@ final class DomainTests: XCTestCase {
             now: now,
             calendar: calendar
         ))
-        XCTAssertFalse(TaskListVisibilityPolicy.includes(
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
             collection: .postTasks,
             focusTaskTemplateID: nil,
             recurrence: .none,
@@ -3047,7 +3626,7 @@ final class DomainTests: XCTestCase {
             now: now,
             calendar: calendar
         ))
-        XCTAssertFalse(TaskListVisibilityPolicy.includes(
+        XCTAssertTrue(TaskListVisibilityPolicy.includes(
             collection: .postTasks,
             focusTaskTemplateID: nil,
             recurrence: .none,
@@ -3649,7 +4228,14 @@ final class DomainTests: XCTestCase {
         XCTAssertNil(CreatorSocialAccount.profileURLString(forHandle: "not a handle", destination: .instagram))
     }
 
-    func testAgendaCompactsElapsedDaysUnlessARealScheduledPostWasMissed() throws {
+    func testNucleoBackIconUsesStandardControlGeometryWithOpticalSizing() {
+        XCTAssertTrue(AgentIcon.allCases.allSatisfy { $0.rawValue.hasPrefix("agent-icon-") })
+        XCTAssertEqual(AgentIcon.back.opticalScale, 0.8)
+        XCTAssertEqual(AgentIcon.close.opticalScale, 1)
+        XCTAssertEqual(AgentIcon.more.opticalScale, 1)
+    }
+
+    func testAgendaCompactsElapsedDaysOnlyWhenEveryPostIsPosted() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
         let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 12)))
@@ -3663,13 +4249,13 @@ final class DomainTests: XCTestCase {
             now: now,
             calendar: calendar
         ))
-        XCTAssertTrue(AgendaDayPresentation.shouldCompact(
+        XCTAssertFalse(AgendaDayPresentation.shouldCompact(
             day: past,
             outputs: [AgendaOutputState(outputStatus: .draft, briefStatus: .spark)],
             now: now,
             calendar: calendar
         ))
-        XCTAssertTrue(AgendaDayPresentation.shouldCompact(
+        XCTAssertFalse(AgendaDayPresentation.shouldCompact(
             day: past,
             outputs: [AgendaOutputState(outputStatus: .scheduled, briefStatus: .developing)],
             now: now,
@@ -3688,6 +4274,23 @@ final class DomainTests: XCTestCase {
             now: now,
             calendar: calendar
         ))
+    }
+
+    func testWeeklyAgendaDayLabelIncludesAbbreviatedMonth() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let day = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 9, day: 16))
+        )
+
+        XCTAssertEqual(
+            AgendaDayPresentation.weekdayMonthDayLabel(
+                day,
+                locale: Locale(identifier: "en_US_POSIX"),
+                calendar: calendar
+            ),
+            "Wed Sep 16"
+        )
     }
 
     func testAgendaOffersTaskCreationOnlyTodayAndLater() throws {
@@ -3714,13 +4317,6 @@ final class DomainTests: XCTestCase {
         XCTAssertFalse(AgendaDayPresentation.isOverdue(targetDate: past, status: .posted, now: now, calendar: calendar))
         XCTAssertFalse(AgendaDayPresentation.isOverdue(targetDate: future, status: .scheduled, now: now, calendar: calendar))
         XCTAssertFalse(AgendaDayPresentation.isOverdue(targetDate: nil, status: .draft, now: now, calendar: calendar))
-    }
-
-    func testAgendaUsesEarliestTaskTimeForUpcomingMetadata() throws {
-        let first = Date(timeIntervalSince1970: 100)
-        let second = Date(timeIntervalSince1970: 200)
-        XCTAssertEqual(AgendaDayPresentation.firstTaskDate(in: [second, nil, first]), first)
-        XCTAssertNil(AgendaDayPresentation.firstTaskDate(in: [nil, nil]))
     }
 
     func testCollapsedPastDayPostCountUsesCorrectPluralization() {
@@ -3835,13 +4431,13 @@ final class DomainTests: XCTestCase {
         ))
     }
 
-    func testDayAgendaUsesPostDateForScheduledAndPostedPosts() throws {
+    func testDayAgendaKeepsScheduledPostsVisibleOnWorkAndPublishingDays() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
         let workDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 1)))
         let postDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 3)))
 
-        XCTAssertFalse(AgendaDayOutputVisibility.includes(
+        XCTAssertTrue(AgendaDayOutputVisibility.includes(
             outputTargetDate: postDate,
             outputStatus: .scheduled,
             briefWorkDate: workDate,
@@ -3857,6 +4453,282 @@ final class DomainTests: XCTestCase {
             day: postDate,
             calendar: calendar
         ))
+    }
+
+    func testPostDatePlanAllowsSameDayWorkAndScheduling() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let morning = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 17, hour: 9)
+        ))
+        let evening = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 17, hour: 18)
+        ))
+
+        XCTAssertTrue(PostDatePlanPolicy.isChronologicallyValid(
+            workDate: evening,
+            scheduledDate: morning,
+            calendar: calendar
+        ))
+    }
+
+    func testPostDatePlanRejectsSchedulingBeforeWorkDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let workDate = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 18)
+        ))
+        let scheduledDate = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 17)
+        ))
+
+        XCTAssertFalse(PostDatePlanPolicy.isChronologicallyValid(
+            workDate: workDate,
+            scheduledDate: scheduledDate,
+            calendar: calendar
+        ))
+    }
+
+    func testPostDatePlanPrefersWorkDateForLinkedTasks() {
+        let workDate = Date(timeIntervalSince1970: 10_000)
+        let scheduledDate = Date(timeIntervalSince1970: 20_000)
+
+        XCTAssertEqual(
+            PostDatePlanPolicy.preferredTaskDate(
+                workDate: workDate,
+                scheduledDate: scheduledDate
+            ),
+            workDate
+        )
+        XCTAssertEqual(
+            PostDatePlanPolicy.preferredTaskDate(
+                workDate: nil,
+                scheduledDate: scheduledDate
+            ),
+            scheduledDate
+        )
+    }
+
+    func testPastWorkDateIsLateUntilPostIsScheduled() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let now = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 17, hour: 12)
+        ))
+        let yesterday = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 16, hour: 23)
+        ))
+
+        XCTAssertTrue(PostWorkDateStatusPolicy.isLate(
+            workDate: yesterday,
+            briefStatus: .developing,
+            outputStatus: .draft,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(PostWorkDateStatusPolicy.isLate(
+            workDate: yesterday,
+            briefStatus: .scheduled,
+            outputStatus: .draft,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertFalse(PostWorkDateStatusPolicy.isLate(
+            workDate: yesterday,
+            briefStatus: .developing,
+            outputStatus: .scheduled,
+            now: now,
+            calendar: calendar
+        ))
+    }
+
+    func testWorkDateDoesNotBecomeLateUntilItsCalendarDayHasPassed() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let morning = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 17, hour: 8)
+        ))
+        let evening = try XCTUnwrap(calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 17, hour: 20)
+        ))
+
+        XCTAssertFalse(PostWorkDateStatusPolicy.isLate(
+            workDate: morning,
+            briefStatus: .developing,
+            outputStatus: .draft,
+            now: evening,
+            calendar: calendar
+        ))
+    }
+
+    func testDayAgendaUsesActualPostedDateInsteadOfFuturePlannedDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let actualDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 2)))
+        let plannedDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 7)))
+
+        XCTAssertTrue(AgendaDayOutputVisibility.includes(
+            outputTargetDate: plannedDate,
+            outputPostedAt: actualDate,
+            outputStatus: .posted,
+            briefWorkDate: nil,
+            briefStatus: .posted,
+            day: actualDate,
+            calendar: calendar
+        ))
+        XCTAssertFalse(AgendaDayOutputVisibility.includes(
+            outputTargetDate: plannedDate,
+            outputPostedAt: actualDate,
+            outputStatus: .posted,
+            briefWorkDate: nil,
+            briefStatus: .posted,
+            day: plannedDate,
+            calendar: calendar
+        ))
+    }
+
+    func testPostedDatePolicyRejectsFutureDatesAndPromptsBeforeSchedule() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        XCTAssertTrue(PostedDatePolicy.isValid(now, now: now))
+        XCTAssertFalse(PostedDatePolicy.isValid(now.addingTimeInterval(1), now: now))
+        XCTAssertTrue(PostedDatePolicy.needsActualDateConfirmation(
+            scheduledDate: now.addingTimeInterval(60),
+            now: now
+        ))
+        XCTAssertFalse(PostedDatePolicy.needsActualDateConfirmation(
+            scheduledDate: now.addingTimeInterval(-60),
+            now: now
+        ))
+    }
+
+    func testLivePostLinksResolveToSupportedPublishingCatalogRecords() throws {
+        let instagram = try XCTUnwrap(LivePostURLPolicy.descriptor(from: "instagram.com/p/example"))
+        let tiktok = try XCTUnwrap(LivePostURLPolicy.descriptor(from: "https://www.tiktok.com/@creator/video/1"))
+        let youtube = try XCTUnwrap(LivePostURLPolicy.descriptor(from: "https://youtu.be/example"))
+
+        XCTAssertEqual(instagram.destinationID, PublishingCatalog.instagramID)
+        XCTAssertEqual(instagram.formatID, PublishingCatalog.instagramReelID)
+        XCTAssertEqual(tiktok.destinationID, PublishingCatalog.tiktokID)
+        XCTAssertEqual(youtube.destinationID, PublishingCatalog.youtubeID)
+        XCTAssertNil(LivePostURLPolicy.descriptor(from: "https://example.com/post"))
+    }
+
+    func testPublishedPostLinkThumbnailBecomesTheCoverWhenNoMediaWasUploaded() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let brief = CreativeBrief(title: "A saved post", status: .posted)
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: .instagramReels,
+            status: .posted
+        )
+        output.publishedURLString = "https://www.instagram.com/reel/THUMBNAIL/"
+        context.insert(brief)
+        context.insert(output)
+        try context.save()
+
+        let thumbnailData = try XCTUnwrap(
+            UIGraphicsImageRenderer(size: CGSize(width: 90, height: 160))
+                .image { context in
+                    UIColor.systemRed.setFill()
+                    context.cgContext.fill(CGRect(x: 0, y: 0, width: 90, height: 160))
+                }
+                .jpegData(compressionQuality: 0.8)
+        )
+        let metadata = PostLinkMetadata(
+            title: "Linked post",
+            caption: nil,
+            creatorName: nil,
+            thumbnailData: thumbnailData
+        )
+
+        let hydratedAttachment = await PublishedPostThumbnailHydrator(
+            metadataService: StubPostLinkMetadataFetcher(metadata: metadata)
+        ).hydrate(brief: brief, output: output, context: context)
+        let attachment = try XCTUnwrap(hydratedAttachment)
+
+        XCTAssertEqual(output.coverAttachmentID, attachment.id)
+        XCTAssertEqual(attachment.cloudData, thumbnailData)
+        XCTAssertEqual(attachment.previewData, thumbnailData)
+        XCTAssertTrue(attachment.isCoverOnly)
+        XCTAssertTrue(PublishedPostThumbnailPolicy.isGeneratedLinkThumbnail(attachment))
+    }
+
+    func testPublishedPostLinkThumbnailNeverReplacesUploadedMedia() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let brief = CreativeBrief(title: "A saved post", status: .posted)
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: .instagramReels,
+            status: .posted
+        )
+        output.publishedURLString = "https://www.instagram.com/reel/THUMBNAIL/"
+        let uploaded = CreatorAttachment(
+            ownerKind: .postMedia,
+            briefID: brief.id,
+            platformOutputID: output.id,
+            fileName: "my-cover.jpg",
+            kind: .photo,
+            uniformTypeIdentifier: "public.jpeg",
+            byteCount: 3,
+            localRelativePath: "cover.jpg",
+            cloudData: Data([1, 2, 3]),
+            isCoverOnly: true
+        )
+        output.coverAttachmentID = uploaded.id
+        context.insert(brief)
+        context.insert(output)
+        context.insert(uploaded)
+        try context.save()
+
+        let metadata = PostLinkMetadata(
+            title: nil,
+            caption: nil,
+            creatorName: nil,
+            thumbnailData: Data([4, 5, 6])
+        )
+        let result = await PublishedPostThumbnailHydrator(
+            metadataService: StubPostLinkMetadataFetcher(metadata: metadata)
+        ).hydrate(brief: brief, output: output, context: context)
+
+        XCTAssertNil(result)
+        XCTAssertEqual(output.coverAttachmentID, uploaded.id)
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<CreatorAttachment>()).map(\.id),
+            [uploaded.id]
+        )
+    }
+
+    func testSavedPostLinkBackfillsItsThumbnailForTheSavedPostsLibrary() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let source = InspirationSource(
+            canonicalURLString: "https://www.youtube.com/watch?v=thumbnail",
+            platform: .youtube
+        )
+        context.insert(source)
+        try context.save()
+
+        let thumbnailData = try XCTUnwrap(
+            UIGraphicsImageRenderer(size: CGSize(width: 160, height: 90))
+                .image { context in
+                    UIColor.systemBlue.setFill()
+                    context.cgContext.fill(CGRect(x: 0, y: 0, width: 160, height: 90))
+                }
+                .jpegData(compressionQuality: 0.8)
+        )
+        let didHydrate = await SavedPostThumbnailHydrator(
+            metadataService: StubPostLinkMetadataFetcher(metadata: PostLinkMetadata(
+                title: "A linked video",
+                caption: nil,
+                creatorName: nil,
+                thumbnailData: thumbnailData
+            ))
+        ).hydrate(source: source, context: context)
+
+        XCTAssertTrue(didHydrate)
+        XCTAssertEqual(source.thumbnailData, thumbnailData)
     }
 
     func testPillarChipColorsAreAdjustedWhenTheyBlendIntoTheSurface() {
@@ -3952,6 +4824,36 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(blocks[1].text, "**Draft week:**")
         XCTAssertEqual(blocks[2].text, "**Monday — Lifestyle:** Film a day in your life.")
         XCTAssertEqual(blocks[3].text, "**Questions:** Which pillar matters most?")
+    }
+
+    func testCyMarkdownParserRepairsMalformedBoldNumberedMarkers() {
+        let blocks = CyMarkdownParser.blocks(from: """
+        1. **Skip tracing myths, debunked** (Data Authority) Quick-fire format.
+        **2. "A day in my inbox" (People) Show the real range of questions.
+        **3. "Why I priced it this way"** (Offers) Pull back the curtain.
+        """)
+
+        XCTAssertEqual(blocks.map(\.kind), [
+            .numbered(marker: "1"),
+            .numbered(marker: "2"),
+            .numbered(marker: "3"),
+        ])
+        XCTAssertEqual(blocks.map(\.text), [
+            "**Skip tracing myths, debunked** (Data Authority) Quick-fire format.",
+            "**\"A day in my inbox\" (People)** Show the real range of questions.",
+            "**\"Why I priced it this way\"** (Offers) Pull back the curtain.",
+        ])
+    }
+
+    func testCyInlineMarkdownSanitizerRemovesOnlyUnmatchedBoldMarkers() {
+        XCTAssertEqual(
+            CyInlineMarkdownSanitizer.readable("**A balanced title** stays bold."),
+            "**A balanced title** stays bold."
+        )
+        XCTAssertEqual(
+            CyInlineMarkdownSanitizer.readable("**An unfinished title stays readable."),
+            "An unfinished title stays readable."
+        )
     }
 
     func testWorkspaceScopeKeepsLegacyNilRecordsInDefaultAccountOnly() {

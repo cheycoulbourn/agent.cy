@@ -202,6 +202,25 @@ enum ContinueWorkingPostPolicy {
     }
 }
 
+/// The Agenda's "Open posts" view includes every post that still needs to go live.
+/// Scheduled posts remain open until they are actually marked as posted.
+enum AgendaOpenPostPolicy {
+    static func includes(
+        briefStatus: BriefStatus,
+        outputStatus: PlatformOutputStatus,
+        ideaBankPlacement: IdeaBankPlacement?
+    ) -> Bool {
+        guard briefStatus != .archived,
+              briefStatus != .posted,
+              outputStatus != .posted,
+              ideaBankPlacement != .idea else {
+            return false
+        }
+
+        return true
+    }
+}
+
 enum AssistanceMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case drive
     case collaborate
@@ -666,10 +685,32 @@ enum TaskCollectionPolicy {
     }
 }
 
+enum TaskCalendarPolicy {
+    static func mondayWeekInterval(
+        containing date: Date,
+        calendar: Calendar = .current
+    ) -> DateInterval? {
+        let day = calendar.startOfDay(for: date)
+        let daysSinceMonday = (calendar.component(.weekday, from: day) + 5) % 7
+        guard let monday = calendar.date(byAdding: .day, value: -daysSinceMonday, to: day),
+              let nextMonday = calendar.date(byAdding: .day, value: 7, to: monday)
+        else { return nil }
+        return DateInterval(start: monday, end: nextMonday)
+    }
+
+    static func contains(
+        _ date: Date,
+        in interval: DateInterval,
+        calendar: Calendar = .current
+    ) -> Bool {
+        let day = calendar.startOfDay(for: date)
+        return day >= interval.start && day < interval.end
+    }
+}
+
 enum TaskListVisibilityPolicy {
-    /// Post Tasks are scoped to the calendar week shown by the Tasks page.
-    /// Recurring Focus Tasks keep the existing short rolling horizon so their
-    /// materialized future occurrences do not flood the list.
+    /// Post Tasks stay reachable across weeks. Materialized recurring Focus
+    /// Tasks retain a short horizon so future occurrences do not flood the list.
     static func includes(
         collection: TaskCollection,
         focusTaskTemplateID: UUID?,
@@ -679,16 +720,22 @@ enum TaskListVisibilityPolicy {
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> Bool {
-        if collection == .postTasks || focusTaskTemplateID != nil {
-            guard let targetDate else { return true }
-            let targetDay = calendar.startOfDay(for: targetDate)
-            let today = calendar.startOfDay(for: now)
-            let weekday = calendar.component(.weekday, from: today)
-            let daysSinceMonday = (weekday + 5) % 7
-            guard let monday = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today),
-                  let nextMonday = calendar.date(byAdding: .day, value: 7, to: monday)
+        if collection == .postTasks {
+            return true
+        }
+
+        if focusTaskTemplateID != nil {
+            guard let targetDate,
+                  let week = TaskCalendarPolicy.mondayWeekInterval(
+                    containing: now,
+                    calendar: calendar
+                  )
             else { return true }
-            return targetDay >= monday && targetDay < nextMonday
+            return TaskCalendarPolicy.contains(
+                targetDate,
+                in: week,
+                calendar: calendar
+            )
         }
 
         let isRecurring = focusTaskTemplateID != nil ||
@@ -1071,6 +1118,23 @@ enum CreatorVibePalette: String, CaseIterable, Codable, Identifiable, Sendable {
     static let onboardingPalettes: [CreatorVibePalette] = [
         .pastel, .neutral, .soho, .tooCool
     ]
+
+    static func matchingPalette(for colorHexes: [String]) -> CreatorVibePalette? {
+        let colors = colorHexes.map(normalizedColorHex)
+        guard !colors.isEmpty else { return nil }
+        return allCases.first { palette in
+            let paletteColors = palette.pillarColorHexes.map(normalizedColorHex)
+            guard colors.count <= paletteColors.count else { return false }
+            return Array(paletteColors.prefix(colors.count)) == colors
+        }
+    }
+
+    private static func normalizedColorHex(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            .uppercased()
+    }
 }
 
 @MainActor
@@ -1464,6 +1528,9 @@ struct OnboardingDraft: Equatable, Sendable {
     var vibePalette: CreatorVibePalette?
     var appearance: AppearancePreference? = .system
     var platforms: Set<CreatorPlatform> = []
+    /// Days per week the creator aims to post. Nil when the step is skipped;
+    /// the Consistency card prompts for it later.
+    var weeklyPostingGoal: Int?
     // Retained while the Paper-led onboarding flow is migrated so existing
     // onboarding services and saved drafts continue to compile and decode.
     var assistanceMode: AssistanceMode = .collaborate

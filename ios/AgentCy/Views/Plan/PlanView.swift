@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 enum PlanMode: Sendable {
     case week
@@ -23,11 +24,13 @@ extension View {
 struct PlanView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var profiles: [CreatorProfile]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
     @State private var weekOffset = 0
     @State private var isSearchingPosts = false
+    @State private var planNow = Date()
     let showsFeedShortcut: Bool
 
     init(showsFeedShortcut: Bool = false) {
@@ -41,11 +44,22 @@ struct PlanView: View {
             AgendaView(
                 weekOffset: $weekOffset,
                 selectedDay: $selectedDay,
+                referenceDate: planNow,
                 showsHeader: false
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.agentCanvas.ignoresSafeArea())
+        .onAppear(perform: refreshPlanClock)
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            refreshPlanClock()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.significantTimeChangeNotification
+        )) { _ in
+            refreshPlanClock()
+        }
         .onChange(of: appModel.requestedPlanMode, initial: true) { _, requestedMode in
             guard let requestedMode else { return }
             if requestedMode == .week, appModel.widgetAgendaDay == nil {
@@ -57,28 +71,28 @@ struct PlanView: View {
         .sheet(isPresented: $isSearchingPosts) {
             AgendaPostSearchView()
                 .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .agentSheetDragIndicator()
         }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-            HStack(alignment: .center, spacing: AgentSpacing.x2) {
+            HStack(alignment: .center, spacing: AgentSpacing.x1) {
                 MetaLabel("Weekly agenda")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 0) {
+                HStack(spacing: AgentSpacing.x1) {
                     Button {
                         isSearchingPosts = true
                     } label: {
-                        planHeaderActionIcon(.search)
+                        AgentToolbarIconLabel(icon: .search, iconSize: 16)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Search posts")
 
                     if showsFeedShortcut {
                         NavigationLink(value: PlanNavigationRoute.socialGrid) {
-                            planHeaderActionIcon(.instagramCamera)
+                            AgentToolbarIconLabel(icon: .instagramCamera, iconSize: 16)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open social grid")
@@ -124,13 +138,6 @@ struct PlanView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func planHeaderActionIcon(_ icon: AgentIcon) -> some View {
-        AgentIconView(icon, size: 16)
-            .foregroundStyle(Color.agentText)
-            .frame(width: 44, height: 44)
-            .contentShape(.rect)
-    }
-
     private var activeIdentity: ActiveCreatorIdentity {
         ActiveCreatorIdentity.resolve(
             profile: profiles.first,
@@ -140,7 +147,7 @@ struct PlanView: View {
     }
 
     private var todayTitleDate: String {
-        Date().formatted(.dateTime.month(.wide).day().year())
+        planNow.formatted(.dateTime.month(.wide).day().year())
     }
 
     private func returnToCurrentWeek() {
@@ -149,7 +156,12 @@ struct PlanView: View {
 
     private func moveToRequestedWeek(_ offset: Int) {
         let update = {
-            selectedDay = Calendar.current.startOfDay(for: Date())
+            let today = Calendar.current.startOfDay(for: planNow)
+            selectedDay = Calendar.current.date(
+                byAdding: .weekOfYear,
+                value: offset,
+                to: today
+            ) ?? today
             weekOffset = offset
         }
         if reduceMotion {
@@ -159,6 +171,103 @@ struct PlanView: View {
         }
     }
 
+    private func refreshPlanClock() {
+        let refreshedNow = Date()
+        selectedDay = PlanClockPolicy.rebasedSelection(
+            selectedDay,
+            oldReferenceDate: planNow,
+            newReferenceDate: refreshedNow,
+            weekOffset: weekOffset,
+            calendar: .current
+        )
+        planNow = refreshedNow
+    }
+
+}
+
+enum PlanClockPolicy {
+    static func weekStart(
+        referenceDate: Date,
+        offset: Int,
+        calendar: Calendar
+    ) -> Date {
+        let day = calendar.startOfDay(for: referenceDate)
+        let daysSinceMonday = (calendar.component(.weekday, from: day) + 5) % 7
+        let currentWeekStart = calendar.date(
+            byAdding: .day,
+            value: -daysSinceMonday,
+            to: day
+        ) ?? day
+        return calendar.date(
+            byAdding: .weekOfYear,
+            value: offset,
+            to: currentWeekStart
+        ) ?? currentWeekStart
+    }
+
+    static func weekOffset(
+        containing day: Date,
+        referenceDate: Date,
+        calendar: Calendar
+    ) -> Int {
+        let currentWeekStart = weekStart(
+            referenceDate: referenceDate,
+            offset: 0,
+            calendar: calendar
+        )
+        let targetWeekStart = weekStart(
+            referenceDate: day,
+            offset: 0,
+            calendar: calendar
+        )
+        let dayDistance = calendar.dateComponents(
+            [.day],
+            from: currentWeekStart,
+            to: targetWeekStart
+        ).day ?? 0
+        return dayDistance / 7
+    }
+
+    static func rebasedSelection(
+        _ selectedDay: Date,
+        oldReferenceDate: Date,
+        newReferenceDate: Date,
+        weekOffset: Int,
+        calendar: Calendar
+    ) -> Date {
+        let oldWeekStart = weekStart(
+            referenceDate: oldReferenceDate,
+            offset: weekOffset,
+            calendar: calendar
+        )
+        let newWeekStart = weekStart(
+            referenceDate: newReferenceDate,
+            offset: weekOffset,
+            calendar: calendar
+        )
+        guard !calendar.isDate(oldWeekStart, inSameDayAs: newWeekStart) else {
+            return selectedDay
+        }
+        let selectedIndex = calendar.dateComponents(
+            [.day],
+            from: oldWeekStart,
+            to: calendar.startOfDay(for: selectedDay)
+        ).day ?? 0
+        let boundedIndex = min(max(selectedIndex, 0), 6)
+        return calendar.date(
+            byAdding: .day,
+            value: boundedIndex,
+            to: newWeekStart
+        ) ?? newWeekStart
+    }
+
+    static func greeting(referenceDate: Date, calendar: Calendar) -> String {
+        switch calendar.component(.hour, from: referenceDate) {
+        case 5..<12: "Good morning"
+        case 12..<18: "Good afternoon"
+        default: "Good evening"
+        }
+    }
 }
 
 private struct AgendaPostSearchView: View {
@@ -308,7 +417,11 @@ private struct AgendaPostSearchView: View {
             status: output.status,
             metadata: platformLabel(for: output),
             timeText: output.targetDate?.formatted(.dateTime.month(.abbreviated).day().hour().minute()),
-            statusTextOverride: missed ? "Missed" : nil,
+            isLate: missed || PostWorkDateStatusPolicy.isLate(
+                workDate: brief.workDate,
+                briefStatus: brief.status,
+                outputStatus: output.status
+            ),
             destination: AnyView(PostOutputDetailView(brief: brief, output: output))
         )
     }

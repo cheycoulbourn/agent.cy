@@ -158,6 +158,9 @@ struct SwiftDataLocalCreatorDataEraser: LocalCreatorDataErasing {
         try? InspirationShareCreatorSnapshotStore.delete()
         InspirationWorkspaceHintStore.save(nil, defaults: inspirationWorkspaceDefaults)
         CreatorWorkspacePreferences.activeWorkspaceID = nil
+#if !targetEnvironment(macCatalyst)
+        try VoiceSparkRecordingStore.clearAll()
+#endif
         AgentCyWidgetSnapshotStore.delete()
         WidgetCenter.shared.reloadAllTimelines()
     }

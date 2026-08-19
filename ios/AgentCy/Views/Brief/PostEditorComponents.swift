@@ -57,6 +57,60 @@ enum PostDraftResumePolicy {
     }
 }
 
+enum PostBottomAction: Equatable {
+    case schedule
+    case markPosted
+    case markPostedAndReschedule
+    case markNotPosted
+}
+
+enum PostBottomActionPolicy {
+    static func action(
+        outputStatus: PlatformOutputStatus,
+        scheduledDate: Date?,
+        includesScheduledTime: Bool,
+        hasPersistedScheduledDate: Bool = true,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> PostBottomAction {
+        if outputStatus == .posted { return .markNotPosted }
+        guard hasPersistedScheduledDate, let scheduledDate else { return .schedule }
+
+        let hasPassed: Bool
+        if includesScheduledTime {
+            hasPassed = scheduledDate < now
+        } else {
+            hasPassed = calendar.startOfDay(for: scheduledDate) < calendar.startOfDay(for: now)
+        }
+
+        return hasPassed ? .markPostedAndReschedule : .markPosted
+    }
+}
+
+enum PostScheduleActionPresentation {
+    static func title(
+        suggestedDate: Date?,
+        hasPersistedScheduledDate: Bool,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        guard !hasPersistedScheduledDate, let suggestedDate else { return "Schedule post" }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = locale
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "EEEE, MMM d"
+        return "Schedule for \(formatter.string(from: suggestedDate))"
+    }
+
+    static func shouldScheduleImmediately(
+        suggestedDate: Date?,
+        hasPersistedScheduledDate: Bool
+    ) -> Bool {
+        suggestedDate != nil && !hasPersistedScheduledDate
+    }
+}
+
 enum PostDraftDeletionPolicy {
     static func canDelete(
         briefStatus: BriefStatus,

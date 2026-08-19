@@ -38,6 +38,10 @@ export interface InstallationRecord {
   readonly createdAt: string;
   deletedAt: string | null;
   allowanceCounts: Partial<Record<AllowanceKey, number>>;
+  bridgeNotificationCapabilityHash: string | null;
+  pushDeviceToken: string | null;
+  pushPlatform: "ios" | "macCatalyst" | null;
+  pushShowTitles: boolean;
 }
 
 export interface AccountRecord {
@@ -53,6 +57,8 @@ interface InviteRecord {
   readonly codeHash: string;
   redeemedAt: string | null;
   installationId: string | null;
+  redemptionAttemptId: string | null;
+  expiresAt: string | null;
 }
 
 interface QuotaEvent {
@@ -252,14 +258,26 @@ export class StateRepository {
     return pending;
   }
 
-  async seedInviteHashes(hashes: readonly string[]): Promise<void> {
+  async seedInviteHashes(
+    hashes: readonly string[],
+    expiresAt: Date | null = null,
+  ): Promise<void> {
     await this.transact((state) => {
       for (const codeHash of hashes) {
-        state.invites[codeHash] ??= {
-          codeHash,
-          redeemedAt: null,
-          installationId: null,
-        };
+        const existing = state.invites[codeHash];
+        if (existing) {
+          if (existing.redeemedAt === null) {
+            existing.expiresAt = expiresAt?.toISOString() ?? null;
+          }
+        } else {
+          state.invites[codeHash] = {
+            codeHash,
+            redeemedAt: null,
+            installationId: null,
+            redemptionAttemptId: null,
+            expiresAt: expiresAt?.toISOString() ?? null,
+          };
+        }
       }
     });
   }
@@ -270,13 +288,40 @@ export class StateRepository {
     now: Date,
     access: SubscriptionAccess = "freeJourney",
     promotionalEntitlementEndsAt: Date | null = null,
+    redemptionAttemptId: string | null = null,
   ): Promise<InstallationRecord> {
     return this.transact((state) => {
       const invite = state.invites[codeHash];
-      if (!invite || invite.redeemedAt !== null) {
+      if (!invite) {
         throw new AppError(
           "installation_invalid",
           "That invitation is invalid or has already been used.",
+        );
+      }
+
+      if (invite.redeemedAt !== null) {
+        const installation = invite.installationId
+          ? state.installations[invite.installationId]
+          : undefined;
+        if (
+          redemptionAttemptId !== null &&
+          invite.redemptionAttemptId === redemptionAttemptId &&
+          installation &&
+          installation.deletedAt === null
+        ) {
+          installation.tokenHash = tokenHash;
+          return structuredClone(installation);
+        }
+        throw new AppError(
+          "installation_invalid",
+          "That invitation is invalid or has already been used.",
+        );
+      }
+
+      if (invite.expiresAt !== null && Date.parse(invite.expiresAt) <= now.getTime()) {
+        throw new AppError(
+          "installation_invalid",
+          "That invitation has expired.",
         );
       }
 
@@ -292,9 +337,14 @@ export class StateRepository {
         createdAt: now.toISOString(),
         deletedAt: null,
         allowanceCounts: {},
+        bridgeNotificationCapabilityHash: null,
+        pushDeviceToken: null,
+        pushPlatform: null,
+        pushShowTitles: true,
       };
       invite.redeemedAt = now.toISOString();
       invite.installationId = installation.id;
+      invite.redemptionAttemptId = redemptionAttemptId;
       state.installations[installation.id] = installation;
       return structuredClone(installation);
     });
@@ -367,6 +417,10 @@ export class StateRepository {
         createdAt: now.toISOString(),
         deletedAt: null,
         allowanceCounts: combinedAllowanceCounts(state, account.id),
+        bridgeNotificationCapabilityHash: null,
+        pushDeviceToken: null,
+        pushPlatform: null,
+        pushShowTitles: true,
       };
       state.installations[installation.id] = installation;
       return {
@@ -415,6 +469,40 @@ export class StateRepository {
         result.access = "expired";
       }
       return result;
+    });
+  }
+
+  async registerBridgePush(
+    installationId: string,
+    capabilityHash: string,
+    deviceToken: string,
+    platform: "ios" | "macCatalyst",
+    showTitles: boolean,
+  ): Promise<InstallationRecord> {
+    return this.transact((state) => {
+      const installation = state.installations[installationId];
+      if (!installation || installation.deletedAt !== null) {
+        throw new AppError("installation_invalid", "This installation is not active.");
+      }
+      installation.bridgeNotificationCapabilityHash = capabilityHash;
+      installation.pushDeviceToken = deviceToken;
+      installation.pushPlatform = platform;
+      installation.pushShowTitles = showTitles;
+      return structuredClone(installation);
+    });
+  }
+
+  async findInstallationByBridgeNotificationCapabilityHash(
+    capabilityHash: string,
+  ): Promise<InstallationRecord | null> {
+    return this.transact((state) => {
+      const installation = Object.values(state.installations).find((candidate) =>
+        candidate.deletedAt === null &&
+        candidate.bridgeNotificationCapabilityHash === capabilityHash &&
+        candidate.pushDeviceToken !== null &&
+        candidate.pushPlatform !== null
+      );
+      return installation ? structuredClone(installation) : null;
     });
   }
 
@@ -747,14 +835,31 @@ function normalizeState(state: PersistedState): PersistedState {
   legacyState.appleAccountIndex ??= {};
   legacyState.operations ??= {};
   legacyState.processedRevenueCatEventTimes ??= {};
+  for (const invite of Object.values(legacyState.invites) as Array<
+    InviteRecord & {
+      redemptionAttemptId?: string | null;
+      expiresAt?: string | null;
+    }
+  >) {
+    invite.redemptionAttemptId ??= null;
+    invite.expiresAt ??= null;
+  }
   for (const installation of Object.values(legacyState.installations) as Array<
     InstallationRecord & {
       accountId?: string | null;
       promotionalEntitlementEndsAt?: string | null;
+      bridgeNotificationCapabilityHash?: string | null;
+      pushDeviceToken?: string | null;
+      pushPlatform?: "ios" | "macCatalyst" | null;
+      pushShowTitles?: boolean;
     }
   >) {
     installation.accountId ??= null;
     installation.promotionalEntitlementEndsAt ??= null;
+    installation.bridgeNotificationCapabilityHash ??= null;
+    installation.pushDeviceToken ??= null;
+    installation.pushPlatform ??= null;
+    installation.pushShowTitles ??= true;
   }
   for (const reservation of Object.values(legacyState.reservations)) {
     reservation.operationKey ??= null;

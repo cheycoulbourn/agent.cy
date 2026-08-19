@@ -6,6 +6,7 @@ import {
   ComposeBriefResultSchema,
   InspirationShapeResultSchema,
   InspirationExtractResultSchema,
+  McpBridgePushRegistrationResultSchema,
   PrivacyDeleteResultSchema,
   ReviseBriefResultSchema,
   SparkTurnResultSchema,
@@ -35,11 +36,14 @@ const config: ServerConfig = {
   anthropicApiKey: undefined,
   model: "claude-sonnet-5",
   dataFile: "/tmp/unused-agent-cy-test.json",
+  publicBaseUrl: "https://agentcy.example",
   inviteHashSecret: "test-invite-secret-long-enough-for-hmac",
   installationHashSecrets: ["test-install-secret-long-enough-for-hmac"],
   appleSubjectHashSecret: "test-apple-subject-secret-long-enough-for-hmac",
+  bridgeNotificationHashSecret: "test-bridge-notification-secret-long-enough",
   appleClientIds: ["com.agentcy.app"],
   inviteCodes: ["FOUNDER-ONE"],
+  inviteExpiresAt: null,
   pilotCompedAccess: false,
   pilotCompedDurationDays: 28,
   revenueCatWebhookSecret: "revenuecat-test-secret",
@@ -50,6 +54,7 @@ const config: ServerConfig = {
   dailyOperationLimit: 50,
   dailyCostLimitMicros: 1_000_000,
   telemetryRetentionDays: 30,
+  apns: null,
 };
 
 afterEach(async () => {
@@ -61,6 +66,7 @@ async function harness(
   configOverrides: Partial<ServerConfig> = {},
   inspirationExtractor?: InspirationExtracting,
   appleIdentityVerifier?: AppleIdentityVerifying,
+  bridgePushSender?: { send(message: unknown): Promise<void> },
 ) {
   const selectedConfig = { ...config, ...configOverrides };
   const repository = new StateRepository(new MemoryStateBackend());
@@ -73,6 +79,7 @@ async function harness(
     clock: () => fixedNow,
     ...(inspirationExtractor ? { inspirationExtractor } : {}),
     ...(appleIdentityVerifier ? { appleIdentityVerifier } : {}),
+    ...(bridgePushSender ? { bridgePushSender } : {}),
   });
   openApps.push(app);
   const redeem = await app.inject({
@@ -93,6 +100,74 @@ async function harness(
   }>();
   return { app, repository, provider: selectedProvider, identity };
 }
+
+describe("MCP bridge push notifications", () => {
+  it("registers one installation and sends a descriptive approval notification", async () => {
+    const deliveries: unknown[] = [];
+    const bridgePushSender = {
+      send: vi.fn(async (message: unknown) => { deliveries.push(message); }),
+    };
+    const { app, identity } = await harness(
+      undefined,
+      {},
+      undefined,
+      undefined,
+      bridgePushSender,
+    );
+    const registered = await app.inject({
+      method: "POST",
+      url: "/v1/bridge/notifications/register",
+      headers: auth(identity.credential),
+      payload: {
+        deviceToken: "ab".repeat(32),
+        platform: "ios",
+        appBuild: "0.1.0 (202)",
+        showTitles: true,
+      },
+    });
+    expect(registered.statusCode).toBe(201);
+    const capability = McpBridgePushRegistrationResultSchema.parse(registered.json()).notification;
+
+    const pushed = await app.inject({
+      method: "POST",
+      url: "/v1/bridge/notifications",
+      headers: { authorization: `Bearer ${capability.token}` },
+      payload: {
+        requestId: "8f7f6883-6a5c-4df4-9c03-356b02a00be1",
+        workspaceId: "99999999-9999-4999-8999-999999999999",
+        type: "reschedulePost",
+        subject: "The hidden bill behind cheap data",
+        pendingCount: 1,
+      },
+    });
+
+    expect(pushed.statusCode).toBe(202);
+    expect(deliveries).toEqual([{
+      deviceToken: "ab".repeat(32),
+      platform: "ios",
+      title: "Agent.cy needs your review",
+      body: "“The hidden bill behind cheap data” has a new posting date and needs your review.",
+      category: "agentcy.mcp-review",
+      collapseId: `agentcy-mcp-${identity.installationId}`,
+      requestId: "8f7f6883-6a5c-4df4-9c03-356b02a00be1",
+    }]);
+  });
+
+  it("rejects approval pushes without the private bridge capability", async () => {
+    const { app } = await harness();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/bridge/notifications",
+      payload: {
+        requestId: "8f7f6883-6a5c-4df4-9c03-356b02a00be1",
+        type: "createIdea",
+        subject: "One clear angle",
+        pendingCount: 1,
+      },
+    });
+    expect(response.statusCode).toBe(401);
+  });
+});
 
 describe("Apple account access", () => {
   const authorization = {
@@ -510,6 +585,81 @@ describe("agent.cy server", () => {
     expect(limited.headers["retry-after"]).toBe("600");
     expect(limited.json()).toMatchObject({
       error: { code: "rate_limited", retryable: true },
+    });
+  });
+
+  it("recovers the same redemption attempt with a replacement credential", async () => {
+    const { app } = await harness(undefined, {
+      inviteCodes: ["FOUNDER-ONE", "RECOVERY-INVITE"],
+    });
+    const redemptionAttemptId = "fa2cc408-d66f-44c1-9122-c56bc44f201f";
+    const redeem = () => app.inject({
+      method: "POST",
+      url: "/v1/installations/redeem",
+      payload: {
+        inviteCode: "RECOVERY-INVITE",
+        redemptionAttemptId,
+        appBuild: "1.0 (1)",
+        platform: "ios",
+      },
+    });
+
+    const first = await redeem();
+    const recovered = await redeem();
+    expect(first.statusCode).toBe(201);
+    expect(recovered.statusCode).toBe(201);
+    const firstIdentity = first.json<{ installationId: string; credential: string }>();
+    const recoveredIdentity = recovered.json<{ installationId: string; credential: string }>();
+    expect(recoveredIdentity.installationId).toBe(firstIdentity.installationId);
+    expect(recoveredIdentity.credential).not.toBe(firstIdentity.credential);
+
+    const oldCredential = await app.inject({
+      method: "POST",
+      url: "/v1/inspiration/extract",
+      headers: auth(firstIdentity.credential),
+      payload: {},
+    });
+    const replacementCredential = await app.inject({
+      method: "POST",
+      url: "/v1/inspiration/extract",
+      headers: auth(recoveredIdentity.credential),
+      payload: {},
+    });
+    expect(oldCredential.statusCode).toBe(401);
+    expect(replacementCredential.statusCode).toBe(400);
+  });
+
+  it("returns an explicit outcome for an expired invitation", async () => {
+    const repository = new StateRepository(new MemoryStateBackend());
+    const app = await buildApp({
+      config: {
+        ...config,
+        inviteCodes: ["EXPIRED-INVITE"],
+        inviteExpiresAt: new Date("2026-07-10T16:00:00.000Z"),
+      },
+      repository,
+      provider: new FixtureAiProvider(config.model, developmentFixtures),
+      clock: () => fixedNow,
+    });
+    openApps.push(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/installations/redeem",
+      payload: {
+        inviteCode: "EXPIRED-INVITE",
+        redemptionAttemptId: "fa2cc408-d66f-44c1-9122-c56bc44f201f",
+        appBuild: "1.0 (1)",
+        platform: "ios",
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      error: {
+        code: "installation_invalid",
+        message: "That invitation has expired.",
+      },
     });
   });
 

@@ -268,7 +268,12 @@ struct TodayView: View {
                             timeText: output.includesTargetTime
                                 ? output.targetDate?.formatted(date: .omitted, time: .shortened)
                                 : nil,
-                            statusTextOverride: statusTextOverride
+                            statusTextOverride: statusTextOverride,
+                            isLate: PostWorkDateStatusPolicy.isLate(
+                                workDate: brief.workDate,
+                                briefStatus: brief.status,
+                                outputStatus: output.status
+                            )
                         )
                     }
                     .buttonStyle(.plain)

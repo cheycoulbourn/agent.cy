@@ -56,7 +56,7 @@ All roles scale relative to an iOS text style. Inter Tight is not used.
 
 ## Information architecture
 
-The five tabs are Today, Agenda, Tasks, Pillars, and Cy. The separate `+` chip opens a creation hub for ideas, posts, tasks, three-angle ideation, and Idea Bank. Cy owns persistent global conversation and contextual recommendations.
+The six phone tabs are Home, Plan, Tasks, Pillars, Idea Bank, and Cy. The separate `+` chip opens a creation hub for ideas, posts, tasks, three-angle ideation, and Idea Bank. Cy owns persistent global conversation and contextual recommendations. Feed and Saved Posts remain separate Catalyst destinations rather than phone tabs.
 
 Today is the warm daily home. Agenda owns weekly planning. Briefs lead with title, duration, hook, script, and ending; secondary production and strategy fields remain collapsed until requested.
 

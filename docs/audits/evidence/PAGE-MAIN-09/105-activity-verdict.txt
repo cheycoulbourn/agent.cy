@@ -1,0 +1,3 @@
+bellBadgeBefore=unread
+nothingUnreadAfterMarkAll=true
+bellAfterLabel=Activity

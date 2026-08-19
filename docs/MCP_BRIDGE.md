@@ -54,11 +54,31 @@ Restart Claude Code or Codex after initial setup. Ask it to call `bridge_status`
 
 Start content work in Plan mode. Use the client's native question tool to learn the creator's goals, audience, account, pillars, capacity, and constraints before proposing a plan. Do not call an MCP write tool until the creator explicitly approves the plan. The customizable starter prompt in **Settings > AI > Claude & Codex** encodes this workflow for both Claude Code and Codex.
 
+Before every planning or editing operation, ask the creator whether the same content plan lives outside agent.cy. This question is mandatory even when a prior operation used Notion or another system. If the answer is yes:
+
+1. Use the external platform's official MCP server or CLI read-only first.
+2. Verify the signed-in workspace, exact database or project, field mapping, source of truth, and sync direction.
+3. Preview the agent.cy changes and external changes separately and obtain explicit approval for each system.
+4. Pass the verified `externalPlan` context to every agent.cy write tool. The bridge rejects a current write call that omits this preflight.
+5. After agent.cy approval, apply only the separately approved external writes, re-read both systems, and compare account, IDs, titles, series or episode, work date, scheduled date, status, and tasks. A partial write is divergence, not a successful sync.
+
+When the creator confirms there is no external plan for the operation, pass `externalPlan: { "status": "none", "creatorConfirmed": true }`. For a linked system, record its system, workspace, destination, source of truth, sync direction, and the required external approval. Never put credentials or access tokens in this context.
+
 When the approved plan includes a date for a new post, call `create_post_draft` once with `targetDate` and `includesTargetTime`. The creator then reviews creation and scheduling together in Cy. Omit `targetDate` only when the creator explicitly wants an unscheduled draft. Never place the posting date only in `notes`, and do not follow a dated `create_post_draft` with a second `schedule_post` request.
 
 ## Cy review
 
 Claude and Codex proposals always pass through one creator-controlled review in Cy. The review uses the same post hierarchy and pillar color as the calendar, shows the complete post and posting details, and supports Edit, Approve, and Deny. A dated new-post proposal uses **Approve & schedule** to create the post and place it on the calendar atomically. It never asks for a second scheduling approval. An undated proposal uses **Approve draft** and remains resumable in the post editor.
+
+### Review delivery
+
+- Cy refreshes the iCloud Drive request queue while the app is active. The phone inbox also supports pull-to-refresh; the desktop inbox has an explicit Refresh control and a two-pane queue/detail layout at wide window sizes.
+- After notification permission is granted, the app registers its APNs device token with the authenticated server. The server returns a private, revocable notification capability that the app writes into `snapshot.json` for the local bridge.
+- When the bridge queues a proposal, it calls that capability with the request ID, type, workspace, review count, and relevant title. It never sends the proposal body, notes, script, caption, or credentials through APNs.
+- Tapping the alert routes directly to the Cy review inbox. If agent.cy is active, the app refreshes the queue and opens Cy when the new request appears.
+- The bridge writes its last delivery result to `push-status.json`. A notification failure does not bypass or remove the pending review; foreground and manual refresh remain available.
+
+Production review alerts require `PUBLIC_BASE_URL`, `BRIDGE_NOTIFICATION_HASH_SECRET`, and the complete APNs configuration (`APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_PRIVATE_KEY`, `APNS_TOPIC`, and `APNS_ENVIRONMENT`) in the server deployment. The Apple App ID and signing profiles must also include the Push Notifications entitlement. Never commit the APNs `.p8` key.
 
 Posts created or edited directly inside agent.cy do not enter the Cy review queue. `schedule_post` remains a separate review only when Claude or Codex is changing the date of a post that already exists.
 
@@ -78,6 +98,7 @@ AGENTCY_NODE_PATH="/absolute/path/to/node" pnpm mcp:setup
 Read tools:
 
 - `bridge_status`
+- `external_plan_preflight`
 - `search_posts`
 - `get_post`
 - `list_ideas`
@@ -94,6 +115,8 @@ Approval-queued write tools:
 - `add_task`
 - `complete_task`
 - `change_request_status`
+
+Every approval-queued write tool requires an `externalPlan` preflight. This records the creator's answer and verified destination with the proposal; it does not grant permission to write to the external system. External writes require their own explicit approval in the connected MCP server or CLI.
 
 `schedule_post` remains available for moving or scheduling a post that already exists in agent.cy. It is not needed when a new `create_post_draft` request already contains `targetDate`.
 

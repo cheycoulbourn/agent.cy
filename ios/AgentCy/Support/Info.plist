@@ -48,14 +48,19 @@
 	<string>Allow agent.cy to add scheduled posts and tasks to your chosen calendar.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Allow agent.cy to reach Local Cy on your Mac while both devices are on the same network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Allow agent.cy to record a Voice Spark that you choose to save as an editable idea.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Allow agent.cy to transcribe audio from a video you explicitly share so it can create an editable post idea.</string>
+	<string>Allow agent.cy to turn Voice Spark recordings into editable thoughts you can save, replay, and connect to your content.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIAppFonts</key>
 	<array>
 		<string>InterVariable.ttf</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UILaunchScreen</key>

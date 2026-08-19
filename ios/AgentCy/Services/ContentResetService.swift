@@ -64,6 +64,7 @@ struct ContentResetService: ContentResetServicing {
             let briefs = try context.fetch(FetchDescriptor<CreativeBrief>()).filter(isActive)
             let inspirationSources = try context.fetch(FetchDescriptor<InspirationSource>()).filter(isActive)
             let inspirationTags = try context.fetch(FetchDescriptor<InspirationTag>()).filter(isActive)
+            let activityRecords = try context.fetch(FetchDescriptor<AgentActivityRecord>()).filter(isActive)
 
             messages.filter { resetThreadIDs.contains($0.threadID) }.forEach(context.delete)
             resetThreads.forEach(context.delete)
@@ -75,7 +76,11 @@ struct ContentResetService: ContentResetServicing {
             briefs.forEach(context.delete)
             inspirationSources.forEach(context.delete)
             inspirationTags.forEach(context.delete)
+            activityRecords.forEach(context.delete)
             try persistence.save(context: context)
+#if !targetEnvironment(macCatalyst)
+            try? VoiceSparkRecordingStore.clear(workspaceID: activeID)
+#endif
         } catch {
             persistence.rollback(context: context)
             throw error
@@ -113,12 +118,16 @@ enum WorkspaceDeletionService {
             try deleteScoped(WeekPlan.self, workspaceID: workspaceID, context: context)
             threads.forEach(context.delete)
             try deleteScoped(CreatorSocialAccount.self, workspaceID: workspaceID, context: context)
+            try deleteScoped(AgentActivityRecord.self, workspaceID: workspaceID, context: context)
 
             if let workspace = try context.fetch(FetchDescriptor<CreatorWorkspace>())
                 .first(where: { $0.id == workspaceID }) {
                 context.delete(workspace)
             }
             try context.save()
+#if !targetEnvironment(macCatalyst)
+            try? VoiceSparkRecordingStore.clear(workspaceID: workspaceID)
+#endif
         } catch {
             context.rollback()
             throw error

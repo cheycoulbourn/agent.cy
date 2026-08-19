@@ -10,6 +10,7 @@ private enum WidgetPalette {
     static let border = Color.widgetAdaptive(light: AgentColorPalette.borderLight, dark: AgentColorPalette.borderDark)
     static let hairline = Color.widgetAdaptive(light: AgentColorPalette.hairlineLight, dark: AgentColorPalette.hairlineDark)
     static let cy = Color.widgetAdaptive(light: AgentColorPalette.cy, dark: AgentColorPalette.cyTextDark)
+    static let success = Color.widgetAdaptive(light: AgentColorPalette.successLight, dark: AgentColorPalette.successDark)
 }
 
 private struct WidgetSurface<Content: View>: View {
@@ -162,6 +163,85 @@ struct QuickCaptureWidgetView: View {
                     .stroke(WidgetPalette.border, lineWidth: 1)
             }
         }
+    }
+}
+
+struct VoiceSparkWidgetView: View {
+    @Environment(\.widgetFamily) private var family
+    let entry: AgentCyWidgetEntry
+
+    var body: some View {
+        WidgetSurface(background: Color(uiColor: AgentColorPalette.surfaceDark.uiColor)) {
+            if family == .systemSmall {
+                smallContent
+            } else {
+                mediumContent
+            }
+        }
+        .widgetURL(AgentCyDeepLink.voiceSpark.url)
+    }
+
+    private var smallContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Image(systemName: "mic.fill")
+                .font(.widgetInter(size: 18, weight: .semibold))
+                .foregroundStyle(Color(uiColor: AgentColorPalette.cyTextDark.uiColor))
+                .frame(width: 38, height: 38)
+                .background(Color.white.opacity(0.08), in: .circle)
+            Spacer(minLength: 12)
+            Text("Voice\nSpark")
+                .font(.widgetInter(size: 24, weight: .bold))
+                .foregroundStyle(Color(uiColor: AgentColorPalette.inkDark.uiColor))
+                .lineSpacing(0)
+            Text("Tap. Say it. Save it.")
+                .font(.widgetInter(size: 12, weight: .regular))
+                .foregroundStyle(Color(uiColor: AgentColorPalette.secondaryDark.uiColor))
+                .padding(.top, 5)
+            Spacer(minLength: 8)
+            HStack {
+                Text("RECORD").widgetMeta(color: Color(uiColor: AgentColorPalette.inkDark.uiColor))
+                Spacer()
+                Image(systemName: "waveform")
+                    .font(.widgetInter(size: 14, weight: .medium))
+                    .foregroundStyle(Color(uiColor: AgentColorPalette.inkDark.uiColor))
+            }
+        }
+        .padding(18)
+    }
+
+    private var mediumContent: some View {
+        HStack(spacing: 18) {
+            ZStack {
+                Circle().fill(Color.white.opacity(0.08))
+                Circle().stroke(Color.white.opacity(0.14), lineWidth: 1)
+                Image(systemName: "mic.fill")
+                    .font(.widgetInter(size: 24, weight: .semibold))
+                    .foregroundStyle(Color(uiColor: AgentColorPalette.cyTextDark.uiColor))
+            }
+            .frame(width: 72, height: 72)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("VOICE SPARK")
+                    .widgetMeta(color: Color(uiColor: AgentColorPalette.cyTextDark.uiColor))
+                if let spark = entry.snapshot.latestVoiceSpark {
+                    Text(spark.title)
+                        .font(.widgetInter(size: 18, weight: .bold))
+                        .foregroundStyle(Color(uiColor: AgentColorPalette.inkDark.uiColor))
+                        .lineLimit(2)
+                    Text("LAST CAPTURE · TAP TO RECORD")
+                        .widgetMeta(color: Color(uiColor: AgentColorPalette.secondaryDark.uiColor))
+                } else {
+                    Text("Say it before it leaves.")
+                        .font(.widgetInter(size: 20, weight: .bold))
+                        .foregroundStyle(Color(uiColor: AgentColorPalette.inkDark.uiColor))
+                    Text("TAP TO RECORD")
+                        .widgetMeta(color: Color(uiColor: AgentColorPalette.secondaryDark.uiColor))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .privacySensitive()
     }
 }
 
@@ -342,6 +422,365 @@ struct IdeaBankWidgetView: View {
             .foregroundStyle(WidgetPalette.ink)
             .padding(20)
         }
+    }
+}
+
+struct PillarUsageWidgetView: View {
+    let entry: AgentCyWidgetEntry
+
+    var body: some View {
+        WidgetSurface {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("PILLAR USAGE").widgetMeta()
+                    Spacer()
+                    Text("THIS WEEK").widgetMeta()
+                }
+
+                if visibleSegments.isEmpty {
+                    Text("No scheduled posts this week.")
+                        .font(.widgetInter(size: 12, weight: .medium))
+                        .foregroundStyle(WidgetPalette.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 62, alignment: .center)
+                } else {
+                    GeometryReader { proxy in
+                        let widths = WidgetPillarBarLayout.segmentWidths(
+                            percentages: visibleSegments.map(\.percentage),
+                            totalWidth: proxy.size.width
+                        )
+
+                        HStack(spacing: WidgetPillarBarLayout.segmentSpacing) {
+                            ForEach(Array(visibleSegments.enumerated()), id: \.element.id) { index, segment in
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color(hex: segment.colorHex))
+                                    .frame(width: widths.indices.contains(index) ? widths[index] : 0)
+                            }
+                        }
+                        .frame(width: proxy.size.width, alignment: .leading)
+                        .clipped()
+                    }
+                    .frame(height: 14)
+                    .padding(.top, 14)
+                    .padding(.bottom, 12)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        if let anchorSegment {
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(Color(hex: anchorSegment.colorHex))
+                                    .frame(width: 6, height: 6)
+                                Text(anchorSegment.name)
+                                    .font(.widgetInter(size: 10, weight: .semibold))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.72)
+                                Text("\(anchorSegment.percentage)%")
+                                    .font(.widgetInter(size: 10, weight: .medium).monospacedDigit())
+                            }
+                        }
+
+                        Spacer(minLength: 4)
+
+                        HStack(spacing: 10) {
+                            ForEach(supportingSegments) { segment in
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(Color(hex: segment.colorHex))
+                                        .frame(width: 6, height: 6)
+                                    Text("\(segment.percentage)%")
+                                        .font(.widgetInter(size: 10, weight: .medium).monospacedDigit())
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HStack {
+                    Spacer()
+                    Text("VIEW PILLARS →").widgetMeta(color: WidgetPalette.ink)
+                }
+                .padding(.top, 7)
+            }
+            .foregroundStyle(WidgetPalette.ink)
+            .padding(20)
+            .privacySensitive()
+            .widgetURL(AgentCyDeepLink.pillars.url)
+        }
+    }
+
+    private var usage: WidgetPillarUsageSnapshot? {
+        WidgetPillarUsagePresentation.usage(
+            for: entry.snapshot,
+            isPreview: entry.isPreview
+        )
+    }
+
+    private var anchorSegment: WidgetPillarSegmentSnapshot? {
+        guard let usage else { return nil }
+        return usage.segments.first { $0.name == usage.leadingPillarName }
+            ?? usage.segments.first
+    }
+
+    private var supportingSegments: [WidgetPillarSegmentSnapshot] {
+        guard let anchorSegment else { return [] }
+        return usage?.segments.filter {
+            $0.id != anchorSegment.id
+        }
+            ?? []
+    }
+
+    private var visibleSegments: [WidgetPillarSegmentSnapshot] {
+        guard let anchorSegment else { return [] }
+        return [anchorSegment] + supportingSegments
+    }
+}
+
+struct ConsistencyWidgetView: View {
+    let entry: AgentCyWidgetEntry
+
+    var body: some View {
+        WidgetSurface {
+            Group {
+                switch WidgetConsistencyPresentation.mode(for: entry.snapshot, isPreview: entry.isPreview) {
+                case .unset:
+                    unsetBody
+                case let .goal(days, postedDayCount, goal, goalMet, streak):
+                    goalBody(
+                        days: days,
+                        postedDayCount: postedDayCount,
+                        goal: goal,
+                        goalMet: goalMet,
+                        streak: streak
+                    )
+                case let .legacy(metric):
+                    legacyBody(metric)
+                }
+            }
+            .foregroundStyle(WidgetPalette.ink)
+            .padding(20)
+            .privacySensitive()
+            .widgetURL(AgentCyDeepLink.agenda(day: nil).url)
+        }
+    }
+
+    private var unsetBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("CONSISTENCY").widgetMeta()
+            Text("Set a weekly posting goal")
+                .font(.widgetInter(size: 17, weight: .bold))
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 16)
+            Spacer(minLength: 15)
+            Text("PICK 1–7 DAYS IN AGENT.CY").widgetMeta()
+        }
+    }
+
+    private func goalBody(
+        days: [WidgetConsistencyPresentation.DayMarker],
+        postedDayCount: Int,
+        goal: Int,
+        goalMet: Bool,
+        streak: Int
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("CONSISTENCY").widgetMeta()
+                Spacer()
+                if goalMet {
+                    Text("GOAL MET").widgetMeta(color: WidgetPalette.success)
+                } else {
+                    Text("GOAL \(goal)/WK").widgetMeta()
+                }
+            }
+            Text(goalMet
+                ? "\(postedDayCount) of \(goal) days — goal met"
+                : "\(postedDayCount) of \(goal) days this week")
+                .font(.widgetInter(size: 17, weight: .bold))
+                .foregroundStyle(goalMet ? WidgetPalette.success : WidgetPalette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 16)
+            HStack(spacing: 7) {
+                ForEach(days) { day in
+                    VStack(spacing: 8) {
+                        Text(day.symbol.uppercased())
+                            .font(.widgetMetadata(size: 9))
+                        Circle()
+                            .fill(day.hasPost
+                                ? (goalMet ? WidgetPalette.success : WidgetPalette.ink)
+                                : WidgetPalette.hairline)
+                            .frame(width: 7, height: 7)
+                            .overlay {
+                                if day.isToday {
+                                    Circle().stroke(WidgetPalette.ink.opacity(0.22), lineWidth: 2)
+                                        .padding(-4)
+                                }
+                            }
+                    }
+                    .foregroundStyle(day.isToday ? WidgetPalette.ink : WidgetPalette.secondary)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.vertical, 15)
+            Text(goalFooter(postedDayCount: postedDayCount, goal: goal, goalMet: goalMet, streak: streak))
+                .widgetMeta()
+        }
+    }
+
+    private func goalFooter(postedDayCount: Int, goal: Int, goalMet: Bool, streak: Int) -> String {
+        if goalMet {
+            return streak == 1 ? "1 WEEK ON YOUR GOAL" : "\(streak) WEEKS ON YOUR GOAL"
+        }
+        let remaining = max(1, goal - postedDayCount)
+        return remaining == 1 ? "1 MORE DAY TO GO" : "\(remaining) MORE DAYS TO GO"
+    }
+
+    private func legacyBody(_ metric: WidgetConsistencySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("CONSISTENCY").widgetMeta()
+                Spacer()
+                Text("\(metric.streak) WKS").widgetMeta()
+            }
+            Text(metric.streak == 1 ? "1 week posting on plan" : "\(metric.streak) weeks posting on plan")
+                .font(.widgetInter(size: 17, weight: .bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 16)
+            HStack(spacing: 5) {
+                ForEach(Array(metric.completedWeeks.enumerated()), id: \.offset) { _, completed in
+                    Capsule()
+                        .fill(completed ? WidgetPalette.success : WidgetPalette.hairline)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 5)
+            .padding(.vertical, 15)
+            Text("THIS WEEK: \(metric.currentPostedCount) OF \(metric.currentPlannedCount) PLANNED")
+                .widgetMeta()
+        }
+    }
+}
+
+struct WeekAtAGlanceWidgetView: View {
+    let entry: AgentCyWidgetEntry
+
+    var body: some View {
+        WidgetSurface {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("WEEK AT A GLANCE").widgetMeta()
+                    Spacer()
+                    Text("\(postCount) POSTS").widgetMeta()
+                }
+                HStack(spacing: 7) {
+                    ForEach(days) { day in
+                        VStack(spacing: 8) {
+                            Text(day.date.formatted(.dateTime.weekday(.narrow)).uppercased())
+                                .font(.widgetMetadata(size: 9))
+                            Circle()
+                                .fill(dayColor(day))
+                                .frame(width: 7, height: 7)
+                                .overlay {
+                                    if (day.postCount ?? 0) == 0 {
+                                        Circle().stroke(WidgetPalette.border, lineWidth: 1)
+                                    }
+                                }
+                                .overlay {
+                                    if Calendar.current.isDateInToday(day.date) {
+                                        Circle().stroke(WidgetPalette.ink.opacity(0.22), lineWidth: 2)
+                                            .padding(-4)
+                                    }
+                                }
+                        }
+                        .foregroundStyle(Calendar.current.isDateInToday(day.date) ? WidgetPalette.ink : WidgetPalette.secondary)
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(.vertical, 22)
+                Text("OPEN AGENDA →").widgetMeta(color: WidgetPalette.ink)
+            }
+            .padding(20)
+            .privacySensitive()
+            .widgetURL(AgentCyDeepLink.agenda(day: nil).url)
+        }
+    }
+
+    private var days: [WidgetDaySnapshot] {
+        entry.snapshot.week.isEmpty ? AgentCyWidgetSnapshot.preview.week : entry.snapshot.week
+    }
+
+    private var postCount: Int {
+        days.reduce(0) { $0 + ($1.postCount ?? ($1.pillarColorHex == nil ? 0 : 1)) }
+    }
+
+    private func dayColor(_ day: WidgetDaySnapshot) -> Color {
+        guard (day.postCount ?? 0) > 0 || day.postCount == nil,
+              let color = day.pillarColorHex else { return .clear }
+        return Color(hex: color)
+    }
+}
+
+struct TasksWidgetView: View {
+    let entry: AgentCyWidgetEntry
+
+    var body: some View {
+        WidgetSurface {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("TASKS").widgetMeta()
+                    Spacer()
+                    Text("\(tasks.count) OPEN").widgetMeta()
+                }
+                VStack(spacing: 0) {
+                    if tasks.isEmpty {
+                        Text("Nothing due today.")
+                            .font(.widgetInter(size: 16, weight: .semibold))
+                            .foregroundStyle(WidgetPalette.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                    } else {
+                        ForEach(tasks.prefix(2)) { task in
+                            // Box top rests on the title's cap line: the
+                            // baseline guide drops exactly one cap height
+                            // from the box top (mirrors AgentTaskCheckbox).
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Button(intent: SetWidgetTaskCompletionIntent(taskID: task.id, isCompleted: true)) {
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(WidgetPalette.ink.opacity(0.28), lineWidth: 1.3)
+                                        .frame(width: 17, height: 17)
+                                        .frame(width: 32, height: 36, alignment: .topLeading)
+                                }
+                                .buttonStyle(.plain)
+                                .alignmentGuide(.firstTextBaseline) { _ in
+                                    (UIFont(name: "InterVariable", size: 13) ?? .systemFont(ofSize: 13)).capHeight
+                                }
+                                Text(task.title)
+                                    .font(.widgetInter(size: 13, weight: .semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(height: 38)
+                        }
+                    }
+                }
+                .padding(.vertical, 7)
+                HStack {
+                    Text("OPEN TASKS").widgetMeta(color: WidgetPalette.ink)
+                    Spacer()
+                    if tasks.count > 2 {
+                        Text("+\(tasks.count - 2) MORE").widgetMeta()
+                    }
+                }
+            }
+            .foregroundStyle(WidgetPalette.ink)
+            .padding(20)
+            .privacySensitive()
+            .widgetURL(AgentCyDeepLink.tasks.url)
+        }
+    }
+
+    private var tasks: [WidgetTaskSnapshot] {
+        entry.snapshot.todayTasks.filter { !$0.isCompleted }
     }
 }
 
@@ -638,7 +1077,7 @@ private extension View {
     }
 }
 
-private extension Font {
+extension Font {
     static func widgetInter(size: CGFloat, weight: Weight) -> Font {
         .custom("InterVariable", size: size).weight(weight)
     }

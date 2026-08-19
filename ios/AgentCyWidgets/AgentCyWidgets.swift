@@ -6,6 +6,7 @@ struct AgentCyWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: AgentCyWidgetSnapshot
     var taskLane: WidgetTaskLane = .production
+    var isPreview = false
 }
 
 extension WidgetTaskLane: AppEnum {
@@ -26,14 +27,14 @@ struct ProductionQueueConfigurationIntent: WidgetConfigurationIntent {
 
 struct AgentCyWidgetProvider: TimelineProvider {
     func placeholder(in context: Context) -> AgentCyWidgetEntry {
-        AgentCyWidgetEntry(date: Date(), snapshot: .preview)
+        AgentCyWidgetEntry(date: Date(), snapshot: .preview, isPreview: true)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (AgentCyWidgetEntry) -> Void) {
         let snapshot = context.isPreview
             ? AgentCyWidgetSnapshot.preview
-            : AgentCyWidgetSnapshotStore.load() ?? .preview
-        completion(AgentCyWidgetEntry(date: Date(), snapshot: snapshot))
+            : AgentCyWidgetSnapshotStore.load() ?? .empty
+        completion(AgentCyWidgetEntry(date: Date(), snapshot: snapshot, isPreview: context.isPreview))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<AgentCyWidgetEntry>) -> Void) {
@@ -46,7 +47,7 @@ struct AgentCyWidgetProvider: TimelineProvider {
 
 struct ProductionQueueWidgetProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> AgentCyWidgetEntry {
-        AgentCyWidgetEntry(date: Date(), snapshot: .preview)
+        AgentCyWidgetEntry(date: Date(), snapshot: .preview, isPreview: true)
     }
 
     func snapshot(
@@ -56,7 +57,12 @@ struct ProductionQueueWidgetProvider: AppIntentTimelineProvider {
         let snapshot = context.isPreview
             ? AgentCyWidgetSnapshot.preview
             : AgentCyWidgetSnapshotStore.load() ?? .empty
-        return AgentCyWidgetEntry(date: Date(), snapshot: snapshot, taskLane: configuration.taskLane)
+        return AgentCyWidgetEntry(
+            date: Date(),
+            snapshot: snapshot,
+            taskLane: configuration.taskLane,
+            isPreview: context.isPreview
+        )
     }
 
     func timeline(
@@ -93,6 +99,20 @@ struct QuickCaptureWidget: Widget {
         }
         .configurationDisplayName("Quick Capture")
         .description("Capture an idea, post, or task without hunting through the app.")
+        .supportedFamilies([.systemSmall, .systemMedium])
+        .contentMarginsDisabled()
+    }
+}
+
+struct VoiceSparkWidget: Widget {
+    let kind = "com.agentcy.widget.voice-spark"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: AgentCyWidgetProvider()) { entry in
+            VoiceSparkWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Voice Spark")
+        .description("Record a thought and turn it into an editable Idea Bank entry.")
         .supportedFamilies([.systemSmall, .systemMedium])
         .contentMarginsDisabled()
     }
@@ -140,6 +160,62 @@ struct IdeaBankWidget: Widget {
     }
 }
 
+struct PillarUsageWidget: Widget {
+    let kind = "com.agentcy.widget.pillar-usage"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: AgentCyWidgetProvider()) { entry in
+            PillarUsageWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Pillar Usage")
+        .description("See how this week’s planned posts are distributed across your pillars.")
+        .supportedFamilies([.systemMedium])
+        .contentMarginsDisabled()
+    }
+}
+
+struct ConsistencyWidget: Widget {
+    let kind = "com.agentcy.widget.consistency"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: AgentCyWidgetProvider()) { entry in
+            ConsistencyWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Consistency")
+        .description("Track how many weeks you’ve posted on plan.")
+        .supportedFamilies([.systemMedium])
+        .contentMarginsDisabled()
+    }
+}
+
+struct WeekAtAGlanceWidget: Widget {
+    let kind = "com.agentcy.widget.week-at-a-glance"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: AgentCyWidgetProvider()) { entry in
+            WeekAtAGlanceWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Week at a Glance")
+        .description("See the posting shape of your week without opening the app.")
+        .supportedFamilies([.systemMedium])
+        .contentMarginsDisabled()
+    }
+}
+
+struct TasksWidget: Widget {
+    let kind = "com.agentcy.widget.tasks"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: AgentCyWidgetProvider()) { entry in
+            TasksWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Tasks")
+        .description("Keep today’s next two tasks on your Home Screen.")
+        .supportedFamilies([.systemMedium])
+        .contentMarginsDisabled()
+    }
+}
+
 struct ProductionQueueWidget: Widget {
     let kind = "com.agentcy.widget.production-queue"
 
@@ -159,9 +235,15 @@ struct AgentCyWidgetBundle: WidgetBundle {
     var body: some Widget {
         TodayFocusWidget()
         QuickCaptureWidget()
+        VoiceSparkWidget()
         NextPostWidget()
         WeeklyRhythmWidget()
         IdeaBankWidget()
+        PillarUsageWidget()
+        ConsistencyWidget()
+        WeekAtAGlanceWidget()
+        TasksWidget()
         ProductionQueueWidget()
+        VoiceSparkControlWidget()
     }
 }

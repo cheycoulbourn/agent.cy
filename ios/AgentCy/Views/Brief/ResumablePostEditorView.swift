@@ -44,10 +44,41 @@ private enum PostWorkflowStatus: String, CaseIterable, Identifiable {
     }
 }
 
+enum PostDatePlanningStep: String, CaseIterable, Identifiable {
+    case work
+    case schedule
+
+    var id: String { rawValue }
+}
+
+private enum PostDatePlanningIntent: Equatable {
+    case edit
+    case markInProgress
+    case schedule
+
+    var requiredStep: PostDatePlanningStep? {
+        switch self {
+        case .edit: nil
+        case .markInProgress: .work
+        case .schedule: .schedule
+        }
+    }
+}
+
+struct PostDatePlanDraft {
+    let workDate: Date
+    let hasWorkDate: Bool
+    let includesWorkTime: Bool
+    let scheduledDate: Date
+    let hasScheduledDate: Bool
+    let includesScheduledTime: Bool
+}
+
 struct ResumablePostEditorView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var brief: CreativeBrief
     @Bindable var output: PlatformOutput
     @Query private var outputs: [PlatformOutput]
@@ -66,6 +97,10 @@ struct ResumablePostEditorView: View {
     let isReviewEditing: Bool
     let isAlreadyInIdeaBank: Bool
     let bottomActionClearance: CGFloat
+    let closeAction: (() -> Void)?
+    /// Hosts that draw their own header (the Quick Add card) suppress the
+    /// editor's desktop rail so back/title/spark/delete never appear twice.
+    let showsDesktopDetailRail: Bool
 
     @State private var targetDate: Date
     @State private var hasTargetDate: Bool
@@ -73,18 +108,19 @@ struct ResumablePostEditorView: View {
     @State private var showDatePicker = false
     @State private var workDate: Date
     @State private var hasWorkDate: Bool
-    @State private var showWorkDatePicker = false
-    @State private var scheduleAfterDatePicker = false
-    @State private var markInProgressAfterWorkDatePicker = false
-    @State private var markPostedAfterDatePicker = false
-    @State private var didChooseDate = false
-    @State private var didChooseWorkDate = false
+    @State private var datePlanningStep: PostDatePlanningStep = .work
+    @State private var datePlanningIntent: PostDatePlanningIntent = .edit
+    @State private var didSaveDatePlan = false
+    @State private var actualPostedDate = Date()
+    @State private var showActualPostedDateConfirmation = false
     @State private var showTaskComposer = false
     @State private var showMorePostDetails = false
     @State private var selectedMedia: [PhotosPickerItem] = []
     @State private var selectedMoodBoardMedia: [PhotosPickerItem] = []
     @State private var isImportingMedia = false
     @State private var isImportingMoodBoardMedia = false
+    @State private var showMediaManager = false
+    @State private var mediaExportRequest: PostMediaExportRequest?
     @State private var showCollaborationFileImporter = false
     @State private var showBrandPartnerPicker = false
     @State private var confirmDeleteDraft = false
@@ -96,8 +132,6 @@ struct ResumablePostEditorView: View {
     @State private var pendingProposal: BriefProposal?
     @State private var activeSetupPicker: PostDraftSetupPicker?
     @State private var isAddingCustomStatus = false
-    @State private var confirmsMediaRemoval = false
-    @State private var mediaPendingRemoval: CreatorAttachment?
     @State private var customStatusDraft = ""
     @State private var customStatusPendingDeletion: String?
     @State private var confirmDeleteCustomStatus = false
@@ -110,6 +144,12 @@ struct ResumablePostEditorView: View {
     @State private var isKeyboardVisible = false
     @State private var draftNotes: String
     @State private var showSparkDevelopment = false
+#if !targetEnvironment(macCatalyst)
+    @State private var voiceRecorderBrief: CreativeBrief?
+#endif
+#if targetEnvironment(macCatalyst)
+    @State private var showDesktopDraftOptions = false
+#endif
     @FocusState private var customStatusFieldFocused: Bool
     @FocusState private var newSeriesNameFieldFocused: Bool
     private var pillars: [Pillar] {
@@ -145,6 +185,8 @@ struct ResumablePostEditorView: View {
         isReviewEditing: Bool = false,
         isAlreadyInIdeaBank: Bool = false,
         bottomActionClearance: CGFloat = 88,
+        closeAction: (() -> Void)? = nil,
+        showsDesktopDetailRail: Bool = true,
         onSpark: @escaping () -> Void
     ) {
         self.brief = brief
@@ -154,6 +196,8 @@ struct ResumablePostEditorView: View {
         self.isReviewEditing = isReviewEditing
         self.isAlreadyInIdeaBank = isAlreadyInIdeaBank
         self.bottomActionClearance = bottomActionClearance
+        self.closeAction = closeAction
+        self.showsDesktopDetailRail = showsDesktopDetailRail
         let briefID = brief.id
         _outputs = Query(
             filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
@@ -181,11 +225,16 @@ struct ResumablePostEditorView: View {
     }
 
     var body: some View {
+        editorImportExportContainer
+    }
+
+    private var editorScrollContainer: some View {
         ScrollView {
             editorPageSurface
         }
         .scrollDismissesKeyboard(.interactively)
 #if targetEnvironment(macCatalyst)
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .background(Color.agentCanvas)
         // A hardware keyboard never covers the window, but Catalyst still
         // reports keyboard frames for floating input panels (dictation
@@ -198,56 +247,93 @@ struct ResumablePostEditorView: View {
         }
 #if targetEnvironment(macCatalyst)
         .safeAreaInset(edge: .top, spacing: 0) {
-            desktopDetailRail
+            if showsDesktopDetailRail {
+                desktopDetailRail
+            }
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
 #endif
-        .sheet(isPresented: $showDatePicker, onDismiss: finishDateSelection) {
-            targetDatePickerSheet
-        }
-        .sheet(isPresented: $showWorkDatePicker, onDismiss: finishWorkDateSelection) {
-            workDatePickerSheet
-        }
-        .sheet(item: $activeSetupPicker, onDismiss: finishSetupPickerPresentation) { picker in
-            ScrollView {
-                postSetupPickerSheet(picker)
-            }
-            .presentationDetents([.height(postSetupPickerHeight(for: picker)), .large])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(Color.agentCanvas)
-        }
-        .sheet(isPresented: $showTaskComposer) {
-            PostDraftTaskComposer(brief: brief, output: output, defaultDate: defaultTaskDate)
-                .presentationDetents([.medium])
-        }
-        .sheet(isPresented: $showSparkDevelopment) {
-            DevelopBriefView(brief: brief, output: output)
-#if targetEnvironment(macCatalyst)
-                .frame(width: 900, height: 860)
-                .presentationBackground(Color.agentCanvas)
-#endif
-        }
-        .sheet(isPresented: $showSeriesPlanner) {
-            if let selectedSeries {
-                SeriesPlannerView(
-                    series: selectedSeries,
-                    suggestedStartDate: targetDate
-                )
-            }
-        }
-        .sheet(isPresented: $showSeriesDetail) {
-            if let selectedSeries {
-                SeriesDetailView(series: selectedSeries)
-            }
-        }
         .toolbar {
 #if !targetEnvironment(macCatalyst)
             ToolbarItem(placement: .topBarTrailing) {
-                navigationToolbarActionControl
+                HStack(spacing: AgentSpacing.x1) {
+                    compactSparkToolbarButton
+                    navigationToolbarActionControl
+                }
             }
+            .sharedBackgroundVisibility(.hidden)
 #endif
         }
+    }
+
+    private var editorSheetContainer: some View {
+        editorScrollContainer
+            .sheet(isPresented: $showDatePicker, onDismiss: finishDateSelection) {
+                targetDatePickerSheet
+            }
+            .sheet(isPresented: $showActualPostedDateConfirmation) {
+#if targetEnvironment(macCatalyst)
+                ActualPostedDatePicker(
+                    postedAt: $actualPostedDate,
+                    onSave: markPosted
+                )
+                .presentationSizing(.fitted)
+                .presentationCornerRadius(AgentRadius.floating)
+                .presentationBackground(Color.agentCanvas)
+#else
+                ActualPostedDatePicker(
+                    postedAt: $actualPostedDate,
+                    onSave: markPosted
+                )
+                .presentationDetents([.height(330)])
+                .agentSheetDragIndicator()
+#endif
+            }
+#if !targetEnvironment(macCatalyst)
+            .sheet(item: $activeSetupPicker, onDismiss: finishSetupPickerPresentation) { picker in
+                ScrollView {
+                    postSetupPickerSheet(picker)
+                }
+                .presentationDetents([.height(postSetupPickerHeight(for: picker)), .large])
+                .agentSheetDragIndicator()
+                .presentationBackground(Color.agentCanvas)
+            }
+            .sheet(item: $voiceRecorderBrief) { selectedBrief in
+                VoiceSparkView(autoLinkBrief: selectedBrief)
+            }
+#endif
+            .sheet(isPresented: $showTaskComposer) {
+                PostDraftTaskComposer(brief: brief, output: output, defaultDate: defaultTaskDate)
+                    .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showSparkDevelopment) {
+                DevelopBriefView(brief: brief, output: output)
+                    .agentDesktopWorkspaceModal()
+            }
+            .sheet(isPresented: $showSeriesPlanner) {
+                if let selectedSeries {
+                    AddFutureEpisodesView(
+                        series: selectedSeries,
+                        suggestedStartDate: SeriesEpisodePlanner.nextEpisodeDate(
+                            after: targetDate,
+                            series: selectedSeries
+                        )
+                    )
+                }
+            }
+            .sheet(isPresented: $showSeriesDetail) {
+                if let selectedSeries {
+                    SeriesDetailView(series: selectedSeries)
+                }
+            }
+            .sheet(isPresented: $showMediaManager) {
+                mediaManagerSheet
+            }
+    }
+
+    private var editorAlertContainer: some View {
+        editorSheetContainer
         .alert("Delete this post?", isPresented: $confirmDeleteDraft) {
             Button("Delete post", role: .destructive, action: deleteDraft)
             Button("Cancel", role: .cancel) {}
@@ -270,7 +356,7 @@ struct ResumablePostEditorView: View {
         }
         .alert("Episode scheduled", isPresented: $showEpisodeScheduledConfirmation) {
             if selectedSeries != nil {
-                Button("Plan future episodes") {
+                Button("Add Future Episodes") {
                     showSeriesPlanner = true
                 }
             }
@@ -278,8 +364,12 @@ struct ResumablePostEditorView: View {
                 openWeeklyAgenda()
             }
         } message: {
-            Text("This episode is scheduled for \(targetDate.formatted(.dateTime.month(.abbreviated).day())). Future episodes are only created when you plan them.")
+            Text("This episode is scheduled for \(targetDate.formatted(.dateTime.month(.abbreviated).day())). Future episode dates are only added when you choose Add Future Episodes.")
         }
+    }
+
+    private var editorLifecycleContainer: some View {
+        editorAlertContainer
         .onDisappear {
             if PostDraftExitPersistencePolicy.shouldPersist(
                 isDeleting: isDeletingDraft,
@@ -310,6 +400,10 @@ struct ResumablePostEditorView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             withAnimation(.easeOut(duration: 0.16)) { isKeyboardVisible = false }
         }
+    }
+
+    private var editorImportExportContainer: some View {
+        editorLifecycleContainer
         .fileImporter(
             isPresented: $showCollaborationFileImporter,
             allowedContentTypes: [.pdf, .image, .plainText, .rtf, .data],
@@ -323,6 +417,32 @@ struct ResumablePostEditorView: View {
             defaultFilename: PostMarkdownExporter.defaultFileName(for: brief),
             onCompletion: handleMarkdownExport
         )
+        .fileExporter(
+            isPresented: mediaExporterPresented,
+            document: mediaExportRequest?.document,
+            contentType: mediaExportRequest?.contentType ?? .data,
+            defaultFilename: mediaExportRequest?.fileName ?? "post-media",
+            onCompletion: handleMediaExport
+        )
+        .task(id: postMediaPreviewKey) {
+            await PostMediaPreviewBackfillService.populateMissingPreviews(
+                for: postMedia,
+                context: context
+            )
+        }
+        .task(id: publishedThumbnailHydrationKey) {
+            do {
+                try await Task.sleep(for: .milliseconds(450))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await PublishedPostThumbnailHydrator().hydrate(
+                brief: brief,
+                output: output,
+                context: context
+            )
+        }
     }
 
     @ViewBuilder
@@ -342,6 +462,14 @@ struct ResumablePostEditorView: View {
             .padding(.horizontal, AgentLayout.dashboardGutter)
             .padding(.top, AgentSpacing.x2)
             .padding(.bottom, AgentSpacing.x8)
+            .overlay(alignment: .bottom) {
+                // SwiftUI's reported Catalyst scroll geometry can include a
+                // phantom keyboard-avoidance region. This anchor clamps the
+                // underlying UIScrollView against the form's rendered end.
+                CatalystEditorScrollEndAnchor()
+                    .frame(height: 1)
+                    .allowsHitTesting(false)
+            }
 #else
         editorContent
             .padding(.horizontal, AgentLayout.pageMargin)
@@ -352,11 +480,12 @@ struct ResumablePostEditorView: View {
 
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
-        AgentDesktopDetailRail(title: "Edit post", backAction: dismiss.callAsFunction) {
-            // Schedule lives beside Spark in the editor heading so the two
-            // post-level actions read as one group on the paper.
-            desktopEditorActionControl
-                .frame(width: 44, height: 44)
+        AgentDesktopDetailRail(title: "Edit post", backAction: closeEditor) {
+            HStack(spacing: AgentSpacing.x2) {
+                compactSparkToolbarButton
+                desktopEditorActionControl
+                    .frame(width: 44, height: 44)
+            }
         }
     }
 #endif
@@ -372,38 +501,60 @@ struct ResumablePostEditorView: View {
     @ViewBuilder
     private var navigationToolbarActionControl: some View {
         if isEditingFinalizedPost || isReviewEditing {
-            Button(action: saveDraft) {
-                AgentIconView(.check, size: 15)
-                    .foregroundStyle(Color.agentPureBlack)
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.circle)
-            .controlSize(.large)
-            .tint(Color.agentPureWhite)
-            .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .opacity(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-            .accessibilityLabel("Save changes")
+            AgentToolbarIconButton(
+                title: "Save changes",
+                icon: .check,
+                isEnabled: !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                action: saveDraft
+            )
         } else if canManageDraft {
             if canDeleteAsEmptyDraft {
                 Button(role: .destructive) {
                     confirmDeleteDraft = true
                 } label: {
-                    AgentIconView(.trash)
+                    compactNeutralToolbarLabel(icon: .trash, foreground: .agentDestructive)
                 }
+                .buttonStyle(AgentPressButtonStyle())
                 .accessibilityLabel("Delete empty draft")
             } else {
                 Menu {
                     draftOptionsMenuContent
                 } label: {
-                    AgentIconView(.more)
-                        .foregroundStyle(Color.agentText)
+                    compactNeutralToolbarLabel(icon: .more)
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Draft options")
             }
         }
     }
 
+    private func compactNeutralToolbarLabel(
+        icon: AgentIcon,
+        foreground: Color = .agentText
+    ) -> some View {
+        AgentToolbarIconLabel(icon: icon, foreground: foreground, iconSize: 16)
+    }
+
+    @ViewBuilder
+    private var compactSparkToolbarButton: some View {
+        if !isEditingFinalizedPost && !isReviewEditing {
+            Button(action: openSpark) {
+                CyAsterisk(color: .cyAccent, size: 16, strokeWidth: 1.5)
+                    .frame(width: 18, height: 18)
+                    .frame(width: 44, height: 44)
+                    .glassEffect(.clear.interactive(), in: .circle)
+                    .overlay {
+                        Circle().stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
+                    }
+                    .contentShape(.circle)
+            }
+            .buttonStyle(AgentPressButtonStyle())
+            .accessibilityLabel("Spark this post")
+            .accessibilityHint("Opens Cy with this saved post as context")
+        }
+    }
+
+#if targetEnvironment(macCatalyst)
     @ViewBuilder
     private var desktopEditorActionControl: some View {
         if isEditingFinalizedPost || isReviewEditing {
@@ -424,16 +575,51 @@ struct ResumablePostEditorView: View {
                     confirmDeleteDraft = true
                 }
             } else {
-                Menu {
-                    draftOptionsMenuContent
+                Button {
+                    showDesktopDraftOptions.toggle()
                 } label: {
                     AgentDesktopDetailIconLabel(icon: .more)
                 }
                 .buttonStyle(AgentPressButtonStyle())
                 .accessibilityLabel("Draft options")
+                .popover(isPresented: $showDesktopDraftOptions, arrowEdge: .top) {
+                    desktopDraftOptionsPopover
+                        .frame(width: 260)
+                        .padding(AgentSpacing.x2)
+                        .presentationCompactAdaptation(.popover)
+                        .presentationBackground(Color.agentSurface)
+                }
             }
         }
     }
+
+    private var desktopDraftOptionsPopover: some View {
+        VStack(spacing: AgentSpacing.x1) {
+            AgentDesktopMenuRow(title: "Save draft", icon: .download) {
+                showDesktopDraftOptions = false
+                saveDraft()
+            }
+            AgentDesktopMenuRow(title: "Duplicate post", icon: .duplicate) {
+                showDesktopDraftOptions = false
+                duplicateDraft()
+            }
+            AgentDesktopMenuDivider()
+            AgentDesktopMenuRow(title: "Copy Markdown", icon: .copy) {
+                showDesktopDraftOptions = false
+                copyMarkdown()
+            }
+            AgentDesktopMenuRow(title: "Export Markdown", icon: .upload) {
+                showDesktopDraftOptions = false
+                exportMarkdown()
+            }
+            AgentDesktopMenuDivider()
+            AgentDesktopMenuRow(title: "Delete post", icon: .trash, isDestructive: true) {
+                showDesktopDraftOptions = false
+                confirmDeleteDraft = true
+            }
+        }
+    }
+#endif
 
     @ViewBuilder
     private var draftOptionsMenuContent: some View {
@@ -472,10 +658,42 @@ struct ResumablePostEditorView: View {
             BufferedPostTitleField(text: $brief.title)
             postSetupSection
 
+#if targetEnvironment(macCatalyst)
+            if let activeSetupPicker {
+                postSetupPickerSheet(activeSetupPicker)
+                    .background(Color.agentSelectionFill, in: .rect(cornerRadius: AgentRadius.dashboard))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.dashboard)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+            }
+#endif
+
             if let contentFormat = selectedFormat?.kind.contentFormat {
                 AgentDurationPicker(seconds: $output.durationSeconds, format: contentFormat)
             }
 
+            mediaSection
+#if targetEnvironment(macCatalyst)
+            if !voiceRecordings.isEmpty {
+                PostVoiceRecordingsSection(
+                    recordings: voiceRecordings,
+                    onDownload: requestMediaExport,
+                    onDelete: deleteAttachment,
+                    onTitleChange: updateVoiceRecordingTitle,
+                    onPlaybackError: { appModel.notice = .error($0) }
+                )
+            }
+#else
+            PostVoiceRecordingsSection(
+                recordings: voiceRecordings,
+                onAdd: { voiceRecorderBrief = brief },
+                onDownload: requestMediaExport,
+                onDelete: deleteAttachment,
+                onTitleChange: updateVoiceRecordingTitle,
+                onPlaybackError: { appModel.notice = .error($0) }
+            )
+#endif
             postCopySection
             seriesSection
 
@@ -488,46 +706,114 @@ struct ResumablePostEditorView: View {
             }
 
             notesSection
-            mediaSection
             moreDetailsSection
             postedLinkSection
             tasksSection
         }
+        // Catalyst proposes an effectively unbounded vertical size to the
+        // single ScrollView child. Keep the form at the sum of its sections
+        // so the document ends with Tasks instead of an empty trailing page.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var editorHeading: some View {
+#if targetEnvironment(macCatalyst)
+        HStack {
+            if showsScheduleAction {
+                desktopPostActions
+                    .frame(maxWidth: .infinity)
+                    .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+#else
         HStack {
             MetaLabel(contextLabel ?? editorContextLabel)
             Spacer()
-            if !isEditingFinalizedPost && !isReviewEditing {
-                Button(action: openSpark) {
-                    HStack(spacing: AgentSpacing.x2) {
-                        CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
-                        Text("Spark")
-                    }
-                    .font(.agentSubtext.weight(.semibold))
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 40)
-                    .foregroundStyle(Color.cyAccent)
-                    .background(Color.cyAccent.opacity(0.06), in: .capsule)
-                    .overlay(Capsule().stroke(Color.cyAccent.opacity(0.18), lineWidth: 1))
-                    .shadow(color: Color.cyAccent.opacity(0.16), radius: 12, y: 4)
-                }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityHint("Opens Cy with this saved post as context")
+        }
+#endif
+    }
 
 #if targetEnvironment(macCatalyst)
-                if showsScheduleAction {
-                    Button("Schedule post", action: requestSchedule)
-                        .buttonStyle(AgentDesktopPrimaryActionButtonStyle())
-                        .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .padding(.leading, AgentSpacing.x2)
-                        .accessibilityHint("Sets a date and adds this post to the weekly agenda")
-                }
-#endif
+    @ViewBuilder
+    private var desktopPostActions: some View {
+        switch bottomPostAction {
+        case .schedule:
+            desktopPostActionButton(
+                title: scheduleActionTitle,
+                isPrimary: true,
+                hint: scheduleActionHint,
+                action: performScheduleAction
+            )
+        case .markPosted:
+            desktopPostActionButton(
+                title: "Mark as posted",
+                isPrimary: true,
+                hint: "Marks this scheduled post as posted",
+                action: requestPosted
+            )
+        case .markPostedAndReschedule:
+            HStack(spacing: AgentSpacing.x2) {
+                desktopPostActionButton(
+                    title: "Mark posted",
+                    isPrimary: true,
+                    hint: "Marks this late scheduled post as posted",
+                    action: requestPosted
+                )
+                desktopPostActionButton(
+                    title: "Reschedule",
+                    isPrimary: false,
+                    hint: "Chooses a new scheduled date",
+                    action: requestSchedule
+                )
             }
+        case .markNotPosted:
+            EmptyView()
         }
     }
+
+    private func desktopPostActionButton(
+        title: String,
+        isPrimary: Bool,
+        hint: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.agentSubtext.weight(.medium))
+                .lineLimit(1)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Color.agentText)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+                .background(
+                    Color.agentPureWhite.opacity(colorScheme == .dark ? 0.14 : 0.96),
+                    in: .rect(cornerRadius: AgentRadius.control)
+                )
+                .glassEffect(
+                    .clear.interactive()
+                        .tint(Color.agentPureWhite.opacity(colorScheme == .dark ? 0.06 : 0.12)),
+                    in: .rect(cornerRadius: AgentRadius.control)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.control)
+                        .stroke(
+                            desktopPostActionBorder(isPrimary: isPrimary),
+                            lineWidth: isPrimary ? 1.25 : 0.9
+                        )
+                        .allowsHitTesting(false)
+                }
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .accessibilityHint(hint)
+    }
+
+    private func desktopPostActionBorder(isPrimary: Bool) -> Color {
+        if colorScheme == .dark {
+            return Color.agentPureWhite.opacity(isPrimary ? 0.34 : 0.22)
+        }
+        return Color.agentPureBlack.opacity(isPrimary ? 0.30 : 0.18)
+    }
+#endif
 
     private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
 
@@ -542,44 +828,24 @@ struct ResumablePostEditorView: View {
         }
     }
 
-    private var targetDatePickerTitle: String {
-        if markPostedAfterDatePicker { return "Posted date" }
-        return scheduleAfterDatePicker ? "Schedule post" : "Post date"
-    }
-
-    private var targetDatePickerConfirmationTitle: String {
-        if markPostedAfterDatePicker { return "Mark posted" }
-        return scheduleAfterDatePicker ? "Schedule" : "Set date"
-    }
-
     private var targetDatePickerSheet: some View {
-        PostDraftDatePicker(
-            date: $targetDate,
-            includesTime: $output.includesTargetTime,
+        PostDatesPicker(
+            scheduledDate: targetDate,
+            hasScheduledDate: hasTargetDate,
+            includesScheduledTime: output.includesTargetTime,
+            workDate: workDate,
+            hasWorkDate: hasWorkDate,
+            includesWorkTime: brief.includesWorkTime,
             pillarMarkers: pillarCalendarMarkers,
-            title: targetDatePickerTitle,
-            confirmationTitle: targetDatePickerConfirmationTitle,
-            canClearDate: hasTargetDate && workflowStatus != .posted,
-            onClearDate: clearTargetDate,
-            onSave: applyTargetDate
+            initialStep: datePlanningStep,
+            requiredStep: datePlanningIntent.requiredStep,
+            confirmationTitle: datePlanningIntent == .schedule ? "Schedule post" : "Save planning dates",
+            isRescheduling: datePlanningIntent == .schedule && bottomPostAction == .markPostedAndReschedule,
+            onSave: applyDatePlan
         )
         .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
-    }
-
-    private var workDatePickerSheet: some View {
-        PostDraftDatePicker(
-            date: $workDate,
-            includesTime: $brief.includesWorkTime,
-            pillarMarkers: pillarCalendarMarkers,
-            title: "Work date",
-            confirmationTitle: markInProgressAfterWorkDatePicker ? "Mark in progress" : "Set date",
-            canClearDate: hasWorkDate,
-            onClearDate: clearWorkDate,
-            onSave: applyWorkDate
-        )
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .agentDesktopWorkspaceModal()
+        .agentSheetDragIndicator()
     }
 
     private var postSetupSection: some View {
@@ -610,19 +876,18 @@ struct ResumablePostEditorView: View {
             .buttonStyle(AgentPressButtonStyle())
 
             if workflowStatus != .idea {
-                if showsWorkDate {
-                    Button { editWorkDate() } label: {
-                        PostDraftSetupRow(
-                            label: "Work date",
-                            value: workDateLabel
-                        )
-                    }
-                    .buttonStyle(AgentPressButtonStyle())
-                }
-
-                Button { editPostDate() } label: {
+                Button { editPostDate(.work) } label: {
                     PostDraftSetupRow(
-                        label: "Post date",
+                        label: "Work on",
+                        value: workDateLabel,
+                        indicator: isWorkDateLate ? "Late" : nil
+                    )
+                }
+                .buttonStyle(AgentPressButtonStyle())
+
+                Button { editPostDate(.schedule) } label: {
+                    PostDraftSetupRow(
+                        label: "Scheduled",
                         value: targetDateLabel
                     )
                 }
@@ -683,20 +948,96 @@ struct ResumablePostEditorView: View {
         !isEditingFinalizedPost && !isReviewEditing
     }
 
+    private var bottomPostAction: PostBottomAction {
+        PostBottomActionPolicy.action(
+            outputStatus: output.status,
+            scheduledDate: hasTargetDate ? targetDate : nil,
+            includesScheduledTime: output.includesTargetTime,
+            hasPersistedScheduledDate: shouldPersistTargetDate
+        )
+    }
+
+    private var scheduleActionTitle: String {
+        PostScheduleActionPresentation.title(
+            suggestedDate: hasTargetDate ? targetDate : nil,
+            hasPersistedScheduledDate: shouldPersistTargetDate
+        )
+    }
+
+    private var scheduleActionHint: String {
+        if PostScheduleActionPresentation.shouldScheduleImmediately(
+            suggestedDate: hasTargetDate ? targetDate : nil,
+            hasPersistedScheduledDate: shouldPersistTargetDate
+        ) {
+            return "Schedules this post for \(targetDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))"
+        }
+        return "Sets a date and adds this post to the weekly agenda"
+    }
+
+    private func performScheduleAction() {
+        if PostScheduleActionPresentation.shouldScheduleImmediately(
+            suggestedDate: hasTargetDate ? targetDate : nil,
+            hasPersistedScheduledDate: shouldPersistTargetDate
+        ) {
+            schedulePost()
+        } else {
+            requestSchedule()
+        }
+    }
+
     @ViewBuilder
     private var floatingScheduleButton: some View {
 #if !targetEnvironment(macCatalyst)
         if showsScheduleAction {
-            Button("Schedule post", action: requestSchedule)
-                .buttonStyle(AgentPrimaryButtonStyle())
-                .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.top, AgentSpacing.x2)
-                .padding(.bottom, isKeyboardVisible ? AgentSpacing.x2 : bottomActionClearance)
-                .shadow(color: Color.agentPureBlack.opacity(0.14), radius: 16, y: 7)
-                .accessibilityHint("Sets a date and adds this post to the weekly agenda")
+            Group {
+                switch bottomPostAction {
+                case .schedule:
+                    floatingPostActionButton(
+                        title: scheduleActionTitle,
+                        hint: scheduleActionHint,
+                        action: performScheduleAction
+                    )
+                case .markPosted:
+                    floatingPostActionButton(
+                        title: "Mark as posted",
+                        hint: "Marks this scheduled post as posted",
+                        action: requestPosted
+                    )
+                case .markPostedAndReschedule:
+                    HStack(spacing: AgentSpacing.x3) {
+                        floatingPostActionButton(
+                            title: "Mark posted",
+                            hint: "Marks this late scheduled post as posted",
+                            action: requestPosted
+                        )
+                        floatingPostActionButton(
+                            title: "Reschedule",
+                            hint: "Chooses a new scheduled date",
+                            action: requestSchedule
+                        )
+                    }
+                case .markNotPosted:
+                    EmptyView()
+                }
+            }
+            .disabled(brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.top, AgentSpacing.x2)
+            .padding(.bottom, isKeyboardVisible ? AgentSpacing.x2 : bottomActionClearance)
         }
 #endif
+    }
+
+    private func floatingPostActionButton(
+        title: String,
+        hint: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        AgentPhonePostActionButton(
+            title: title,
+            accessibilityHint: hint,
+            action: action
+        )
     }
 
     private var pillarMenu: some View {
@@ -894,7 +1235,7 @@ struct ResumablePostEditorView: View {
         .padding(.horizontal, AgentLayout.pageMargin)
         .padding(.top, AgentSpacing.x4)
         .padding(.bottom, AgentSpacing.x6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func setupPickerChoice(
@@ -1166,7 +1507,53 @@ struct ResumablePostEditorView: View {
     }
 
     private var postMedia: [CreatorAttachment] {
-        attachments.filter { $0.ownerKind == .postMedia && $0.platformOutputID == output.id }
+        attachments
+            .filter { $0.ownerKind == .postMedia && $0.platformOutputID == output.id }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    private var voiceRecordings: [CreatorAttachment] {
+        PostVoiceRecordingPolicy.recordings(from: attachments, briefID: brief.id)
+    }
+
+    @discardableResult
+    private func updateVoiceRecordingTitle(_ attachment: CreatorAttachment, title: String) -> Bool {
+        attachment.displayTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        attachment.updatedAt = Date()
+        do {
+            try context.save()
+            return true
+        } catch {
+            appModel.notice = .error("That recording title could not be saved.")
+            return false
+        }
+    }
+
+    private var mediaManagerSheet: some View {
+        PostMediaManagerView(
+            briefID: brief.id,
+            workspaceID: mediaWorkspaceID,
+            output: output
+        )
+    }
+
+    private var mediaWorkspaceID: UUID? {
+        brief.workspaceID ?? appModel.resolvedWorkspaceID(context: context)
+    }
+
+    private var postMediaPreviewKey: String {
+        postMedia.map { "\($0.id.uuidString):\($0.previewData == nil ? 0 : 1)" }.joined(separator: "|")
+    }
+
+    private var publishedThumbnailHydrationKey: String {
+        PublishedPostThumbnailPolicy.taskKey(output: output)
+    }
+
+    private var mediaExporterPresented: Binding<Bool> {
+        Binding(
+            get: { mediaExportRequest != nil },
+            set: { if !$0 { mediaExportRequest = nil } }
+        )
     }
 
     private var collaborationFiles: [CreatorAttachment] {
@@ -1179,7 +1566,6 @@ struct ResumablePostEditorView: View {
 
     private var postCopySection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            SectionRuleHeader(title: "Post copy")
             ForEach(CreatorPostCopyField.allCases) { field in
                 if field != .hook || showsHookSection {
                     PostEditorTextField(
@@ -1233,120 +1619,148 @@ struct ResumablePostEditorView: View {
     }
 
     private var collaborationSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            SectionRuleHeader(title: "Collaboration")
-
-            Toggle("Brand collaboration", isOn: $brief.isBrandCollaboration)
-                .font(.agentBody.weight(.semibold))
-                .tint(Color.actionAccent)
-                .frame(minHeight: 44)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: AgentSpacing.x4) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text("Collaboration")
+                        .font(.agentBody.weight(.semibold))
+                    Text(brief.isBrandCollaboration ? collaborationSummary : "Not a brand collaboration")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Toggle("Brand collaboration", isOn: $brief.isBrandCollaboration)
+                    .labelsHidden()
+                    .tint(Color.actionAccent)
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(minHeight: 64)
 
             if brief.isBrandCollaboration {
-                Button {
-                    showBrandPartnerPicker = true
-                } label: {
-                    HStack(spacing: AgentSpacing.x3) {
-                        MetaLabel("Partner")
-                        Spacer()
-                        if let partner = selectedBrandPartner {
-                            BrandPartnerAvatar(partner: partner, size: 30)
-                            Text(partner.name)
-                                .font(.agentBody)
-                                .foregroundStyle(Color.agentText)
-                                .lineLimit(1)
-                        } else {
-                            Text(brief.brandName.isEmpty ? "Choose partner" : brief.brandName)
-                                .font(.agentBody)
-                                .foregroundStyle(brief.brandName.isEmpty ? Color.agentSecondary : Color.agentText)
-                                .lineLimit(1)
-                        }
-                        AgentIconView(.forward, size: 12)
-                            .foregroundStyle(Color.agentSecondary)
-                    }
-                    .frame(minHeight: 52)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
+                Rectangle().fill(Color.agentHairline).frame(height: 1)
 
-                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                    MetaLabel("Compensation")
-                    Picker("Compensation", selection: $brief.compensationTypeRaw) {
-                        ForEach(CompensationType.allCases) { type in
-                            Text(type.title).tag(type.rawValue)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-
-                if brief.compensationType == .paid || brief.compensationType == .both {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        MetaLabel("Amount")
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    Button {
+                        showBrandPartnerPicker = true
+                    } label: {
                         HStack(spacing: AgentSpacing.x3) {
-                            Text("$")
-                                .font(.agentBody.weight(.medium))
-                            TextField("", value: $brief.compensationAmount, format: .number.precision(.fractionLength(0...2)))
-                                .font(.agentBody)
-                                .keyboardType(.decimalPad)
-                            Text("USD")
-                                .font(.agentMetadata)
+                            MetaLabel("Partner")
+                            Spacer()
+                            if let partner = selectedBrandPartner {
+                                BrandPartnerAvatar(partner: partner, size: 30)
+                                Text(partner.name)
+                                    .font(.agentBody)
+                                    .foregroundStyle(Color.agentText)
+                                    .lineLimit(1)
+                            } else {
+                                Text(brief.brandName.isEmpty ? "Choose partner" : brief.brandName)
+                                    .font(.agentBody)
+                                    .foregroundStyle(brief.brandName.isEmpty ? Color.agentSecondary : Color.agentText)
+                                    .lineLimit(1)
+                            }
+                            AgentIconView(.forward, size: 12)
                                 .foregroundStyle(Color.agentSecondary)
                         }
-                        .padding(.horizontal, AgentSpacing.x4)
                         .frame(minHeight: 52)
-                        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(AgentPressButtonStyle())
+
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                        MetaLabel("Compensation")
+                        Picker("Compensation", selection: $brief.compensationTypeRaw) {
+                            ForEach(CompensationType.allCases) { type in
+                                Text(type.title).tag(type.rawValue)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+
+                    if brief.compensationType == .paid || brief.compensationType == .both {
+                        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                            MetaLabel("Amount")
+                            HStack(spacing: AgentSpacing.x3) {
+                                Text("$")
+                                    .font(.agentBody.weight(.medium))
+                                TextField("", value: $brief.compensationAmount, format: .number.precision(.fractionLength(0...2)))
+                                    .font(.agentBody)
+                                    .keyboardType(.decimalPad)
+                                Text("USD")
+                                    .font(.agentMetadata)
+                                    .foregroundStyle(Color.agentSecondary)
+                            }
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: AgentRadius.control)
+                                    .stroke(Color.agentBorder, lineWidth: 1)
+                            }
+                        }
+
+                        VStack(spacing: 0) {
+                            Toggle("Net terms", isOn: $brief.brandHasNetTerms)
+                                .font(.agentBody)
+                                .tint(Color.actionAccent)
+                                .padding(.horizontal, AgentSpacing.x4)
+                                .frame(minHeight: 52)
+                            if brief.brandHasNetTerms {
+                                Divider().overlay(Color.agentHairline)
+                                HStack {
+                                    Text("Payment due")
+                                        .font(.agentBody)
+                                    Spacer()
+                                    Picker("Payment due", selection: $brief.brandNetTermsDays) {
+                                        ForEach([15, 30, 45, 60, 90], id: \.self) { days in
+                                            Text("Net \(days)").tag(days)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
+                                .padding(.horizontal, AgentSpacing.x4)
+                                .frame(minHeight: 52)
+                            }
+                        }
+                        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
                         .overlay {
                             RoundedRectangle(cornerRadius: AgentRadius.control)
                                 .stroke(Color.agentBorder, lineWidth: 1)
                         }
                     }
 
-                    VStack(spacing: 0) {
-                        Toggle("Net terms", isOn: $brief.brandHasNetTerms)
-                            .font(.agentBody)
-                            .tint(Color.actionAccent)
-                            .padding(.horizontal, AgentSpacing.x4)
-                            .frame(minHeight: 52)
-                        if brief.brandHasNetTerms {
-                            Divider().overlay(Color.agentHairline)
-                            HStack {
-                                Text("Payment due")
-                                    .font(.agentBody)
-                                Spacer()
-                                Picker("Payment due", selection: $brief.brandNetTermsDays) {
-                                    ForEach([15, 30, 45, 60, 90], id: \.self) { days in
-                                        Text("Net \(days)").tag(days)
-                                    }
-                                }
-                                .pickerStyle(.menu)
+                    if brief.compensationType == .gifted || brief.compensationType == .both {
+                        PostEditorTextField(label: "Gifted product", text: $brief.giftedProductDescription)
+                    }
+
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        HStack {
+                            MetaLabel("Contract or brief")
+                            Spacer()
+                            if !collaborationFiles.isEmpty {
+                                Text(collaborationFiles.count, format: .number)
+                                    .font(.agentMetadata)
+                                    .foregroundStyle(Color.agentSecondary)
                             }
-                            .padding(.horizontal, AgentSpacing.x4)
-                            .frame(minHeight: 52)
+                        }
+                        ForEach(collaborationFiles) { attachment in
+                            PostAttachmentRow(attachment: attachment) {
+                                deleteAttachment(attachment)
+                            }
+                        }
+                        AgentAddActionRow(title: "Add contract or brief") {
+                            showCollaborationFileImporter = true
                         }
                     }
-                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AgentRadius.control)
-                            .stroke(Color.agentBorder, lineWidth: 1)
-                    }
                 }
-
-                if brief.compensationType == .gifted || brief.compensationType == .both {
-                    PostEditorTextField(label: "Gifted product", text: $brief.giftedProductDescription)
-                }
-
-                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-                    SectionRuleHeader(title: "Contract or brief", trailing: "\(collaborationFiles.count)")
-                    ForEach(collaborationFiles) { attachment in
-                        PostAttachmentRow(attachment: attachment) {
-                            deleteAttachment(attachment)
-                        }
-                    }
-                    AgentAddActionRow(title: "Add contract or brief") {
-                        showCollaborationFileImporter = true
-                    }
-                }
+                .padding(AgentSpacing.x4)
             }
+        }
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.card)
+                .stroke(Color.agentBorder, lineWidth: 1)
         }
         .sheet(isPresented: $showBrandPartnerPicker) {
             BrandPartnerPickerView(selectedPartnerID: brief.brandPartnerID) { partner in
@@ -1362,6 +1776,11 @@ struct ResumablePostEditorView: View {
     private var selectedBrandPartner: BrandPartner? {
         guard let id = brief.brandPartnerID else { return nil }
         return allBrandPartners.first { $0.id == id }
+    }
+
+    private var collaborationSummary: String {
+        let partner = brief.brandName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return partner.isEmpty ? "Add partner and deal details" : partner
     }
 
     private var moodBoardSection: some View {
@@ -1415,77 +1834,115 @@ struct ResumablePostEditorView: View {
     }
 
     private var seriesSection: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            SectionRuleHeader(title: "Series")
-
-            Toggle("Part of a series", isOn: Binding(
-                get: { seriesEnabled },
-                set: { enabled in
-                    seriesEnabled = enabled
-                    if enabled {
-                        isAddingSeries = seriesRecords.isEmpty
-                        presentSetupPicker(.series)
-                    } else {
-                        detachFromSeries()
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: AgentSpacing.x4) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text("Series")
+                        .font(.agentBody.weight(.semibold))
+                    Text(seriesEnabled ? seriesSelectionLabel : "Not part of a series")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .lineLimit(1)
                 }
-            ))
-            .font(.agentBody.weight(.semibold))
-            .tint(Color.actionAccent)
-            .frame(minHeight: 44)
+                Spacer()
+                Toggle("Part of a series", isOn: Binding(
+                    get: { seriesEnabled },
+                    set: { enabled in
+                        seriesEnabled = enabled
+                        if enabled {
+                            isAddingSeries = seriesRecords.isEmpty
+                            presentSetupPicker(.series)
+                        } else {
+                            detachFromSeries()
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .tint(Color.actionAccent)
+            }
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(minHeight: 64)
 
             if seriesEnabled {
-                Button {
-                    isAddingSeries = seriesRecords.isEmpty
-                    presentSetupPicker(.series)
-                } label: {
-                    HStack(spacing: AgentSpacing.x3) {
-                        MetaLabel("Series")
-                        Spacer()
-                        Text(seriesSelectionLabel)
-                            .font(.agentBody)
-                            .foregroundStyle(selectedSeries == nil ? Color.agentSecondary : Color.agentText)
-                            .lineLimit(1)
-                        AgentIconView(.forward, size: 12)
-                            .foregroundStyle(Color.agentSecondary)
-                    }
-                    .frame(minHeight: 52)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Series")
-                .accessibilityValue(seriesSelectionLabel)
+                Rectangle().fill(Color.agentHairline).frame(height: 1)
 
-                if selectedSeries != nil {
-                    PostEditorTextField(
-                        label: "Episode name",
-                        text: $brief.episodeLabel,
-                        axis: .horizontal,
-                        minimumHeight: 52
-                    )
-
-                    PostEditorTextField(
-                        label: "Episode number",
-                        text: Binding(
-                            get: { brief.episodeNumber.map(String.init) ?? "" },
-                            set: { brief.episodeNumber = Int($0.filter(\.isNumber)) }
-                        ),
-                        axis: .horizontal,
-                        minimumHeight: 52,
-                        keyboardType: .numberPad
-                    )
-
-                    HStack(spacing: AgentSpacing.x3) {
-                        seriesActionButton("View series") {
-                            showSeriesDetail = true
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    Button {
+                        isAddingSeries = seriesRecords.isEmpty
+                        presentSetupPicker(.series)
+                    } label: {
+                        HStack(spacing: AgentSpacing.x3) {
+                            AgentIconView(.branch, size: 14)
+                                .foregroundStyle(Color.agentSecondary)
+                            Text(seriesSelectionLabel)
+                                .font(.agentBody.weight(.medium))
+                                .foregroundStyle(selectedSeries == nil ? Color.agentSecondary : Color.agentText)
+                                .lineLimit(1)
+                            Spacer()
+                            AgentIconView(.forward, size: 12)
+                                .foregroundStyle(Color.agentSecondary)
                         }
-                        seriesActionButton("Plan future episodes") {
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+                        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AgentRadius.control)
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(AgentPressButtonStyle())
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Choose series")
+                    .accessibilityValue(seriesSelectionLabel)
+
+                    if selectedSeries != nil {
+                        PostEditorTextField(
+                            label: "Episode name",
+                            text: $brief.episodeLabel,
+                            axis: .horizontal,
+                            minimumHeight: 52
+                        )
+
+                        PostEditorTextField(
+                            label: "Episode number",
+                            text: Binding(
+                                get: { brief.episodeNumber.map(String.init) ?? "" },
+                                set: { brief.episodeNumber = Int($0.filter(\.isNumber)) }
+                            ),
+                            axis: .horizontal,
+                            minimumHeight: 52,
+                            keyboardType: .numberPad
+                        )
+
+                        Button {
                             showSeriesPlanner = true
+                        } label: {
+                            HStack(spacing: AgentSpacing.x2) {
+                                AgentIconView(.calendar, size: 13)
+                                Text("Add Future Episodes")
+                            }
                         }
+                        .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
+
+                        Button {
+                            showSeriesDetail = true
+                        } label: {
+                            HStack(spacing: AgentSpacing.x2) {
+                                AgentIconView(.forward, size: 13)
+                                Text("Go to series")
+                            }
+                        }
+                        .buttonStyle(AgentQuietSecondaryButtonStyle())
                     }
                 }
+                .padding(AgentSpacing.x4)
             }
+        }
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.card)
+                .stroke(Color.agentBorder, lineWidth: 1)
         }
     }
 
@@ -1496,75 +1953,28 @@ struct ResumablePostEditorView: View {
         return brief.seriesID == nil ? "Choose a series" : "Series unavailable"
     }
 
-    private func seriesActionButton(
-        _ title: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.actionAccent)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-    }
-
     private var mediaSection: some View {
         let importingMedia = isImportingMedia
         return VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            SectionRuleHeader(title: "Media", trailing: "\(postMedia.count)")
+            if postMedia.isEmpty {
+                PostMediaEmptyAddButton(
+                    selection: $selectedMedia,
+                    isImporting: importingMedia
+                )
+            } else {
+                PostMediaSpotlight(
+                    attachments: postMedia,
+                    coverAttachmentID: output.coverAttachmentID,
+                    onOpen: { _ in showMediaManager = true },
+                    onDownload: requestMediaExport
+                )
 
-            if !postMedia.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: AgentSpacing.x3) {
-                        ForEach(postMedia) { attachment in
-                            PostMediaThumbnail(attachment: attachment) {
-                                mediaPendingRemoval = attachment
-                                confirmsMediaRemoval = true
-                            }
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
-                .confirmationDialog(
-                    "Remove this media?",
-                    isPresented: $confirmsMediaRemoval,
-                    titleVisibility: .visible,
-                    presenting: mediaPendingRemoval
-                ) { attachment in
-                    Button("Remove media", role: .destructive) {
-                        context.delete(attachment)
-                        try? context.save()
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: { _ in
-                    Text("This cannot be undone.")
-                }
+                PostMediaActionBar(
+                    selection: $selectedMedia,
+                    isImporting: importingMedia,
+                    onEdit: { showMediaManager = true }
+                )
             }
-
-            PhotosPicker(
-                selection: $selectedMedia,
-                maxSelectionCount: 10,
-                matching: .any(of: [.images, .videos])
-            ) {
-                HStack(spacing: AgentSpacing.x3) {
-                    AgentIconView(.image)
-                    Text(importingMedia ? "Adding media" : "Add photos or videos")
-                    Spacer()
-                    if importingMedia { ProgressView().controlSize(.small) }
-                }
-                .font(.agentBody.weight(.semibold))
-                .foregroundStyle(Color.agentText)
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(maxWidth: .infinity, minHeight: 50)
-                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
-                .overlay {
-                    RoundedRectangle(cornerRadius: AgentRadius.panel)
-                        .stroke(Color.agentBorder, lineWidth: 1)
-                }
-            }
-            .disabled(importingMedia)
 
             Text("Media stays with this post and is not sent to Cy unless you explicitly include it later.")
                 .font(.agentMetadata)
@@ -1580,35 +1990,14 @@ struct ResumablePostEditorView: View {
             selectedMedia = []
         }
 
-        for item in items {
-            do {
-                guard let data = try await item.loadTransferable(type: Data.self) else { continue }
-                guard data.count <= 45 * 1_024 * 1_024 else {
-                    appModelNotice("Choose photos or videos smaller than 45 MB each.")
-                    continue
-                }
-                let type = item.supportedContentTypes.first ?? .data
-                let kind: AttachmentKind = type.conforms(to: .movie) ? .video : .photo
-                let ext = type.preferredFilenameExtension ?? (kind == .video ? "mov" : "jpg")
-                let attachment = CreatorAttachment(
-                    ownerKind: .postMedia,
-                    briefID: brief.id,
-                    platformOutputID: output.id,
-                    fileName: "media-\(UUID().uuidString.prefix(8)).\(ext)",
-                    kind: kind,
-                    uniformTypeIdentifier: type.identifier,
-                    byteCount: Int64(data.count),
-                    localRelativePath: "",
-                    cloudData: data,
-                    syncState: .synced
-                )
-                attachment.workspaceID = brief.workspaceID ?? appModel.resolvedWorkspaceID(context: context)
-                context.insert(attachment)
-            } catch {
-                appModelNotice("One media item could not be added.")
-            }
-        }
-        try? context.save()
+        let result = await PostMediaImportService.add(
+            items: items,
+            briefID: brief.id,
+            output: output,
+            workspaceID: brief.workspaceID ?? appModel.resolvedWorkspaceID(context: context),
+            context: context
+        )
+        if let notice = result.notice { appModelNotice(notice) }
     }
 
     @MainActor
@@ -1720,85 +2109,45 @@ struct ResumablePostEditorView: View {
         output.platform = platform
     }
 
-    private func applyTargetDate() {
-        targetDate = RecurringPostSchedule.normalizedTargetDate(
-            targetDate,
-            includesTime: output.includesTargetTime
-        )
-        hasTargetDate = true
+    private func applyDatePlan(_ draft: PostDatePlanDraft) {
+        let normalizedWorkDate = draft.hasWorkDate
+            ? RecurringPostSchedule.normalizedTargetDate(
+                draft.workDate,
+                includesTime: draft.includesWorkTime
+            )
+            : nil
+        let normalizedScheduledDate = draft.hasScheduledDate
+            ? RecurringPostSchedule.normalizedTargetDate(
+                draft.scheduledDate,
+                includesTime: draft.includesScheduledTime
+            )
+            : nil
+
+        guard appModel.updatePostPlanDates(
+            brief: brief,
+            output: output,
+            workDate: normalizedWorkDate,
+            includesWorkTime: draft.includesWorkTime,
+            scheduledDate: normalizedScheduledDate,
+            includesScheduledTime: draft.includesScheduledTime,
+            context: context
+        ) else { return }
+
+        workDate = normalizedWorkDate ?? draft.workDate
+        hasWorkDate = normalizedWorkDate != nil
+        brief.includesWorkTime = draft.hasWorkDate && draft.includesWorkTime
+        targetDate = normalizedScheduledDate ?? draft.scheduledDate
+        hasTargetDate = normalizedScheduledDate != nil
+        output.includesTargetTime = draft.hasScheduledDate && draft.includesScheduledTime
         shouldPersistTargetDate = true
-        didChooseDate = true
-        if markPostedAfterDatePicker {
-            persistChanges(commitSuggestedTargetDate: true)
-        } else {
-            appModel.schedule(output: output, date: targetDate, context: context)
-            persistChanges()
-        }
+        didSaveDatePlan = true
     }
 
-    private func editPostDate() {
-        scheduleAfterDatePicker = false
-        markPostedAfterDatePicker = false
-        didChooseDate = false
+    private func editPostDate(_ step: PostDatePlanningStep) {
+        datePlanningIntent = .edit
+        datePlanningStep = step
+        didSaveDatePlan = false
         showDatePicker = true
-    }
-
-    private func editWorkDate() {
-        markInProgressAfterWorkDatePicker = false
-        didChooseWorkDate = false
-        showWorkDatePicker = true
-    }
-
-    private func applyWorkDate() {
-        let previousWorkDate = brief.workDate
-        workDate = RecurringPostSchedule.normalizedTargetDate(
-            workDate,
-            includesTime: brief.includesWorkTime
-        )
-        hasWorkDate = true
-        didChooseWorkDate = true
-        brief.workDate = workDate
-        brief.updatedAt = Date()
-        appModel.rescheduleLinkedTasks(
-            for: output,
-            from: previousWorkDate ?? output.targetDate,
-            to: workDate,
-            context: context
-        )
-        try? context.save()
-        appModel.queueCalendarSync(context: context)
-    }
-
-    private func clearTargetDate() {
-        guard workflowStatus != .posted else { return }
-
-        scheduleAfterDatePicker = false
-        markPostedAfterDatePicker = false
-        didChooseDate = false
-
-        guard appModel.clearPostDate(brief: brief, output: output, context: context) else { return }
-        hasTargetDate = false
-        shouldPersistTargetDate = true
-        output.includesTargetTime = false
-    }
-
-    private func clearWorkDate() {
-        let previousWorkDate = brief.workDate
-            ?? (brief.status == .developing ? output.targetDate : nil)
-        brief.workDate = nil
-        brief.includesWorkTime = false
-        brief.updatedAt = Date()
-        hasWorkDate = false
-        markInProgressAfterWorkDatePicker = false
-        didChooseWorkDate = false
-        appModel.rescheduleLinkedTasks(
-            for: output,
-            from: previousWorkDate,
-            to: nil,
-            context: context
-        )
-        try? context.save()
-        appModel.queueCalendarSync(context: context)
     }
 
     private func repairLegacyWorkDateIfNeeded() {
@@ -1816,9 +2165,10 @@ struct ResumablePostEditorView: View {
             appModelNotice("Adding work to the agenda is not available with your current access.")
             return
         }
-        markInProgressAfterWorkDatePicker = true
-        didChooseWorkDate = false
-        showWorkDatePicker = true
+        datePlanningIntent = .markInProgress
+        datePlanningStep = .work
+        didSaveDatePlan = false
+        showDatePicker = true
     }
 
     private func requestSchedule() {
@@ -1826,35 +2176,26 @@ struct ResumablePostEditorView: View {
             appModelNotice("Scheduling is not available with your current access.")
             return
         }
-        if workflowStatus == .idea || !hasTargetDate {
-            scheduleAfterDatePicker = true
-            markPostedAfterDatePicker = false
-            didChooseDate = false
-            showDatePicker = true
-            return
-        }
-        schedulePost()
+        datePlanningIntent = .schedule
+        datePlanningStep = .schedule
+        didSaveDatePlan = false
+        showDatePicker = true
     }
 
     private func finishDateSelection() {
-        let shouldSchedule = scheduleAfterDatePicker && didChooseDate
-        let shouldMarkPosted = markPostedAfterDatePicker && didChooseDate
-        scheduleAfterDatePicker = false
-        markPostedAfterDatePicker = false
-        didChooseDate = false
-        if shouldMarkPosted {
-            markPosted()
-        } else if shouldSchedule {
-            schedulePost()
-        }
-    }
+        let savedPlan = didSaveDatePlan
+        let intent = datePlanningIntent
+        didSaveDatePlan = false
+        datePlanningIntent = .edit
+        guard savedPlan else { return }
 
-    private func finishWorkDateSelection() {
-        let shouldMarkInProgress = markInProgressAfterWorkDatePicker && didChooseWorkDate
-        markInProgressAfterWorkDatePicker = false
-        didChooseWorkDate = false
-        if shouldMarkInProgress {
-            markInProgress()
+        switch intent {
+        case .edit:
+            break
+        case .markInProgress:
+            if hasWorkDate { markInProgress() }
+        case .schedule:
+            if hasTargetDate { schedulePost() }
         }
     }
 
@@ -1868,11 +2209,7 @@ struct ResumablePostEditorView: View {
             persistChanges(commitSuggestedTargetDate: true)
             _ = appModel.markPostDraft(brief: brief, output: output, context: context)
         case .inProgress:
-            if hasWorkDate {
-                markInProgress()
-            } else {
-                requestInProgress()
-            }
+            requestInProgress()
         case .scheduled:
             requestSchedule()
         case .posted:
@@ -1901,32 +2238,41 @@ struct ResumablePostEditorView: View {
             appModelNotice("Updating posting status is not available with your current access.")
             return
         }
-        guard hasTargetDate else {
-            markPostedAfterDatePicker = true
-            scheduleAfterDatePicker = false
-            didChooseDate = false
-            showDatePicker = true
+        let now = Date()
+        if PostedDatePolicy.needsActualDateConfirmation(
+            scheduledDate: hasTargetDate ? targetDate : nil,
+            now: now
+        ) {
+            actualPostedDate = now
+            showActualPostedDateConfirmation = true
             return
         }
-        markPosted()
+        markPosted(at: now)
     }
 
-    private func markPosted() {
+    private func markPosted(at postedAt: Date) {
         let cleanTitle = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanTitle.isEmpty else {
             appModelNotice("Name the post before marking it Posted.")
             return
         }
-        guard hasTargetDate else {
-            requestPosted()
+        guard PostedDatePolicy.isValid(postedAt) else {
+            appModelNotice("A live post cannot have a future posted date.")
             return
+        }
+
+        if !hasTargetDate {
+            targetDate = postedAt
+            hasTargetDate = true
+            shouldPersistTargetDate = true
+            output.includesTargetTime = true
         }
 
         persistChanges(commitSuggestedTargetDate: true)
         if output.status != .scheduled {
             guard appModel.scheduleSinglePost(output: output, date: targetDate, context: context) else { return }
         }
-        appModel.togglePosted(output: output, context: context)
+        appModel.togglePosted(output: output, postedAt: postedAt, context: context)
         if output.status == .posted { openWeeklyAgenda() }
     }
 
@@ -1971,7 +2317,7 @@ struct ResumablePostEditorView: View {
     }
 
     private func openWeeklyAgenda() {
-        dismiss()
+        closeEditor()
         Task { @MainActor in
             await Task.yield()
             appModel.routeToWeeklyAgenda()
@@ -1985,7 +2331,7 @@ struct ResumablePostEditorView: View {
 
     private func saveDraft() {
         persistChanges(commitSuggestedTargetDate: true)
-        dismiss()
+        closeEditor()
     }
 
     private func makeIdea() {
@@ -1996,7 +2342,7 @@ struct ResumablePostEditorView: View {
         output.includesTargetTime = false
         hasWorkDate = false
         didMoveToIdeaBank = true
-        dismiss()
+        closeEditor()
     }
 
     private func repairIdeaBankPlacementIfNeeded() {
@@ -2030,9 +2376,17 @@ struct ResumablePostEditorView: View {
     private func deleteDraft() {
         isDeletingDraft = true
         if appModel.deleteDraft(brief, context: context) {
-            dismiss()
+            closeEditor()
         } else {
             isDeletingDraft = false
+        }
+    }
+
+    private func closeEditor() {
+        if let closeAction {
+            closeAction()
+        } else {
+            dismiss()
         }
     }
 
@@ -2103,8 +2457,38 @@ struct ResumablePostEditorView: View {
         }
     }
 
+    private func requestMediaExport(_ attachment: CreatorAttachment) {
+        let preferredFileName = PostVoiceRecordingPolicy.isVoiceRecording(attachment)
+            ? VoiceRecordingExportNaming.fileName(
+                title: attachment.displayTitle,
+                recordedAt: attachment.createdAt,
+                postTitle: brief.title
+            )
+            : nil
+        guard let request = PostMediaExportRequest(
+            attachment: attachment,
+            preferredFileName: preferredFileName
+        ) else {
+            appModel.notice = .error("That original is not available on this device yet.")
+            return
+        }
+        mediaExportRequest = request
+    }
+
+    private func handleMediaExport(_ result: Result<URL, Error>) {
+        defer { mediaExportRequest = nil }
+        switch result {
+        case .success:
+            appModel.notice = .info("Full-resolution media saved to Files.")
+        case let .failure(error):
+            if (error as? CocoaError)?.code != .userCancelled {
+                appModel.notice = .error("That media file could not be saved.")
+            }
+        }
+    }
+
     private var targetDateLabel: String {
-        guard hasTargetDate else { return "Set post date" }
+        guard hasTargetDate else { return "Not scheduled" }
         if output.includesTargetTime {
             return targetDate.formatted(
                 .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
@@ -2114,13 +2498,21 @@ struct ResumablePostEditorView: View {
     }
 
     private var workDateLabel: String {
-        guard hasWorkDate else { return "Set work date" }
+        guard hasWorkDate else { return "Not planned" }
         if brief.includesWorkTime {
             return workDate.formatted(
                 .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
             )
         }
         return workDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+    }
+
+    private var isWorkDateLate: Bool {
+        PostWorkDateStatusPolicy.isLate(
+            workDate: hasWorkDate ? workDate : nil,
+            briefStatus: brief.status,
+            outputStatus: output.status
+        )
     }
 
     private var showsWorkDate: Bool {
@@ -2179,11 +2571,12 @@ struct ResumablePostEditorView: View {
     }
 }
 
-private struct SeriesPlannerView: View {
+private struct SeriesDetailsEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Bindable var series: ContentSeries
 
+    @State private var name: String
     @State private var frequency: PostRecurrenceFrequency
     @State private var weekdays: Set<PillarWeekday>
     @State private var monthDay: Int
@@ -2191,33 +2584,33 @@ private struct SeriesPlannerView: View {
     @State private var includesTime: Bool
     @State private var usesEndDate: Bool
     @State private var endDate: Date
-    @State private var plannedCount = 6
     @State private var notice: String?
 
-    init(series: ContentSeries, suggestedStartDate: Date) {
+    init(series: ContentSeries, suggestedFirstDate: Date) {
         self.series = series
+        let firstDate = series.cadenceStartDate ?? suggestedFirstDate
         let initialFrequency = series.cadence == .none ? PostRecurrenceFrequency.weekly : series.cadence
         let initialEnd = series.cadenceEndDate
-            ?? Calendar.current.date(byAdding: .month, value: 3, to: suggestedStartDate)
-            ?? suggestedStartDate
+            ?? Calendar.current.date(byAdding: .month, value: 3, to: firstDate)
+            ?? firstDate
+        let firstWeekday = PillarWeekday(
+            rawValue: Calendar.current.component(.weekday, from: firstDate)
+        )
+        _name = State(initialValue: series.name)
         _frequency = State(initialValue: initialFrequency)
-        _weekdays = State(initialValue: series.cadenceWeekdays)
-        _monthDay = State(initialValue: series.cadenceMonthDay ?? Calendar.current.component(.day, from: suggestedStartDate))
-        _firstDate = State(initialValue: suggestedStartDate)
+        _weekdays = State(initialValue: series.cadenceWeekdays.isEmpty
+            ? Set(firstWeekday.map { [$0] } ?? [])
+            : series.cadenceWeekdays)
+        _monthDay = State(initialValue: series.cadenceMonthDay ?? Calendar.current.component(.day, from: firstDate))
+        _firstDate = State(initialValue: firstDate)
         _includesTime = State(initialValue: series.cadenceIncludesTime)
         _usesEndDate = State(initialValue: series.cadenceEndDate != nil)
         _endDate = State(initialValue: initialEnd)
     }
 
-    private var preview: [Date] {
-        SeriesEpisodePlanner.previewDates(
-            startingAt: firstDate,
-            frequency: frequency,
-            weekdays: weekdays,
-            monthDay: monthDay,
-            endDate: usesEndDate ? endDate : nil,
-            count: plannedCount
-        )
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            (frequency != .weekly || !weekdays.isEmpty)
     }
 
     var body: some View {
@@ -2226,14 +2619,21 @@ private struct SeriesPlannerView: View {
                 VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                         MetaLabel("Series planner")
-                        Text(series.name)
+                        Text("Edit series details")
                             .font(.agentTitle)
-                        Text("Choose the cadence. This creates empty episode slots, not duplicate posts.")
+                        Text("Set the recurring plan. Existing episode posts keep their current dates.")
                             .font(.agentSubtext)
                             .foregroundStyle(Color.agentSecondary)
                     }
 
                     VStack(spacing: 0) {
+                        TextField("Series name", text: $name)
+                            .textInputAutocapitalization(.sentences)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+
+                        Divider().overlay(Color.agentHairline)
+
                         Picker("Cadence", selection: $frequency) {
                             ForEach(PostRecurrenceFrequency.allCases.filter { $0 != .none }) { cadence in
                                 Text(cadence.title).tag(cadence)
@@ -2245,6 +2645,13 @@ private struct SeriesPlannerView: View {
 
                         Divider().overlay(Color.agentHairline)
 
+                        Toggle("Include a time", isOn: $includesTime)
+                            .tint(Color.actionAccent)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+
+                        Divider().overlay(Color.agentHairline)
+
                         DatePicker(
                             "First episode",
                             selection: $firstDate,
@@ -2252,13 +2659,6 @@ private struct SeriesPlannerView: View {
                         )
                         .padding(.horizontal, AgentSpacing.x4)
                         .frame(minHeight: 52)
-
-                        Divider().overlay(Color.agentHairline)
-
-                        Toggle("Include a time", isOn: $includesTime)
-                            .tint(Color.actionAccent)
-                            .padding(.horizontal, AgentSpacing.x4)
-                            .frame(minHeight: 52)
                     }
                     .font(.agentBody)
                     .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
@@ -2325,11 +2725,6 @@ private struct SeriesPlannerView: View {
                             )
                             .padding(.horizontal, AgentSpacing.x4)
                             .frame(minHeight: 52)
-                        } else {
-                            Divider().overlay(Color.agentHairline)
-                            Stepper("Plan \(plannedCount) episodes", value: $plannedCount, in: 1...24)
-                                .padding(.horizontal, AgentSpacing.x4)
-                                .frame(minHeight: 52)
                         }
                     }
                     .font(.agentBody)
@@ -2339,24 +2734,167 @@ private struct SeriesPlannerView: View {
                             .stroke(Color.agentBorder, lineWidth: 1)
                     }
 
+                    if let notice {
+                        Text(notice)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentDestructive)
+                    }
+
+                    Button("Save Series Details", action: save)
+                        .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
+                        .disabled(!canSave)
+                }
+                .padding(AgentLayout.pageMargin)
+            }
+            .background(Color.agentCanvas)
+            .navigationTitle("Edit Series Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .onChange(of: firstDate) { _, newDate in
+                guard usesEndDate,
+                      Calendar.current.startOfDay(for: endDate) < Calendar.current.startOfDay(for: newDate) else {
+                    return
+                }
+                endDate = Calendar.current.date(byAdding: .month, value: 1, to: newDate) ?? newDate
+            }
+        }
+    }
+
+    private func save() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+        series.name = trimmedName
+        series.cadence = frequency
+        series.cadenceStartDate = RecurringPostSchedule.normalizedTargetDate(
+            firstDate,
+            includesTime: includesTime
+        )
+        series.cadenceWeekdays = frequency == .weekly ? weekdays : []
+        series.cadenceMonthDay = frequency == .monthly ? monthDay : nil
+        series.cadenceEndDate = usesEndDate ? Calendar.current.startOfDay(for: endDate) : nil
+        series.cadenceIncludesTime = includesTime
+        series.updatedAt = Date()
+        do {
+            try context.save()
+            dismiss()
+        } catch {
+            context.rollback()
+            notice = "The series details could not be saved. Your existing plan is unchanged."
+        }
+    }
+}
+
+private struct AddFutureEpisodesView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    @Bindable var series: ContentSeries
+
+    @State private var firstDate: Date
+    @State private var plannedCount = 6
+    @State private var notice: String?
+
+    init(series: ContentSeries, suggestedStartDate: Date) {
+        self.series = series
+        _firstDate = State(initialValue: suggestedStartDate)
+    }
+
+    private var frequency: PostRecurrenceFrequency {
+        series.cadence == .none ? .weekly : series.cadence
+    }
+
+    private var preview: [Date] {
+        if let endDate = series.cadenceEndDate,
+           Calendar.current.startOfDay(for: firstDate) > Calendar.current.startOfDay(for: endDate) {
+            return []
+        }
+        return SeriesEpisodePlanner.previewDates(
+            startingAt: firstDate,
+            frequency: frequency,
+            weekdays: series.cadenceWeekdays,
+            monthDay: series.cadenceMonthDay,
+            endDate: series.cadenceEndDate,
+            count: plannedCount
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                        MetaLabel("Upcoming episodes")
+                        Text(series.name)
+                            .font(.agentTitle)
+                        Text("Add empty episode dates using this series schedule. No post is created until you choose an episode.")
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+
+                    VStack(spacing: 0) {
+                        detailRow("Repeats", value: repeatDescription)
+                        Divider().overlay(Color.agentHairline)
+                        detailRow(
+                            "Ends",
+                            value: series.cadenceEndDate?.formatted(.dateTime.month(.abbreviated).day().year()) ?? "No end date"
+                        )
+                    }
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+
+                    VStack(spacing: 0) {
+                        DatePicker(
+                            "Next episode",
+                            selection: $firstDate,
+                            displayedComponents: series.cadenceIncludesTime ? [.date, .hourAndMinute] : [.date]
+                        )
+                        .padding(.horizontal, AgentSpacing.x4)
+                        .frame(minHeight: 52)
+
+                        Divider().overlay(Color.agentHairline)
+
+                        Stepper("Add \(plannedCount) episodes", value: $plannedCount, in: 1...24)
+                            .padding(.horizontal, AgentSpacing.x4)
+                            .frame(minHeight: 52)
+                    }
+                    .font(.agentBody)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.panel)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+
                     VStack(alignment: .leading, spacing: 0) {
-                        SectionRuleHeader(title: "Preview", trailing: "\(preview.count)")
-                        ForEach(Array(preview.enumerated()), id: \.offset) { index, date in
-                            HStack {
-                                Text("Episode \(index + 1)")
-                                    .font(.agentBody.weight(.semibold))
-                                Spacer()
-                                Text(date.formatted(
-                                    includesTime
-                                        ? .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
-                                        : .dateTime.weekday(.abbreviated).month(.abbreviated).day()
-                                ))
+                        SectionRuleHeader(title: "New episode dates", trailing: "\(preview.count)")
+                        if preview.isEmpty {
+                            Text("Extend the series end date before adding more episodes.")
                                 .font(.agentSubtext)
                                 .foregroundStyle(Color.agentSecondary)
-                            }
-                            .padding(.vertical, AgentSpacing.x3)
-                            if index < preview.count - 1 {
-                                Divider().overlay(Color.agentHairline)
+                                .padding(.vertical, AgentSpacing.x4)
+                        } else {
+                            ForEach(Array(preview.enumerated()), id: \.offset) { index, date in
+                                HStack {
+                                    Text("Episode \(index + 1)")
+                                        .font(.agentBody.weight(.semibold))
+                                    Spacer()
+                                    Text(date.formatted(
+                                        series.cadenceIncludesTime
+                                            ? .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()
+                                            : .dateTime.weekday(.abbreviated).month(.abbreviated).day()
+                                    ))
+                                    .font(.agentSubtext)
+                                    .foregroundStyle(Color.agentSecondary)
+                                }
+                                .padding(.vertical, AgentSpacing.x3)
+                                if index < preview.count - 1 {
+                                    Divider().overlay(Color.agentHairline)
+                                }
                             }
                         }
                     }
@@ -2364,23 +2902,19 @@ private struct SeriesPlannerView: View {
                     if let notice {
                         Text(notice)
                             .font(.agentSubtext)
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.agentSecondary)
                     }
 
-                    Button(action: planEpisodes) {
-                        Text("Plan \(preview.count) episode\(preview.count == 1 ? "" : "s")")
-                            .font(.agentBody.weight(.semibold))
-                            .foregroundStyle(Color.onAccent)
-                            .frame(maxWidth: .infinity, minHeight: 52)
-                            .background(Color.actionAccent, in: .capsule)
+                    Button(action: addEpisodes) {
+                        Text("Add \(preview.count) Future Episode\(preview.count == 1 ? "" : "s")")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(preview.isEmpty || (frequency == .weekly && weekdays.isEmpty))
+                    .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
+                    .disabled(preview.isEmpty)
                 }
                 .padding(AgentLayout.pageMargin)
             }
             .background(Color.agentCanvas)
-            .navigationTitle("Plan future episodes")
+            .navigationTitle("Add Future Episodes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -2390,28 +2924,54 @@ private struct SeriesPlannerView: View {
         }
     }
 
-    private func planEpisodes() {
-        series.cadence = frequency
-        series.cadenceWeekdays = weekdays
-        series.cadenceMonthDay = frequency == .monthly ? monthDay : nil
-        series.cadenceEndDate = usesEndDate ? endDate : nil
+    private var repeatDescription: String {
+        switch frequency {
+        case .none:
+            return "Does not repeat"
+        case .daily:
+            return "Daily"
+        case .weekly:
+            let days = PillarWeekday.mondayFirst
+                .filter { series.cadenceWeekdays.contains($0) }
+                .map(\.title)
+            return days.isEmpty ? "Weekly" : "Weekly on \(days.joined(separator: ", "))"
+        case .monthly:
+            return "Monthly on day \(series.cadenceMonthDay ?? Calendar.current.component(.day, from: firstDate))"
+        }
+    }
+
+    private func detailRow(_ label: String, value: String) -> some View {
+        HStack(spacing: AgentSpacing.x4) {
+            Text(label)
+                .font(.agentBody)
+            Spacer(minLength: AgentSpacing.x3)
+            Text(value)
+                .font(.agentSubtext)
+                .foregroundStyle(Color.agentSecondary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, AgentSpacing.x4)
+        .frame(minHeight: 52)
+    }
+
+    private func addEpisodes() {
         do {
             let created = try SeriesEpisodePlanner.plan(
                 series: series,
                 dates: preview,
-                includesTime: includesTime,
+                includesTime: series.cadenceIncludesTime,
                 context: context
             )
             notice = created.isEmpty
-                ? "Those episode slots are already planned."
-                : "\(created.count) episode slot\(created.count == 1 ? "" : "s") added."
+                ? "Those episode dates are already in Upcoming Episodes."
+                : "\(created.count) future episode\(created.count == 1 ? "" : "s") added."
         } catch {
-            notice = "The episode slots could not be planned. Your post is unchanged."
+            notice = "Future episodes could not be added. Your existing plan is unchanged."
         }
     }
 }
 
-private struct SeriesDetailView: View {
+struct SeriesDetailView: View {
     private enum EpisodeGroup {
         case draft
         case scheduled
@@ -2444,8 +3004,10 @@ private struct SeriesDetailView: View {
     @Query(sort: \SeriesEpisodeSlot.plannedDate) private var allSlots: [SeriesEpisodeSlot]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query private var allOutputs: [PlatformOutput]
-    @State private var showPlanner = false
+    @State private var showSeriesDetails = false
+    @State private var showAddFutureEpisodes = false
     @State private var selectedSlot: SeriesEpisodeSlot?
+    @State private var editingEpisodeBrief: CreativeBrief?
     @State private var confirmRemoveFutureSlots = false
     @State private var confirmArchive = false
 
@@ -2502,6 +3064,19 @@ private struct SeriesDetailView: View {
         return "\(episodeText) · \(openSlots.count) date\(openSlots.count == 1 ? "" : "s") to fill"
     }
 
+    private var firstEpisodeDate: Date {
+        ([series.cadenceStartDate] + slots.map { Optional($0.plannedDate) } + episodeItems.map(\.date))
+            .compactMap { $0 }
+            .min() ?? Date()
+    }
+
+    private var nextEpisodeDate: Date {
+        let latestDate = (slots.map(\.plannedDate) + episodeItems.compactMap(\.date)).max()
+            ?? series.cadenceStartDate
+            ?? Date()
+        return SeriesEpisodePlanner.nextEpisodeDate(after: latestDate, series: series)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -2518,24 +3093,25 @@ private struct SeriesDetailView: View {
                     }
 
                     Button {
-                        showPlanner = true
+                        showSeriesDetails = true
                     } label: {
                         HStack(spacing: AgentSpacing.x2) {
-                            AgentIconView(.add, size: 13)
-                            Text("Plan future episodes")
-                                .font(.agentBody.weight(.semibold))
+                            AgentIconView(.pencil, size: 13)
+                            Text("Edit Series Details")
                         }
-                        .foregroundStyle(Color.onAccent)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .background(Color.actionAccent, in: .capsule)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
 
-                    slotSection(
-                        title: "Upcoming episodes",
-                        slots: openSlots,
-                        emptyMessage: "No episode dates are waiting to be filled."
-                    )
+                    VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                        slotSection(
+                            title: "Upcoming episodes",
+                            slots: openSlots,
+                            emptyMessage: "No episode dates are waiting to be filled."
+                        )
+                        AgentBlockAddActionButton(title: "Add Future Episodes") {
+                            showAddFutureEpisodes = true
+                        }
+                    }
                     episodeSection(
                         "Draft episodes",
                         items: episodeItems.filter { $0.group == .draft },
@@ -2605,12 +3181,37 @@ private struct SeriesDetailView: View {
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
-            .sheet(isPresented: $showPlanner) {
-                SeriesPlannerView(series: series, suggestedStartDate: Date())
+            .sheet(isPresented: $showSeriesDetails) {
+                SeriesDetailsEditorView(
+                    series: series,
+                    suggestedFirstDate: firstEpisodeDate
+                )
+            }
+            .sheet(isPresented: $showAddFutureEpisodes) {
+                AddFutureEpisodesView(
+                    series: series,
+                    suggestedStartDate: nextEpisodeDate
+                )
             }
             .sheet(item: $selectedSlot) { slot in
-                EpisodeSlotActionsView(slot: slot) { _ in
-                    selectedSlot = nil
+                EpisodeSlotActionsView(slot: slot) { result in
+                    editingEpisodeBrief = result.brief
+                }
+            }
+            .navigationDestination(item: $editingEpisodeBrief) { brief in
+                if let output = allOutputs.first(where: { $0.briefID == brief.id }) {
+                    ResumablePostEditorView(
+                        brief: brief,
+                        output: output,
+                        contextLabel: "Series episode",
+                        onSpark: {}
+                    )
+                    .navigationTitle("Plan Episode")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .agentScreen()
+                    .agentKeyboardDismissal()
+                } else {
+                    IdeaPostDraftView(brief: brief)
                 }
             }
             .alert("Remove future empty slots?", isPresented: $confirmRemoveFutureSlots) {
@@ -2804,6 +3405,135 @@ private struct SeriesDetailView: View {
         .opacity(isEnabled ? 1 : 0.45)
     }
 }
+
+#if targetEnvironment(macCatalyst)
+/// Catalyst can append a stale keyboard-avoidance region below SwiftUI's real
+/// scroll content. SwiftUI scroll-position writes are ignored while Page Down,
+/// a wheel, or momentum owns the gesture, so clamp the backing UIScrollView at
+/// the actual bottom marker instead.
+private struct CatalystEditorScrollEndAnchor: UIViewRepresentable {
+    @MainActor
+    final class Coordinator: NSObject {
+        weak var marker: UIView?
+        weak var scrollView: UIScrollView?
+        var contentOffsetObservation: NSKeyValueObservation?
+        var isClamping = false
+        var attachmentScheduled = false
+
+        func connect(marker: UIView) {
+            self.marker = marker
+            attachToContainingScrollViewIfNeeded()
+        }
+
+        private func attachToContainingScrollViewIfNeeded() {
+            guard let marker else { return }
+
+            var ancestor = marker.superview
+            while let view = ancestor, !(view is UIScrollView) {
+                ancestor = view.superview
+            }
+
+            guard let containingScrollView = ancestor as? UIScrollView else {
+                guard !attachmentScheduled else { return }
+                attachmentScheduled = true
+                DispatchQueue.main.async { [weak self] in
+                    self?.attachmentScheduled = false
+                    self?.attachToContainingScrollViewIfNeeded()
+                }
+                return
+            }
+
+            guard scrollView !== containingScrollView else {
+                clampIfNeeded()
+                return
+            }
+
+            contentOffsetObservation = nil
+            scrollView = containingScrollView
+            contentOffsetObservation = containingScrollView.observe(
+                \.contentOffset,
+                options: [.new]
+            ) { [weak self] _, _ in
+                MainActor.assumeIsolated {
+                    self?.clampIfNeeded()
+                }
+            }
+            clampIfNeeded()
+        }
+
+        func clampIfNeeded() {
+            guard !isClamping,
+                  let marker,
+                  let scrollView,
+                  marker.window != nil,
+                  scrollView.window != nil,
+                  scrollView.bounds.height > 0
+            else { return }
+
+            // Calculate the document-space end from window coordinates so the
+            // value stays correct before, during, and after an overscroll.
+            let markerBottomInWindow = marker.convert(
+                CGPoint(x: marker.bounds.midX, y: marker.bounds.maxY),
+                to: nil
+            ).y
+            let viewportTopInWindow = scrollView.convert(
+                CGPoint(x: scrollView.bounds.minX, y: scrollView.bounds.minY),
+                to: nil
+            ).y
+            let documentEnd = scrollView.contentOffset.y
+                + markerBottomInWindow
+                - viewportTopInWindow
+            guard documentEnd.isFinite else { return }
+
+            let minimumOffset = -scrollView.adjustedContentInset.top
+            let maximumOffset = max(
+                minimumOffset,
+                documentEnd - scrollView.bounds.height
+            )
+            guard scrollView.contentOffset.y > maximumOffset + 0.5 else { return }
+
+            isClamping = true
+            scrollView.setContentOffset(
+                CGPoint(x: scrollView.contentOffset.x, y: maximumOffset),
+                animated: false
+            )
+            isClamping = false
+        }
+    }
+
+    final class MarkerView: UIView {
+        var onLayout: ((UIView) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onLayout?(self)
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onLayout?(self)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> MarkerView {
+        let marker = MarkerView(frame: .zero)
+        marker.isUserInteractionEnabled = false
+        marker.backgroundColor = .clear
+        marker.onLayout = { [weak coordinator = context.coordinator] view in
+            coordinator?.connect(marker: view)
+        }
+        return marker
+    }
+
+    func updateUIView(_ marker: MarkerView, context: Context) {
+        context.coordinator.connect(marker: marker)
+    }
+}
+#endif
 
 enum PostDraftSavePolicy {
     static func prepare(_ brief: CreativeBrief) {
@@ -3004,7 +3734,10 @@ private struct BufferedPostNotesEditor: View {
             TextEditor(text: $text)
                 .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 160)
+                // TextEditor has an unbounded ideal height inside a vertical
+                // ScrollView on Catalyst. A minimum alone lets it inflate the
+                // editor's document far beyond the visible notes field.
+                .frame(height: 160)
                 .padding(16)
                 .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
                 .overlay {
@@ -3103,13 +3836,13 @@ private struct PostDraftSetupRow: View {
     let label: String
     let value: String
     var color: Color?
+    var indicator: String?
     var showsChevron = true
 
     var body: some View {
         HStack(spacing: 14) {
             MetaLabel(label)
                 .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
                 .frame(width: 92, alignment: .leading)
             HStack(spacing: AgentSpacing.x2) {
                 if let color {
@@ -3120,11 +3853,26 @@ private struct PostDraftSetupRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .allowsTightening(true)
+                    .layoutPriority(1)
+                if let indicator {
+                    Text(indicator.uppercased())
+                        .font(.agentMetadata)
+                        .tracking(0.5)
+                        .foregroundStyle(Color.agentDestructive)
+                        .padding(.horizontal, AgentSpacing.x2)
+                        .frame(minHeight: 22)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.agentDestructive, lineWidth: 1)
+                        }
+                        .fixedSize()
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
-            Spacer(minLength: AgentSpacing.x2)
             if showsChevron {
                 AgentIconView(.forward, size: 12)
+                    .fixedSize()
             }
         }
         .foregroundStyle(Color.agentText)
@@ -3136,90 +3884,546 @@ private struct PostDraftSetupRow: View {
     }
 }
 
-private struct PostDraftDatePicker: View {
+struct PostDatesPicker: View {
     @Environment(\.dismiss) private var dismiss
-    @Binding var date: Date
-    @Binding var includesTime: Bool
+    @State private var scheduledDate: Date
+    @State private var hasScheduledDate: Bool
+    @State private var includesScheduledTime: Bool
+    @State private var workDate: Date
+    @State private var hasWorkDate: Bool
+    @State private var includesWorkTime: Bool
+    let activeStep: PostDatePlanningStep
     let pillarMarkers: [PillarCalendarMarker]
-    let title: String
+    let requiredStep: PostDatePlanningStep?
     let confirmationTitle: String
-    let canClearDate: Bool
-    let onClearDate: () -> Void
-    let onSave: () -> Void
+    let isRescheduling: Bool
+    let onSave: (PostDatePlanDraft) -> Void
+
+    init(
+        scheduledDate: Date,
+        hasScheduledDate: Bool,
+        includesScheduledTime: Bool,
+        workDate: Date,
+        hasWorkDate: Bool,
+        includesWorkTime: Bool,
+        pillarMarkers: [PillarCalendarMarker],
+        initialStep: PostDatePlanningStep,
+        requiredStep: PostDatePlanningStep?,
+        confirmationTitle: String,
+        isRescheduling: Bool = false,
+        onSave: @escaping (PostDatePlanDraft) -> Void
+    ) {
+        _scheduledDate = State(initialValue: isRescheduling ? max(scheduledDate, Date()) : scheduledDate)
+        _hasScheduledDate = State(initialValue: hasScheduledDate)
+        _includesScheduledTime = State(initialValue: includesScheduledTime)
+        _workDate = State(initialValue: workDate)
+        _hasWorkDate = State(initialValue: hasWorkDate)
+        _includesWorkTime = State(initialValue: includesWorkTime)
+        self.activeStep = initialStep
+        self.pillarMarkers = pillarMarkers
+        self.requiredStep = requiredStep
+        self.confirmationTitle = confirmationTitle
+        self.isRescheduling = isRescheduling
+        self.onSave = onSave
+    }
 
     var body: some View {
+#if targetEnvironment(macCatalyst)
+        if isRescheduling {
+            desktopRescheduleBody
+        } else {
+            standardBody
+        }
+#else
+        standardBody
+#endif
+    }
+
+    private var standardBody: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                    PillarCalendarDatePicker(
-                        date: $date,
-                        pillarMarkers: pillarMarkers
-                    )
-                    .frame(minHeight: 330)
-                    .accessibilityLabel(title)
-
-                    Text("Pillar days are marked by color.")
-                        .font(.agentSubtext)
-                        .foregroundStyle(Color.agentSecondary)
-
-                    VStack(spacing: 0) {
-                        Toggle("Include a time", isOn: $includesTime)
-                            .font(.agentHeadline)
-                            .tint(Color.actionAccent)
-                            .padding(.horizontal, AgentSpacing.x4)
-                            .frame(minHeight: 54)
-
-                        if includesTime {
-                            Divider().overlay(Color.agentHairline)
-                            HStack {
-                                Text("Time")
-                                    .font(.agentBody)
-                                Spacer()
-                                DatePicker("Time", selection: $date, displayedComponents: .hourAndMinute)
-                                    .labelsHidden()
-                                    .datePickerStyle(.compact)
-                            }
-                            .padding(.horizontal, AgentSpacing.x4)
-                            .frame(minHeight: 54)
-                        }
-                    }
-                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AgentRadius.control)
-                            .stroke(Color.agentBorder, lineWidth: 1)
-                    }
-
-                    if canClearDate {
-                        Button(role: .destructive) {
-                            onClearDate()
-                            dismiss()
-                        } label: {
-                            Text("Clear date")
-                                .font(.paperInter(size: 15, weight: .medium, relativeTo: .body))
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.agentDestructive)
-                        .accessibilityHint("Removes this post from the agenda")
-                    }
-                }
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.top, AgentSpacing.x4)
-                .padding(.bottom, AgentSpacing.x8)
+                planningLayout
+                    .padding(.horizontal, AgentLayout.pageMargin)
+                    .padding(.top, AgentSpacing.x5)
+                    .padding(.bottom, AgentSpacing.x8)
             }
-                .navigationTitle(title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button(confirmationTitle) { onSave(); dismiss() }
+            .navigationTitle("Plan this post")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
+                }
+                .sharedBackgroundVisibility(.hidden)
+
+                ToolbarItem(placement: .confirmationAction) {
+                    AgentToolbarIconButton(
+                        title: confirmationTitle,
+                        icon: .check,
+                        isEnabled: canSave
+                    ) {
+                        saveAndDismiss()
                     }
                 }
+                .sharedBackgroundVisibility(.hidden)
+            }
         }
         .agentScreen()
         .agentKeyboardDismissal()
+    }
+
+#if targetEnvironment(macCatalyst)
+    private var desktopRescheduleBody: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: AgentSpacing.x3) {
+                Text("Reschedule post")
+                    .font(.agentHeadline)
+                    .foregroundStyle(Color.agentText)
+                Spacer(minLength: 0)
+                Button { dismiss() } label: {
+                    AgentIconView(.close, size: 14)
+                        .frame(width: 40, height: 40)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel")
+            }
+            .padding(.leading, AgentSpacing.x5)
+            .padding(.trailing, AgentSpacing.x3)
+            .padding(.top, AgentSpacing.x3)
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                Text("Choose a new scheduled date.")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+
+                PillarCalendarDatePicker(
+                    date: $scheduledDate,
+                    pillarMarkers: pillarMarkers,
+                    minimumDate: Date(),
+                    cellHeight: 38,
+                    dayDiameter: 28
+                )
+                .padding(AgentSpacing.x4)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AgentRadius.card)
+                        .stroke(Color.agentBorder, lineWidth: 1)
+                }
+
+                dateTimeControls(
+                    includesTime: $includesScheduledTime,
+                    date: $scheduledDate
+                )
+            }
+            .padding(.horizontal, AgentSpacing.x5)
+            .padding(.top, AgentSpacing.x2)
+            .padding(.bottom, AgentSpacing.x5)
+
+            Divider().overlay(Color.agentHairline)
+
+            HStack(spacing: AgentSpacing.x3) {
+                Button("Cancel") { dismiss() }
+                    .font(.agentSubtext.weight(.medium))
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(width: 92)
+                    .frame(minHeight: 44)
+                    .contentShape(.rect(cornerRadius: AgentRadius.card))
+                    .buttonStyle(.plain)
+
+                Button(action: saveAndDismiss) {
+                    Text("Save new date")
+                        .font(.agentSubtext.weight(.medium))
+                        .foregroundStyle(Color.agentText)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AgentRadius.card)
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSave)
+            }
+            .padding(AgentSpacing.x4)
+        }
+        .frame(width: 500)
+        .background(Color.agentCanvas)
+        .agentScreen()
+        .presentationSizing(.fitted)
+        .presentationCornerRadius(AgentRadius.floating)
+        .presentationBackground(Color.agentCanvas)
+    }
+#endif
+
+    private func saveAndDismiss() {
+        onSave(
+            PostDatePlanDraft(
+                workDate: workDate,
+                hasWorkDate: hasWorkDate,
+                includesWorkTime: includesWorkTime,
+                scheduledDate: scheduledDate,
+                hasScheduledDate: hasScheduledDate,
+                includesScheduledTime: includesScheduledTime
+            )
+        )
+        dismiss()
+    }
+
+    private var planningLayout: some View {
+        activeCalendar
+            .frame(maxWidth: 540)
+            .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    private var activeCalendar: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            Text(activeQuestion)
+                .font(.agentHeadline)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Toggle(activeDateToggleLabel, isOn: activeDateEnabledBinding)
+                .font(.agentBody.weight(.semibold))
+                .tint(Color.actionAccent)
+                .frame(minHeight: 44)
+
+            if activeDateIsSet {
+                PillarCalendarDatePicker(
+                    date: activeDateBinding,
+                    pillarMarkers: activeStep == .schedule ? pillarMarkers : []
+                )
+                .frame(minHeight: 330)
+                .accessibilityLabel(activeStep == .work ? "Work date" : "Scheduled date")
+            }
+
+            if activeStep == .schedule && hasScheduledDate {
+                Text("Pillar days are marked by color.")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+            }
+
+            if activeDateIsSet {
+                dateTimeControls(
+                    includesTime: activeIncludesTimeBinding,
+                    date: activeDateBinding
+                )
+            }
+
+            if !datesAreValid {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    Text("The scheduled date needs to be on or after the work date.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentDestructive)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Move work date to the scheduled day") {
+                        workDate = scheduledDate
+                        hasWorkDate = true
+                    }
+                    .font(.agentSubtext.weight(.semibold))
+                    .foregroundStyle(Color.agentText)
+                    .buttonStyle(.plain)
+                }
+            } else if let requiredMessage {
+                Text(requiredMessage)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(AgentSpacing.x5)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.panel)
+                .stroke(Color.agentBorder, lineWidth: 1)
+        }
+    }
+
+    private var activeQuestion: String {
+        activeStep == .work
+            ? "When do you want to work on this post?"
+            : "When should this post be scheduled?"
+    }
+
+    private var activeDateToggleLabel: String {
+        activeStep == .work ? "Include work date" : "Include scheduled date"
+    }
+
+    private var activeDateEnabledBinding: Binding<Bool> {
+        switch activeStep {
+        case .work:
+            Binding(
+                get: { hasWorkDate },
+                set: { isEnabled in
+                    hasWorkDate = isEnabled
+                    if !isEnabled { includesWorkTime = false }
+                }
+            )
+        case .schedule:
+            Binding(
+                get: { hasScheduledDate },
+                set: { isEnabled in
+                    hasScheduledDate = isEnabled
+                    if !isEnabled { includesScheduledTime = false }
+                }
+            )
+        }
+    }
+
+    private var activeDateIsSet: Bool {
+        activeStep == .work ? hasWorkDate : hasScheduledDate
+    }
+
+    private var activeDateBinding: Binding<Date> {
+        switch activeStep {
+        case .work:
+            Binding(
+                get: { workDate },
+                set: { newDate in
+                    workDate = newDate
+                    hasWorkDate = true
+                }
+            )
+        case .schedule:
+            Binding(
+                get: { scheduledDate },
+                set: { newDate in
+                    scheduledDate = newDate
+                    hasScheduledDate = true
+                }
+            )
+        }
+    }
+
+    private var activeIncludesTimeBinding: Binding<Bool> {
+        switch activeStep {
+        case .work: $includesWorkTime
+        case .schedule: $includesScheduledTime
+        }
+    }
+
+    private var datesAreValid: Bool {
+        PostDatePlanPolicy.isChronologicallyValid(
+            workDate: hasWorkDate ? workDate : nil,
+            scheduledDate: hasScheduledDate ? scheduledDate : nil
+        )
+    }
+
+    private var requiredMessage: String? {
+        switch requiredStep {
+        case .work where !hasWorkDate:
+            "Choose when you want to work on this post to continue."
+        case .schedule where !hasScheduledDate:
+            "Choose when this post should be scheduled to continue."
+        default:
+            nil
+        }
+    }
+
+    private var canSave: Bool {
+        datesAreValid && requiredMessage == nil
+    }
+
+    private func dateTimeControls(
+        includesTime: Binding<Bool>,
+        date: Binding<Date>
+    ) -> some View {
+        VStack(spacing: 0) {
+            Toggle("Include a time", isOn: includesTime)
+                .font(.agentHeadline)
+                .tint(Color.actionAccent)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(minHeight: 54)
+
+            if includesTime.wrappedValue {
+                Divider().overlay(Color.agentHairline)
+                HStack {
+                    Text("Time")
+                        .font(.agentBody)
+                    Spacer()
+                    DatePicker("Time", selection: date, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                }
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(minHeight: 54)
+            }
+        }
+        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.control)
+                .stroke(Color.agentBorder, lineWidth: 1)
+        }
+    }
+}
+
+struct ActualPostedDatePicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var postedAt: Date
+    let onSave: (Date) -> Void
+    @State private var showsCalendar = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: AgentSpacing.x3) {
+                Text("Actual posted date")
+                    .font(.agentHeadline)
+                    .foregroundStyle(Color.agentText)
+                Spacer(minLength: 0)
+                Button { dismiss() } label: {
+                    AgentIconView(.close, size: 14)
+                        .frame(width: 40, height: 40)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel("Cancel")
+            }
+            .padding(.leading, AgentSpacing.x5)
+            .padding(.trailing, AgentSpacing.x3)
+            .padding(.top, AgentSpacing.x3)
+
+            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                Text("Confirm when this post went live.")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: AgentSpacing.x2) {
+                    postedDateButton
+                    postedTimeField
+                }
+
+                if showsCalendar {
+                    PillarCalendarDatePicker(
+                        date: $postedAt,
+                        pillarMarkers: [],
+                        maximumDate: Date(),
+                        cellHeight: 38,
+                        dayDiameter: 28
+                    )
+                    .padding(AgentSpacing.x4)
+                    .background(
+                        Color.agentSurface,
+                        in: .rect(cornerRadius: AgentRadius.card)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AgentRadius.card)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                }
+            }
+            .padding(.horizontal, AgentSpacing.x5)
+            .padding(.top, AgentSpacing.x2)
+            .padding(.bottom, AgentSpacing.x5)
+
+            Divider()
+                .overlay(Color.agentHairline)
+
+            HStack(spacing: AgentSpacing.x3) {
+                Button("Cancel") { dismiss() }
+                    .font(.agentSubtext.weight(.medium))
+                    .foregroundStyle(Color.agentSecondary)
+                    .frame(width: 92)
+                    .frame(minHeight: 44)
+                    .contentShape(.rect(cornerRadius: AgentRadius.card))
+                    .buttonStyle(AgentPressButtonStyle())
+
+                Button {
+                    onSave(postedAt)
+                    dismiss()
+                } label: {
+                    Text("Mark posted")
+                        .font(.agentSubtext.weight(.medium))
+                        .foregroundStyle(Color.agentText)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(
+                            Color.agentSurface,
+                            in: .rect(cornerRadius: AgentRadius.card)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AgentRadius.card)
+                                .stroke(Color.agentBorder, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .disabled(!PostedDatePolicy.isValid(postedAt))
+            }
+            .padding(AgentSpacing.x4)
+        }
+        .frame(width: dialogWidth)
+        .background(Color.agentCanvas)
+        .agentScreen()
+    }
+
+    private var postedDateButton: some View {
+        Button {
+            showsCalendar.toggle()
+        } label: {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                HStack(spacing: AgentSpacing.x2) {
+                    Text("DATE")
+                        .font(.agentMetadata)
+                        .tracking(1.4)
+                        .foregroundStyle(Color.agentSecondary)
+                    Spacer(minLength: 0)
+                    AgentIconView(showsCalendar ? .collapse : .expand, size: 11)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+                Text(postedAt.formatted(.dateTime.month(.abbreviated).day().year()))
+                    .font(.agentBody.weight(.medium))
+                    .foregroundStyle(Color.agentText)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, AgentSpacing.x3)
+            .padding(.vertical, AgentSpacing.x3)
+            .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
+            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentRadius.control)
+                    .stroke(
+                        showsCalendar ? Color.agentText.opacity(0.35) : Color.agentBorder,
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(.rect(cornerRadius: AgentRadius.control))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Posted date, \(postedAt.formatted(date: .complete, time: .omitted))")
+        .accessibilityHint(showsCalendar ? "Hides the calendar" : "Shows the calendar")
+    }
+
+    private var postedTimeField: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+            Text("TIME")
+                .font(.agentMetadata)
+                .tracking(1.4)
+                .foregroundStyle(Color.agentSecondary)
+            DatePicker(
+                "Time",
+                selection: $postedAt,
+                in: ...Date(),
+                displayedComponents: .hourAndMinute
+            )
+            .labelsHidden()
+            .datePickerStyle(.compact)
+            .font(.agentBody.weight(.medium))
+            .tint(Color.actionAccent)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, AgentSpacing.x3)
+        .padding(.vertical, AgentSpacing.x3)
+        .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.control)
+                .stroke(Color.agentBorder, lineWidth: 1)
+        }
+    }
+
+    private var dialogWidth: CGFloat? {
+#if targetEnvironment(macCatalyst)
+        500
+#else
+        nil
+#endif
     }
 }
 
@@ -3251,16 +4455,28 @@ extension Array where Element == PillarCalendarMarker {
 struct PillarCalendarDatePicker: View {
     @Binding var date: Date
     let pillarMarkers: [PillarCalendarMarker]
+    let minimumDate: Date?
+    let maximumDate: Date?
+    let cellHeight: CGFloat
+    let dayDiameter: CGFloat
     private var calendar: Calendar = .current
     @State private var displayedMonth: Date
 
     init(
         date: Binding<Date>,
         pillarMarkers: [PillarCalendarMarker],
+        minimumDate: Date? = nil,
+        maximumDate: Date? = nil,
+        cellHeight: CGFloat = 52,
+        dayDiameter: CGFloat = 40,
         calendar: Calendar = .current
     ) {
         _date = date
         self.pillarMarkers = pillarMarkers
+        self.minimumDate = minimumDate
+        self.maximumDate = maximumDate
+        self.cellHeight = cellHeight
+        self.dayDiameter = dayDiameter
         self.calendar = calendar
         _displayedMonth = State(initialValue: Self.firstDayOfMonth(for: date.wrappedValue, calendar: calendar))
     }
@@ -3270,15 +4486,9 @@ struct PillarCalendarDatePicker: View {
             monthHeader
             weekdayHeader
 
-            LazyVGrid(columns: gridColumns, spacing: AgentSpacing.x1) {
-                ForEach(Array(monthCells.enumerated()), id: \.offset) { _, day in
-                    if let day {
-                        dayButton(day)
-                    } else {
-                        Color.clear
-                            .frame(height: 52)
-                            .accessibilityHidden(true)
-                    }
+            VStack(spacing: AgentSpacing.x1) {
+                ForEach(0..<monthRowCount, id: \.self) { row in
+                    monthRow(row)
                 }
             }
         }
@@ -3303,6 +4513,8 @@ struct PillarCalendarDatePicker: View {
                 AgentIconView(.back, size: 18)
                     .frame(width: 44, height: 44)
             }
+            .disabled(!canMoveMonth(by: -1))
+            .opacity(canMoveMonth(by: -1) ? 1 : 0.32)
             .accessibilityLabel("Previous month")
 
             Button {
@@ -3311,13 +4523,15 @@ struct PillarCalendarDatePicker: View {
                 AgentIconView(.forward, size: 18)
                     .frame(width: 44, height: 44)
             }
+            .disabled(!canMoveMonth(by: 1))
+            .opacity(canMoveMonth(by: 1) ? 1 : 0.32)
             .accessibilityLabel("Next month")
         }
         .foregroundStyle(Color.agentText)
     }
 
     private var weekdayHeader: some View {
-        LazyVGrid(columns: gridColumns, spacing: 0) {
+        HStack(spacing: AgentSpacing.x1) {
             ForEach(weekdaySymbols, id: \.self) { symbol in
                 Text(symbol)
                     .font(.paperMetadata(size: 11, weight: .medium, relativeTo: .caption))
@@ -3330,6 +4544,9 @@ struct PillarCalendarDatePicker: View {
     private func dayButton(_ day: Date) -> some View {
         let isSelected = calendar.isDate(day, inSameDayAs: date)
         let isToday = calendar.isDateInToday(day)
+        let isBeforeMinimum = minimumDate.map { day < calendar.startOfDay(for: $0) } ?? false
+        let isAfterMaximum = maximumDate.map { day > endOfDay(for: $0) } ?? false
+        let isDisabled = isBeforeMinimum || isAfterMaximum
         let colors = pillarMarkers.colorHexes(for: day, calendar: calendar)
 
         return Button {
@@ -3338,8 +4555,12 @@ struct PillarCalendarDatePicker: View {
             VStack(spacing: 3) {
                 Text(day.formatted(.dateTime.day()))
                     .font(.paperInter(size: 17, weight: .regular, relativeTo: .body))
-                    .foregroundStyle(isSelected ? Color.agentCanvas : Color.agentText)
-                    .frame(width: 40, height: 40)
+                    .foregroundStyle(
+                        isDisabled
+                            ? Color.agentSecondary.opacity(0.35)
+                            : (isSelected ? Color.agentCanvas : Color.agentText)
+                    )
+                    .frame(width: dayDiameter, height: dayDiameter)
                     .background(isSelected ? Color.agentText : Color.clear, in: .circle)
                     .overlay {
                         if isToday {
@@ -3362,16 +4583,32 @@ struct PillarCalendarDatePicker: View {
                 }
                 .frame(height: 7)
             }
-            .frame(maxWidth: .infinity, minHeight: 52)
+            .frame(maxWidth: .infinity, minHeight: cellHeight)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
         .accessibilityLabel(accessibilityLabel(for: day, colorCount: colors.count, isToday: isToday))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private var gridColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: AgentSpacing.x1), count: 7)
+    private var monthRowCount: Int {
+        (monthCells.count + 6) / 7
+    }
+
+    private func monthRow(_ row: Int) -> some View {
+        HStack(spacing: AgentSpacing.x1) {
+            ForEach(0..<7, id: \.self) { column in
+                let index = row * 7 + column
+                if index < monthCells.count, let day = monthCells[index] {
+                    dayButton(day)
+                } else {
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: cellHeight)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
     }
 
     private var weekdaySymbols: [String] {
@@ -3400,10 +4637,32 @@ struct PillarCalendarDatePicker: View {
     }
 
     private func moveMonth(by value: Int) {
+        guard canMoveMonth(by: value) else { return }
         guard let month = calendar.date(byAdding: .month, value: value, to: displayedMonth) else {
             return
         }
         displayedMonth = Self.firstDayOfMonth(for: month, calendar: calendar)
+    }
+
+    private func canMoveMonth(by value: Int) -> Bool {
+        guard let month = calendar.date(byAdding: .month, value: value, to: displayedMonth) else {
+            return false
+        }
+        let candidate = Self.firstDayOfMonth(for: month, calendar: calendar)
+
+        if let minimumDate,
+           candidate < Self.firstDayOfMonth(for: minimumDate, calendar: calendar) {
+            return false
+        }
+        if let maximumDate,
+           candidate > Self.firstDayOfMonth(for: maximumDate, calendar: calendar) {
+            return false
+        }
+        return true
+    }
+
+    private func endOfDay(for value: Date) -> Date {
+        calendar.date(bySettingHour: 23, minute: 59, second: 59, of: value) ?? value
     }
 
     private func select(_ selectedDay: Date) {
@@ -3503,7 +4762,7 @@ struct PostDraftTaskComposer: View {
         .sheet(isPresented: $showDatePicker) {
             PostTaskDatePicker(date: $date)
                 .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .agentSheetDragIndicator()
         }
     }
 

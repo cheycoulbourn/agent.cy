@@ -50,15 +50,23 @@ struct SettingsView: View {
                                 } label: {
                                     SettingsIndexRow(title: "How Cy helps", value: profile.assistanceMode.title)
                                 }
-                                NavigationLink {
-                                    AppearanceSettingsView(
-                                        profile: profile,
-                                        deviceAppearance: appModel.appearancePreference
-                                    )
-                                } label: {
+                                if let activeWorkspace {
+                                    NavigationLink {
+                                        AppearanceSettingsView(
+                                            workspace: activeWorkspace,
+                                            deviceAppearance: appModel.appearancePreference
+                                        )
+                                    } label: {
+                                        SettingsIndexRow(
+                                            title: "Appearance",
+                                            value: appModel.appearancePreference.title,
+                                            isLast: true
+                                        )
+                                    }
+                                } else {
                                     SettingsIndexRow(
                                         title: "Appearance",
-                                        value: appModel.appearancePreference.title,
+                                        value: "Account unavailable",
                                         isLast: true
                                     )
                                 }
@@ -106,7 +114,7 @@ struct SettingsView: View {
                             NavigationLink {
                                 PublishingSettingsView()
                             } label: {
-                                SettingsIndexRow(title: "Destinations & formats", value: "\(activeDestinationCount)")
+                                SettingsIndexRow(title: "Platforms", value: "\(activeDestinationCount)")
                             }
                             if let profile = profiles.first {
                                 NavigationLink {
@@ -139,9 +147,9 @@ struct SettingsView: View {
                                     value: "Connected"
                                 )
                             }
-                            if let profile = profiles.first {
+                            if let activeWorkspace {
                                 NavigationLink {
-                                    CyQuickPromptsSettingsView(profile: profile)
+                                    CyQuickPromptsSettingsView(workspace: activeWorkspace)
                                 } label: {
                                     SettingsIndexRow(
                                         title: "Quick prompts",
@@ -305,7 +313,7 @@ struct SettingsView: View {
                     initialDraft: OnboardingDraft(
                         name: activeIdentity.name,
                         goal: profile.goal,
-                        vibePalette: profile.vibePalette,
+                        vibePalette: activeWorkspace?.vibePalette ?? profile.vibePalette,
                         appearance: appModel.appearancePreference,
                         aiProvider: LocalCyPreferences.isEnabled ? .claudeOrCodex : .agentCy,
                         brandPartnershipsEnabled: profile.showsBrandDealsInPostEditor
@@ -375,6 +383,14 @@ struct SettingsView: View {
         )
     }
 
+    private var activeWorkspace: CreatorWorkspace? {
+        guard let activeID = WorkspaceScope.activeWorkspaceID(
+            preferredID: appModel.activeWorkspaceID,
+            workspaces: workspaces
+        ) else { return nil }
+        return workspaces.first { $0.id == activeID && !$0.isArchived }
+    }
+
     private func enabledPostSectionCount(for profile: CreatorProfile) -> Int {
         [
             profile.showsHookInPostEditor,
@@ -435,6 +451,7 @@ struct SettingsView: View {
 struct NewDestinationView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Query private var destinations: [PublishingDestination]
     @State private var name = ""
     @State private var formatName = "Post"
     @State private var kind: PublishingFormatKind = .nonVideo
@@ -442,7 +459,7 @@ struct NewDestinationView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Destination") { TextField("Name", text: $name).agentSingleLineSubmit() }
+                Section("Platform") { TextField("Name", text: $name).agentSingleLineSubmit() }
                 Section("Default format") {
                     TextField("Format name", text: $formatName)
                         .agentSingleLineSubmit()
@@ -451,11 +468,14 @@ struct NewDestinationView: View {
                     }
                 }
             }
-            .navigationTitle("New destination")
+            .navigationTitle("New platform")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create destination") {
+                    Button("Create platform") {
+                        guard !destinations.contains(where: {
+                            PublishingCatalog.logicalKey(for: $0) == "custom:\(PublishingCatalog.normalizedName(name))"
+                        }) else { return }
                         let destination = PublishingDestination(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
                         context.insert(destination)
                         context.insert(PublishingFormat(destinationID: destination.id, name: formatName.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind))

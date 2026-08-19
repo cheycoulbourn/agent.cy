@@ -35,9 +35,38 @@ enum AgentLayout {
     static let bottomNavigationClearance: CGFloat = 120
 }
 
+/// Shared geometry for the Quick Add launcher and every drill-down it owns.
+/// Keeping these values centralized prevents embedded flows from jumping to a
+/// different width or inventing a second toolbar treatment.
+enum AgentQuickAddLayout {
+    static let desktopHeaderHeight: CGFloat = 64
+    /// Phone quick-action controls need breathing room below the safe area.
+    /// Keep this geometry centralized so new capture flows cannot creep back
+    /// toward the status bar.
+    static let phoneHeaderHeight: CGFloat = 72
+    static let phoneHeaderTopPadding: CGFloat = AgentSpacing.x3
+    static var headerHeight: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        desktopHeaderHeight
+        #else
+        phoneHeaderHeight
+        #endif
+    }
+    static var headerTopPadding: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        0
+        #else
+        phoneHeaderTopPadding
+        #endif
+    }
+    static let desktopContentWidth: CGFloat = 620
+    static let desktopEditorWidth: CGFloat = 680
+}
+
 enum AgentRadius {
     static let structural: CGFloat = 8
     static let control: CGFloat = 8
+    static let button: CGFloat = 10
     static let card: CGFloat = 12
     static let panel: CGFloat = 16
     static let floating: CGFloat = 28
@@ -60,12 +89,12 @@ enum AgentIcon: String, CaseIterable, Sendable {
     case forward = "agent-icon-forward"
     case expand = "agent-icon-expand"
     case collapse = "agent-icon-collapse"
-    case moveVertical = "agent-icon-move-vertical"
     case external = "agent-icon-external"
     case arrowUp = "agent-icon-arrow-up"
     case arrowRight = "agent-icon-arrow-right"
     case branch = "agent-icon-branch"
     case refresh = "agent-icon-refresh"
+    case bell = "agent-icon-bell"
     case home = "agent-icon-home"
     case calendar = "agent-icon-calendar"
     case tasks = "agent-icon-tasks"
@@ -86,6 +115,7 @@ enum AgentIcon: String, CaseIterable, Sendable {
     case microphone = "agent-icon-microphone"
     case profile = "agent-icon-profile"
     case warning = "agent-icon-warning"
+    case info = "agent-icon-info"
     case keyboardDown = "agent-icon-keyboard-down"
     case idea = "agent-icon-idea"
     case folder = "agent-icon-folder"
@@ -106,6 +136,13 @@ enum AgentIcon: String, CaseIterable, Sendable {
     case sliders = "agent-icon-sliders"
     case business = "agent-icon-business"
 
+    /// Nucleo glyphs share an 18-point canvas, but the back chevron occupies
+    /// more of that canvas than Close and Ellipsis. Keep every Back control on
+    /// the same touch target while matching those icons optically.
+    var opticalScale: CGFloat {
+        self == .back ? 0.8 : 1
+    }
+
     init(legacySystemName name: String) {
         switch name {
         case "archivebox": self = .archive
@@ -113,6 +150,7 @@ enum AgentIcon: String, CaseIterable, Sendable {
         case "arrow.down.to.line", "square.and.arrow.down": self = .download
         case "arrow.right": self = .arrowRight
         case "arrow.triangle.2.circlepath": self = .refresh
+        case "bell": self = .bell
         case "arrow.triangle.branch": self = .branch
         case "arrow.up": self = .arrowUp
         case "arrow.up.right": self = .external
@@ -124,7 +162,7 @@ enum AgentIcon: String, CaseIterable, Sendable {
         case "chevron.right": self = .forward
         case "chevron.down": self = .expand
         case "chevron.up": self = .collapse
-        case "chevron.up.chevron.down": self = .moveVertical
+        case "chevron.up.chevron.down": self = .expand
         case "circle": self = .radioEmpty
         case "doc.fill", "doc.on.doc", "text.page": self = .copy
         case "ellipsis": self = .more
@@ -172,6 +210,38 @@ enum AgentIcon: String, CaseIterable, Sendable {
     }
 }
 
+enum AgentNavigationIconMetrics {
+    /// Matches the Back glyph inside the approved 48-point recording-detail
+    /// control. Every custom and native Back indicator uses this rendered size.
+    static let backGlyphSide: CGFloat = 12.8
+    static let nativeBackCanvasSide: CGFloat = 18
+}
+
+@MainActor
+enum AgentNavigationAppearance {
+    static let backIndicatorAssetName = AgentIcon.back.rawValue
+
+    static func configure() {
+#if !targetEnvironment(macCatalyst)
+        guard let source = UIImage(named: backIndicatorAssetName) else { return }
+        let canvasSide = AgentNavigationIconMetrics.nativeBackCanvasSide
+        let glyphSide = AgentNavigationIconMetrics.backGlyphSide
+        let origin = (canvasSide - glyphSide) / 2
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasSide, height: canvasSide))
+        let indicator = renderer.image { _ in
+            source
+                .withTintColor(.black, renderingMode: .alwaysOriginal)
+                .draw(in: CGRect(x: origin, y: origin, width: glyphSide, height: glyphSide))
+        }
+        .withRenderingMode(.alwaysTemplate)
+
+        let navigationBar = UINavigationBar.appearance()
+        navigationBar.backIndicatorImage = indicator
+        navigationBar.backIndicatorTransitionMaskImage = indicator
+#endif
+    }
+}
+
 struct AgentIconView: View {
     let icon: AgentIcon
     var size: CGFloat = 18
@@ -186,10 +256,14 @@ struct AgentIconView: View {
     }
 
     var body: some View {
+        let renderedSize = icon == .back
+            ? AgentNavigationIconMetrics.backGlyphSide
+            : size * icon.opticalScale
         Image(icon.rawValue)
             .renderingMode(.template)
             .resizable()
             .scaledToFit()
+            .frame(width: renderedSize, height: renderedSize)
             .frame(width: size, height: size)
             .accessibilityHidden(true)
     }
@@ -217,29 +291,61 @@ struct AgentToolbarIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            AgentIconView(icon, size: 17)
-                .foregroundStyle(Color.agentText)
-                .frame(width: 44, height: 44)
-                .contentShape(.circle)
+            AgentToolbarIconLabel(icon: icon)
         }
         .buttonStyle(.plain)
-        .frame(width: 44, height: 44)
-        .glassEffect(.clear.interactive(), in: .circle)
-        .overlay {
-            Circle()
-                .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                .allowsHitTesting(false)
-        }
-        .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.42)
         .accessibilityLabel(title)
     }
 }
 
+/// Canonical 44-point phone header control. It matches the system back-button
+/// footprint and can also be used as a Menu label without changing geometry.
+struct AgentToolbarIconLabel: View {
+    let icon: AgentIcon
+    var foreground: Color = .agentText
+    var iconSize: CGFloat = 17
+
+    var body: some View {
+        AgentIconView(icon, size: iconSize)
+            .foregroundStyle(foreground)
+            .frame(width: 44, height: 44)
+            .contentShape(.circle)
+            .glassEffect(.clear.interactive(), in: .circle)
+            .overlay {
+                Circle()
+                    .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            }
+    }
+}
+
+struct AgentSelectionIndicator: View {
+    let isSelected: Bool
+
+    var body: some View {
+        Circle()
+            .fill(isSelected ? Color.agentText : Color.clear)
+            .overlay {
+                Circle()
+                    .stroke(isSelected ? Color.agentText : Color.agentBorder, lineWidth: 1.25)
+            }
+            .overlay {
+                if isSelected {
+                    AgentIconView(.check, size: 9)
+                        .foregroundStyle(Color.agentSurface)
+                }
+            }
+            .frame(width: 20, height: 20)
+            .frame(width: 28, height: 44)
+            .accessibilityHidden(true)
+    }
+}
+
 /// Shared desktop drill-down chrome. Keeping the navigation rail outside the
 /// system toolbar prevents Catalyst from adding a scrolling material shadow,
-/// and gives tasks, posts, and agenda days the same geometry.
+/// and gives tasks, posts, pillars, and agenda days the same geometry.
 struct AgentDesktopDetailRail<Trailing: View>: View {
     let title: String
     let backAction: () -> Void
@@ -355,6 +461,9 @@ struct AgentDesktopDetailIconLabel: View {
 extension Color {
     static let agentPureBlack = Color(uiColor: AgentColorPalette.pureBlack.uiColor)
     static let agentPureWhite = Color(uiColor: AgentColorPalette.pureWhite.uiColor)
+    /// A stable warm off-white that stays light in both appearances. Reserved
+    /// for explicitly light desktop records that need contrast from the canvas.
+    static let agentWarmWhite = Color(uiColor: AgentColorPalette.surfaceLight.uiColor)
     static let agentCanvas = adaptive(light: AgentColorPalette.canvasLight, dark: AgentColorPalette.canvasDark)
     static let agentSurface = adaptive(light: AgentColorPalette.surfaceLight, dark: AgentColorPalette.surfaceDark)
     static let agentText = adaptive(light: AgentColorPalette.inkLight, dark: AgentColorPalette.inkDark)
@@ -377,6 +486,34 @@ extension Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? dark.uiColor : light.uiColor
         })
+    }
+}
+
+/// Shared timing for desktop modals that resize between stages (the creation
+/// hub, and Cy moving between chat and the review workspace). `smooth` eases
+/// without the spring overshoot `snappy` adds, which reads as a settle at these
+/// sizes.
+enum AgentModalResize {
+    static let animation: Animation = .smooth(duration: 0.34)
+}
+
+private struct AgentDesktopWorkspaceModalModifier: ViewModifier {
+    var sheet: AppSheet? = nil
+
+    func body(content: Content) -> some View {
+#if targetEnvironment(macCatalyst)
+        let selfSizing = sheet.map(DesktopLayoutPolicy.sizesItself) ?? false
+        let metrics = DesktopLayoutPolicy.workspaceModalMetrics
+        content
+            .frame(
+                width: selfSizing ? nil : metrics.width,
+                height: selfSizing ? nil : metrics.height
+            )
+            .background(Color.agentCanvas.ignoresSafeArea())
+            .presentationBackground(Color.agentCanvas)
+#else
+        content
+#endif
     }
 }
 
@@ -596,6 +733,32 @@ extension Font {
     }
 }
 
+enum AgentButtonPressFeedback {
+    static func value<Value>(resting: Value, pressed: Value, isPressed: Bool) -> Value {
+#if targetEnvironment(macCatalyst)
+        resting
+#else
+        isPressed ? pressed : resting
+#endif
+    }
+
+    static func scale(isPressed: Bool, reduceMotion: Bool) -> CGFloat {
+#if targetEnvironment(macCatalyst)
+        1
+#else
+        isPressed && !reduceMotion ? 0.96 : 1
+#endif
+    }
+
+    static func animation(reduceMotion: Bool) -> Animation? {
+#if targetEnvironment(macCatalyst)
+        nil
+#else
+        reduceMotion ? nil : .easeOut(duration: 0.12)
+#endif
+    }
+}
+
 struct AgentPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -610,8 +773,14 @@ struct AgentPrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(foreground)
             .background(background, in: .capsule)
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -628,8 +797,14 @@ struct AgentCyPrimaryButtonStyle: ButtonStyle {
             .background(Color.cyAccent, in: .capsule)
             .shadow(color: Color.cyAccent.opacity(0.28), radius: 16, y: 6)
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -646,8 +821,14 @@ struct AgentSecondaryButtonStyle: ButtonStyle {
             .background(Color.agentSurface, in: .capsule)
             .overlay(Capsule().strokeBorder(Color.agentBorder, lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -659,9 +840,85 @@ struct AgentPressButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(isEnabled
+                ? AgentButtonPressFeedback.value(
+                    resting: 1.0,
+                    pressed: 0.72,
+                    isPressed: configuration.isPressed
+                )
+                : 0.42)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
+    }
+}
+
+struct AgentCircularGlassIconButton: View {
+    let icon: AgentIcon
+    let accessibilityLabel: String
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            AgentIconView(icon, size: 16)
+                .foregroundStyle(Color.agentText)
+                .frame(width: 48, height: 48)
+        }
+        .buttonStyle(AgentPressButtonStyle())
+        .frame(width: 48, height: 48)
+        .contentShape(.circle)
+        .glassEffect(.clear.interactive(), in: .circle)
+        .overlay {
+            Circle()
+                .stroke(Color.agentPureWhite.opacity(0.16), lineWidth: 0.5)
+                .allowsHitTesting(false)
+        }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.34)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// Canonical persistent post action on iPhone. Its material and highlight are
+/// intentionally identical to the bottom menu bar so Schedule, Mark posted,
+/// and Reschedule always read as one system-level action family.
+struct AgentPhonePostActionButton: View {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+
+    let title: String
+    let accessibilityHint: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.agentSubtext.weight(.medium))
+                .lineLimit(1)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Color.agentText)
+                .padding(.horizontal, AgentSpacing.x4)
+                .frame(maxWidth: .infinity, minHeight: 56, alignment: .center)
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.clear.interactive(), in: .capsule)
+        .overlay {
+            Capsule()
+                .stroke(
+                    Color.agentPureWhite.opacity(colorScheme == .dark ? 0.14 : 0.45),
+                    lineWidth: 0.5
+                )
+                .allowsHitTesting(false)
+        }
+        .opacity(isEnabled ? 1 : 0.42)
+        .accessibilityHint(accessibilityHint)
     }
 }
 
@@ -691,7 +948,7 @@ struct AgentAddActionRow: View {
             .frame(minHeight: 44)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AgentPressButtonStyle())
     }
 }
 
@@ -724,26 +981,108 @@ struct AgentBlockAddActionButton: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
             .contentShape(.rect)
         }
+        .buttonStyle(AgentPressButtonStyle())
+    }
+}
+
+#if targetEnvironment(macCatalyst)
+/// Compact desktop menu row used by custom post action popovers. Native
+/// Catalyst menus inflate asset-backed icons, so this keeps their optical
+/// weight aligned with the surrounding utility text.
+struct AgentDesktopMenuRow: View {
+    let title: String
+    let icon: AgentIcon
+    var isDestructive = false
+    var isSelected = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(role: isDestructive ? .destructive : nil, action: action) {
+            HStack(spacing: AgentSpacing.x3) {
+                AgentIconView(icon, size: 15)
+                    .frame(width: 18, height: 18)
+
+                Text(title)
+                    .font(.agentSubtext)
+
+                Spacer(minLength: AgentSpacing.x3)
+
+                if isSelected {
+                    AgentIconView(.check, size: 13)
+                        .frame(width: 18, height: 18)
+                }
+            }
+            .foregroundStyle(isDestructive ? Color.agentDestructive : Color.agentText)
+            .padding(.horizontal, AgentSpacing.x3)
+            .frame(minHeight: 40)
+            .background(
+                isHovered ? Color.agentSelectionFill : Color.clear,
+                in: .rect(cornerRadius: AgentRadius.control)
+            )
+            .contentShape(.rect)
+        }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+struct AgentDesktopMenuDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.agentHairline)
+            .frame(height: 1)
+            .padding(.horizontal, AgentSpacing.x3)
+            .padding(.vertical, AgentSpacing.x1)
+    }
+}
+#endif
+
+enum AgentTaskCheckboxAlignment {
+    /// Rows align checkboxes with `.firstTextBaseline`. On the phone the
+    /// guide rests the box's top edge exactly on the title's cap line. On
+    /// desktop the guide centers the box on the title's first line (never on
+    /// a title+metadata block), matching the Control Center widget optics.
+    static func baselineGuide(
+        titlePointSize: CGFloat,
+        relativeTo style: UIFont.TextStyle = .body
+    ) -> CGFloat {
+        let base = UIFont(name: "InterVariable", size: titlePointSize)
+            ?? .systemFont(ofSize: titlePointSize)
+        let capHeight = UIFontMetrics(forTextStyle: style).scaledFont(for: base).capHeight
+        #if targetEnvironment(macCatalyst)
+        let markTopInset = (44 - AgentTaskCheckboxMetrics.markSide) / 2
+        return markTopInset + AgentTaskCheckboxMetrics.markSide / 2 + capHeight / 2
+        #else
+        return capHeight
+        #endif
     }
 }
 
 struct AgentTaskCheckbox: View {
     let isCompleted: Bool
     var color: Color = .agentBorder
+    /// Point size of the row title beside this checkbox; drives the cap-line
+    /// baseline guide. Rows must use `HStack(alignment: .firstTextBaseline)`.
+    var titlePointSize: CGFloat = 15
     let accessibilityLabel: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             AgentTaskCheckboxMark(isCompleted: isCompleted, color: color)
-                .frame(width: 20, height: 44, alignment: .leading)
+                .frame(width: 20, height: 44, alignment: AgentTaskCheckboxMetrics.markFrameAlignment)
                 // Expand only horizontally. Expanding vertically makes the
                 // target collide with checkboxes in adjacent 44-point rows.
                 .contentShape(AgentHorizontalHitArea(horizontalExpansion: 12))
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(accessibilityLabel)
+        .alignmentGuide(.firstTextBaseline) { _ in
+            AgentTaskCheckboxAlignment.baselineGuide(titlePointSize: titlePointSize)
+        }
     }
 }
 
@@ -762,9 +1101,37 @@ private struct AgentHorizontalHitArea: Shape {
     }
 }
 
+enum AgentTaskCheckboxMetrics {
+    /// The mark tracks each platform's title scale: desktop titles run
+    /// smaller (14pt utility body), so its box shrinks proportionally while
+    /// the phone keeps its 19pt mark beside 15pt titles.
+    static var markSide: CGFloat {
+        #if targetEnvironment(macCatalyst)
+        16
+        #else
+        19
+        #endif
+    }
+
+    /// Every checkbox row aligns on the first text line: the platform guide
+    /// in AgentTaskCheckboxAlignment then chooses cap-top (phone) or
+    /// title-line centering (desktop), so metadata lines never pull the box
+    /// toward a block center.
+    static var rowAlignment: VerticalAlignment { .firstTextBaseline }
+
+    static var markFrameAlignment: Alignment {
+        #if targetEnvironment(macCatalyst)
+        .leading
+        #else
+        .topLeading
+        #endif
+    }
+}
+
 struct AgentTaskCheckboxMark: View {
     let isCompleted: Bool
     var color: Color = .agentBorder
+    var size: CGFloat = AgentTaskCheckboxMetrics.markSide
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -776,23 +1143,27 @@ struct AgentTaskCheckboxMark: View {
                 in: .rect(cornerRadius: 4)
             )
             .overlay {
-                AgentIconView(.check, size: 11)
+                AgentIconView(.check, size: (size * 0.58).rounded())
                     .foregroundStyle(Color.agentCanvas)
                     .opacity(isCompleted ? 1 : 0)
                     .scaleEffect(isCompleted ? 1 : 0.6)
             }
-            .frame(width: 19, height: 19)
+            .frame(width: size, height: size)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isCompleted)
     }
 }
 
 struct AgentTaskCheckboxPlaceholder: View {
     var color: Color = .agentBorder
+    var titlePointSize: CGFloat = 15
 
     var body: some View {
         AgentTaskCheckboxMark(isCompleted: false, color: color)
-            .frame(width: 20, height: 44, alignment: .leading)
+            .frame(width: 20, height: 44, alignment: AgentTaskCheckboxMetrics.markFrameAlignment)
             .accessibilityHidden(true)
+            .alignmentGuide(.firstTextBaseline) { _ in
+                AgentTaskCheckboxAlignment.baselineGuide(titlePointSize: titlePointSize)
+            }
     }
 }
 
@@ -809,8 +1180,14 @@ struct AgentCompactSecondaryButtonStyle: ButtonStyle {
             .background(Color.agentSurface, in: .capsule)
             .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -830,9 +1207,21 @@ struct AgentDesktopPrimaryActionButtonStyle: ButtonStyle {
             .frame(minHeight: 40)
             .foregroundStyle(Color.onCyAccent)
             .background(Color.cyAccent, in: .capsule)
-            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(isEnabled
+                ? AgentButtonPressFeedback.value(
+                    resting: 1.0,
+                    pressed: 0.82,
+                    isPressed: configuration.isPressed
+                )
+                : 0.42)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -851,13 +1240,27 @@ struct AgentDesktopQuietActionButtonStyle: ButtonStyle {
             .frame(minHeight: 40)
             .background(
                 isProminent
-                    ? Color.actionAccent.opacity(configuration.isPressed ? 0.82 : 1)
-                    : Color.agentSelectionFill.opacity(configuration.isPressed ? 1 : 0.72),
+                    ? Color.actionAccent.opacity(AgentButtonPressFeedback.value(
+                        resting: 1.0,
+                        pressed: 0.82,
+                        isPressed: configuration.isPressed
+                    ))
+                    : Color.agentSelectionFill.opacity(AgentButtonPressFeedback.value(
+                        resting: 0.72,
+                        pressed: 1.0,
+                        isPressed: configuration.isPressed
+                    )),
                 in: .rect(cornerRadius: AgentRadius.control)
             )
             .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -1035,11 +1438,29 @@ struct AgentHoverRowModifier: ViewModifier {
 }
 
 extension View {
+    /// Canonical spacious footprint for every desktop Quick Action and the
+    /// Settings modal, based on the approved Cy post-development sheet.
+    func agentDesktopWorkspaceModal(sheet: AppSheet? = nil) -> some View {
+        modifier(AgentDesktopWorkspaceModalModifier(sheet: sheet))
+    }
+
     func agentHoverRow(
         cornerRadius: CGFloat = AgentRadius.control,
         bleed: CGFloat = 0
     ) -> some View {
         modifier(AgentHoverRowModifier(cornerRadius: cornerRadius, horizontalBleed: bleed))
+    }
+
+    /// Keeps sheet affordances platform-appropriate. A drag handle is useful
+    /// on iPhone, but Catalyst animates it separately from a dismissing sheet,
+    /// which makes the handle look like a loose bar traveling down the page.
+    @ViewBuilder
+    func agentSheetDragIndicator() -> some View {
+#if targetEnvironment(macCatalyst)
+        presentationDragIndicator(.hidden)
+#else
+        presentationDragIndicator(.visible)
+#endif
     }
 }
 
@@ -1113,8 +1534,53 @@ struct CyAsterisk: View {
     }
 }
 
+/// The canonical static agent.cy logo mark. Brand headers and system-generated
+/// notices use this exact component so a small notice can never drift into a
+/// generic star, sparkle, or SF Symbol.
+struct AgentCyLogoMark: View {
+    var color: Color = .cyAccent
+    var size: CGFloat = 16
+
+    var body: some View {
+        CyAsterisk(
+            color: color,
+            size: size,
+            strokeWidth: max(1, size * (2 / 23))
+        )
+    }
+}
+
+/// Shared activity treatment for MCP proposals waiting in Cy. Phone and Mac
+/// use the same speed and brand geometry so the signal means one thing across
+/// both apps. Reduce Motion keeps the mark static while preserving the state.
+struct CyPendingReviewLogo: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isRotating = false
+
+    var color: Color = .cyAccent
+    var size: CGFloat = 20
+    var strokeWidth: CGFloat = 1.8
+
+    var body: some View {
+        CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
+            .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
+            .animation(
+                reduceMotion ? nil : .linear(duration: 1.8).repeatForever(autoreverses: false),
+                value: isRotating
+            )
+            .onAppear { isRotating = true }
+            .accessibilityHidden(true)
+    }
+}
+
 /// The primary animated Cy brand mark used on high-level Cy surfaces.
 /// Smaller inline references continue to use the static `CyAsterisk`.
+enum CyAnimatedLogoMotionPolicy {
+    static func usesTimeline(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+}
+
 struct CyAnimatedLogo: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1124,21 +1590,32 @@ struct CyAnimatedLogo: View {
     var duration: TimeInterval = 2.8
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
-            let progress = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: duration) / duration
-            let pulse = 1 - (abs(progress - 0.5) * 2)
+        Group {
+            if CyAnimatedLogoMotionPolicy.usesTimeline(reduceMotion: reduceMotion) {
+                TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+                    let progress = timeline.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: duration) / duration
+                    let pulse = 1 - (abs(progress - 0.5) * 2)
 
-            CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
-                .rotationEffect(.degrees(reduceMotion ? 0 : progress * 45))
-                .scaleEffect(reduceMotion ? 1 : 0.97 + (pulse * 0.06))
-                .shadow(
-                    color: color.opacity(reduceMotion ? 0.12 : 0.12 + (pulse * 0.12)),
-                    radius: reduceMotion ? 5 : 5 + (pulse * 4)
-                )
+                    animatedMark(progress: progress, pulse: pulse)
+                }
+            } else {
+                CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
+                    .shadow(color: color.opacity(0.12), radius: 5)
+            }
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+
+    private func animatedMark(progress: Double, pulse: Double) -> some View {
+            CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
+                .rotationEffect(.degrees(progress * 45))
+                .scaleEffect(0.97 + (pulse * 0.06))
+                .shadow(
+                    color: color.opacity(0.12 + (pulse * 0.12)),
+                    radius: 5 + (pulse * 4)
+                )
     }
 }
 
@@ -1392,6 +1869,20 @@ private struct AgentBottomNavigationClearanceModifier: ViewModifier {
     }
 }
 
+private struct AgentQuickAddHeaderSurfaceModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .frame(height: AgentQuickAddLayout.headerHeight)
+            .padding(.top, AgentQuickAddLayout.headerTopPadding)
+            .background(Color.agentCanvas)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.agentHairline)
+                    .frame(height: 1)
+            }
+    }
+}
+
 extension View {
     /// The canonical card treatment used by the guided walkthrough and every
     /// elevated app surface: one neutral hairline plus two ambient shadow layers.
@@ -1411,6 +1902,13 @@ extension View {
 
     func agentBottomNavigationClearance(additional: CGFloat = 0) -> some View {
         modifier(AgentBottomNavigationClearanceModifier(additional: additional))
+    }
+
+    /// Flat, stable Quick Add header chrome. Catalyst material headers can
+    /// create separate update layers while child views swap, producing the
+    /// traveling shadows and repeated layout work seen in crash reports.
+    func agentQuickAddHeaderSurface() -> some View {
+        modifier(AgentQuickAddHeaderSurfaceModifier())
     }
 
     func reportAgentViewHeight() -> some View {
@@ -1472,7 +1970,7 @@ struct AgentInputHeader: View {
                         .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
                         .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AgentPressButtonStyle())
                 .accessibilityHint("Keeps your writing and hides the keyboard")
             }
         }

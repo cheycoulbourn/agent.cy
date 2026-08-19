@@ -43,6 +43,143 @@ final class WidgetTests: XCTestCase {
         XCTAssertTrue(try WidgetTaskCompletionActionStore.pending(defaults: defaults).isEmpty)
     }
 
+    func testPhoneFeatureLaunchRequestIsConsumedOnce() throws {
+        let suite = "AgentCyPhoneFeatureLaunchTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        PhoneFeatureLaunchRequestStore.request(.voiceSpark, defaults: defaults)
+
+        XCTAssertEqual(PhoneFeatureLaunchRequestStore.take(defaults: defaults), .voiceSpark)
+        XCTAssertNil(PhoneFeatureLaunchRequestStore.take(defaults: defaults))
+    }
+
+    func testCreatorSessionRecordStoreRoundTrips() throws {
+        let suite = "AgentCyCreatorSessionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let start = Date(timeIntervalSince1970: 1_784_050_200)
+        let postID = UUID()
+        let expected = ActiveCreatorSessionRecord(
+            sessionID: "session-1",
+            title: "Film the studio update",
+            mode: .filming,
+            startedAt: start,
+            endDate: start.addingTimeInterval(2_700),
+            durationMinutes: 45,
+            linkedPostID: postID,
+            linkedPostTitle: "Studio update"
+        )
+
+        try CreatorSessionRecordStore.save(expected, defaults: defaults)
+
+        XCTAssertEqual(CreatorSessionRecordStore.load(defaults: defaults), expected)
+        CreatorSessionRecordStore.clear(defaults: defaults)
+        XCTAssertNil(CreatorSessionRecordStore.load(defaults: defaults))
+    }
+
+    func testCreatorSessionLogKeepsLinkedPostAndDeduplicatesSession() throws {
+        let suite = "AgentCyCreatorSessionLogTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let start = Date(timeIntervalSince1970: 1_784_050_200)
+        let postID = UUID()
+        let session = ActiveCreatorSessionRecord(
+            sessionID: "session-1",
+            title: "Film the studio update",
+            mode: .filming,
+            startedAt: start,
+            endDate: start.addingTimeInterval(2_700),
+            durationMinutes: 45,
+            linkedPostID: postID,
+            linkedPostTitle: "Studio update"
+        )
+        let log = CreatorSessionLog(session: session, endedAt: start.addingTimeInterval(900))
+
+        try CreatorSessionLogStore.append(log, defaults: defaults)
+        try CreatorSessionLogStore.append(log, defaults: defaults)
+
+        let history = CreatorSessionLogStore.load(defaults: defaults)
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history.first?.linkedPostID, postID)
+        XCTAssertEqual(history.first?.linkedPostTitle, "Studio update")
+        XCTAssertEqual(history.first?.endedAt, start.addingTimeInterval(900))
+    }
+
+    func testCreatorSessionKeepsOptionalLogSeparateFromLinkedPostTitle() {
+        let start = Date(timeIntervalSince1970: 1_784_050_200)
+        let session = ActiveCreatorSessionRecord(
+            sessionID: "session-linked-post",
+            title: "",
+            mode: .writing,
+            startedAt: start,
+            endDate: start.addingTimeInterval(1_500),
+            durationMinutes: 25,
+            linkedPostID: UUID(),
+            linkedPostTitle: "No scroll Sundays ritual",
+            style: .pomodoro,
+            totalRounds: 4,
+            timerTheme: .splitDial
+        )
+
+        XCTAssertEqual(session.title, "")
+        XCTAssertEqual(session.displayTitle, "Write session")
+        XCTAssertEqual(session.linkedPostTitle, "No scroll Sundays ritual")
+        XCTAssertEqual(session.timerTheme, .splitDial)
+    }
+
+    func testCreatorSessionSupportsMultipleOrderedModes() throws {
+        let start = Date(timeIntervalSince1970: 1_784_050_200)
+        let session = ActiveCreatorSessionRecord(
+            sessionID: "session-multiple-modes",
+            title: "",
+            mode: .editing,
+            modes: [.editing, .planning, .writing, .planning],
+            startedAt: start,
+            endDate: start.addingTimeInterval(2_700),
+            durationMinutes: 45,
+            style: .custom,
+            timerTheme: .focusConsole
+        )
+
+        XCTAssertEqual(session.modes, [.planning, .writing, .editing])
+        XCTAssertEqual(session.mode, .planning)
+        XCTAssertEqual(session.modeSummary, "Plan + Write + Edit")
+        XCTAssertEqual(session.displayTitle, "Plan + Write + Edit session")
+
+        let decoded = try JSONDecoder().decode(
+            ActiveCreatorSessionRecord.self,
+            from: JSONEncoder().encode(session)
+        )
+        XCTAssertEqual(decoded.modes, session.modes)
+        XCTAssertEqual(CreatorSessionLog(session: session, endedAt: start).modes, session.modes)
+    }
+
+    func testCreatorSessionScrollResetsWhenTimerPresentationChanges() {
+        XCTAssertTrue(CreatorSessionPresentationPolicy.shouldResetScroll(
+            previousSessionID: nil,
+            currentSessionID: "session-1"
+        ))
+        XCTAssertFalse(CreatorSessionPresentationPolicy.shouldResetScroll(
+            previousSessionID: "session-1",
+            currentSessionID: "session-1"
+        ))
+        XCTAssertTrue(CreatorSessionPresentationPolicy.shouldResetScroll(
+            previousSessionID: "session-1",
+            currentSessionID: nil
+        ))
+    }
+
+    func testPhoneQuickActionHeaderKeepsTopControlsBelowTheSafeArea() {
+        XCTAssertEqual(AgentQuickAddLayout.phoneHeaderHeight, 72)
+        XCTAssertEqual(AgentQuickAddLayout.phoneHeaderTopPadding, 12)
+    }
+
+    func testPomodoroPlanIncludesFocusRoundsAndShortBreaks() {
+        let plan = CreatorSessionPlan(focusMinutes: 25, shortBreakMinutes: 5, rounds: 4, longBreakMinutes: 15)
+        XCTAssertEqual(plan.plannedDurationMinutes, 115)
+    }
+
     func testPendingWidgetTaskCompletionReconcilesIntoSwiftData() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -76,10 +213,13 @@ final class WidgetTests: XCTestCase {
             .agenda(day: nil),
             .agenda(day: day),
             .tasks,
+            .pillars,
             .ideaBank,
             .quickIdea,
             .quickPost,
             .quickTask,
+            .voiceSpark,
+            .creatorSession,
             .brief(briefID),
         ]
 
@@ -120,6 +260,15 @@ final class WidgetTests: XCTestCase {
         let idea = CreativeBrief(title: "A fresh angle", premise: "A thought", status: .spark)
         idea.pillarID = pillar.id
         idea.updatedAt = now.addingTimeInterval(10)
+        let voiceSpark = CreativeBrief(
+            title: "A spoken thought",
+            premise: "A thought I recorded",
+            source: .voiceTranscript,
+            status: .spark
+        )
+        voiceSpark.pillarID = pillar.id
+        voiceSpark.ideaBankPlacement = .idea
+        voiceSpark.updatedAt = now.addingTimeInterval(5)
         let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .scheduled)
         output.targetDate = now
         let task = CreatorTask(
@@ -146,6 +295,7 @@ final class WidgetTests: XCTestCase {
         context.insert(pillar)
         context.insert(brief)
         context.insert(idea)
+        context.insert(voiceSpark)
         context.insert(output)
         context.insert(task)
         context.insert(pillarTask)
@@ -159,9 +309,121 @@ final class WidgetTests: XCTestCase {
         XCTAssertEqual(snapshot.nextPost?.title, "The small shift")
         XCTAssertEqual(snapshot.nextPost?.pillarColorHex, "5E8069")
         XCTAssertEqual(snapshot.latestIdea?.title, "A fresh angle")
+        XCTAssertEqual(snapshot.latestVoiceSpark?.title, "A spoken thought")
         XCTAssertEqual(snapshot.productionTasks.first?.title, "Film the opening")
         XCTAssertEqual(snapshot.productionTasks.map(\.lane), [.production, .pillar])
         XCTAssertEqual(snapshot.week.count, 7)
+        XCTAssertEqual(snapshot.week.reduce(0) { $0 + ($1.postCount ?? 0) }, 1)
+        XCTAssertEqual(snapshot.pillarUsage?.leadingPillarName, "Lifestyle")
+        XCTAssertEqual(snapshot.pillarUsage?.leadingPercentage, 100)
+        XCTAssertNil(snapshot.consistency?.goal, "No workspace goal is set in this fixture")
+        XCTAssertEqual(snapshot.consistency?.postedDayCount, 0)
+        XCTAssertEqual(snapshot.consistency?.days?.count, 7)
+        XCTAssertEqual(snapshot.consistency?.currentPlannedCount, 0)
+        XCTAssertEqual(snapshot.consistency?.currentPostedCount, 0)
+    }
+
+    func testPillarUsageSnapshotKeepsAnchorFirstAndIncludesEveryActivePillar() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let now = try XCTUnwrap(
+            Calendar.current.date(
+                bySettingHour: 12,
+                minute: 0,
+                second: 0,
+                of: Date()
+            )
+        )
+        let anchor = Pillar(role: .anchor, name: "Lifestyle", colorHex: "8A5A3B")
+        let beauty = Pillar(
+            parentPillarID: anchor.id,
+            role: .supporting,
+            name: "Beauty",
+            colorHex: "AFBCC6"
+        )
+        let business = Pillar(
+            parentPillarID: anchor.id,
+            role: .supporting,
+            name: "Business",
+            colorHex: "6B6136"
+        )
+        let community = Pillar(
+            parentPillarID: anchor.id,
+            role: .supporting,
+            name: "Community",
+            colorHex: "C9B48D"
+        )
+        let education = Pillar(
+            parentPillarID: anchor.id,
+            role: .supporting,
+            name: "Education",
+            colorHex: "416B85"
+        )
+
+        for (index, pillar) in [anchor, beauty, beauty].enumerated() {
+            let brief = CreativeBrief(title: "Post \(index)", status: .scheduled)
+            brief.pillarID = pillar.id
+            let output = PlatformOutput(
+                briefID: brief.id,
+                platform: .instagramReels,
+                status: .scheduled
+            )
+            output.targetDate = now.addingTimeInterval(Double(index * 60))
+            context.insert(brief)
+            context.insert(output)
+        }
+        context.insert(anchor)
+        context.insert(beauty)
+        context.insert(business)
+        context.insert(community)
+        context.insert(education)
+        try context.save()
+
+        let usage = try XCTUnwrap(
+            WidgetSnapshotService.makeSnapshot(context: context, now: now).pillarUsage
+        )
+        let percentages = Dictionary(uniqueKeysWithValues: usage.segments.map { ($0.name, $0.percentage) })
+
+        XCTAssertEqual(
+            usage.segments.map(\.name),
+            ["Lifestyle", "Beauty", "Business", "Community", "Education"]
+        )
+        XCTAssertEqual(
+            percentages,
+            ["Lifestyle": 33, "Beauty": 67, "Business": 0, "Community": 0, "Education": 0]
+        )
+        XCTAssertEqual(usage.leadingPillarName, "Lifestyle")
+        XCTAssertEqual(usage.leadingPercentage, 33)
+    }
+
+    func testPillarUsagePresentationDoesNotSubstitutePreviewDataInProduction() {
+        XCTAssertNil(
+            WidgetPillarUsagePresentation.usage(
+                for: .empty,
+                isPreview: false
+            )
+        )
+        XCTAssertEqual(
+            WidgetPillarUsagePresentation.usage(
+                for: .empty,
+                isPreview: true
+            ),
+            AgentCyWidgetSnapshot.preview.pillarUsage
+        )
+    }
+
+    func testPillarUsageBarWidthsStopAtTheWidgetContentInset() {
+        let totalWidth: CGFloat = 300
+        let widths = WidgetPillarBarLayout.segmentWidths(
+            percentages: [33, 50, 17],
+            totalWidth: totalWidth
+        )
+        let renderedWidth = widths.reduce(0, +)
+            + WidgetPillarBarLayout.segmentSpacing * CGFloat(widths.count - 1)
+
+        XCTAssertEqual(widths.count, 3)
+        XCTAssertEqual(renderedWidth, totalWidth, accuracy: 0.001)
+        XCTAssertTrue(widths.allSatisfy { $0 >= 8 })
     }
 
     func testSnapshotDoesNotPromoteTomorrowPostIntoTodaysWidget() throws {
@@ -218,6 +480,164 @@ final class WidgetTests: XCTestCase {
         let snapshot = try WidgetSnapshotService.makeSnapshot(context: context, now: now)
 
         XCTAssertNil(snapshot.nextPost)
+    }
+
+    // Widget request 2026-08-19: the consistency tile mirrors the in-app goal
+    // card. The wire format stays additive so installed widgets keep decoding.
+    func testConsistencySnapshotWireFormatStaysAdditiveForInstalledWidgets() throws {
+        let legacyJSON = Data("""
+        {"completedWeeks":[true,false],"streak":1,"currentPostedCount":2,"currentPlannedCount":3}
+        """.utf8)
+        let legacy = try JSONDecoder().decode(WidgetConsistencySnapshot.self, from: legacyJSON)
+        XCTAssertEqual(legacy.streak, 1)
+        XCTAssertNil(legacy.days)
+        XCTAssertNil(legacy.postedDayCount)
+        XCTAssertNil(legacy.goal)
+
+        let current = WidgetConsistencySnapshot(
+            completedWeeks: [false, true],
+            streak: 1,
+            currentPostedCount: 2,
+            currentPlannedCount: 4,
+            days: [WidgetConsistencyDaySnapshot(date: Date(timeIntervalSince1970: 1_787_000_000), hasPost: true)],
+            postedDayCount: 2,
+            goal: 4
+        )
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(current))
+        let keys = Set(try XCTUnwrap(object as? [String: Any]).keys)
+        for legacyKey in ["completedWeeks", "streak", "currentPostedCount", "currentPlannedCount"] {
+            XCTAssertTrue(keys.contains(legacyKey), "Installed widgets still decode \(legacyKey)")
+        }
+    }
+
+    func testConsistencySnapshotCountsDistinctPostedDaysAgainstTheWorkspaceGoal() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let calendar = Calendar.current
+        func date(_ day: Int, hour: Int = 9) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 8, day: day, hour: hour))!
+        }
+        let now = date(19, hour: 12) // Wednesday; the week runs Mon 8/17 – Sun 8/23
+
+        let workspace = CreatorWorkspace(profileID: UUID(), name: "@goal")
+        workspace.weeklyPostingGoal = 2
+        let brief = CreativeBrief(title: "Posted work", premise: "A premise", status: .posted)
+        context.insert(workspace)
+        context.insert(brief)
+        // Two posts on Monday count as one day; Wednesday's post has no
+        // postedAt and falls back to its target date. Last week's Tuesday and
+        // Thursday posts put that week on the goal too.
+        let postedDates: [(postedAt: Date?, targetDate: Date?)] = [
+            (date(17, hour: 8), nil),
+            (date(17, hour: 19), nil),
+            (nil, date(19)),
+            (date(11), nil),
+            (date(13), nil),
+        ]
+        for entry in postedDates {
+            let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .posted)
+            output.postedAt = entry.postedAt
+            output.targetDate = entry.targetDate
+            context.insert(output)
+        }
+        try context.save()
+
+        let snapshot = try WidgetSnapshotService.makeSnapshot(
+            context: context,
+            now: now,
+            workspaceID: workspace.id
+        )
+
+        let consistency = try XCTUnwrap(snapshot.consistency)
+        XCTAssertEqual(consistency.goal, 2)
+        XCTAssertEqual(consistency.postedDayCount, 2)
+        XCTAssertEqual(consistency.days?.map(\.hasPost), [true, false, true, false, false, false, false])
+        XCTAssertEqual(consistency.streak, 2, "Last week and this week both hit the goal")
+        XCTAssertEqual(Array(consistency.completedWeeks.suffix(2)), [true, true])
+        XCTAssertFalse(consistency.completedWeeks.prefix(6).contains(true))
+        // The legacy fields mirror the goal story for installed widgets.
+        XCTAssertEqual(consistency.currentPostedCount, 2)
+        XCTAssertEqual(consistency.currentPlannedCount, 2)
+    }
+
+    func testConsistencyPresentationResolvesGoalStateForTheWidget() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US")
+        calendar.firstWeekday = 2
+        func day(_ dayOfMonth: Int, hour: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 8, day: dayOfMonth, hour: hour))!
+        }
+        let now = day(19, hour: 12) // Wednesday; the week runs Mon 8/17 – Sun 8/23
+        let days = (0..<7).map { offset in
+            WidgetConsistencyDaySnapshot(
+                date: day(17 + offset),
+                hasPost: [true, false, true, false, false, false, false][offset]
+            )
+        }
+        var snapshot = AgentCyWidgetSnapshot.empty
+        snapshot.consistency = WidgetConsistencySnapshot(
+            completedWeeks: [true, true],
+            streak: 2,
+            currentPostedCount: 2,
+            currentPlannedCount: 2,
+            days: days,
+            postedDayCount: 2,
+            goal: 2
+        )
+
+        let mode = WidgetConsistencyPresentation.mode(
+            for: snapshot,
+            isPreview: false,
+            calendar: calendar,
+            now: now
+        )
+
+        guard case let .goal(markers, postedDayCount, goal, goalMet, streak) = mode else {
+            return XCTFail("Expected the goal mode, got \(mode)")
+        }
+        XCTAssertEqual(markers.map(\.symbol), ["M", "T", "W", "T", "F", "S", "S"])
+        XCTAssertEqual(markers.map(\.hasPost), [true, false, true, false, false, false, false])
+        XCTAssertEqual(markers.map(\.isToday), [false, false, true, false, false, false, false])
+        XCTAssertEqual(postedDayCount, 2)
+        XCTAssertEqual(goal, 2)
+        XCTAssertTrue(goalMet)
+        XCTAssertEqual(streak, 2)
+    }
+
+    func testConsistencyPresentationFallsBackForUnsetGoalLegacyAndPreviewData() {
+        // Goal fields present but no goal chosen → the set-a-goal prompt.
+        var unset = AgentCyWidgetSnapshot.empty
+        unset.consistency = WidgetConsistencySnapshot(
+            completedWeeks: [],
+            streak: 0,
+            currentPostedCount: 1,
+            currentPlannedCount: 0,
+            days: [],
+            postedDayCount: 1,
+            goal: nil
+        )
+        XCTAssertEqual(WidgetConsistencyPresentation.mode(for: unset, isPreview: false), .unset)
+
+        // A snapshot written before the goal fields renders the legacy tile.
+        var legacy = AgentCyWidgetSnapshot.empty
+        let legacyConsistency = WidgetConsistencySnapshot(
+            completedWeeks: [true],
+            streak: 1,
+            currentPostedCount: 2,
+            currentPlannedCount: 3
+        )
+        legacy.consistency = legacyConsistency
+        XCTAssertEqual(
+            WidgetConsistencyPresentation.mode(for: legacy, isPreview: false),
+            .legacy(legacyConsistency)
+        )
+
+        // No data at all: production tells the truth; previews substitute demo data.
+        XCTAssertEqual(WidgetConsistencyPresentation.mode(for: .empty, isPreview: false), .unset)
+        XCTAssertEqual(
+            WidgetConsistencyPresentation.mode(for: .empty, isPreview: true),
+            WidgetConsistencyPresentation.mode(for: .preview, isPreview: false)
+        )
     }
 
     private func canonicalData(_ snapshot: AgentCyWidgetSnapshot) throws -> Data {

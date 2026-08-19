@@ -9,6 +9,7 @@ struct AgentPostCard: View {
     let metadata: String
     let timeText: String?
     var statusTextOverride: String? = nil
+    var isLate = false
     var destination: AnyView? = nil
     var footerActionTitle: String? = nil
     var footerAction: (() -> Void)? = nil
@@ -113,21 +114,21 @@ struct AgentPostCard: View {
     }
 
     private var isAlertStatus: Bool {
-        statusTextOverride?.caseInsensitiveCompare("Missed") == .orderedSame
+        isLate
     }
 
     private var statusBadgeBackground: Color {
-        if isAlertStatus { return .agentDestructive }
         return status == .posted ? .actionAccent : .clear
     }
 
     private var statusBadgeForeground: Color {
-        if isAlertStatus { return .onCyAccent }
+        if isLate { return .agentDestructive }
         return status == .posted ? .onAccent : .agentText
     }
 
     private var statusBadgeBorder: Color {
-        if isAlertStatus || status == .posted { return .clear }
+        if status == .posted { return .clear }
+        if isLate { return .agentDestructive }
         return Color.agentText.opacity(0.20)
     }
 }

@@ -1,17 +1,205 @@
 import SwiftData
 import SwiftUI
 
-private enum IdeaBankFilter: Hashable {
+enum IdeaBankFilter: Hashable {
     case all
     case unfiled
     case archived
     case pillar(UUID)
 }
 
+struct IdeaBankSelection: Equatable {
+    let ideaIDs: Set<UUID>
+    let savedPostIDs: Set<UUID>
+}
+
+enum IdeaBankRootStatePolicy {
+    static func normalizedFilter(
+        _ filter: IdeaBankFilter,
+        activePillarIDs: Set<UUID>
+    ) -> IdeaBankFilter {
+        guard case .pillar(let pillarID) = filter else { return filter }
+        return activePillarIDs.contains(pillarID) ? filter : .all
+    }
+
+    static func capturePillarID(
+        for filter: IdeaBankFilter,
+        activePillarIDs: Set<UUID>
+    ) -> UUID? {
+        guard case .pillar(let pillarID) = normalizedFilter(
+            filter,
+            activePillarIDs: activePillarIDs
+        ) else { return nil }
+        return pillarID
+    }
+
+    static func reconciledSelection(
+        ideaIDs: Set<UUID>,
+        savedPostIDs: Set<UUID>,
+        visibleIdeaIDs: Set<UUID>,
+        visibleSavedPostIDs: Set<UUID>
+    ) -> IdeaBankSelection {
+        IdeaBankSelection(
+            ideaIDs: ideaIDs.intersection(visibleIdeaIDs),
+            savedPostIDs: savedPostIDs.intersection(visibleSavedPostIDs)
+        )
+    }
+
+    static func selectableSavedPostIDs(
+        previewIDs: Set<UUID>,
+        savedPostsAreVisible: Bool
+    ) -> Set<UUID> {
+        savedPostsAreVisible ? previewIDs : []
+    }
+}
+
+enum IdeaBankRequestedRoute: Equatable {
+    case none
+    case idea(UUID)
+    case missing
+}
+
+enum IdeaBankRequestedRoutePolicy {
+    static func resolve(
+        requestedID: UUID?,
+        scopedBriefs: [CreativeBrief]
+    ) -> IdeaBankRequestedRoute {
+        guard let requestedID else { return .none }
+        return scopedBriefs.contains(where: { $0.id == requestedID })
+            ? .idea(requestedID)
+            : .missing
+    }
+}
+
+enum IdeaBankRootAccessibilityPolicy {
+    static func shouldAnimateSelection(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+
+    static func usesStackedSelectionActions(dynamicTypeSize: DynamicTypeSize) -> Bool {
+        dynamicTypeSize.isAccessibilitySize
+    }
+
+    static func usesBoundedCancelAction(dynamicTypeSize: DynamicTypeSize) -> Bool {
+        dynamicTypeSize.isAccessibilitySize
+    }
+
+    static func ideaTitleLineLimit(dynamicTypeSize: DynamicTypeSize) -> Int {
+        dynamicTypeSize.isAccessibilitySize ? 4 : 2
+    }
+
+    static func ideaMetadataLineLimit(dynamicTypeSize: DynamicTypeSize) -> Int {
+        dynamicTypeSize.isAccessibilitySize ? 3 : 1
+    }
+}
+
+struct IdeaBankRootProjection {
+    let resolvedWorkspaceID: UUID?
+    let scopedBriefs: [CreativeBrief]
+    let activePillars: [Pillar]
+    let pillarByID: [UUID: Pillar]
+    let normalizedFilter: IdeaBankFilter
+    let ideas: [CreativeBrief]
+    let savedInspirations: [InspirationSource]
+    let savedInspirationPreview: [InspirationSource]
+}
+
+enum IdeaBankRootProjectionPolicy {
+    static func make(
+        briefs: [CreativeBrief],
+        inspirationSources: [InspirationSource],
+        pillars: [Pillar],
+        preferredWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace],
+        search: String,
+        selectedFilter: IdeaBankFilter
+    ) -> IdeaBankRootProjection {
+        let resolvedWorkspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: preferredWorkspaceID,
+            workspaces: workspaces
+        )
+        let scopedBriefs = unique(briefs.filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: resolvedWorkspaceID,
+                workspaces: workspaces
+            )
+        })
+        let scopedPillars = unique(pillars.filter {
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: resolvedWorkspaceID,
+                workspaces: workspaces
+            )
+        })
+        let pillarByID = Dictionary(uniqueKeysWithValues: scopedPillars.map { ($0.id, $0) })
+        let activePillars = PillarRootHierarchyPolicy.activePillars(from: scopedPillars)
+        let activePillarIDs = Set(activePillars.map(\.id))
+        let normalizedFilter = IdeaBankRootStatePolicy.normalizedFilter(
+            selectedFilter,
+            activePillarIDs: activePillarIDs
+        )
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let visibleIdeas = scopedBriefs.filter { brief in
+            let matchesLifecycle = normalizedFilter == .archived
+                ? brief.status == .archived
+                : IdeaBankPlacementPolicy.includes(brief)
+            guard matchesLifecycle,
+                  !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return false
+            }
+            let attachedPillar = brief.pillarID.flatMap { pillarByID[$0] }
+            let matchesSearch = query.isEmpty
+                || brief.title.localizedStandardContains(query)
+                || brief.notes.localizedStandardContains(query)
+                || attachedPillar?.name.localizedStandardContains(query) == true
+            let matchesFilter: Bool = switch normalizedFilter {
+            case .all, .archived:
+                true
+            case .unfiled:
+                attachedPillar == nil
+            case .pillar(let pillarID):
+                brief.pillarID == pillarID
+            }
+            return matchesSearch && matchesFilter
+        }
+
+        let savedInspirations = unique(inspirationSources.filter { source in
+            SavedPostsScopePolicy.includes(
+                recordWorkspaceID: source.workspaceID,
+                activeWorkspaceID: resolvedWorkspaceID
+            ) && (
+                query.isEmpty
+                    || SavedPostPresentation.title(for: source).localizedStandardContains(query)
+                    || source.pillarID.flatMap { pillarByID[$0] }?.name.localizedStandardContains(query) == true
+            )
+        })
+
+        return IdeaBankRootProjection(
+            resolvedWorkspaceID: resolvedWorkspaceID,
+            scopedBriefs: scopedBriefs,
+            activePillars: activePillars,
+            pillarByID: pillarByID,
+            normalizedFilter: normalizedFilter,
+            ideas: visibleIdeas,
+            savedInspirations: savedInspirations,
+            savedInspirationPreview: SavedPostsPreviewPolicy.preview(savedInspirations)
+        )
+    }
+
+    private static func unique<T: Identifiable>(_ values: [T]) -> [T] where T.ID == UUID {
+        var seen: Set<UUID> = []
+        return values.filter { seen.insert($0.id).inserted }
+    }
+}
+
 struct IdeaBankView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
     @Query(sort: \InspirationSource.updatedAt, order: .reverse) private var allInspirationSources: [InspirationSource]
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
@@ -24,57 +212,35 @@ struct IdeaBankView: View {
     @State private var selectedIdea: CreativeBrief?
     @State private var isSelecting = false
     @State private var selectedIdeaIDs: Set<UUID> = []
+    @State private var selectedSavedPostIDs: Set<UUID> = []
     @State private var confirmsSelectionDeletion = false
     @State private var showsSavedPostsLibrary = false
+    @State private var showsLinkCapture = false
     @State private var pendingSavedPostDeletion: InspirationSource?
     @State private var confirmsSavedPostDeletion = false
+    @State private var attemptedSavedPostThumbnailIDs: Set<UUID> = []
+#if DEBUG
+    @State private var didApplyPreviewFixture = false
+#endif
 
-    private var briefs: [CreativeBrief] { scoped(allBriefs) }
-    private var savedInspirations: [InspirationSource] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return allInspirationSources.filter { source in
-            SavedPostsScopePolicy.includes(
-                recordWorkspaceID: source.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID
-            ) && (
-                query.isEmpty || SavedPostPresentation.title(for: source).localizedStandardContains(query) ||
-                    inspirationPillar(source)?.name.localizedStandardContains(query) == true
-            )
-        }
-    }
-    private var savedInspirationPreview: [InspirationSource] {
-        SavedPostsPreviewPolicy.preview(savedInspirations)
-    }
-    private var pillars: [Pillar] { scoped(allPillars) }
-    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
-        values.filter {
-            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
-        }
-    }
-
-    private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
-    private var ideas: [CreativeBrief] {
-        briefs.filter { brief in
-            let matchesLifecycle = selectedFilter == .archived
-                ? brief.status == .archived
-                : IdeaBankPlacementPolicy.includes(brief)
-            let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard matchesLifecycle, !brief.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return false
-            }
-            let matchesSearch = query.isEmpty
-                || brief.title.localizedStandardContains(query)
-                || brief.notes.localizedStandardContains(query)
-                || pillar(for: brief)?.name.localizedStandardContains(query) == true
-            return matchesSearch && matchesSelectedFilter(brief)
-        }
+    private var rootProjection: IdeaBankRootProjection {
+        IdeaBankRootProjectionPolicy.make(
+            briefs: allBriefs,
+            inspirationSources: allInspirationSources,
+            pillars: allPillars,
+            preferredWorkspaceID: appModel.activeWorkspaceID,
+            workspaces: workspaces,
+            search: search,
+            selectedFilter: selectedFilter
+        )
     }
 
     var body: some View {
+        let projection = rootProjection
         GeometryReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    header
+                    header(projection: projection)
                         .reportAgentViewHeight()
 
                     AgentDashboardSurface(minimumHeight: AgentScrollableSurfacePolicy.minimumHeight(
@@ -85,17 +251,12 @@ struct IdeaBankView: View {
                         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                             searchField
                             #if !targetEnvironment(macCatalyst)
-                            if !savedInspirations.isEmpty {
-                                inspirationList
-                            }
+                            inspirationList(projection: projection)
                             #endif
                             if isSelecting {
-                                selectionActions
+                                selectionActions(projection: projection)
                             }
-                            ideaList
-                            if !isSelecting {
-                                saveIdeaButton
-                            }
+                            ideaList(projection: projection)
                         }
                     }
                     .padding(.horizontal, AgentLayout.dashboardGutter)
@@ -109,12 +270,18 @@ struct IdeaBankView: View {
         .navigationDestination(isPresented: $showsSavedPostsLibrary) {
             SavedPostsLibraryView()
         }
+        .sheet(isPresented: $showsLinkCapture) {
+            SavedPostLinkCaptureView()
+                .environment(appModel)
+                .presentationDetents([.medium, .large])
+                .agentSheetDragIndicator()
+        }
         .confirmationDialog(
             deletionConfirmationTitle,
             isPresented: $confirmsSelectionDeletion,
             titleVisibility: .visible
         ) {
-            Button(deletionActionTitle, role: .destructive, action: deleteSelectedIdeas)
+            Button(deletionActionTitle, role: .destructive, action: deleteSelectedItems)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This cannot be undone.")
@@ -131,31 +298,81 @@ struct IdeaBankView: View {
             Text("The saved reference will be removed. Any idea you already created from it will stay in your Idea Bank.")
         }
         .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
-        .onChange(of: Set(ideas.map(\.id))) { _, visibleIdeaIDs in
-            selectedIdeaIDs.formIntersection(visibleIdeaIDs)
+        .onChange(of: selectionVisibilityKey(projection: projection)) { _, _ in
+            reconcileSelection(projection: rootProjection)
         }
-        .onAppear(perform: openRequestedIdeaIfNeeded)
+        .onAppear {
+            applyPreviewFixtureIfNeeded()
+            openRequestedIdeaIfNeeded()
+        }
         .onChange(of: appModel.requestedIdeaID) { _, _ in
             openRequestedIdeaIfNeeded()
+        }
+        .onChange(of: projection.resolvedWorkspaceID) { _, _ in
+            resetRetainedStateForWorkspaceChange()
+        }
+        .onChange(of: Set(projection.activePillars.map(\.id))) { _, _ in
+            selectedFilter = rootProjection.normalizedFilter
+        }
+        .task(id: savedPostThumbnailHydrationKey(projection: projection)) {
+            await hydrateMissingSavedPostThumbnails(projection: projection)
         }
         .agentDashboardScreen()
     }
 
     private func openRequestedIdeaIfNeeded() {
-        guard let ideaID = appModel.requestedIdeaID,
-              let brief = briefs.first(where: { $0.id == ideaID }) else { return }
-        appModel.requestedIdeaID = nil
-        selectedIdea = brief
+        let projection = rootProjection
+        switch IdeaBankRequestedRoutePolicy.resolve(
+            requestedID: appModel.requestedIdeaID,
+            scopedBriefs: projection.scopedBriefs
+        ) {
+        case .none:
+            return
+        case .idea(let ideaID):
+            appModel.requestedIdeaID = nil
+            selectedIdea = projection.scopedBriefs.first { $0.id == ideaID }
+        case .missing:
+            appModel.requestedIdeaID = nil
+            appModel.notice = .info("This idea is no longer available in this workspace.")
+        }
     }
 
-    private var header: some View {
+    private func applyPreviewFixtureIfNeeded() {
+#if DEBUG
+        guard !didApplyPreviewFixture else { return }
+        didApplyPreviewFixture = true
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let marker = arguments.firstIndex(of: "-agentCyPreviewIdeaBankState"),
+              arguments.indices.contains(marker + 1) else { return }
+        switch arguments[marker + 1] {
+        case "archived":
+            selectedFilter = .archived
+        case "query":
+            search = "No matching phrase"
+        case "selection":
+            isSelecting = true
+            let projection = rootProjection
+            selectedIdeaIDs = Set(projection.ideas.prefix(1).map(\.id))
+            selectedSavedPostIDs = Set(projection.savedInspirationPreview.prefix(1).map(\.id))
+        case "missing":
+            appModel.requestedIdeaID = UUID()
+        default:
+            break
+        }
+        if arguments.contains("-agentCyPreviewIdeaBankFilter") {
+            isFilterPresented = true
+        }
+#endif
+    }
+
+    private func header(projection: IdeaBankRootProjection) -> some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             AgentPageRail(
                 breadcrumb: "Idea Bank",
                 identity: activeIdentity,
                 openSettings: { appModel.presentedSheet = .settings }
             ) {
-                headerActions
+                headerActions(projection: projection)
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
@@ -182,39 +399,43 @@ struct IdeaBankView: View {
         )
     }
 
-    private var headerActions: some View {
-        HStack(spacing: 0) {
+    private func headerActions(projection: IdeaBankRootProjection) -> some View {
+        HStack(spacing: AgentSpacing.x1) {
             if isSelecting {
-                Button("Cancel", action: endSelection)
-                    .font(.agentSubtext.weight(.semibold))
-                    .frame(minWidth: 44, minHeight: 44)
+                if IdeaBankRootAccessibilityPolicy.usesBoundedCancelAction(
+                    dynamicTypeSize: dynamicTypeSize
+                ) {
+                    Button(action: endSelection) {
+                        AgentToolbarIconLabel(icon: .close, iconSize: 16)
+                    }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Cancel selection")
+                } else {
+                    Button("Cancel", action: endSelection)
+                        .font(.agentSubtext.weight(.semibold))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .buttonStyle(.plain)
+                }
             } else {
-                if !ideas.isEmpty, selectedFilter != .archived {
+                if projection.normalizedFilter != .archived,
+                   !visibleSelectableIDs(projection: projection).isEmpty {
                     Button(action: beginSelection) {
-                        AgentIconView(.tasks, size: 18)
-                            .foregroundStyle(Color.agentText)
-                            .frame(width: 40, height: 44)
-                            .contentShape(Rectangle().inset(by: -2))
+                        AgentToolbarIconLabel(icon: .tasks, iconSize: 18)
                     }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Select ideas")
-                        .accessibilityHint("Choose one or more ideas to manage")
+                        .accessibilityLabel("Select items")
+                        .accessibilityHint("Choose ideas or saved posts to manage")
                 }
-                filterMenu
+                filterMenu(projection: projection)
             }
         }
-        .padding(.trailing, isSelecting ? AgentSpacing.x2 : AgentSpacing.x1)
     }
 
-    private var filterMenu: some View {
+    private func filterMenu(projection: IdeaBankRootProjection) -> some View {
         Button {
             isFilterPresented.toggle()
         } label: {
-            AgentIconView(.filter, size: 18)
-                .foregroundStyle(Color.agentText)
-                .frame(width: 40, height: 44)
-                .contentShape(Rectangle().inset(by: -2))
+            AgentToolbarIconLabel(icon: .filter, iconSize: 18)
         }
         .buttonStyle(.plain)
         .popover(
@@ -222,29 +443,29 @@ struct IdeaBankView: View {
             attachmentAnchor: .rect(.bounds),
             arrowEdge: .top
         ) {
-            filterPopover
+            filterPopover(projection: projection)
                 .presentationCompactAdaptation(.popover)
                 .presentationBackground(.ultraThinMaterial)
                 .presentationCornerRadius(24)
         }
         .accessibilityLabel("Filter ideas")
-        .accessibilityValue(selectedFilterTitle)
+        .accessibilityValue(selectedFilterTitle(projection: projection))
     }
 
-    private var filterPopover: some View {
+    private func filterPopover(projection: IdeaBankRootProjection) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             filterChoice(title: "All ideas", filter: .all)
             filterChoice(title: "Unfiled", filter: .unfiled, isUnfiled: true)
             filterChoice(title: "Archived", filter: .archived)
 
-            if !activePillars.isEmpty {
+            if !projection.activePillars.isEmpty {
                 Divider()
                     .padding(.horizontal, AgentSpacing.x4)
-                ForEach(activePillars) { pillar in
+                ForEach(projection.activePillars) { pillar in
                     filterChoice(
                         title: pillar.name,
                         filter: .pillar(pillar.id),
-                        colorHex: pillar.resolvedColorHex(in: pillars)
+                        colorHex: pillar.resolvedColorHex(in: Array(projection.pillarByID.values))
                     )
                 }
             }
@@ -297,10 +518,11 @@ struct IdeaBankView: View {
         HStack(spacing: AgentSpacing.x3) {
             AgentIconView(.search, size: 15)
                 .foregroundStyle(Color.agentSecondary)
-            TextField("Search ideas", text: $search)
+            TextField("Search Idea Bank", text: $search)
                 .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
                 .textInputAutocapitalization(.sentences)
                 .submitLabel(.done)
+                .accessibilityLabel("Search ideas and saved posts")
         }
         .padding(.horizontal, AgentSpacing.x4)
         .frame(minHeight: 48)
@@ -312,31 +534,22 @@ struct IdeaBankView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var selectionActions: some View {
-        HStack(spacing: AgentSpacing.x3) {
-            Text("\(selectedIdeaIDs.count) SELECTED")
-                .font(.agentMetadata)
-                .monospacedDigit()
-                .foregroundStyle(Color.agentSecondary)
-
-            Spacer(minLength: AgentSpacing.x2)
-
-            Button(allVisibleIdeasAreSelected ? "Clear" : "Select all") {
-                if allVisibleIdeasAreSelected {
-                    selectedIdeaIDs.removeAll()
-                } else {
-                    selectedIdeaIDs = Set(ideas.map(\.id))
+    private func selectionActions(projection: IdeaBankRootProjection) -> some View {
+        return Group {
+            if IdeaBankRootAccessibilityPolicy.usesStackedSelectionActions(
+                dynamicTypeSize: dynamicTypeSize
+            ) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+                    selectionCountLabel
+                    selectionButtons(projection: projection)
+                }
+            } else {
+                HStack(spacing: AgentSpacing.x3) {
+                    selectionCountLabel
+                    Spacer(minLength: AgentSpacing.x2)
+                    selectionButtons(projection: projection)
                 }
             }
-            .font(.agentSubtext.weight(.semibold))
-            .buttonStyle(.plain)
-
-            Button("Delete", role: .destructive) {
-                confirmsSelectionDeletion = true
-            }
-            .font(.agentSubtext.weight(.semibold))
-            .buttonStyle(.plain)
-            .disabled(selectedIdeaIDs.isEmpty)
         }
         .frame(minHeight: 44)
         .padding(.horizontal, AgentSpacing.x3)
@@ -348,42 +561,82 @@ struct IdeaBankView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var inspirationList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionRuleHeader(title: "Saved Posts", trailing: "\(savedInspirations.count)")
-            ForEach(Array(savedInspirationPreview.enumerated()), id: \.element.id) { index, source in
-                SavedPostRow(
-                    source: source,
-                    pillarName: inspirationPillar(source)?.name,
-                    pillarColorHex: inspirationPillar(source)?.resolvedColorHex(in: allPillars),
-                    showsDivider: index < savedInspirationPreview.count - 1,
-                    open: { appModel.openInspiration(source) },
-                    openOriginal: { openOriginalPost(source) },
-                    requestDeletion: { requestSavedPostDeletion(source) }
-                )
-            }
+    private var selectionCountLabel: some View {
+        Text("\(selectedItemCount) SELECTED")
+            .font(.agentMetadata)
+            .monospacedDigit()
+            .foregroundStyle(Color.agentSecondary)
+    }
 
-            Button {
-                showsSavedPostsLibrary = true
-            } label: {
-                HStack(spacing: AgentSpacing.x2) {
-                    Text("View all saved posts")
-                        .font(.agentSubtext.weight(.semibold))
-                    Spacer()
-                    AgentIconView(.forward, size: 11)
+    private func selectionButtons(projection: IdeaBankRootProjection) -> some View {
+        HStack(spacing: AgentSpacing.x4) {
+            Button(allVisibleItemsAreSelected(projection: projection) ? "Clear" : "Select all") {
+                if allVisibleItemsAreSelected(projection: rootProjection) {
+                    selectedIdeaIDs.removeAll()
+                    selectedSavedPostIDs.removeAll()
+                } else {
+                    let current = rootProjection
+                    selectedIdeaIDs = Set(current.ideas.map(\.id))
+                    selectedSavedPostIDs = Set(selectableSavedPosts(projection: current).map(\.id))
                 }
-                .foregroundStyle(Color.agentText)
-                .frame(minHeight: 48)
-                .contentShape(.rect)
             }
+            .font(.agentSubtext.weight(.semibold))
             .buttonStyle(.plain)
-            .accessibilityHint("Opens the complete Saved Posts bank")
+
+            Button("Delete", role: .destructive) {
+                confirmsSelectionDeletion = true
+            }
+            .font(.agentSubtext.weight(.semibold))
+            .buttonStyle(.plain)
+            .disabled(selectedItemCount == 0)
         }
     }
 
-    private func inspirationPillar(_ source: InspirationSource) -> Pillar? {
-        guard let pillarID = source.pillarID else { return nil }
-        return allPillars.first { $0.id == pillarID && $0.workspaceID == source.workspaceID }
+    private func inspirationList(projection: IdeaBankRootProjection) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionRuleHeader(title: "Saved Posts", trailing: "\(projection.savedInspirations.count)")
+            if !isSelecting {
+                AgentBlockAddActionButton(title: "Save a post") {
+                    showsLinkCapture = true
+                }
+                .padding(.top, AgentSpacing.x3)
+                .padding(.bottom, projection.savedInspirationPreview.isEmpty ? 0 : AgentSpacing.x2)
+            }
+            ForEach(Array(projection.savedInspirationPreview.enumerated()), id: \.element.id) { index, source in
+                SavedPostRow(
+                    source: source,
+                    pillarName: source.pillarID.flatMap { projection.pillarByID[$0] }?.name,
+                    pillarColorHex: source.pillarID.flatMap { projection.pillarByID[$0] }?.resolvedColorHex(
+                        in: Array(projection.pillarByID.values)
+                    ),
+                    showsDivider: index < projection.savedInspirationPreview.count - 1,
+                    open: { appModel.openInspiration(source) },
+                    openOriginal: { openOriginalPost(source) },
+                    requestDeletion: { requestSavedPostDeletion(source) },
+                    isSelecting: isSelecting,
+                    isSelected: selectedSavedPostIDs.contains(source.id),
+                    toggleSelection: { toggleSelection(for: source) }
+                )
+            }
+
+            if !projection.savedInspirations.isEmpty {
+                Button {
+                    showsSavedPostsLibrary = true
+                } label: {
+                    HStack(spacing: AgentSpacing.x2) {
+                        Text("View all saved posts")
+                            .font(.agentSubtext.weight(.semibold))
+                        Spacer()
+                        AgentIconView(.forward, size: 11)
+                    }
+                    .foregroundStyle(Color.agentText)
+                    .frame(minHeight: 48)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the complete Saved Posts bank")
+            }
+        }
     }
 
     private func openOriginalPost(_ source: InspirationSource) {
@@ -406,18 +659,43 @@ struct IdeaBankView: View {
         pendingSavedPostDeletion = nil
     }
 
-    @ViewBuilder
-    private var ideaList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionRuleHeader(title: "Idea Bank", trailing: "\(ideas.count)")
+    private func savedPostThumbnailHydrationKey(projection: IdeaBankRootProjection) -> String {
+        SavedPostThumbnailHydrationPolicy.taskKey(
+            workspaceKey: projection.resolvedWorkspaceID?.uuidString ?? "legacy",
+            missingSourceIDs: projection.savedInspirations.filter { $0.thumbnailData == nil }.map(\.id)
+        )
+    }
 
-            if ideas.isEmpty {
-                Text(emptyStateCopy)
+    @MainActor
+    private func hydrateMissingSavedPostThumbnails(projection: IdeaBankRootProjection) async {
+        for source in projection.savedInspirations where source.thumbnailData == nil {
+            guard !Task.isCancelled,
+                  attemptedSavedPostThumbnailIDs.insert(source.id).inserted
+            else { continue }
+            await SavedPostThumbnailHydrator().hydrate(source: source, context: context)
+        }
+    }
+
+    @ViewBuilder
+    private func ideaList(projection: IdeaBankRootProjection) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionRuleHeader(title: "Idea Bank", trailing: "\(projection.ideas.count)")
+
+            if !isSelecting {
+                AgentBlockAddActionButton(title: "Add idea") {
+                    saveIdea(projection: projection)
+                }
+                .padding(.top, AgentSpacing.x3)
+                .padding(.bottom, projection.ideas.isEmpty ? 0 : AgentSpacing.x2)
+            }
+
+            if projection.ideas.isEmpty {
+                Text(emptyStateCopy(projection: projection))
                     .font(.paperInter(size: 16, weight: .regular, relativeTo: .body))
                     .foregroundStyle(Color.agentSecondary)
                     .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
             } else {
-                ForEach(Array(ideas.enumerated()), id: \.element.id) { index, brief in
+                ForEach(Array(projection.ideas.enumerated()), id: \.element.id) { index, brief in
                     Button {
                         if isSelecting {
                             toggleSelection(for: brief)
@@ -427,13 +705,13 @@ struct IdeaBankView: View {
                     } label: {
                         HStack(spacing: AgentSpacing.x3) {
                             if isSelecting {
-                                selectionIndicator(isSelected: selectedIdeaIDs.contains(brief.id))
+                                AgentSelectionIndicator(isSelected: selectedIdeaIDs.contains(brief.id))
                             }
 
                             IdeaBankRow(
                                 brief: brief,
-                                pillar: pillar(for: brief),
-                                showsDivider: index < ideas.count - 1,
+                                pillar: brief.pillarID.flatMap { projection.pillarByID[$0] },
+                                showsDivider: index < projection.ideas.count - 1,
                                 showsDisclosure: !isSelecting
                             )
                         }
@@ -443,7 +721,10 @@ struct IdeaBankView: View {
                     .accessibilityValue(
                         isSelecting
                             ? (selectedIdeaIDs.contains(brief.id) ? "Selected" : "Not selected")
-                            : ""
+                            : IdeaBankRow.accessibilityMetadata(
+                                brief: brief,
+                                pillar: brief.pillarID.flatMap { projection.pillarByID[$0] }
+                            )
                     )
                     .accessibilityHint(
                         isSelecting
@@ -455,45 +736,44 @@ struct IdeaBankView: View {
         }
     }
 
-    private func selectionIndicator(isSelected: Bool) -> some View {
-        Circle()
-            .fill(isSelected ? Color.agentText : Color.clear)
-            .overlay {
-                Circle()
-                    .stroke(isSelected ? Color.agentText : Color.agentBorder, lineWidth: 1.25)
-            }
-            .overlay {
-                if isSelected {
-                    AgentIconView(.check, size: 9)
-                        .foregroundStyle(Color.agentSurface)
-                }
-            }
-            .frame(width: 20, height: 20)
-            .frame(width: 28, height: 44)
-            .accessibilityHidden(true)
-    }
-
-    private var saveIdeaButton: some View {
-        AgentBlockAddActionButton(title: "Save idea", action: saveIdea)
-    }
-
-    private func saveIdea() {
-        appModel.quickCapturePillarID = selectedFilter.pillarID
+    private func saveIdea(projection: IdeaBankRootProjection) {
+        appModel.quickCapturePillarID = IdeaBankRootStatePolicy.capturePillarID(
+            for: projection.normalizedFilter,
+            activePillarIDs: Set(projection.activePillars.map(\.id))
+        )
         appModel.setQuickCaptureMode(.idea)
         appModel.presentedSheet = .quickCapture
     }
 
     private func beginSelection() {
         selectedIdeaIDs.removeAll()
-        withAnimation(.snappy(duration: 0.2)) {
-            isSelecting = true
-        }
+        selectedSavedPostIDs.removeAll()
+        updateSelectionMode(true)
     }
 
     private func endSelection() {
-        withAnimation(.snappy(duration: 0.2)) {
+        updateSelectionMode(false) {
             isSelecting = false
             selectedIdeaIDs.removeAll()
+            selectedSavedPostIDs.removeAll()
+        }
+    }
+
+    private func updateSelectionMode(
+        _ selecting: Bool,
+        updates: (() -> Void)? = nil
+    ) {
+        let action = {
+            if let updates {
+                updates()
+            } else {
+                isSelecting = selecting
+            }
+        }
+        if IdeaBankRootAccessibilityPolicy.shouldAnimateSelection(reduceMotion: reduceMotion) {
+            withAnimation(.snappy(duration: 0.2), action)
+        } else {
+            action()
         }
     }
 
@@ -505,51 +785,90 @@ struct IdeaBankView: View {
         }
     }
 
-    private func deleteSelectedIdeas() {
-        let selectedIdeas = ideas.filter { selectedIdeaIDs.contains($0.id) }
+    private func toggleSelection(for source: InspirationSource) {
+        if selectedSavedPostIDs.contains(source.id) {
+            selectedSavedPostIDs.remove(source.id)
+        } else {
+            selectedSavedPostIDs.insert(source.id)
+        }
+    }
+
+    private func deleteSelectedItems() {
+        let projection = rootProjection
+        reconcileSelection(projection: projection)
+        let selectedIdeas = projection.ideas.filter { selectedIdeaIDs.contains($0.id) }
+        let selectedSavedPosts = selectableSavedPosts(projection: projection).filter {
+            selectedSavedPostIDs.contains($0.id)
+        }
         if let selectedIdea, selectedIdeaIDs.contains(selectedIdea.id) {
             self.selectedIdea = nil
         }
-        withAnimation(.snappy(duration: 0.24)) {
+        let deleteIdeas = {
             selectedIdeas.forEach { _ = appModel.deleteDraft($0, context: context) }
+        }
+        if IdeaBankRootAccessibilityPolicy.shouldAnimateSelection(reduceMotion: reduceMotion) {
+            withAnimation(.snappy(duration: 0.24), deleteIdeas)
+        } else {
+            deleteIdeas()
+        }
+        do {
+            for source in selectedSavedPosts {
+                try InspirationDeletionCoordinator.delete(source, context: context)
+            }
+        } catch {
+            appModel.presentCreatorError(error, action: "The selected saved posts")
         }
         endSelection()
     }
 
-    private var allVisibleIdeasAreSelected: Bool {
-        !ideas.isEmpty && Set(ideas.map(\.id)).isSubset(of: selectedIdeaIDs)
+    private func selectableSavedPosts(
+        projection: IdeaBankRootProjection
+    ) -> [InspirationSource] {
+#if targetEnvironment(macCatalyst)
+        let savedPostsAreVisible = false
+#else
+        let savedPostsAreVisible = true
+#endif
+        let selectableIDs = IdeaBankRootStatePolicy.selectableSavedPostIDs(
+            previewIDs: Set(projection.savedInspirationPreview.map(\.id)),
+            savedPostsAreVisible: savedPostsAreVisible
+        )
+        return projection.savedInspirationPreview.filter { selectableIDs.contains($0.id) }
+    }
+
+    private func visibleSelectableIDs(projection: IdeaBankRootProjection) -> Set<UUID> {
+        Set(projection.ideas.map(\.id)).union(
+            selectableSavedPosts(projection: projection).map(\.id)
+        )
+    }
+
+    private var selectedItemCount: Int {
+        selectedIdeaIDs.count + selectedSavedPostIDs.count
+    }
+
+    private func allVisibleItemsAreSelected(projection: IdeaBankRootProjection) -> Bool {
+        let selectableSavedPosts = selectableSavedPosts(projection: projection)
+        return !visibleSelectableIDs(projection: projection).isEmpty &&
+            Set(projection.ideas.map(\.id)).isSubset(of: selectedIdeaIDs) &&
+            Set(selectableSavedPosts.map(\.id)).isSubset(of: selectedSavedPostIDs)
     }
 
     private var deletionConfirmationTitle: String {
-        let count = selectedIdeaIDs.count
-        return count == 1 ? "Delete this idea?" : "Delete \(count) ideas?"
+        if selectedItemCount == 1 {
+            return selectedSavedPostIDs.isEmpty ? "Delete this idea?" : "Delete this saved post?"
+        }
+        return "Delete \(selectedItemCount) items?"
     }
 
     private var deletionActionTitle: String {
-        let count = selectedIdeaIDs.count
-        return count == 1 ? "Delete idea" : "Delete \(count) ideas"
-    }
-
-    private func pillar(for brief: CreativeBrief) -> Pillar? {
-        guard let pillarID = brief.pillarID else { return nil }
-        return activePillars.first { $0.id == pillarID }
-    }
-
-    private func matchesSelectedFilter(_ brief: CreativeBrief) -> Bool {
-        switch selectedFilter {
-        case .all:
-            return true
-        case .unfiled:
-            return pillar(for: brief) == nil
-        case .archived:
-            return true
-        case .pillar(let pillarID):
-            return brief.pillarID == pillarID
+        if selectedItemCount == 1 {
+            return selectedSavedPostIDs.isEmpty ? "Delete idea" : "Delete saved post"
         }
+        return "Delete \(selectedItemCount) items"
     }
 
-    private var selectedFilterTitle: String {
-        switch selectedFilter {
+    private func selectedFilterTitle(projection: IdeaBankRootProjection) -> String {
+        switch projection.normalizedFilter {
         case .all:
             return "All ideas"
         case .unfiled:
@@ -557,15 +876,15 @@ struct IdeaBankView: View {
         case .archived:
             return "Archived"
         case .pillar(let pillarID):
-            return activePillars.first(where: { $0.id == pillarID })?.name ?? "Pillar"
+            return projection.activePillars.first(where: { $0.id == pillarID })?.name ?? "All ideas"
         }
     }
 
-    private var emptyStateCopy: String {
+    private func emptyStateCopy(projection: IdeaBankRootProjection) -> String {
         if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "No ideas match this search."
         }
-        switch selectedFilter {
+        switch projection.normalizedFilter {
         case .all:
             return "No ideas yet."
         case .unfiled:
@@ -573,19 +892,44 @@ struct IdeaBankView: View {
         case .archived:
             return "No archived work."
         case .pillar:
-            return "No ideas saved under \(selectedFilterTitle)."
+            return "No ideas saved under \(selectedFilterTitle(projection: projection))."
         }
     }
-}
 
-private extension IdeaBankFilter {
-    var pillarID: UUID? {
-        guard case .pillar(let pillarID) = self else { return nil }
-        return pillarID
+    private func selectionVisibilityKey(
+        projection: IdeaBankRootProjection
+    ) -> IdeaBankSelection {
+        IdeaBankSelection(
+            ideaIDs: Set(projection.ideas.map(\.id)),
+            savedPostIDs: Set(selectableSavedPosts(projection: projection).map(\.id))
+        )
+    }
+
+    private func reconcileSelection(projection: IdeaBankRootProjection) {
+        let reconciled = IdeaBankRootStatePolicy.reconciledSelection(
+            ideaIDs: selectedIdeaIDs,
+            savedPostIDs: selectedSavedPostIDs,
+            visibleIdeaIDs: Set(projection.ideas.map(\.id)),
+            visibleSavedPostIDs: Set(selectableSavedPosts(projection: projection).map(\.id))
+        )
+        selectedIdeaIDs = reconciled.ideaIDs
+        selectedSavedPostIDs = reconciled.savedPostIDs
+    }
+
+    private func resetRetainedStateForWorkspaceChange() {
+        search = ""
+        selectedFilter = .all
+        selectedIdea = nil
+        pendingSavedPostDeletion = nil
+        confirmsSavedPostDeletion = false
+        showsSavedPostsLibrary = false
+        attemptedSavedPostThumbnailIDs.removeAll()
+        endSelection()
     }
 }
 
 private struct IdeaBankRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let brief: CreativeBrief
     let pillar: Pillar?
     let showsDivider: Bool
@@ -597,7 +941,9 @@ private struct IdeaBankRow: View {
                 Text(brief.title)
                     .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
                     .tracking(-0.2)
-                    .lineLimit(2)
+                    .lineLimit(IdeaBankRootAccessibilityPolicy.ideaTitleLineLimit(
+                        dynamicTypeSize: dynamicTypeSize
+                    ))
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: AgentSpacing.x2) {
@@ -618,7 +964,10 @@ private struct IdeaBankRow: View {
                         .tracking(1)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.agentSecondary)
-                        .lineLimit(1)
+                        .lineLimit(IdeaBankRootAccessibilityPolicy.ideaMetadataLineLimit(
+                            dynamicTypeSize: dynamicTypeSize
+                        ))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -641,6 +990,10 @@ private struct IdeaBankRow: View {
     }
 
     private var metadata: String {
+        Self.accessibilityMetadata(brief: brief, pillar: pillar)
+    }
+
+    static func accessibilityMetadata(brief: CreativeBrief, pillar: Pillar?) -> String {
         let pillarName = pillar?.name ?? "Unfiled"
         let relativeDate = brief.updatedAt.formatted(.relative(presentation: .named))
         if brief.status == .developing {

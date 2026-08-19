@@ -15,6 +15,7 @@ describe("server secret configuration", () => {
     expect(config.appleSubjectHashSecret).not.toBe(
       config.installationHashSecrets[0],
     );
+    expect(config.bridgeNotificationHashSecret).not.toBe(config.inviteHashSecret);
     expect(config.inviteHashSecret.length).toBeGreaterThanOrEqual(32);
     expect(config.installationHashSecrets[0].length).toBeGreaterThanOrEqual(32);
   });
@@ -33,6 +34,7 @@ describe("server secret configuration", () => {
         INVITE_HASH_SECRET: "a".repeat(32),
         INSTALLATION_HASH_SECRET: "a".repeat(32),
         APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
+        BRIDGE_NOTIFICATION_HASH_SECRET: "d".repeat(32),
       }),
     ).toThrow("must differ");
     expect(() =>
@@ -41,6 +43,7 @@ describe("server secret configuration", () => {
         INVITE_HASH_SECRET: "a".repeat(32),
         INSTALLATION_HASH_SECRET: "b".repeat(32),
         APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
+        BRIDGE_NOTIFICATION_HASH_SECRET: "d".repeat(32),
         PREVIOUS_INSTALLATION_HASH_SECRETS: "short",
       }),
     ).toThrow("PREVIOUS_INSTALLATION_HASH_SECRETS[0]");
@@ -54,6 +57,7 @@ describe("server secret configuration", () => {
       INVITE_HASH_SECRET: "a".repeat(32),
       INSTALLATION_HASH_SECRET: "b".repeat(32),
       APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
+      BRIDGE_NOTIFICATION_HASH_SECRET: "d".repeat(32),
       REVENUECAT_ENTITLEMENT_ID: "creator_access",
     };
     expect(() => loadConfig(production)).toThrow("INVITE_CODES");
@@ -69,6 +73,21 @@ describe("server secret configuration", () => {
     expect(() =>
       loadConfig({ ...production, INVITE_CODES: strongProductionInvite }),
     ).not.toThrow();
+  });
+
+  it("loads an optional invitation expiry and rejects invalid dates", () => {
+    expect(
+      loadConfig({
+        NODE_ENV: "development",
+        INVITE_EXPIRES_AT: "2026-09-01T00:00:00.000Z",
+      }).inviteExpiresAt?.toISOString(),
+    ).toBe("2026-09-01T00:00:00.000Z");
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "development",
+        INVITE_EXPIRES_AT: "not-a-date",
+      }),
+    ).toThrow("INVITE_EXPIRES_AT must be an ISO-8601 date-time");
   });
 
   it("loads prior installation secrets for credential rotation", () => {
@@ -113,6 +132,7 @@ describe("server secret configuration", () => {
       INVITE_HASH_SECRET: "a".repeat(32),
       INSTALLATION_HASH_SECRET: "b".repeat(32),
       APPLE_SUBJECT_HASH_SECRET: "c".repeat(32),
+      BRIDGE_NOTIFICATION_HASH_SECRET: "d".repeat(32),
       INVITE_CODES: strongProductionInvite,
       REVENUECAT_ENTITLEMENT_ID: "creator_access",
     });

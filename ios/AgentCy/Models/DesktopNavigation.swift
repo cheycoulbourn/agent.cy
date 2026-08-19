@@ -97,8 +97,17 @@ struct DesktopSheetMetrics: Equatable, Sendable {
     let height: CGFloat
 }
 
+enum DesktopQuickAddPlacement: Equatable, Sendable {
+    case leadingSidebar
+    case utilitySidebar
+}
+
 enum DesktopLayoutPolicy {
     static let utilityRailBreakpoint: CGFloat = 1_280
+    /// The roomy Cy post-development sheet is the canonical footprint for
+    /// desktop Quick Actions and Settings. Keeping one size prevents modal
+    /// flows from collapsing back into narrow phone-shaped cards.
+    static let workspaceModalMetrics = DesktopSheetMetrics(width: 900, height: 860)
 
     static func metrics(forWindowWidth width: CGFloat) -> DesktopLayoutMetrics {
         let showsUtilityRail = width >= utilityRailBreakpoint
@@ -110,17 +119,80 @@ enum DesktopLayoutPolicy {
         )
     }
 
-    static func sheetMetrics(for sheet: AppSheet) -> DesktopSheetMetrics {
-        switch sheet {
-        case .creationHub:
-            DesktopSheetMetrics(width: 780, height: 720)
-        case .quickCapture:
-            DesktopSheetMetrics(width: 760, height: 760)
-        case .askCy:
-            DesktopSheetMetrics(width: 900, height: 860)
-        case .settings:
-            DesktopSheetMetrics(width: 840, height: 780)
+    /// The review workspace is a sidebar of post cards beside a detail pane.
+    /// At the standard 900pt the cards truncate their pillar names, so the Cy
+    /// sheet widens to this only while the workspace is open — chat keeps the
+    /// standard footprint, where the extra width just reads as empty.
+    static let cyReviewModalMetrics = DesktopSheetMetrics(width: 1_180, height: 860)
+
+    /// Cy applies its own frame so it can resize between chat and review.
+    static func sizesItself(_ sheet: AppSheet) -> Bool { sheet == .askCy }
+
+    static func sheetMetrics(for _: AppSheet) -> DesktopSheetMetrics {
+        workspaceModalMetrics
+    }
+
+    /// The Quick Add menu is a compact choice card sized to its five options;
+    /// only the embedded capture flows need the canonical workspace footprint.
+    static let creationHubMenuMetrics = DesktopSheetMetrics(width: 600, height: 560)
+
+    static func creationHubMetrics(stage: DesktopCreationHubStage) -> DesktopSheetMetrics {
+        switch stage {
+        case .menu: creationHubMenuMetrics
+        case .capture: workspaceModalMetrics
         }
+    }
+
+    static func quickAddPlacement(forWindowWidth width: CGFloat) -> DesktopQuickAddPlacement {
+        width >= utilityRailBreakpoint ? .utilitySidebar : .leadingSidebar
+    }
+}
+
+/// Which face the Quick Add overlay is showing: the choice menu, or one of
+/// the embedded capture flows that replace it inside the same card.
+enum DesktopCreationHubStage: Equatable, Sendable {
+    case menu
+    case capture
+}
+
+enum DesktopShellMotionPolicy {
+    static func animatesUtilityRail(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+}
+
+enum DesktopShellMCPReviewPolicy {
+    static func shouldPresent(
+        requestIDs: Set<UUID>,
+        presentedRequestIDs: Set<UUID>,
+        hasGlobalPresentation: Bool,
+        hasLocalPresentation: Bool
+    ) -> Bool {
+        !hasGlobalPresentation &&
+            !hasLocalPresentation &&
+            !requestIDs.isEmpty &&
+            !requestIDs.subtracting(presentedRequestIDs).isEmpty
+    }
+}
+
+enum DesktopShellWorkspacePolicy {
+    static func acceptsMCPResult(
+        requestedWorkspaceID: UUID?,
+        activeWorkspaceID: UUID?
+    ) -> Bool {
+        requestedWorkspaceID == activeWorkspaceID
+    }
+}
+
+enum DesktopUtilityOutputPolicy {
+    static func includes(
+        briefStatus: BriefStatus,
+        outputIsInActiveWorkspace: Bool,
+        briefIsInActiveWorkspace: Bool
+    ) -> Bool {
+        briefStatus != .archived &&
+            outputIsInActiveWorkspace &&
+            briefIsInActiveWorkspace
     }
 }
 
@@ -146,6 +218,15 @@ enum DesktopUtilityWidget: String, CaseIterable, Identifiable, Sendable {
     case tasks
     case upcomingPosts
     case ideas
+    case pillarUsage
+    case needsNewDate
+    case cyNoticed
+    case weekAtAGlance
+    case consistency
+    case recentlyPosted
+    case draftsInProgress
+    case brandCabinet
+    case weeklyFocus
 
     var id: String { rawValue }
 
@@ -154,25 +235,57 @@ enum DesktopUtilityWidget: String, CaseIterable, Identifiable, Sendable {
         case .tasks: "Tasks"
         case .upcomingPosts: "Upcoming Posts"
         case .ideas: "Idea Bank"
+        case .pillarUsage: "Pillar Usage"
+        case .needsNewDate: "Needs a New Date"
+        case .cyNoticed: "Cy Noticed"
+        case .weekAtAGlance: "Week at a Glance"
+        case .consistency: "Consistency"
+        case .recentlyPosted: "Recently Posted"
+        case .draftsInProgress: "Drafts in Progress"
+        case .brandCabinet: "Brand Cabinet"
+        case .weeklyFocus: "Weekly Focus"
         }
     }
 
-    var icon: AgentIcon {
+    var icon: AgentIcon? {
         switch self {
         case .tasks: .tasks
         case .upcomingPosts: .calendar
         case .ideas: .idea
+        case .pillarUsage: .pillars
+        case .needsNewDate: .calendar
+        case .cyNoticed: nil
+        case .weekAtAGlance: .calendar
+        case .consistency: .checkCircle
+        case .recentlyPosted: .verified
+        case .draftsInProgress: .pencil
+        case .brandCabinet: .business
+        case .weeklyFocus: .sliders
         }
     }
+
+    static let optionalWidgets: Set<DesktopUtilityWidget> = [
+        .pillarUsage,
+        .needsNewDate,
+        .weekAtAGlance,
+        .consistency,
+        .recentlyPosted,
+        .draftsInProgress,
+        .brandCabinet,
+        .weeklyFocus,
+    ]
 }
 
 enum DesktopUtilityWidgetVisibilityPolicy {
     static func hiddenWidgets(from storageValue: String) -> Set<DesktopUtilityWidget> {
-        Set(storageValue.split(separator: ",").compactMap { DesktopUtilityWidget(rawValue: String($0)) })
+        let isCurrentFormat = storageValue.hasPrefix("v2:")
+        let value = isCurrentFormat ? String(storageValue.dropFirst(3)) : storageValue
+        let stored = Set(value.split(separator: ",").compactMap { DesktopUtilityWidget(rawValue: String($0)) })
+        return isCurrentFormat ? stored : stored.union(DesktopUtilityWidget.optionalWidgets)
     }
 
     static func storageValue(for hiddenWidgets: Set<DesktopUtilityWidget>) -> String {
-        DesktopUtilityWidget.allCases
+        "v2:" + DesktopUtilityWidget.allCases
             .filter(hiddenWidgets.contains)
             .map(\.rawValue)
             .joined(separator: ",")
@@ -198,6 +311,7 @@ enum DesktopUtilityWidgetOrderPolicy {
 
 enum DesktopUtilityWidgetContentPolicy {
     static let ideaPreviewLimit = 3
+    static let taskPreviewLimit = 3
 }
 
 enum DesktopUtilityTaskPolicy {

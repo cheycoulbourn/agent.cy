@@ -1,5 +1,122 @@
 import Foundation
 
+enum PostDatePlanPolicy {
+    static func isChronologicallyValid(
+        workDate: Date?,
+        scheduledDate: Date?,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard let workDate, let scheduledDate else { return true }
+        return calendar.startOfDay(for: scheduledDate) >= calendar.startOfDay(for: workDate)
+    }
+
+    static func preferredTaskDate(workDate: Date?, scheduledDate: Date?) -> Date? {
+        workDate ?? scheduledDate
+    }
+}
+
+enum PostWorkDateStatusPolicy {
+    static func isLate(
+        workDate: Date?,
+        briefStatus: BriefStatus,
+        outputStatus: PlatformOutputStatus,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard let workDate,
+              briefStatus != .archived,
+              briefStatus != .scheduled,
+              briefStatus != .posted,
+              outputStatus != .scheduled,
+              outputStatus != .posted else {
+            return false
+        }
+
+        return calendar.startOfDay(for: workDate) < calendar.startOfDay(for: now)
+    }
+}
+
+struct CyNoticedReconciliationSummary: Equatable {
+    let lateWorkCount: Int
+    let overduePostCount: Int
+
+    var needsAttention: Bool { lateWorkCount > 0 || overduePostCount > 0 }
+
+    var message: String {
+        switch (lateWorkCount, overduePostCount) {
+        case let (lateWork, overduePosts) where lateWork > 0 && overduePosts > 0:
+            return "\(lateWork) late work item\(lateWork == 1 ? "" : "s") and \(overduePosts) overdue post\(overduePosts == 1 ? "" : "s") need attention."
+        case let (lateWork, _) where lateWork > 0:
+            return "\(lateWork) work item\(lateWork == 1 ? " needs" : "s need") a new date."
+        case let (_, overduePosts) where overduePosts > 0:
+            return "\(overduePosts) post\(overduePosts == 1 ? " missed" : "s missed") the scheduled date."
+        default:
+            return ""
+        }
+    }
+}
+
+/// One shared definition drives the Cy Noticed widget and the list it opens.
+/// This prevents a notice from surviving after every actionable item is cleared.
+enum CyNoticedReconciliationPolicy {
+    static func includes(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard brief.status != .archived else { return false }
+        return isOverduePost(output: output, now: now, calendar: calendar)
+            || PostWorkDateStatusPolicy.isLate(
+                workDate: brief.workDate,
+                briefStatus: brief.status,
+                outputStatus: output.status,
+                now: now,
+                calendar: calendar
+            )
+    }
+
+    static func summary(
+        briefs: [CreativeBrief],
+        outputs: [PlatformOutput],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> CyNoticedReconciliationSummary {
+        let briefsByID = DuplicateSafeIndex.firstValues(briefs.map { ($0.id, $0) })
+        var lateBriefIDs = Set<UUID>()
+        var overdueOutputIDs = Set<UUID>()
+
+        for output in outputs {
+            guard let brief = briefsByID[output.briefID], brief.status != .archived else { continue }
+            if isOverduePost(output: output, now: now, calendar: calendar) {
+                overdueOutputIDs.insert(output.id)
+            } else if PostWorkDateStatusPolicy.isLate(
+                workDate: brief.workDate,
+                briefStatus: brief.status,
+                outputStatus: output.status,
+                now: now,
+                calendar: calendar
+            ) {
+                lateBriefIDs.insert(brief.id)
+            }
+        }
+
+        return CyNoticedReconciliationSummary(
+            lateWorkCount: lateBriefIDs.count,
+            overduePostCount: overdueOutputIDs.count
+        )
+    }
+
+    private static func isOverduePost(
+        output: PlatformOutput,
+        now: Date,
+        calendar: Calendar
+    ) -> Bool {
+        guard output.status != .posted, let targetDate = output.targetDate else { return false }
+        return calendar.startOfDay(for: targetDate) < calendar.startOfDay(for: now)
+    }
+}
+
 enum PostTaskReschedulePolicy {
     static func isLinked(
         taskBriefID: UUID?,

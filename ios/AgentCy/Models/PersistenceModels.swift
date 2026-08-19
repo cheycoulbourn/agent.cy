@@ -10,8 +10,14 @@ final class CreatorWorkspace {
     var avatarImageData: Data?
     var hasCustomIdentity: Bool = false
     var primarySocialAccountID: UUID?
-    /// Newline-delimited custom post statuses. Optional for additive CloudKit migration safety.
+    /// Legacy newline-delimited statuses or a versioned workspace-customization payload.
+    /// Reusing the existing optional CloudKit field keeps account-scoped appearance
+    /// preferences additive without requiring a destructive store migration.
     var customPostStatusesRaw: String?
+    /// Days per week this account aims to post. Nil until the creator sets it
+    /// (onboarding or the consistency card). Optional for additive CloudKit
+    /// migration safety.
+    var weeklyPostingGoal: Int?
     var isArchived: Bool = false
     var sortOrder: Int = 0
     var createdAt: Date = Date()
@@ -43,9 +49,8 @@ final class CreatorWorkspace {
     var customPostStatuses: [String] {
         get {
             var seen = Set<String>()
-            return (customPostStatusesRaw ?? "")
-                .split(separator: "\n")
-                .compactMap { CustomPostStatusPolicy.normalized(String($0)) }
+            return workspaceCustomization.customPostStatuses
+                .compactMap(CustomPostStatusPolicy.normalized)
                 .filter { seen.insert($0.lowercased()).inserted }
         }
         set {
@@ -53,9 +58,83 @@ final class CreatorWorkspace {
             let values = newValue
                 .compactMap(CustomPostStatusPolicy.normalized)
                 .filter { seen.insert($0.lowercased()).inserted }
-            customPostStatusesRaw = values.isEmpty ? nil : values.joined(separator: "\n")
+            var customization = workspaceCustomization
+            customization.customPostStatuses = values
+            saveWorkspaceCustomization(customization)
             updatedAt = Date()
         }
+    }
+
+    var vibePalette: CreatorVibePalette? {
+        get {
+            workspaceCustomization.vibePaletteRaw.flatMap(CreatorVibePalette.init(rawValue:))
+        }
+        set {
+            var customization = workspaceCustomization
+            customization.vibePaletteRaw = newValue?.rawValue
+            saveWorkspaceCustomization(customization)
+            updatedAt = Date()
+        }
+    }
+
+    /// The two Cy conversation shortcuts belong to the creator account, not
+    /// the shared profile. Storing them in the existing customization payload
+    /// keeps account switching isolated without adding a CloudKit field.
+    var customCyQuickPrompts: [String]? {
+        let prompts = workspaceCustomization.cyQuickPrompts ?? []
+        let normalized = prompts.map {
+            String(
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .prefix(CreatorProfile.maxCyQuickPromptLength)
+            )
+        }
+        guard normalized.count == 2,
+              normalized.allSatisfy({ !$0.isEmpty }) else { return nil }
+        return normalized
+    }
+
+    func setCustomCyQuickPrompts(_ prompts: [String]) {
+        guard prompts.count == 2 else { return }
+        let normalized = prompts.map {
+            String(
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .prefix(CreatorProfile.maxCyQuickPromptLength)
+            )
+        }
+        guard normalized.allSatisfy({ !$0.isEmpty }) else { return }
+        var customization = workspaceCustomization
+        customization.cyQuickPrompts = normalized
+        saveWorkspaceCustomization(customization)
+        updatedAt = Date()
+    }
+
+    func restoreDefaultCyQuickPrompts() {
+        setCustomCyQuickPrompts(CreatorProfile.defaultCyQuickPrompts)
+    }
+
+    private var workspaceCustomization: WorkspaceCustomizationPayload {
+        guard let raw = customPostStatusesRaw, !raw.isEmpty else {
+            return WorkspaceCustomizationPayload()
+        }
+        if let data = raw.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(WorkspaceCustomizationPayload.self, from: data) {
+            return decoded
+        }
+        return WorkspaceCustomizationPayload(
+            customPostStatuses: raw.split(separator: "\n").map(String.init)
+        )
+    }
+
+    private func saveWorkspaceCustomization(_ customization: WorkspaceCustomizationPayload) {
+        guard !customization.customPostStatuses.isEmpty ||
+                customization.vibePaletteRaw != nil ||
+                customization.cyQuickPrompts != nil else {
+            customPostStatusesRaw = nil
+            return
+        }
+        guard let data = try? JSONEncoder().encode(customization),
+              let raw = String(data: data, encoding: .utf8) else { return }
+        customPostStatusesRaw = raw
     }
 
     @discardableResult
@@ -84,6 +163,13 @@ final class CreatorWorkspace {
         }
         return existing
     }
+}
+
+private struct WorkspaceCustomizationPayload: Codable {
+    var version = 1
+    var customPostStatuses: [String] = []
+    var vibePaletteRaw: String?
+    var cyQuickPrompts: [String]?
 }
 
 @Model
@@ -291,6 +377,9 @@ final class InspirationSource {
     @Attribute(.externalStorage) var thumbnailData: Data?
     var tagIDsText: String = ""
     var shapePayloadJSON: String = ""
+    /// Unfinished creator-authored fields on a Saved Post. The default-backed
+    /// payload keeps this additive for existing SwiftData and CloudKit stores.
+    var manualDraftPayloadJSON: String = ""
     var statusRaw: String = InspirationStatus.pending.rawValue
     var linkedBriefID: UUID?
     var filmingTaskID: UUID?
@@ -429,6 +518,10 @@ final class CreativeBrief {
     /// Optional for additive CloudKit migration compatibility.
     var ideaBankPlacementRaw: String?
     var pillarID: UUID?
+    /// Optional platform/format the creator tagged at capture time. Advisory
+    /// until a post draft exists; optional for additive CloudKit migration safety.
+    var preferredDestinationID: UUID?
+    var preferredFormatID: UUID?
     /// First-class series membership. Optional for additive CloudKit migration safety.
     var seriesID: UUID?
     /// Private provenance link for an idea created from a saved inspiration source.
@@ -546,6 +639,9 @@ final class ContentSeries {
     var defaultSocialAccountID: UUID?
     var defaultDurationSeconds: Int?
     var cadenceRaw: String = PostRecurrenceFrequency.none.rawValue
+    /// Optional for additive CloudKit migration compatibility. Existing
+    /// series infer this from their earliest episode until details are saved.
+    var cadenceStartDate: Date?
     var cadenceWeekdaysRaw: String = ""
     var cadenceMonthDay: Int?
     var cadenceEndDate: Date?
@@ -767,6 +863,9 @@ final class PlatformOutput {
     var recurrenceEndDate: Date?
     var includesTargetTime: Bool = true
     var seriesRootOutputID: UUID?
+    /// The attachment used as the post thumbnail and Feed-grid cover. Optional
+    /// so existing CloudKit-backed stores migrate additively.
+    var coverAttachmentID: UUID?
     var publishedURLString: String = ""
     var createdAt: Date = Date()
 
@@ -1380,26 +1479,40 @@ final class CreatorAttachment {
     var briefID: UUID = UUID()
     var platformOutputID: UUID?
     var fileName: String = ""
+    var displayTitle: String = ""
+    var voiceTranscript: String = ""
+    var voiceDurationSeconds: Double = 0
     var kindRaw: String = AttachmentKind.other.rawValue
     var uniformTypeIdentifier: String = "public.data"
     var byteCount: Int64 = 0
     var localRelativePath: String = ""
     @Attribute(.externalStorage) var cloudData: Data?
+    /// A lightweight rendering derivative. `cloudData` remains the untouched
+    /// downloadable source and is never replaced by this preview.
+    @Attribute(.externalStorage) var previewData: Data?
+    /// A separately uploaded thumbnail can be visible in the media manager and
+    /// spotlight without being treated as publishable carousel content.
+    var isCoverOnly: Bool = false
     var syncStateRaw: String = AttachmentSyncState.localOnly.rawValue
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
-    init(id: UUID = UUID(), ownerKind: AttachmentOwnerKind, briefID: UUID, platformOutputID: UUID? = nil, fileName: String, kind: AttachmentKind, uniformTypeIdentifier: String, byteCount: Int64, localRelativePath: String, cloudData: Data? = nil, syncState: AttachmentSyncState = .localOnly, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), ownerKind: AttachmentOwnerKind, briefID: UUID, platformOutputID: UUID? = nil, fileName: String, displayTitle: String = "", voiceTranscript: String = "", voiceDurationSeconds: Double = 0, kind: AttachmentKind, uniformTypeIdentifier: String, byteCount: Int64, localRelativePath: String, cloudData: Data? = nil, previewData: Data? = nil, isCoverOnly: Bool = false, syncState: AttachmentSyncState = .localOnly, createdAt: Date = Date()) {
         self.id = id
         self.ownerKindRaw = ownerKind.rawValue
         self.briefID = briefID
         self.platformOutputID = platformOutputID
         self.fileName = fileName
+        self.displayTitle = displayTitle
+        self.voiceTranscript = voiceTranscript
+        self.voiceDurationSeconds = voiceDurationSeconds
         self.kindRaw = kind.rawValue
         self.uniformTypeIdentifier = uniformTypeIdentifier
         self.byteCount = byteCount
         self.localRelativePath = localRelativePath
         self.cloudData = cloudData
+        self.previewData = previewData
+        self.isCoverOnly = isCoverOnly
         self.syncStateRaw = syncState.rawValue
         self.createdAt = createdAt
         self.updatedAt = createdAt
@@ -1703,6 +1816,7 @@ enum AgentCySchema {
         ConversationThread.self,
         ConversationMessage.self,
         ReminderSettings.self,
+        AgentActivityRecord.self,
         SubscriptionState.self
     ]
 

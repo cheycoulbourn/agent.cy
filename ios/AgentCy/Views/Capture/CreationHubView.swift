@@ -7,6 +7,8 @@ struct CreationHubView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var showQuickCapture = false
+    @State private var showLivePost = false
+    @State private var showVoiceSpark = false
     @State private var closeIsPulsing = false
 
     init(onDismiss: (() -> Void)? = nil) {
@@ -16,19 +18,35 @@ struct CreationHubView: View {
     var body: some View {
         #if targetEnvironment(macCatalyst)
         Group {
-            if showQuickCapture {
+            if showLivePost {
+                AddLivePostView(onDismiss: returnToCreationHub)
+            } else if showQuickCapture {
                 QuickCaptureView(onExit: returnToCreationHub)
             } else {
                 creationHubContent
             }
         }
         .background(Color.agentCanvas)
+        .preference(
+            key: DesktopCreationHubStagePreferenceKey.self,
+            value: showLivePost || showQuickCapture ? .capture : .menu
+        )
         #else
         creationHubContent
             .background(Color.agentCanvas.ignoresSafeArea())
             .presentationBackground(Color.agentCanvas)
             .sheet(isPresented: $showQuickCapture) {
                 QuickCaptureView()
+                    .environment(appModel)
+            }
+            .sheet(isPresented: $showLivePost) {
+                AddLivePostView()
+                    .environment(appModel)
+                    .presentationDetents([.large])
+                    .agentSheetDragIndicator()
+            }
+            .sheet(isPresented: $showVoiceSpark) {
+                VoiceSparkView()
                     .environment(appModel)
             }
         #endif
@@ -55,6 +73,7 @@ struct CreationHubView: View {
             VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                 mobileHeader
                 createActions
+                phoneActions
                 cyAction
                 if appModel.walkthroughStep == .quickAdd {
                     quickAddWalkthroughCard
@@ -67,46 +86,32 @@ struct CreationHubView: View {
 
     #if targetEnvironment(macCatalyst)
     private var desktopContent: some View {
-        VStack(spacing: 0) {
-            desktopToolbar
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+        // One compact card, one voice: the editorial heading carries the
+        // header role and the close control sits on its cap line, so the
+        // content column and chrome share a single left edge.
+        ScrollView {
+            VStack(alignment: .leading, spacing: AgentSpacing.x5) {
+                HStack(alignment: .top, spacing: AgentSpacing.x4) {
                     desktopHeading
-                    desktopCreateActions
-                    desktopCyAction
-
-                    if appModel.walkthroughStep == .quickAdd {
-                        quickAddWalkthroughCard
-                    }
+                    Spacer(minLength: AgentSpacing.x4)
+                    AgentToolbarIconButton(title: "Close", icon: .close, action: closeCreationHub)
+                        .keyboardShortcut(.cancelAction)
+                        .accessibilityHint("Closes Quick Add")
                 }
-                .padding(.horizontal, AgentSpacing.x8)
-                .padding(.top, AgentSpacing.x6)
-                .padding(.bottom, AgentSpacing.x8)
+
+                desktopCreateActions
+                desktopCyAction
+
+                if appModel.walkthroughStep == .quickAdd {
+                    quickAddWalkthroughCard
+                }
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, AgentSpacing.x6)
+            .padding(.top, AgentSpacing.x6)
+            .padding(.bottom, AgentSpacing.x6)
         }
+        .scrollIndicators(.hidden)
         .background(Color.agentCanvas)
-    }
-
-    private var desktopToolbar: some View {
-        HStack(spacing: AgentSpacing.x4) {
-            Text("Quick add")
-                .font(.agentHeadline)
-                .foregroundStyle(Color.agentText)
-
-            Spacer(minLength: AgentSpacing.x4)
-
-            AgentToolbarIconButton(title: "Close", icon: .close, action: closeCreationHub)
-            .keyboardShortcut(.cancelAction)
-            .accessibilityHint("Closes Quick Add")
-        }
-        .padding(.leading, AgentSpacing.x8)
-        .padding(.trailing, AgentSpacing.x5)
-        .frame(height: 64)
-        .background(.ultraThinMaterial)
-        .shadow(color: Color.agentPureBlack.opacity(0.045), radius: 10, y: 5)
-        .zIndex(1)
     }
 
     private var desktopHeading: some View {
@@ -145,8 +150,15 @@ struct CreationHubView: View {
                     icon: .tasks,
                     title: "Task",
                     detail: "Add one clear next step.",
-                    showsDivider: false
+                    showsDivider: true
                 ) { openCapture(.task) }
+
+                DesktopQuickActionRow(
+                    icon: .link,
+                    title: "Live post",
+                    detail: "Track a published post by link.",
+                    showsDivider: false
+                ) { openCapture(.livePost) }
             }
             .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
             .clipShape(.rect(cornerRadius: AgentRadius.panel))
@@ -262,7 +274,7 @@ struct CreationHubView: View {
         }
     }
 
-    private enum Destination { case idea, post, task, cyIdeas }
+    private enum Destination { case idea, post, task, livePost, cyIdeas }
 
     private func openCapture(_ destination: Destination) {
         appModel.quickCaptureTargetDate = nil
@@ -271,6 +283,9 @@ struct CreationHubView: View {
         case .idea: appModel.setQuickCaptureMode(.idea)
         case .post: appModel.setQuickCaptureMode(.post)
         case .task: appModel.setQuickCaptureMode(.task)
+        case .livePost:
+            setLivePostVisible(true)
+            return
         case .cyIdeas: appModel.setQuickCaptureMode(.cyIdeas)
         }
         setQuickCaptureVisible(true)
@@ -278,6 +293,15 @@ struct CreationHubView: View {
 
     private func returnToCreationHub() {
         setQuickCaptureVisible(false)
+        setLivePostVisible(false)
+    }
+
+    private func setLivePostVisible(_ isVisible: Bool) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            showLivePost = isVisible
+        }
     }
 
     private func setQuickCaptureVisible(_ isVisible: Bool) {
@@ -318,8 +342,34 @@ struct CreationHubView: View {
             quickActionRow(
                 title: "Task",
                 detail: "Add one clear next step.",
-                showsDivider: false
+                showsDivider: true
             ) { openCapture(.task) }
+
+            quickActionRow(
+                title: "Live post",
+                detail: "Track a published post by link.",
+                showsDivider: false
+            ) { openCapture(.livePost) }
+        }
+        .padding(.bottom, AgentSpacing.x2)
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
+        .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
+    }
+
+    private var phoneActions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            MetaLabel("Create on iPhone")
+                .padding(.horizontal, AgentSpacing.x5)
+                .padding(.top, AgentSpacing.x5)
+                .padding(.bottom, AgentSpacing.x2)
+
+            quickActionRow(
+                title: "Voice Spark",
+                detail: "Record a thought and save the editable transcript.",
+                showsDivider: false
+            ) {
+                showVoiceSpark = true
+            }
         }
         .padding(.bottom, AgentSpacing.x2)
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
@@ -477,10 +527,10 @@ private struct DesktopQuickActionRow: View {
         Button(action: action) {
             HStack(spacing: AgentSpacing.x4) {
                 AgentIconView(icon, size: 18)
-                    .foregroundStyle(isHovered ? Color.cyAccent : Color.agentText)
+                    .foregroundStyle(Color.agentText)
                     .frame(width: 40, height: 40)
                     .background(
-                        isHovered ? Color.cyAccent.opacity(0.09) : Color.agentCanvas,
+                        Color.agentCanvas,
                         in: .rect(cornerRadius: AgentRadius.control)
                     )
 
@@ -496,19 +546,14 @@ private struct DesktopQuickActionRow: View {
                 Spacer(minLength: AgentSpacing.x3)
 
                 AgentIconView(.arrowRight, size: 12)
-                    .foregroundStyle(isHovered ? Color.cyAccent : Color.agentSecondary)
+                    .foregroundStyle(Color.agentSecondary)
                     .frame(width: 40, height: 40)
             }
             .foregroundStyle(Color.agentText)
             .padding(.leading, AgentSpacing.x4)
             .padding(.trailing, AgentSpacing.x3)
-            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-            .overlay(alignment: .leading) {
-                Capsule()
-                    .fill(Color.cyAccent)
-                    .frame(width: 3, height: 28)
-                    .opacity(isHovered ? 1 : 0)
-            }
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+            .background(isHovered ? Color.agentSelectionFill : Color.clear)
             .overlay(alignment: .bottom) {
                 if showsDivider {
                     Rectangle()
@@ -521,8 +566,17 @@ private struct DesktopQuickActionRow: View {
         }
         .buttonStyle(AgentPressButtonStyle())
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.1), value: isHovered)
         .accessibilityHint(detail)
+    }
+}
+
+/// Lets the shell size the Quick Add card to the stage the hub is showing —
+/// compact for the menu, the canonical workspace footprint for capture.
+struct DesktopCreationHubStagePreferenceKey: PreferenceKey {
+    static let defaultValue: DesktopCreationHubStage = .menu
+
+    static func reduce(value: inout DesktopCreationHubStage, nextValue: () -> DesktopCreationHubStage) {
+        value = nextValue()
     }
 }
 #endif

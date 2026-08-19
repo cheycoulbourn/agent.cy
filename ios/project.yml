@@ -11,7 +11,7 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     TARGETED_DEVICE_FAMILY: "1"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "170"
+    CURRENT_PROJECT_VERSION: "227"
     DEVELOPMENT_LANGUAGE: en
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     # Design tokens are programmatic so simulator/source builds and the asset
@@ -50,10 +50,14 @@ targets:
         Debug:
           CODE_SIGN_STYLE: Manual
           PROVISIONING_PROFILE_SPECIFIER: AgentCy Development 2026
+          APS_ENVIRONMENT: development
           AGENTCY_API_BASE_URL: "https://agentcy-production.up.railway.app"
           AGENTCY_USE_LIVE_AI: YES
           AGENTCY_CLOUDKIT_ENABLED: YES
         Release:
+          CODE_SIGN_STYLE: Manual
+          PROVISIONING_PROFILE_SPECIFIER: AgentCy Development 2026
+          APS_ENVIRONMENT: development
           AGENTCY_API_BASE_URL: "https://agentcy-production.up.railway.app"
           AGENTCY_USE_LIVE_AI: YES
           AGENTCY_CLOUDKIT_ENABLED: YES
@@ -79,12 +83,15 @@ targets:
         AGENTCY_CLOUDKIT_ENABLED: "$(AGENTCY_CLOUDKIT_ENABLED)"
         # Required by private CloudKit mirroring. Notification content remains local-only.
         UIBackgroundModes:
+          - audio
           - remote-notification
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: "Allow agent.cy to reach Local Cy on your Mac while both devices are on the same network."
         NSCalendarsFullAccessUsageDescription: "Allow agent.cy to add scheduled posts and tasks to your chosen calendar."
-        NSSpeechRecognitionUsageDescription: "Allow agent.cy to transcribe audio from a video you explicitly share so it can create an editable post idea."
+        NSMicrophoneUsageDescription: "Allow agent.cy to record a Voice Spark that you choose to save as an editable idea."
+        NSSpeechRecognitionUsageDescription: "Allow agent.cy to turn Voice Spark recordings into editable thoughts you can save, replay, and connect to your content."
+        NSSupportsLiveActivities: true
     entitlements:
       path: AgentCy/Support/AgentCy.entitlements
       properties:
@@ -98,6 +105,7 @@ targets:
           - Default
         com.apple.security.application-groups:
           - group.com.agentcy.app
+        aps-environment: "$(APS_ENVIRONMENT)"
   AgentCyMac:
     type: application
     supportedDestinations:
@@ -126,10 +134,12 @@ targets:
         Debug:
           CODE_SIGN_STYLE: Manual
           PROVISIONING_PROFILE_SPECIFIER: AgentCy Mac Catalyst Development 2026
+          APS_ENVIRONMENT: development
           AGENTCY_API_BASE_URL: "https://agentcy-production.up.railway.app"
           AGENTCY_USE_LIVE_AI: YES
           AGENTCY_CLOUDKIT_ENABLED: YES
         Release:
+          APS_ENVIRONMENT: production
           AGENTCY_API_BASE_URL: "https://agentcy-production.up.railway.app"
           AGENTCY_USE_LIVE_AI: YES
           AGENTCY_CLOUDKIT_ENABLED: YES
@@ -157,6 +167,8 @@ targets:
         AGENTCY_API_BASE_URL: "$(AGENTCY_API_BASE_URL)"
         AGENTCY_USE_LIVE_AI: "$(AGENTCY_USE_LIVE_AI)"
         AGENTCY_CLOUDKIT_ENABLED: "$(AGENTCY_CLOUDKIT_ENABLED)"
+        UIBackgroundModes:
+          - remote-notification
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: "Allow agent.cy to reach Local Cy on this Mac."
@@ -179,6 +191,7 @@ targets:
           - Default
         com.apple.security.application-groups:
           - group.com.agentcy.app
+        aps-environment: "$(APS_ENVIRONMENT)"
   AgentCyWidgets:
     type: app-extension
     platform: iOS
@@ -186,6 +199,10 @@ targets:
       - path: AgentCyWidgets
       - path: AgentCyShared
       - path: AgentCy/Resources/Fonts
+        buildPhase: resources
+      # Live Activities use the same licensed Nucleo assets as the app so
+      # system surfaces never fall back to an SF Symbol for app actions.
+      - path: AgentCy/Resources/Assets.xcassets
         buildPhase: resources
     settings:
       base:
@@ -200,6 +217,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
       configs:
         Debug:
+          CODE_SIGN_STYLE: Manual
+          PROVISIONING_PROFILE_SPECIFIER: AgentCy Widgets Development 2026
+        Release:
           CODE_SIGN_STYLE: Manual
           PROVISIONING_PROFILE_SPECIFIER: AgentCy Widgets Development 2026
     info:

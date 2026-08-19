@@ -115,6 +115,25 @@ enum SeriesEpisodePlanner {
         return Array(([firstDate] + future).prefix(count))
     }
 
+    static func nextEpisodeDate(
+        after date: Date,
+        series: ContentSeries,
+        calendar: Calendar = .current
+    ) -> Date {
+        let frequency = series.cadence == .none ? PostRecurrenceFrequency.weekly : series.cadence
+        return RecurringPostSchedule.futureDates(
+            after: date,
+            frequency: frequency,
+            weekdays: series.cadenceWeekdays,
+            monthDay: series.cadenceMonthDay,
+            endDate: nil,
+            includesTime: series.cadenceIncludesTime,
+            calendar: calendar
+        ).first
+            ?? calendar.date(byAdding: .weekOfYear, value: 1, to: date)
+            ?? date
+    }
+
     @discardableResult
     static func plan(
         series: ContentSeries,
@@ -154,6 +173,13 @@ enum SeriesEpisodePlanner {
         }
 
         series.cadenceIncludesTime = includesTime
+        if series.cadenceStartDate == nil, let firstDate = dates.min() {
+            series.cadenceStartDate = RecurringPostSchedule.normalizedTargetDate(
+                firstDate,
+                includesTime: includesTime,
+                calendar: calendar
+            )
+        }
         series.updatedAt = Date()
         try context.save()
         return planned
@@ -546,8 +572,12 @@ enum SeriesMigrationService {
             output: PlatformOutput,
             brief: CreativeBrief
         ) -> ContentSeries {
+            // Capturing the @Model itself makes this closure main-actor
+            // isolated under Release whole-module checking; the plain value
+            // keeps the lookup nonisolated.
+            let briefWorkspaceID = brief.workspaceID
             if let existing = seriesRecords.first(where: {
-                $0.workspaceID == brief.workspaceID &&
+                $0.workspaceID == briefWorkspaceID &&
                     $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
             }) {
                 return existing
@@ -565,6 +595,7 @@ enum SeriesMigrationService {
                 createdAt: min(brief.createdAt, output.createdAt)
             )
             series.cadence = output.recurrence
+            series.cadenceStartDate = output.targetDate ?? brief.workDate ?? brief.agendaDate
             series.cadenceWeekdays = output.recurrenceWeekdays
             series.cadenceMonthDay = output.recurrenceMonthDay
             series.cadenceEndDate = output.recurrenceEndDate
