@@ -2557,11 +2557,16 @@ struct DayAgendaView: View {
         DuplicateSafeIndex.firstValues(activeBriefs.map { ($0.id, $0) })
     }
     private var dayOutputs: [PlatformOutput] {
-        outputs.filter {
+        // Hoisted once per call. These lookups were computed properties that
+        // re-filtered the whole brief store for every output — the sampler
+        // caught this cascade saturating the main thread with the day open.
+        let briefIndex = activeBriefByID
+        let briefIDs = Set(briefIndex.keys)
+        return outputs.filter {
             guard AgendaContentVisibility.includesOutput(
                 briefID: $0.briefID,
-                activeBriefIDs: activeBriefIDs
-            ), let brief = activeBriefByID[$0.briefID] else {
+                activeBriefIDs: briefIDs
+            ), let brief = briefIndex[$0.briefID] else {
                 return false
             }
             return AgendaDayOutputVisibility.includes(
@@ -2576,18 +2581,25 @@ struct DayAgendaView: View {
         .sorted { lhs, rhs in
             AgendaOutputOrdering.precedes(
                 lhs,
-                briefStatus: activeBriefByID[lhs.briefID]?.status,
+                briefStatus: briefIndex[lhs.briefID]?.status,
                 rhs,
-                briefStatus: activeBriefByID[rhs.briefID]?.status
+                briefStatus: briefIndex[rhs.briefID]?.status
             )
         }
     }
     private var dayTasks: [CreatorTask] {
-        tasks.filter {
+        // One pass over the day's outputs; membership checks per task are set
+        // lookups instead of recomputing dayOutputs (a full-store filter) for
+        // every task.
+        let outputsForDay = dayOutputs
+        let dayOutputIDs = Set(outputsForDay.map(\.id))
+        let dayOutputBriefIDs = Set(outputsForDay.map(\.briefID))
+        let briefIDs = activeBriefIDs
+        return tasks.filter {
             $0.parentTaskID == nil &&
                 !$0.isSkipped &&
-                AgendaContentVisibility.includesTask(briefID: $0.briefID, activeBriefIDs: activeBriefIDs) &&
-                taskBelongsToDay($0)
+                AgendaContentVisibility.includesTask(briefID: $0.briefID, activeBriefIDs: briefIDs) &&
+                taskBelongsToDay($0, dayOutputIDs: dayOutputIDs, dayOutputBriefIDs: dayOutputBriefIDs)
         }
         .sorted(by: sortTasks)
     }
@@ -3155,9 +3167,9 @@ struct DayAgendaView: View {
     }
 
     private var currentDaySignature: String {
-        // Computed on every body evaluation via hasDayChanges: one dictionary
-        // pass beats a full scan of every brief per day output.
-        let briefByID = Dictionary(activeBriefs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Computed on every body evaluation via hasDayChanges: reuse the one
+        // shared index instead of building a second dictionary.
+        let briefByID = activeBriefByID
         let outputSignature = dayOutputs.map { output in
             let brief = briefByID[output.briefID]
             return [
@@ -3512,20 +3524,21 @@ struct DayAgendaView: View {
         return lhs.createdAt < rhs.createdAt
     }
 
-    private func taskBelongsToDay(_ task: CreatorTask) -> Bool {
+    private func taskBelongsToDay(
+        _ task: CreatorTask,
+        dayOutputIDs: Set<UUID>,
+        dayOutputBriefIDs: Set<UUID>
+    ) -> Bool {
         if task.dailyFocusDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true ||
             task.targetDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true {
             return true
         }
 
-        if let outputID = task.platformOutputID,
-           dayOutputs.contains(where: { $0.id == outputID }) {
+        if let outputID = task.platformOutputID, dayOutputIDs.contains(outputID) {
             return true
         }
 
-        return task.briefID.map { briefID in
-            dayOutputs.contains(where: { $0.briefID == briefID })
-        } == true
+        return task.briefID.map { dayOutputBriefIDs.contains($0) } == true
     }
 
     private func linkedPostTitle(
