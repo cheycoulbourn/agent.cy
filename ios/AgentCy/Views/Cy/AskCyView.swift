@@ -559,7 +559,6 @@ struct AskCyView: View {
     @State private var lastReviewRefreshAt: Date?
     @State private var desktopSelectedReviewID: UUID?
     @State private var showsDesktopReviewWorkspace = false
-    @State private var refreshSpin: Double = 0
     @State private var showReviewCompletion = false
     @State private var showConversationHistory = false
     @State private var showProUpsell = false
@@ -1011,16 +1010,17 @@ struct AskCyView: View {
                     ) {
                         Task { await refreshPendingReviews() }
                     }
-                    .rotationEffect(.degrees(refreshSpin))
-                    .onChange(of: isRefreshingReviews) { _, checking in
-                        if checking {
-                            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
-                                refreshSpin = 360
-                            }
-                        } else {
-                            withAnimation(.easeOut(duration: 0.2)) { refreshSpin = 0 }
-                        }
-                    }
+                    // Declarative spin: the four-second poll flips
+                    // isRefreshingReviews around every check, and restarting a
+                    // repeatForever animation on each flip kept the render loop
+                    // busy the whole time Cy was open.
+                    .rotationEffect(.degrees(isRefreshingReviews ? 360 : 0))
+                    .animation(
+                        isRefreshingReviews
+                            ? .linear(duration: 0.9).repeatForever(autoreverses: false)
+                            : .none,
+                        value: isRefreshingReviews
+                    )
                 }
                 .padding(.horizontal, AgentSpacing.x5)
                 .padding(.vertical, AgentSpacing.x4)

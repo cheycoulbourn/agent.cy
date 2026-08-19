@@ -2514,7 +2514,11 @@ struct DayAgendaView: View {
     @State private var selectedPostTaskOutput: PlatformOutput?
     @State private var showPostTaskPicker = false
     @State private var isPillarPickerPresented = false
-    @State private var confirmsPillarAfterPickerDismissal = false
+    // The picker confirms inside its own sheet. The old flow dismissed the
+    // sheet and scheduled the alert one yield later, which Catalyst dropped
+    // when the dismissal was still animating — leaving a stuck pending alert,
+    // a stale draft pillar, and a Close button that could no longer dismiss.
+    @State private var confirmsPillarSelectionInPicker = false
     @State private var selectedEpisodeSlot: SeriesEpisodeSlot?
     @State private var convertedEpisodeBrief: CreativeBrief?
     @State private var acceptsDayContentInteractions = false
@@ -2707,11 +2711,22 @@ struct DayAgendaView: View {
                 )
             }
         }
-        .sheet(isPresented: $isPillarPickerPresented, onDismiss: finishPillarSelection) {
+        .sheet(isPresented: $isPillarPickerPresented) {
             pillarPickerSheet
                 .presentationDetents([.height(pillarPickerHeight)])
                 .agentSheetDragIndicator()
                 .presentationBackground(Color.agentCanvas)
+                .alert(pillarConfirmationTitle, isPresented: $confirmsPillarSelectionInPicker) {
+                    Button("Cancel", role: .cancel) {
+                        cancelPillarOverwrite()
+                    }
+                    Button(pillarConfirmationActionTitle, role: .destructive) {
+                        applyPillarOverwrite()
+                        isPillarPickerPresented = false
+                    }
+                } message: {
+                    Text(pillarConfirmationMessage)
+                }
         }
         .sheet(item: $selectedEpisodeSlot) { slot in
             EpisodeSlotActionsView(slot: slot) { result in
@@ -3035,7 +3050,6 @@ struct DayAgendaView: View {
                 Spacer()
 
                 Button("Close") {
-                    confirmsPillarAfterPickerDismissal = false
                     isPillarPickerPresented = false
                 }
                 .font(.agentSubtext.weight(.semibold))
@@ -3167,7 +3181,6 @@ struct DayAgendaView: View {
 
     private func choosePillar(_ selected: Pillar?) {
         guard selected?.id != displayedPillar?.id else {
-            confirmsPillarAfterPickerDismissal = false
             isPillarPickerPresented = false
             return
         }
@@ -3179,19 +3192,12 @@ struct DayAgendaView: View {
             hasLoadedPillarDraft = true
         }
 
-        if !isPastDay {
+        if isPastDay {
+            // Past days confirm through the day's save control instead.
+            isPillarPickerPresented = false
+        } else {
             dismissAfterPillarSave = false
-            confirmsPillarAfterPickerDismissal = true
-        }
-        isPillarPickerPresented = false
-    }
-
-    private func finishPillarSelection() {
-        guard confirmsPillarAfterPickerDismissal else { return }
-        confirmsPillarAfterPickerDismissal = false
-        Task { @MainActor in
-            await Task.yield()
-            showPillarOverwriteConfirmation = true
+            confirmsPillarSelectionInPicker = true
         }
     }
 
