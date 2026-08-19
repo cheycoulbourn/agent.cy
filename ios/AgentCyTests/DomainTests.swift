@@ -2183,10 +2183,12 @@ final class DomainTests: XCTestCase {
         task.lane = .production
         try StoreBootstrapService.run(context: context)
 
-        XCTAssertEqual(firstDestinationCount, 3)
-        XCTAssertEqual(firstFormatCount, 8)
-        XCTAssertEqual(try context.fetch(FetchDescriptor<PublishingDestination>()).count, 3)
-        XCTAssertEqual(try context.fetch(FetchDescriptor<PublishingFormat>()).count, 8)
+        // 5 destinations / 11 formats since Substack (Letter, Note) and
+        // Pinterest (Pin) joined the catalog for the personal-brand plan.
+        XCTAssertEqual(firstDestinationCount, 5)
+        XCTAssertEqual(firstFormatCount, 11)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PublishingDestination>()).count, 5)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PublishingFormat>()).count, 11)
         XCTAssertEqual(output.destinationID, PublishingCatalog.youtubeID)
         XCTAssertEqual(output.formatID, PublishingCatalog.youtubeVideoID)
         XCTAssertEqual(output.durationSeconds, brief.durationSeconds)
@@ -3145,7 +3147,7 @@ final class DomainTests: XCTestCase {
 
         XCTAssertEqual(brief.durationSeconds, 600)
         XCTAssertEqual(model.outputs(for: brief, context: context).first?.platform, .youtubeVideo)
-        XCTAssertEqual(CreatorPlatform.choices(for: .longForm), [.youtubeVideo])
+        XCTAssertEqual(CreatorPlatform.choices(for: .longForm), [.youtubeVideo, .substack])
         XCTAssertEqual(ContentFormat.shortForm.durationOptions, [30, 60, 90, 180])
         XCTAssertEqual(ContentFormat.longForm.durationOptions, [600, 1_200, 1_800, 2_700, 3_600])
         XCTAssertEqual(ContentFormat.shortForm.defaultDuration, 60)

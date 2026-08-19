@@ -15,10 +15,18 @@ enum PublishingCatalog {
     static let youtubeShortID = UUID(uuidString: "B7D82641-569B-4CF9-A80E-90E538B28007")!
     static let youtubeVideoID = UUID(uuidString: "B7D82641-569B-4CF9-A80E-90E538B28008")!
 
+    static let substackID = UUID(uuidString: "A6C71530-458A-4BF8-97FD-89D427A17904")!
+    static let pinterestID = UUID(uuidString: "A6C71530-458A-4BF8-97FD-89D427A17905")!
+    static let substackLetterID = UUID(uuidString: "B7D82641-569B-4CF9-A80E-90E538B28009")!
+    static let substackNoteID = UUID(uuidString: "B7D82641-569B-4CF9-A80E-90E538B2800A")!
+    static let pinterestPinID = UUID(uuidString: "B7D82641-569B-4CF9-A80E-90E538B2800B")!
+
     static let destinationSeeds: [(UUID, String, BuiltInDestinationKind, Int)] = [
         (instagramID, "Instagram", .instagram, 0),
         (tiktokID, "TikTok", .tiktok, 1),
-        (youtubeID, "YouTube", .youtube, 2)
+        (youtubeID, "YouTube", .youtube, 2),
+        (substackID, "Substack", .substack, 3),
+        (pinterestID, "Pinterest", .pinterest, 4)
     ]
 
     static let formatSeeds: [(UUID, UUID, String, PublishingFormatKind, Int)] = [
@@ -29,7 +37,10 @@ enum PublishingCatalog {
         (tiktokShortID, tiktokID, "Short video", .shortVideo, 0),
         (tiktokLongID, tiktokID, "Long video", .longVideo, 1),
         (youtubeShortID, youtubeID, "Short", .shortVideo, 0),
-        (youtubeVideoID, youtubeID, "Video", .longVideo, 1)
+        (youtubeVideoID, youtubeID, "Video", .longVideo, 1),
+        (substackLetterID, substackID, "Letter", .nonVideo, 0),
+        (substackNoteID, substackID, "Note", .nonVideo, 1),
+        (pinterestPinID, pinterestID, "Pin", .nonVideo, 0)
     ]
 
     static func identifiers(for legacy: CreatorPlatform) -> (destination: UUID, format: UUID) {
@@ -38,6 +49,8 @@ enum PublishingCatalog {
         case .tiktok: (tiktokID, tiktokShortID)
         case .youtubeShorts: (youtubeID, youtubeShortID)
         case .youtubeVideo: (youtubeID, youtubeVideoID)
+        case .substack: (substackID, substackLetterID)
+        case .pinterest: (pinterestID, pinterestPinID)
         }
     }
 
@@ -47,6 +60,8 @@ enum PublishingCatalog {
         case (tiktokID, tiktokShortID), (tiktokID, tiktokLongID): .tiktok
         case (youtubeID, youtubeShortID): .youtubeShorts
         case (youtubeID, youtubeVideoID): .youtubeVideo
+        case (substackID, substackLetterID), (substackID, substackNoteID): .substack
+        case (pinterestID, pinterestPinID): .pinterest
         default: nil
         }
     }

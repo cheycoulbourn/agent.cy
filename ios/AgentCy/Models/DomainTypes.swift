@@ -421,6 +421,8 @@ enum BuiltInDestinationKind: String, CaseIterable, Codable, Hashable, Identifiab
     case instagram
     case tiktok
     case youtube
+    case substack
+    case pinterest
 
     var id: String { rawValue }
     var title: String {
@@ -428,6 +430,8 @@ enum BuiltInDestinationKind: String, CaseIterable, Codable, Hashable, Identifiab
         case .instagram: "Instagram"
         case .tiktok: "TikTok"
         case .youtube: "YouTube"
+        case .substack: "Substack"
+        case .pinterest: "Pinterest"
         }
     }
 }
@@ -437,6 +441,8 @@ enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case tiktok
     case youtubeShorts
     case youtubeVideo
+    case substack
+    case pinterest
 
     var id: String { rawValue }
 
@@ -446,6 +452,8 @@ enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .tiktok: "TikTok"
         case .youtubeShorts: "YouTube Shorts"
         case .youtubeVideo: "YouTube"
+        case .substack: "Substack"
+        case .pinterest: "Pinterest"
         }
     }
 
@@ -455,6 +463,8 @@ enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .tiktok: "TikTok"
         case .youtubeShorts: "Shorts"
         case .youtubeVideo: "YouTube"
+        case .substack: "Substack"
+        case .pinterest: "Pinterest"
         }
     }
 
@@ -463,16 +473,39 @@ enum CreatorPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .instagramReels: "camera.aperture"
         case .tiktok: "music.note"
         case .youtubeShorts, .youtubeVideo: "play.rectangle.fill"
+        case .substack: "doc.richtext"
+        case .pinterest: "pin.fill"
         }
     }
 
     var format: ContentFormat {
-        self == .youtubeVideo ? .longForm : .shortForm
+        switch self {
+        // Substack letters are the long-form home of the brand; everything
+        // else in the short-form lane, including pins, plans like a short.
+        case .youtubeVideo, .substack: .longForm
+        case .instagramReels, .tiktok, .youtubeShorts, .pinterest: .shortForm
+        }
     }
 
     static func choices(for format: ContentFormat) -> [CreatorPlatform] {
         allCases.filter { $0.format == format }
     }
+
+    /// Catalog format names offered for this platform, in display order. The
+    /// first entry is the default. One shared list so review editors and the
+    /// post editor never drift apart.
+    var catalogFormatChoices: [String] {
+        switch self {
+        case .instagramReels: ["Reel", "Carousel", "Feed post", "Story"]
+        case .tiktok: ["Short video", "Long video"]
+        case .youtubeShorts: ["Short"]
+        case .youtubeVideo: ["Video"]
+        case .substack: ["Letter", "Note"]
+        case .pinterest: ["Pin"]
+        }
+    }
+
+    var catalogDefaultFormat: String { catalogFormatChoices[0] }
 }
 
 enum BriefStatus: String, CaseIterable, Codable, Identifiable, Sendable {

@@ -26,6 +26,8 @@ export const PlatformSchema = z.enum([
   "tiktok",
   "youtubeShorts",
   "youtubeVideo",
+  "substack",
+  "pinterest",
 ]);
 export const BriefStatusSchema = z.enum([
   "spark",

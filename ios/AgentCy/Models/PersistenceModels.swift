@@ -981,6 +981,10 @@ final class CreatorSocialAccount {
             return "https://www.tiktok.com/@\(handle)"
         case .youtube:
             return "https://www.youtube.com/@\(handle)"
+        case .substack:
+            return "https://\(handle).substack.com"
+        case .pinterest:
+            return "https://www.pinterest.com/\(handle)/"
         }
     }
 }

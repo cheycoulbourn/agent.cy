@@ -62,6 +62,9 @@ export const McpPublishingFormatSchema = z.enum([
   "Long video",
   "Short",
   "Video",
+  "Letter",
+  "Note",
+  "Pin",
 ]);
 
 export const McpBridgeSocialAccountSchema = z

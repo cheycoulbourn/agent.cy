@@ -9,8 +9,8 @@ import { agendaResult, postSearchResult, taskResult, workspaceSummary } from "./
 import { AgentCyWorkspace, clientSource, type SeriesEpisodeRevisionPatch } from "./workspace.js";
 
 const statusValues = ["spark", "developing", "ready", "scheduled", "posted", "archived"] as const;
-const platformValues = ["instagramReels", "tiktok", "youtubeShorts", "youtubeVideo"] as const;
-const formatValues = ["Reel", "Carousel", "Feed post", "Story", "Short video", "Long video", "Short", "Video"] as const;
+const platformValues = ["instagramReels", "tiktok", "youtubeShorts", "youtubeVideo", "substack", "pinterest"] as const;
+const formatValues = ["Reel", "Carousel", "Feed post", "Story", "Short video", "Long video", "Short", "Video", "Letter", "Note", "Pin"] as const;
 const kindValues = ["planning", "scripting", "filming", "editing", "publishing", "creatorBusiness"] as const;
 const priorityValues = ["none", "low", "medium", "high", "urgent"] as const;
 const cadenceValues = ["none", "daily", "weekly", "monthly"] as const;

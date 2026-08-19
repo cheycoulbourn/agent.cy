@@ -445,6 +445,10 @@ struct PreviewCreativeService: CreativeServicing {
                 PlatformVariantDraft(platform: platform, caption: draft.takeaway, openingAdjustment: "State the promise cleanly before adding context.", titleOverride: draft.title, cta: "Subscribe for more practical creator systems.", editChanges: "Keep the title searchable and the close self-contained.")
             case .youtubeVideo:
                 PlatformVariantDraft(platform: platform, caption: draft.takeaway, openingAdjustment: "Open with the clearest promise, then preview the path through the full video.", titleOverride: draft.title, cta: "Subscribe for the next practical creator guide.", editChanges: "Use chapters, room for examples, and a deliberate closing recap.")
+            case .substack:
+                PlatformVariantDraft(platform: platform, caption: draft.takeaway, openingAdjustment: "Open with the personal moment behind the idea, then widen to what it means for the reader.", titleOverride: draft.title, cta: "Reply and tell me the version of this you're living right now.", editChanges: "Break the piece with subheads, keep one pull-quote line, and close with a direct question.")
+            case .pinterest:
+                PlatformVariantDraft(platform: platform, caption: "\(draft.takeaway) Save this for later.", openingAdjustment: "Put the promise in the cover text so the pin reads at a glance.", titleOverride: draft.title, cta: "Save this pin for when you need it.", editChanges: "Use a vertical cover with readable overlay text and a keyword-rich title.")
             }
         }
     }

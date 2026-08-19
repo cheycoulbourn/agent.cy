@@ -1342,6 +1342,8 @@ struct OnboardingView: View {
             case .instagram: draft.platforms.contains(.instagramReels)
             case .tiktok: draft.platforms.contains(.tiktok)
             case .youtube: draft.platforms.contains(.youtubeShorts) || draft.platforms.contains(.youtubeVideo)
+            case .substack: draft.platforms.contains(.substack)
+            case .pinterest: draft.platforms.contains(.pinterest)
             }
         }
     }
