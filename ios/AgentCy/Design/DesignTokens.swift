@@ -759,19 +759,69 @@ enum AgentButtonPressFeedback {
     }
 }
 
+/// One visual family for every action button in the app: a rounded rect at
+/// `AgentRadius.control` with a 1pt border and a flat tinted fill — the same
+/// structure as the pillar "add" affordance. Roles differ only by fill and
+/// text color, never by shape, so buttons with similar purposes read as the
+/// same control everywhere. The Cy accent stays reserved for the single color
+/// moment on a screen and is never spent on a button fill.
+enum AgentActionButtonTheme {
+    static let radius = AgentRadius.control
+
+    static let primaryFill = Color.agentText.opacity(0.09)
+    static let secondaryFill = Color.agentText.opacity(0.055)
+    static let destructiveFill = Color.agentDestructive.opacity(0.10)
+
+    static let border = Color.agentBorder
+    static let destructiveBorder = Color.agentDestructive.opacity(0.35)
+}
+
+/// Destructive sibling in the unified action-button family: same shape and
+/// border structure, destructive tint for fill, stroke, and text.
+struct AgentQuietDestructiveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.agentSubtext.weight(.semibold))
+            .foregroundStyle(Color.agentDestructive)
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(
+                AgentActionButtonTheme.destructiveFill,
+                in: .rect(cornerRadius: AgentActionButtonTheme.radius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
+                    .stroke(AgentActionButtonTheme.destructiveBorder, lineWidth: 1)
+            }
+            .opacity(isEnabled ? 1 : 0.42)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
+    }
+}
+
 struct AgentPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var background: Color = .actionAccent
-    var foreground: Color = .onAccent
-
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.agentHeadline)
             .frame(maxWidth: .infinity, minHeight: 52)
             .padding(.horizontal, AgentLayout.pageMargin)
-            .foregroundStyle(foreground)
-            .background(background, in: .capsule)
+            .foregroundStyle(Color.agentText)
+            .background(AgentActionButtonTheme.primaryFill, in: .rect(cornerRadius: AgentActionButtonTheme.radius))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
+                    .stroke(AgentActionButtonTheme.border, lineWidth: 1)
+            }
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(AgentButtonPressFeedback.scale(
                 isPressed: configuration.isPressed,
@@ -793,9 +843,12 @@ struct AgentCyPrimaryButtonStyle: ButtonStyle {
             .font(.agentHeadline)
             .frame(maxWidth: .infinity, minHeight: 52)
             .padding(.horizontal, AgentSpacing.x6)
-            .foregroundStyle(Color.onCyAccent)
-            .background(Color.cyAccent, in: .capsule)
-            .shadow(color: Color.cyAccent.opacity(0.28), radius: 16, y: 6)
+            .foregroundStyle(Color.agentText)
+            .background(AgentActionButtonTheme.primaryFill, in: .rect(cornerRadius: AgentActionButtonTheme.radius))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
+                    .stroke(AgentActionButtonTheme.border, lineWidth: 1)
+            }
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(AgentButtonPressFeedback.scale(
                 isPressed: configuration.isPressed,
@@ -818,8 +871,11 @@ struct AgentSecondaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: 52)
             .padding(.horizontal, AgentSpacing.x6)
             .foregroundStyle(Color.agentText)
-            .background(Color.agentSurface, in: .capsule)
-            .overlay(Capsule().strokeBorder(Color.agentBorder, lineWidth: 1))
+            .background(AgentActionButtonTheme.secondaryFill, in: .rect(cornerRadius: AgentActionButtonTheme.radius))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
+                    .stroke(AgentActionButtonTheme.border, lineWidth: 1)
+            }
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(AgentButtonPressFeedback.scale(
                 isPressed: configuration.isPressed,
@@ -1177,8 +1233,11 @@ struct AgentCompactSecondaryButtonStyle: ButtonStyle {
             .padding(.horizontal, AgentSpacing.x4)
             .frame(minHeight: 44)
             .foregroundStyle(Color.agentText)
-            .background(Color.agentSurface, in: .capsule)
-            .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
+            .background(AgentActionButtonTheme.secondaryFill, in: .rect(cornerRadius: AgentActionButtonTheme.radius))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
+                    .stroke(AgentActionButtonTheme.border, lineWidth: 1)
+            }
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(AgentButtonPressFeedback.scale(
                 isPressed: configuration.isPressed,
@@ -1198,15 +1257,16 @@ struct AgentDesktopPrimaryActionButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
-        // A warm capsule in the brand accent: the previous ink-filled block
-        // was the only near-black element in the light-mode chrome and read
-        // as foreign next to the paper surfaces.
         configuration.label
             .font(.agentSubtext.weight(.semibold))
             .padding(.horizontal, 14)
             .frame(minHeight: 40)
-            .foregroundStyle(Color.onCyAccent)
-            .background(Color.cyAccent, in: .capsule)
+            .foregroundStyle(Color.agentText)
+            .background(AgentActionButtonTheme.primaryFill, in: .rect(cornerRadius: AgentActionButtonTheme.radius))
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
+                    .stroke(AgentActionButtonTheme.border, lineWidth: 1)
+            }
             .opacity(isEnabled
                 ? AgentButtonPressFeedback.value(
                     resting: 1.0,

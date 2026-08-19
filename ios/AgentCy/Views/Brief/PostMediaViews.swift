@@ -359,12 +359,12 @@ struct AgentQuietSecondaryButtonStyle: ButtonStyle {
             .padding(.horizontal, AgentSpacing.x4)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(
-                Color.agentText.opacity(isEmphasized ? 0.09 : 0.055),
-                in: .rect(cornerRadius: AgentRadius.button)
+                isEmphasized ? AgentActionButtonTheme.primaryFill : AgentActionButtonTheme.secondaryFill,
+                in: .rect(cornerRadius: AgentActionButtonTheme.radius)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: AgentRadius.button)
-                    .stroke(Color.agentBorder.opacity(isEmphasized ? 0 : 1), lineWidth: 1)
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
+                    .stroke(AgentActionButtonTheme.border, lineWidth: 1)
             }
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(AgentButtonPressFeedback.scale(

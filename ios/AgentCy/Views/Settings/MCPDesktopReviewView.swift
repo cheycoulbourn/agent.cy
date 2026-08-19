@@ -892,32 +892,3 @@ struct MCPDesktopReviewView: View {
     }
 }
 
-/// Destructive sibling of `AgentQuietSecondaryButtonStyle`. The shared style has
-/// no destructive variant, and the Paper design system specifies a tinted
-/// destructive fill rather than a solid block — the Cy accent stays reserved as
-/// the single color moment on a screen.
-struct AgentQuietDestructiveButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.agentSubtext.weight(.semibold))
-            .foregroundStyle(Color.agentDestructive)
-            .padding(.horizontal, AgentSpacing.x4)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(
-                Color.agentDestructive.opacity(0.10),
-                in: .rect(cornerRadius: AgentRadius.button)
-            )
-            .opacity(isEnabled ? 1 : 0.42)
-            .scaleEffect(AgentButtonPressFeedback.scale(
-                isPressed: configuration.isPressed,
-                reduceMotion: reduceMotion
-            ))
-            .animation(
-                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
-                value: configuration.isPressed
-            )
-    }
-}

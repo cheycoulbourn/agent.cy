@@ -205,32 +205,14 @@ struct ConsistencyGoalEditorView: View {
             }
 
             HStack(spacing: AgentSpacing.x3) {
-                Button {
+                Button("Save goal") {
                     onSave(WeeklyConsistencyPolicy.clampedGoal(selection))
-                } label: {
-                    Text("Save goal")
-                        .font(.agentSubtext.weight(.semibold))
-                        .foregroundStyle(Color.agentText)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(Color.agentSelectionFill, in: .rect(cornerRadius: AgentRadius.control))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: AgentRadius.control)
-                                .stroke(Color.agentText.opacity(0.4), lineWidth: 1)
-                        }
-                        .contentShape(.rect)
                 }
-                .buttonStyle(AgentPressButtonStyle())
+                .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
 
                 if currentGoal != nil, let onRemove {
-                    Button(role: .destructive, action: onRemove) {
-                        Text("Remove")
-                            .font(.agentSubtext.weight(.medium))
-                            .foregroundStyle(Color.agentDestructive)
-                            .padding(.horizontal, AgentSpacing.x4)
-                            .frame(minHeight: 44)
-                            .contentShape(.rect)
-                    }
-                    .buttonStyle(AgentPressButtonStyle())
+                    Button("Remove", role: .destructive, action: onRemove)
+                        .buttonStyle(AgentQuietDestructiveButtonStyle())
                 }
             }
         }

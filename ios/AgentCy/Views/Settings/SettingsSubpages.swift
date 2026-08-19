@@ -2292,10 +2292,7 @@ struct EraseDataSettingsView: View {
 
             VStack(spacing: AgentSpacing.x3) {
                 Button("Erase everything", role: .destructive) { confirmErase = true }
-                    .buttonStyle(AgentPrimaryButtonStyle(
-                        background: .agentDestructive,
-                        foreground: .onCyAccent
-                    ))
+                    .buttonStyle(AgentQuietDestructiveButtonStyle())
 
                 Button("Keep my data") { dismiss() }
                     .buttonStyle(AgentSecondaryButtonStyle())
@@ -2345,10 +2342,7 @@ struct ResetPostsAndTasksSettingsView: View {
 
             VStack(spacing: AgentSpacing.x3) {
                 Button("Reset posts & tasks", role: .destructive) { confirmReset = true }
-                    .buttonStyle(AgentPrimaryButtonStyle(
-                        background: .agentDestructive,
-                        foreground: .onCyAccent
-                    ))
+                    .buttonStyle(AgentQuietDestructiveButtonStyle())
 
                 Button("Keep my work") { dismiss() }
                     .buttonStyle(AgentSecondaryButtonStyle())
