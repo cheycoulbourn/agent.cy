@@ -2712,21 +2712,21 @@ struct DayAgendaView: View {
             }
         }
         .sheet(isPresented: $isPillarPickerPresented) {
-            pillarPickerSheet
+            // Catalyst gets a fitted compact sheet like the posted-date picker;
+            // iPhone-style height detents on the desktop made presentation
+            // negotiate sizes against the window and open sluggishly.
+            #if targetEnvironment(macCatalyst)
+            pillarPickerSheetWithConfirmation
+                .frame(width: 460, height: pillarPickerHeight)
+                .presentationSizing(.fitted)
+                .presentationCornerRadius(AgentRadius.floating)
+                .presentationBackground(Color.agentCanvas)
+            #else
+            pillarPickerSheetWithConfirmation
                 .presentationDetents([.height(pillarPickerHeight)])
                 .agentSheetDragIndicator()
                 .presentationBackground(Color.agentCanvas)
-                .alert(pillarConfirmationTitle, isPresented: $confirmsPillarSelectionInPicker) {
-                    Button("Cancel", role: .cancel) {
-                        cancelPillarOverwrite()
-                    }
-                    Button(pillarConfirmationActionTitle, role: .destructive) {
-                        applyPillarOverwrite()
-                        isPillarPickerPresented = false
-                    }
-                } message: {
-                    Text(pillarConfirmationMessage)
-                }
+            #endif
         }
         .sheet(item: $selectedEpisodeSlot) { slot in
             EpisodeSlotActionsView(slot: slot) { result in
@@ -3040,6 +3040,21 @@ struct DayAgendaView: View {
         return "\(title) Day"
     }
 
+    private var pillarPickerSheetWithConfirmation: some View {
+        pillarPickerSheet
+            .alert(pillarConfirmationTitle, isPresented: $confirmsPillarSelectionInPicker) {
+                Button("Cancel", role: .cancel) {
+                    cancelPillarOverwrite()
+                }
+                Button(pillarConfirmationActionTitle, role: .destructive) {
+                    applyPillarOverwrite()
+                    isPillarPickerPresented = false
+                }
+            } message: {
+                Text(pillarConfirmationMessage)
+            }
+    }
+
     private var pillarPickerSheet: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .center) {
@@ -3049,13 +3064,10 @@ struct DayAgendaView: View {
 
                 Spacer()
 
-                Button("Close") {
+                AgentToolbarIconButton(title: "Close", icon: .close) {
                     isPillarPickerPresented = false
                 }
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.agentText)
                 .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
-                .buttonStyle(.plain)
             }
 
             VStack(spacing: 0) {
@@ -3143,8 +3155,11 @@ struct DayAgendaView: View {
     }
 
     private var currentDaySignature: String {
+        // Computed on every body evaluation via hasDayChanges: one dictionary
+        // pass beats a full scan of every brief per day output.
+        let briefByID = Dictionary(activeBriefs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let outputSignature = dayOutputs.map { output in
-            let brief = activeBriefs.first { $0.id == output.briefID }
+            let brief = briefByID[output.briefID]
             return [
                 output.id.uuidString,
                 output.status.rawValue,
