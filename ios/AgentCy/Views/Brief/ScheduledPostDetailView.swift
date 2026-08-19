@@ -604,7 +604,13 @@ struct ScheduledPostDetailView: View {
     @ViewBuilder
     private var episodeSeriesAction: some View {
         if let selectedSeries {
-            NavigationLink(value: selectedSeries) {
+            // A view-builder link matches how every other detail view in the
+            // app is pushed, and works in any stack — the value-based link
+            // needed a registered destination and popped straight back out of
+            // stacks with typed paths.
+            NavigationLink {
+                SeriesDetailView(series: selectedSeries)
+            } label: {
                 HStack(spacing: AgentSpacing.x3) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                         MetaLabel("Series")

@@ -38,13 +38,6 @@ extension View {
         navigationDestination(for: TaskNavigationRoute.self) { route in
             TaskNavigationDestinationView(route: route)
         }
-        // Series is registered here, at the root of every stack that already
-        // registers task routes. Declaring it inside a detail view meant the
-        // destination was not in scope when the link fired, so the push
-        // immediately popped back.
-        .navigationDestination(for: ContentSeries.self) { series in
-            SeriesDetailView(series: series)
-        }
     }
 }
 
