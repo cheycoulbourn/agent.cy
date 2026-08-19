@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+import UserNotifications
 
 enum MCPBridgeStarterPrompt {
     static let defaultValue = """
@@ -22,6 +23,10 @@ enum MCPBridgeStarterPrompt {
 }
 
 struct MCPBridgeSettingsView: View {
+    @State private var pushAuthorization: UNAuthorizationStatus?
+    @State private var pushCapabilityConnected = MCPBridgePushPreferences.capability != nil
+    @State private var isEnablingPush = false
+
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @State private var chooseFolder = false
@@ -47,6 +52,9 @@ struct MCPBridgeSettingsView: View {
             if MCPBridgePreferences.isConnected {
                 localCySection
                 pendingSection
+                #if !targetEnvironment(macCatalyst)
+                notificationsSection
+                #endif
                 demoSection
                 syncSection
             } else {
@@ -247,6 +255,98 @@ struct MCPBridgeSettingsView: View {
             }
         }
     }
+
+#if !targetEnvironment(macCatalyst)
+    /// Review alerts were previously only enabled as a side effect of turning
+    /// on reminders, so most installs never asked for notification permission
+    /// and the bridge could never nudge this iPhone. This section owns that
+    /// explicitly: it shows the real state and starts the registration chain
+    /// (permission -> APNs token -> server capability -> snapshot).
+    private var notificationsSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+            SectionRuleHeader(title: "Review alerts")
+            AgentInsetSurface {
+                HStack(spacing: AgentSpacing.x4) {
+                    VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                        Text(pushStatusTitle)
+                            .font(.agentHeadline)
+                        Text(pushStatusDetail)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    if pushCapabilityConnected {
+                        AgentIconView(.check, size: 15)
+                            .foregroundStyle(Color.agentSuccess)
+                    }
+                }
+            }
+
+            if !pushCapabilityConnected {
+                if pushAuthorization == .denied {
+                    Button { openNotificationSettings() } label: {
+                        Text("Open notification settings")
+                    }
+                    .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
+                } else {
+                    Button {
+                        Task { await enableReviewAlerts() }
+                    } label: {
+                        Text(isEnablingPush ? "Enabling…" : "Enable review alerts")
+                    }
+                    .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
+                    .disabled(isEnablingPush)
+                }
+            }
+        }
+        .task { await refreshPushState() }
+        .onReceive(NotificationCenter.default.publisher(for: .agentCyMCPInboxChanged)) { _ in
+            Task { await refreshPushState() }
+        }
+    }
+
+    private var pushStatusTitle: String {
+        if pushCapabilityConnected { return "Alerts on" }
+        if pushAuthorization == .denied { return "Notifications are off" }
+        return "Alerts off"
+    }
+
+    private var pushStatusDetail: String {
+        if pushCapabilityConnected {
+            return "This iPhone is notified the moment Claude or Codex sends a proposal."
+        }
+        if pushAuthorization == .denied {
+            return "Turn on notifications for agent.cy in Settings, then come back here."
+        }
+        return "Get a notification on this iPhone the moment Claude or Codex sends a proposal for review."
+    }
+
+    private func refreshPushState() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        pushAuthorization = settings.authorizationStatus
+        pushCapabilityConnected = MCPBridgePushPreferences.capability != nil
+    }
+
+    private func enableReviewAlerts() async {
+        isEnablingPush = true
+        defer { isEnablingPush = false }
+        let center = UNUserNotificationCenter.current()
+        let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        if granted {
+            // The APNs token callback in AgentCyApplicationDelegate registers
+            // with the server and posts agentCyMCPInboxChanged when the
+            // capability lands, which flips this section to connected.
+            await MainActor.run { UIApplication.shared.registerForRemoteNotifications() }
+        }
+        await refreshPushState()
+    }
+
+    private func openNotificationSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+#endif
 
     private var setupSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
