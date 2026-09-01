@@ -1,0 +1,43 @@
+L2 · Tab-switch render cost
+===========================
+
+Device : simulator "iPhone 17", iOS 26.5, UDID 1F605047-4304-48C2-8DA0-1D5C72D585BC
+Build  : prebuilt Debug agent.cy.app
+Date   : 2026-09-01
+
+Method
+------
+One continuous recordVideo (variable frame rate; one frame per composited update) while
+tapping through all six tabs with a ~3 s pause between taps, then opening the creation
+hub. Contiguous runs of frames closer than 250 ms apart are one "burst"; the burst
+length is how long the app kept rendering after the tap.
+
+  ffprobe -v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0 tabs.mov \
+    | tr -d ',' \
+    | awk 'NR==1{s=$1;p=$1;n=1;next} {d=$1-p; if(d>0.25){printf "BURST %.3f -> %.3f (%.0f ms, %d frames) then idle %.2f s\n",s,p,(p-s)*1000,n,d; s=$1;n=1} else n++; p=$1}'
+
+Raw output (scratchpad/l2/tabs.mov, 30 fps container, 1114 frames, 61.5 s)
+--------------------------------------------------------------------------
+  BURST 0.000  -> 5.358   (5358 ms, 164 frames)   then idle 7.67 s
+  BURST 13.027 -> 13.535  ( 508 ms,  33 frames)   then idle 4.96 s
+  BURST 18.500 -> 18.532  (  32 ms,   3 frames)   then idle 1.59 s
+  BURST 20.117 -> 20.635  ( 518 ms,  32 frames)   then idle 6.76 s
+  BURST 27.398 -> 27.902  ( 503 ms,  33 frames)   then idle 6.38 s
+  BURST 34.278 -> 48.427  (14148 ms, 459 frames)  then idle 0.43 s
+  BURST 48.857 -> 61.432  (12575 ms, 390 frames)
+
+Reading
+-------
+  t~3 s   tap Plan      : inside the opening burst (Home was already rendering; see
+                          idle-frames-by-tab.txt)
+  t~13 s  tap Tasks     : 508 ms of continuous render, then idle
+  t~20 s  tap Pillars   : 518 ms
+  t~27 s  tap Idea Bank : 503 ms
+  t~34 s  tap Cy        : never returns to idle — the Cy surfaces carry CyAnimatedLogo
+  t~41 s  tap Home      : still never idle — Home carries CyAnimatedLogo too
+  t~48 s  tap +         : creation hub sheet; still never idle
+
+So a tab switch costs ~510 ms of continuous rendering on the four tabs that do settle.
+The tab pill is animated with .snappy(duration: 0.32) at
+Views/Shell/AppShellView.swift:849; the content layer itself is explicitly not animated
+(appTabLayer, AppShellView.swift:733-741).

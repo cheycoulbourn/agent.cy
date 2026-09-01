@@ -1,0 +1,178 @@
+Verbatim excerpts gathered 2026-09-01 for the L5 security lane.
+
+--- 1. Share extension performs authenticated network calls -------------------
+ios/AgentCyInspirationShare/ShareViewController.swift:202
+    private let apiClient = InspirationShareAPIClient()
+ios/AgentCyInspirationShare/ShareViewController.swift:394
+        let task = Task { try await apiClient.extract(url: url) }
+ios/AgentCyInspirationShare/ShareViewController.swift:255
+            let shaped = try await apiClient.shape(
+
+ios/AgentCyInspirationShare/InspirationShareAPI.swift:112
+        var request = URLRequest(url: baseURL.appending(path: "/v1/inspiration/extract"))
+ios/AgentCyInspirationShare/InspirationShareAPI.swift:155
+        var request = URLRequest(url: baseURL.appending(path: "/v1/ai/inspiration/shape"))
+
+Contradicts docs/PRIVACY.md:11  "Capture makes no network request."
+Contradicts docs/ARCHITECTURE.md:35 "It does not link SwiftData, AI, EventKit,
+notification, or CloudKit services."
+
+--- 2. Proxy fetches the shared link server-side ------------------------------
+server/src/app.ts:190
+  app.post("/v1/inspiration/extract", async (request, reply) => {
+server/src/app.ts:199
+      const extracted = await inspirationExtractor.extract(parsed.data.canonicalUrl);
+server/src/inspiration-extractor.ts:46
+    const [postPage, embedPage, oEmbedResponse] = await Promise.allSettled([
+      this.fetchHtml(canonicalUrl),
+      this.fetchHtml(embedUrl.toString()),
+      this.fetchOEmbed(oEmbedUrl.toString()),
+    ]);
+
+Contradicts docs/PRIVACY.md:23 "The proxy does not fetch links."
+
+--- 3. Push capability token is written into the MCP snapshot -----------------
+contracts/src/mcp.ts:22
+export const McpBridgePushCapabilitySchema = z
+  .object({
+    endpoint: z.url().refine(...),
+    token: z.string().min(32).max(512),
+  })
+contracts/src/mcp.ts:232 (McpBridgeSnapshotSchema)
+    notification: McpBridgePushCapabilitySchema.nullish(),
+ios/AgentCy/Services/MCPBridgeService.swift:697
+        try encoder.encode(snapshot).write(
+            to: directory.appending(path: "snapshot.json"), ...
+
+Contradicts docs/ARCHITECTURE.md:33 "a versioned content snapshot without
+attachment bytes or credentials" and docs/MCP_BRIDGE.md privacy boundary
+"Attachment bytes, the profile photo, credentials, ... are not copied into the
+MCP snapshot."
+
+--- 4. iOS accepts an unvalidated Local Cy base URL ---------------------------
+ios/AgentCy/Services/LocalCyService.swift:267
+    private func connectionConfig() throws -> LocalCyConnectionConfig? {
+        guard MCPBridgePreferences.isConnected else { return nil }
+        return try MCPBridgePreferences.withDirectory { directory in
+            let url = directory.appending(path: "cy-connection.json")
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let config = try decoder.decode(LocalCyConnectionConfig.self, from: Data(contentsOf: url))
+            guard config.schemaVersion == 1, config.token.count >= 32 else {
+                throw LocalCyError.invalidResponse
+            }
+            return config
+        }
+    }
+ios/AgentCy/Services/LocalCyService.swift:207
+        var request = URLRequest(url: connection.baseURL.appending(path: "v1/local-cy"))
+        request.httpMethod = "POST"
+        request.httpBody = try encoder.encode(envelope)      <- full creator payload
+        request.setValue("Bearer \(connection.token)", forHTTPHeaderField: "Authorization")
+
+No scheme, host, or loopback/private-range check anywhere on connection.baseURL.
+
+--- 5. Local Cy transport is cleartext HTTP on all interfaces -----------------
+mcp/scripts/install-local-cy.mjs:63
+const connection = {
+  schemaVersion: 1,
+  baseURL: `http://${localHostName}.local:${port}`,
+mcp/src/local-cy-http-server.ts:38
+      server.listen(port, "0.0.0.0", () => {
+ios/project.yml (AgentCy info.properties)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+
+--- 6. Erase leaves the APNs device token on the proxy ------------------------
+server/src/store.ts:751
+  async eraseInstallation(installationId: string, now: Date): Promise<void> {
+    ... installation.tokenHash = null; installation.deletedAt = ...
+    (quotaEvents, costEvents, telemetry, reservations, operations cleared)
+  }
+Never cleared: installation.pushDeviceToken, installation.pushPlatform,
+installation.bridgeNotificationCapabilityHash, installation.accountId,
+installation.allowanceCounts.
+
+Contradicts docs/PRIVACY.md:57 "- Installation-linked proxy metadata." in the
+Erase All Data removal list.
+
+--- 7. Erase leaves the bridge folder populated -------------------------------
+ios/AgentCy/Services/PrivacyEraseCoordinator.swift:252
+        try? MCPBridgePreferences.withDirectory { folder in
+            try FileManager.default.removeItem(at: folder.appending(path: "snapshot.json"))
+        }
+Directories created by mcp/src/workspace.ts:92 and left in place:
+requests/, responses/, episode-revisions/, cy-requests/, cy-responses/,
+cy-processing/, cy-connection.json, cy-runtime.json, bridge-status.json,
+push-status.json.
+
+--- 8. Unrated-limited bridge notification endpoint ---------------------------
+server/src/app.ts:239
+  app.post("/v1/bridge/notifications", async (request, reply) => {
+      const rawCapability = readBearerToken(request.headers.authorization);
+      ... no rate limit, no quota, no reservation ...
+server/src/app.ts:1237
+  return `“${request.subject}” ${change} and needs your review.`;
+subject is caller-controlled, contracts/src/mcp.ts:40 allows 1..500 chars.
+
+--- 9. Telemetry ingestion is unbounded ---------------------------------------
+server/src/app.ts:401  app.post("/v1/telemetry/events", ...)  (auth only)
+server/src/app.ts:415
+      for (const event of parsed.data.events) {
+        await repository.appendTelemetry(...)      <- one full state rewrite each
+contracts/src/supporting.ts:192  events: z.array(TelemetryEventSchema).min(1).max(100),
+server/src/store.ts:245 transact() -> structuredClone(state) + backend.save(state)
+server/src/store.ts:199 JsonFileStateBackend.save writes the whole file each time.
+
+--- 10. Failed generations refund every limit --------------------------------
+server/src/app.ts:794
+    if (reservationId !== null && installation !== null) {
+      const failureCostMicros = 0;
+server/src/store.ts:700 (settleOperation)
+      if (input.outcome !== "succeeded") {
+        const quotaEventIndex = state.quotaEvents.findIndex(...)
+        if (quotaEventIndex >= 0) state.quotaEvents.splice(quotaEventIndex, 1);
+      }
+Result: an operation that reached Anthropic but failed validation consumes no
+short-window count, no daily count, no free allowance and no global spend.
+
+--- 11. /v1/inspiration/extract has no quota ----------------------------------
+server/src/app.ts:190-204: authenticate() only. No reserveOperation, no
+enforceInviteRedemptionRateLimit, no entitlement check. authenticate()
+(server/src/app.ts:869) checks only token hash + deletedAt, never access.
+
+--- 12. Dockerfile / .dockerignore -------------------------------------------
+Dockerfile:18   COPY server ./server
+Dockerfile:24   EXPOSE 3000
+Dockerfile:26   CMD ["node", "server/dist/index.js"]     <- no USER directive
+.dockerignore
+.env
+.env.*
+node_modules
+**/node_modules
+**/dist
+Root-anchored `.env` / `.env.*` do not match `server/.env`; `**/node_modules`
+shows the nested form was used where it was needed.
+
+--- 13. Share extension privacy manifest -------------------------------------
+ios/AgentCyInspirationShare/PrivacyInfo.xcprivacy
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array/>
+but ios/AgentCyInspirationShare/ShareViewController.swift:275 and :338 use
+UserDefaults(suiteName:), and ios/AgentCyShared/InspirationShareTransport.swift:615
+reads/writes UserDefaults. NSPrivacyAccessedAPICategoryUserDefaults with reason
+CA92.1 is declared in the app and widget manifests but not here.
+
+--- 14. Documented MCP tool inventory is stale -------------------------------
+docs/MCP_BRIDGE.md lists 8 read tools and 7 write tools (15).
+mcp/src/server.ts registers 32:
+bridge_status, external_plan_preflight, scheduling_preflight, search_posts,
+get_post, list_ideas, list_pillars, list_social_accounts, list_series,
+list_episode_slots, list_episode_revisions, get_episode_revision,
+list_brand_partners, get_agenda, list_tasks, create_idea, create_post_draft,
+update_post, set_post_work_date, schedule_post, reschedule_post, mark_posted,
+create_series, create_series_episode, resubmit_series_episode, add_task,
+add_post_task, create_brand_partner, update_brand_partner, make_anchor_pillar,
+complete_task, change_request_status.
+Every write tool still routes through workspace.queueRequest (mcp/src/server.ts
+queuedResult, line 812) so the approval boundary itself holds. No delete,
+archive, publish, erase, attachment or raw-database tool exists.

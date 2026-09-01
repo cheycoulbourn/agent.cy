@@ -1,0 +1,72 @@
+L2 · Cold-launch milestones
+===========================
+
+Device : simulator "iPhone 17", iOS 26.5, UDID 1F605047-4304-48C2-8DA0-1D5C72D585BC
+         ("iPhone 17 Pro" was in use by lane L1)
+Build  : prebuilt Debug agent.cy.app
+Date   : 2026-09-01
+
+Method
+------
+The app already emits os_log notices from RootLaunchDiagnostics (App/RootView.swift:43-86)
+with an elapsed_ms since process init. No instrumentation was added.
+
+  xcrun simctl spawn <udid> log stream --style compact \
+    --predicate 'subsystem == "com.agentcy.app"' > launch.log &
+  xcrun simctl launch <udid> com.agentcy.app <fixture flags>
+
+`destination_app` is emitted from RootView's .onAppear, i.e. after SwiftUI has built the
+whole tree for the first frame. Script: scratchpad/l2/launchtime.sh
+
+A. Cold — first launches after install, freshly booted simulator
+----------------------------------------------------------------
+run 1  process_initialized 0.3   store_ready 485.8   bootstrap 556.8   app_model_ready 621.3   destination_app 2213.4
+run 2  process_initialized 0.8   store_ready 1017.9  bootstrap 1092.5  app_model_ready 1175.6  destination_app 3649.3
+run 3  process_initialized 0.2   store_ready 610.7   bootstrap 675.7   app_model_ready 710.5   destination_app 2305.4
+
+  Gap between "the model is ready" and "the first screen exists":
+    1592 ms / 2474 ms / 1595 ms.   That gap is SwiftUI building the shell.
+
+B. Warm — same session, ~20 launches later, all values in ms
+------------------------------------------------------------
+  shellhome  run1: app_model_ready=182.9  first_screen=582.5   (build 399.6)
+  shellhome  run2: app_model_ready=163.7  first_screen=554.9   (build 391.2)
+  shellhome  run3: app_model_ready=159.3  first_screen=523.0   (build 363.7)
+  shellplan  run1: app_model_ready=159.5  first_screen=527.6   (build 368.1)
+  shellplan  run2: app_model_ready=161.6  first_screen=525.1   (build 363.5)
+  shellplan  run3: app_model_ready=163.8  first_screen=544.9   (build 381.1)
+  editoronly run1: app_model_ready=156.5  first_screen=431.5   (build 275.0)
+  editoronly run2: app_model_ready=155.8  first_screen=390.1   (build 234.3)
+  editoronly run3: app_model_ready=165.5  first_screen=417.2   (build 251.7)
+
+  shellhome  = -agentCyPreviewData -agentCyPreviewTab home   (AppShellView, six tab roots)
+  shellplan  = -agentCyPreviewData -agentCyPreviewTab today  (AppShellView, six tab roots)
+  editoronly = -agentCyPreviewData -agentCyPreviewPostEditor (PreviewPostEditorRoot bypasses
+               the shell entirely — App/RootView.swift:154-155, :397-415 — and builds only
+               ResumablePostEditorView)
+
+Two readings
+------------
+1. Home-selected and Plan-selected launches cost the same (mean 553.5 ms vs 532.5 ms) even
+   though HomeDashboardView declares 12 whole-table @Query and 29 derived array properties
+   while PlanView declares 8 and 0. The shell builds all six tab roots regardless of which
+   one is selected — AppShellView.swift:62-83 puts six NavigationStacks in one ZStack and
+   only sets opacity(0) on the unselected ones (appTabLayer, AppShellView.swift:733-741).
+
+2. ResumablePostEditorView alone costs 234–275 ms of main-thread build. That work has to
+   finish before iOS can begin a sheet presentation, which is what "sheets feel slow"
+   measures.
+
+Note on Instruments
+-------------------
+`xcrun xctrace record --template 'Time Profiler' --device <sim udid> --attach <pid>
+--time-limit 30s` was attempted twice. Both runs created the .trace directory and then hung
+with 52 KB written; killed after 5 minutes. No trace was produced, so no top-frames table
+is available. Every number above comes from the app's own os_log milestones and from
+variable-frame-rate screen recordings (see idle-frames-by-tab.txt).
+
+Fixture volume
+--------------
+-agentCyPreviewData seeds 34 inserts (Preview/PreviewData.swift, 485 lines) — one idea,
+zero saved posts. Every number here is therefore a floor. The whole-table @Query cost
+(L2H-02) grows with the creator's own data and cannot be sized from this fixture.

@@ -1,0 +1,460 @@
+Attributes: Application, 0x10831e440, pid: 22394, label: 'agent.cy'
+Element subtree:
+ →Application, 0x10831e440, pid: 22394, label: 'agent.cy'
+    Window (Main), 0x10831e580, {{0.0, 0.0}, {390.0, 844.0}}
+      Other, 0x10831e6c0, {{0.0, 0.0}, {390.0, 844.0}}
+        Other, 0x10831e800, {{0.0, 0.0}, {390.0, 844.0}}
+          Other, 0x10831e940, {{-390.0, -844.0}, {1170.0, 2532.0}}
+          Other, 0x10831ea80, {{0.0, 0.0}, {390.0, 844.0}}
+            Other, 0x10831ebc0, {{0.0, 0.0}, {390.0, 844.0}}
+              Other, 0x10831ed00, {{0.0, 0.0}, {390.0, 844.0}}
+                Other, 0x10831ee40, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x10831ef80, {{0.0, 0.0}, {390.0, 844.0}}
+                    Other, 0x10831f0c0, {{0.0, 0.0}, {390.0, 844.0}}
+                      Other, 0x10831f200, {{0.0, 0.0}, {390.0, 844.0}}
+                        StaticText, 0x10831f340, {{24.0, 94.3}, {112.3, 13.3}}, label: 'Weekly agenda'
+                        Button, 0x10831f480, {{225.8, 78.8}, {44.5, 44.5}}, label: 'Search posts'
+                          Image, 0x10831f5c0, {{226.0, 79.0}, {44.0, 44.0}}, label: 'agent-icon-search'
+                        Button, 0x10831f700, {{273.8, 78.8}, {44.5, 44.5}}, label: 'Open social grid'
+                          Image, 0x10831f840, {{274.0, 79.0}, {44.0, 44.0}}, label: 'agent-icon-instagram-camera'
+                        Button, 0x10831f980, {{322.0, 79.0}, {44.0, 44.0}}, label: 'Profile and settings'
+                        Button, 0x10831fac0, {{24.0, 147.0}, {80.7, 39.0}}, label: 'Return to this week'
+                        StaticText, 0x10831fc00, {{104.7, 147.0}, {28.0, 39.0}}, label: ' is'
+                        StaticText, 0x10831fd40, {{24.0, 188.0}, {266.0, 39.0}}, label: 'September 1, 2026'
+                        SegmentedControl, 0x10831fe80, {{15.0, 262.0}, {360.0, 31.0}}
+                          Button, 0x117044000, {{15.0, 262.0}, {120.0, 32.0}}, label: 'Week', Selected
+                          Button, 0x117044140, {{135.0, 262.0}, {120.0, 32.0}}, label: 'Calendar'
+                          Button, 0x117044280, {{255.0, 262.0}, {120.0, 32.0}}, label: 'List'
+                        Button, 0x1170443c0, {{28.0, 342.0}, {44.0, 44.0}}, label: 'Previous week'
+                          Image, 0x117044500, {{28.0, 342.0}, {44.0, 44.0}}, label: 'agent-icon-back'
+                        Button, 0x117044640, {{76.0, 326.0}, {34.0, 76.0}}, label: 'Monday, August 31'
+                          StaticText, 0x117044780, {{79.5, 334.2}, {27.0, 13.3}}, label: 'Mon'
+                          StaticText, 0x1170448c0, {{85.2, 357.5}, {15.7, 18.3}}, label: '31'
+                          Other, 0x117044a00, {{88.6, 385.6}, {8.8, 8.8}}
+                        Button, 0x117044b40, {{110.0, 326.0}, {34.0, 76.0}}, label: 'Tuesday, September 1', Selected
+                          StaticText, 0x117044c80, {{116.0, 334.2}, {22.0, 13.3}}, label: 'Tue'
+                          StaticText, 0x117044dc0, {{123.8, 357.5}, {6.3, 18.3}}, label: '1'
+                          Other, 0x117044f00, {{122.6, 385.6}, {8.8, 8.8}}
+                        Button, 0x117045040, {{144.0, 326.0}, {34.0, 76.0}}, label: 'Wednesday, September 2'
+                          StaticText, 0x117045180, {{148.2, 334.2}, {25.7, 13.3}}, label: 'Wed'
+                          StaticText, 0x1170452c0, {{156.3, 357.5}, {9.3, 18.3}}, label: '2'
+                          Other, 0x117045400, {{156.6, 385.6}, {8.8, 8.8}}
+                        Button, 0x117045540, {{178.0, 326.0}, {34.0, 76.0}}, label: 'Thursday, September 3'
+                          StaticText, 0x117045680, {{183.2, 334.2}, {23.7, 13.3}}, label: 'Thu'
+                          StaticText, 0x1170457c0, {{190.2, 357.5}, {9.7, 18.3}}, label: '3'
+                          Other, 0x117045900, {{190.6, 385.6}, {8.8, 8.8}}
+                        Button, 0x117045a40, {{212.0, 326.0}, {34.0, 76.0}}, label: 'Friday, September 4'
+                          StaticText, 0x117045b80, {{220.7, 334.2}, {16.7, 13.3}}, label: 'Fri'
+                          StaticText, 0x117045cc0, {{224.0, 357.5}, {10.0, 18.3}}, label: '4'
+                          Other, 0x117045e00, {{224.6, 385.6}, {8.8, 8.8}}
+                        Button, 0x117045f40, {{246.0, 326.0}, {34.0, 76.0}}, label: 'Saturday, September 5'
+                          StaticText, 0x117046080, {{252.3, 334.2}, {21.3, 13.3}}, label: 'Sat'
+                          StaticText, 0x1170461c0, {{258.3, 357.5}, {9.3, 18.3}}, label: '5'
+                          Other, 0x117046300, {{259.0, 386.0}, {8.0, 8.0}}
+                        Button, 0x117046440, {{280.0, 326.0}, {34.0, 76.0}}, label: 'Sunday, September 6'
+                          StaticText, 0x117046580, {{285.2, 334.2}, {23.7, 13.3}}, label: 'Sun'
+                          StaticText, 0x1170466c0, {{292.2, 357.5}, {9.7, 18.3}}, label: '6'
+                          Other, 0x117046800, {{293.0, 386.0}, {8.0, 8.0}}
+                        Button, 0x117046940, {{318.0, 342.0}, {44.0, 44.0}}, label: 'Next week'
+                          Image, 0x117046a80, {{318.0, 342.0}, {44.0, 44.0}}, label: 'agent-icon-forward'
+                        ScrollView, 0x117046bc0, {{12.0, 438.0}, {366.0, 406.0}}
+                          Other, 0x117046d00, {{12.0, 438.0}, {366.0, 1266.3}}
+                            Button, 0x117046e40, {{36.0, 462.0}, {318.0, 63.0}}, label: 'Monday, Aug 31, complete, focus Rest Day'
+                              StaticText, 0x117046f80, {{36.0, 486.8}, {68.3, 13.3}}, label: 'Mon Aug 31'
+                              Image, 0x1170470c0, {{140.7, 487.0}, {13.0, 13.0}}, label: 'agent-icon-check'
+                              StaticText, 0x117047200, {{166.0, 484.3}, {63.3, 18.3}}, label: 'Rest Day'
+                              Image, 0x117047340, {{341.7, 488.0}, {11.0, 11.0}}, label: 'agent-icon-forward'
+                            Button, 0x117047480, {{36.0, 545.0}, {266.0, 56.0}}, label: 'Tue Sep 1, Rest Day'
+                              StaticText, 0x1170475c0, {{36.0, 553.2}, {53.3, 13.3}}, label: 'Tue Sep 1'
+                              StaticText, 0x117047700, {{36.0, 574.5}, {63.3, 18.3}}, label: 'Rest Day'
+                            Button, 0x117047840, {{310.0, 551.0}, {44.0, 44.0}}, label: 'Schedule post'
+                              Image, 0x117047980, {{310.0, 551.0}, {44.0, 44.0}}, label: 'agent-icon-add'
+                            StaticText, 0x117047ac0, {{36.0, 623.0}, {135.0, 13.3}}, label: 'Production tasks'
+                            StaticText, 0x117047c00, {{321.7, 623.0}, {32.3, 13.3}}, label: '1 task'
+                            Button, 0x117047d40, {{36.0, 669.3}, {20.0, 44.0}}, identifier: 'task-checkbox-7007033C-1D4F-4F7F-81E4-36D6F7779014', label: 'Complete task'
+                              Image, 0x117047e80, {{36.0, 669.3}, {20.0, 44.0}}, label: 'agent-icon-check'
+                            Button, 0x117048000, {{64.0, 652.3}, {290.0, 64.0}}, label: 'Open task Film the one-job walkthrough'
+                              StaticText, 0x117048140, {{64.0, 665.5}, {211.7, 18.3}}, label: 'Film the one-job walkthrough'
+                              StaticText, 0x117048280, {{64.0, 689.8}, {233.0, 13.3}}, label: 'THE ONE-JOB IDEA TEST, TODAY, NONE'
+                                StaticText, 0x1170483c0, {{64.0, 689.8}, {134.3, 13.3}}, label: 'THE ONE-JOB IDEA TEST'
+                                Other, 0x117048500, {{204.5, 695.3}, {2.3, 2.3}}
+                                StaticText, 0x117048640, {{212.8, 689.8}, {37.7, 13.3}}, label: 'TODAY'
+                                Other, 0x117048780, {{256.5, 695.3}, {2.3, 2.3}}
+                                StaticText, 0x1170488c0, {{265.0, 689.8}, {32.0, 13.3}}, label: 'NONE'
+                              Image, 0x117048a00, {{336.0, 678.3}, {12.0, 12.0}}, label: 'agent-icon-forward'
+                            Button, 0x117048b40, {{64.0, 733.7}, {20.0, 44.0}}, identifier: 'task-checkbox-5B461032-A684-4EAD-BEC2-A4D9C529DCB7', label: 'Complete subtask'
+                              Image, 0x117048c80, {{64.0, 733.7}, {20.0, 44.0}}, label: 'agent-icon-check'
+                            StaticText, 0x117048dc0, {{92.0, 730.3}, {93.3, 16.0}}, label: 'Set the camera'
+                            Button, 0x117048f00, {{64.0, 794.7}, {20.0, 44.0}}, identifier: 'task-checkbox-FA73600A-B467-48C9-8400-0EAE5B392253', label: 'Complete subtask'
+                              Image, 0x117049040, {{64.0, 794.7}, {20.0, 44.0}}, label: 'agent-icon-check'
+                            StaticText, 0x117049180, {{92.0, 791.5}, {106.7, 16.0}}, label: 'Record two takes'
+                            Button, 0x1170492c0, {{36.0, 886.7}, {266.0, 56.0}}, label: 'Wed Sep 2, Rest Day'
+                              StaticText, 0x117049400, {{36.0, 894.9}, {59.3, 13.3}}, label: 'Wed Sep 2'
+                              StaticText, 0x117049540, {{36.0, 916.3}, {63.3, 18.3}}, label: 'Rest Day'
+                            Button, 0x117049680, {{310.0, 892.7}, {44.0, 44.0}}, label: 'Schedule post'
+                              Image, 0x1170497c0, {{310.0, 892.7}, {44.0, 44.0}}, label: 'agent-icon-add'
+                            Button, 0x117049900, {{52.0, 972.7}, {286.0, 76.3}}, label: 'CREATOR SYSTEMS, SCHEDULED, The one-job idea test, POST DATE · INSTAGRAM, 4:40 PM'
+                              StaticText, 0x117049a40, {{67.0, 972.8}, {117.3, 13.3}}, label: 'CREATOR SYSTEMS'
+                              StaticText, 0x117049b80, {{257.7, 978.1}, {72.3, 13.3}}, label: 'SCHEDULED'
+                              StaticText, 0x117049cc0, {{52.0, 1004.8}, {169.7, 20.7}}, label: 'The one-job idea test'
+                              StaticText, 0x117049e00, {{52.0, 1035.8}, {150.0, 13.3}}, label: 'POST DATE · INSTAGRAM'
+                              StaticText, 0x117049f40, {{269.0, 1035.8}, {44.0, 13.3}}, label: '4:40 PM'
+                              Image, 0x11704a080, {{325.0, 1033.3}, {13.0, 13.0}}, label: 'agent-icon-forward'
+                            Button, 0x11704a1c0, {{36.0, 1105.0}, {266.0, 56.0}}, label: 'Thu Sep 3, Rest Day'
+                              StaticText, 0x11704a300, {{36.0, 1113.3}, {57.3, 13.3}}, label: 'Thu Sep 3'
+                              StaticText, 0x11704a440, {{36.0, 1134.6}, {63.3, 18.3}}, label: 'Rest Day'
+                            Button, 0x11704a580, {{310.0, 1111.0}, {44.0, 44.0}}, label: 'Schedule post'
+                              Image, 0x11704a6c0, {{310.0, 1111.0}, {44.0, 44.0}}, label: 'agent-icon-add'
+                            StaticText, 0x11704a800, {{36.0, 1183.1}, {135.0, 13.3}}, label: 'Production tasks'
+                            StaticText, 0x11704a940, {{321.7, 1183.1}, {32.3, 13.3}}, label: '1 task'
+                            Button, 0x11704aa80, {{36.0, 1229.3}, {20.0, 44.0}}, identifier: 'task-checkbox-08ADE7C2-88B7-46B4-9307-19AB6AA3C665', label: 'Complete task'
+                              Image, 0x11704abc0, {{36.0, 1229.3}, {20.0, 44.0}}, label: 'agent-icon-check'
+                            Button, 0x11704ad00, {{64.0, 1212.3}, {290.0, 64.0}}, label: 'Open task Shape the opening'
+                              StaticText, 0x11704ae40, {{64.0, 1225.6}, {135.3, 18.3}}, label: 'Shape the opening'
+                              StaticText, 0x11704af80, {{64.0, 1249.9}, {244.7, 13.3}}, label: 'WHAT I STOPPED TRACKING, SEP 3, NONE'
+                                StaticText, 0x11704b0c0, {{64.0, 1249.9}, {153.0, 13.3}}, label: 'WHAT I STOPPED TRACKING'
+                                Other, 0x11704b200, {{223.0, 1255.3}, {2.7, 2.7}}
+                                StaticText, 0x11704b340, {{231.5, 1249.9}, {30.7, 13.3}}, label: 'SEP 3'
+                                Other, 0x11704b480, {{268.3, 1255.5}, {2.3, 2.3}}
+                                StaticText, 0x11704b5c0, {{276.7, 1249.9}, {32.0, 13.3}}, label: 'NONE'
+                              Image, 0x11704b700, {{336.0, 1238.3}, {12.0, 12.0}}, label: 'agent-icon-forward'
+                            Button, 0x11704b840, {{36.0, 1316.3}, {266.0, 56.0}}, label: 'Fri Sep 4, Rest Day'
+                              StaticText, 0x11704b980, {{36.0, 1324.6}, {50.7, 13.3}}, label: 'Fri Sep 4'
+                              StaticText, 0x11704bac0, {{36.0, 1345.9}, {63.3, 18.3}}, label: 'Rest Day'
+                            Button, 0x11704bc00, {{310.0, 1322.3}, {44.0, 44.0}}, label: 'Schedule post'
+                              Image, 0x11704bd40, {{310.0, 1322.3}, {44.0, 44.0}}, label: 'agent-icon-add'
+                            Button, 0x11704be80, {{36.0, 1412.3}, {266.0, 56.0}}, label: 'Sat Sep 5, Rest Day'
+                              StaticText, 0x11704c000, {{36.0, 1420.6}, {54.7, 13.3}}, label: 'Sat Sep 5'
+                              StaticText, 0x11704c140, {{36.0, 1441.9}, {63.3, 18.3}}, label: 'Rest Day'
+                            Button, 0x11704c280, {{310.0, 1418.3}, {44.0, 44.0}}, label: 'Schedule post'
+                              Image, 0x11704c3c0, {{310.0, 1418.3}, {44.0, 44.0}}, label: 'agent-icon-add'
+                            Button, 0x11704c500, {{36.0, 1508.3}, {266.0, 56.0}}, label: 'Sun Sep 6, Rest Day'
+                              StaticText, 0x11704c640, {{36.0, 1516.6}, {57.3, 13.3}}, label: 'Sun Sep 6'
+                              StaticText, 0x11704c780, {{36.0, 1537.9}, {63.3, 18.3}}, label: 'Rest Day'
+                            Button, 0x11704c8c0, {{310.0, 1514.3}, {44.0, 44.0}}, label: 'Schedule post'
+                              Image, 0x11704ca00, {{310.0, 1514.3}, {44.0, 44.0}}, label: 'agent-icon-add'
+                Other, 0x11704cb40, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11704cc80, {{0.0, 0.0}, {0.0, 0.0}}
+                  Other, 0x11704cdc0, {{0.0, 0.0}, {390.0, 844.0}}
+              Other, 0x11704cf00, {{0.0, 0.0}, {390.0, 844.0}}
+                Other, 0x11704d040, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11704d180, {{0.0, 0.0}, {390.0, 844.0}}
+                    Other, 0x11704d2c0, {{0.0, 0.0}, {390.0, 844.0}}
+                      Other, 0x11704d400, {{0.0, 0.0}, {390.0, 844.0}}
+                        StaticText, 0x11704d540, {{24.0, 94.3}, {42.7, 13.3}}, label: 'Tasks'
+                        Button, 0x11704d680, {{274.0, 79.0}, {44.0, 44.0}}, label: 'Filter tasks', value: No filters
+                          Image, 0x11704d7c0, {{274.0, 79.0}, {44.0, 44.0}}, label: 'agent-icon-filter'
+                        Button, 0x11704d900, {{322.0, 79.0}, {44.0, 44.0}}, label: 'Profile and settings'
+                        StaticText, 0x11704da40, {{24.0, 139.0}, {174.3, 80.0}}, label: 'Let’s get, things done.'
+                          StaticText, 0x11704db80, {{24.0, 139.0}, {111.7, 39.0}}, label: 'Let’s get'
+                          StaticText, 0x11704dcc0, {{24.0, 180.0}, {174.3, 39.0}}, label: 'things done.'
+                        SegmentedControl, 0x11704de00, {{15.0, 254.0}, {360.0, 31.0}}
+                          Button, 0x11704df40, {{15.0, 254.0}, {180.0, 32.0}}, label: 'Focus tasks', Selected
+                          Button, 0x11704e080, {{195.0, 254.0}, {180.0, 32.0}}, label: 'Post tasks'
+                        CollectionView, 0x11704e1c0, {{12.0, 300.0}, {366.0, 510.0}}
+                          Cell, 0x11704e300, {{12.0, 300.0}, {366.0, 510.0}}
+                            Other, 0x11704e440, {{12.0, 300.0}, {366.0, 510.0}}
+                              Other, 0x11704e580, {{12.0, 300.0}, {366.0, 510.0}}
+                                Other, 0x11704e6c0, {{12.0, 300.0}, {366.0, 510.0}}
+                                  Other, 0x11704e800, {{12.0, 300.0}, {366.0, 510.0}}
+                                    StaticText, 0x11704e940, {{136.5, 499.3}, {117.0, 26.3}}, label: 'No tasks yet'
+                                    StaticText, 0x11704ea80, {{112.0, 528.7}, {166.0, 18.0}}, label: 'Add one clear next step.'
+                                    Button, 0x11704ebc0, {{140.3, 566.7}, {109.3, 44.0}}, label: 'Add task'
+                                      Image, 0x11704ed00, {{152.3, 582.7}, {12.0, 12.0}}, label: 'agent-icon-add'
+                                      StaticText, 0x11704ee40, {{140.3, 566.7}, {109.3, 44.0}}, label: 'Add task'
+                          Other, 0x11704ef80, {{345.0, 300.0}, {30.0, 496.7}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                          Other, 0x11704f0c0, {{345.0, 300.0}, {30.0, 496.7}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                Other, 0x11704f200, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11704f340, {{0.0, 0.0}, {0.0, 0.0}}
+                  Other, 0x11704f480, {{0.0, 0.0}, {390.0, 844.0}}
+              Other, 0x11704f5c0, {{0.0, 0.0}, {390.0, 844.0}}
+                Other, 0x11704f700, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11704f840, {{0.0, 0.0}, {390.0, 844.0}}
+                    Other, 0x11704f980, {{0.0, 0.0}, {390.0, 844.0}}
+                      Other, 0x11704fac0, {{0.0, 0.0}, {390.0, 844.0}}
+                        ScrollView, 0x11704fc00, {{0.0, 0.0}, {390.0, 844.0}}
+                          Other, 0x11704fd40, {{0.0, 47.0}, {390.0, 930.0}}
+                            StaticText, 0x11704fe80, {{24.0, 94.3}, {54.3, 13.3}}, label: 'Pillars'
+                            Button, 0x117054000, {{273.8, 78.8}, {44.5, 44.5}}, label: 'About pillars'
+                              Image, 0x117054140, {{274.0, 79.0}, {44.0, 44.0}}, label: 'agent-icon-info'
+                            Button, 0x117054280, {{322.0, 79.0}, {44.0, 44.0}}, label: 'Profile and settings'
+                            StaticText, 0x1170543c0, {{24.0, 143.0}, {242.7, 80.0}}, label: 'What do you want, to be known for?'
+                              StaticText, 0x117054500, {{24.0, 143.0}, {242.7, 39.0}}, label: 'What do you want'
+                              StaticText, 0x117054640, {{24.0, 184.0}, {237.3, 39.0}}, label: 'to be known for?'
+                            Other, 0x117054780, {{36.0, 287.0}, {318.0, 43.3}}, label: 'Creator systems, 100 percent, Behind the work, 0 percent, Practical tutorials, 0 percent'
+                              StaticText, 0x1170548c0, {{36.0, 287.0}, {185.3, 13.3}}, label: 'This week's pillar usage'
+                            StaticText, 0x117054a00, {{36.0, 378.3}, {101.7, 12.3}}, label: 'Anchor pillar'
+                            StaticText, 0x117054b40, {{156.7, 378.3}, {97.3, 12.3}}, label: 'Mon · Wed · Fri'
+                            Button, 0x117054c80, {{36.0, 410.7}, {318.0, 52.0}}, label: 'Creator systems'
+                              StaticText, 0x117054dc0, {{36.0, 410.7}, {318.0, 52.0}}, label: 'Creator systems'
+                              Image, 0x117054f00, {{325.0, 429.7}, {14.0, 14.0}}, label: 'agent-icon-forward'
+                            Other, 0x117055040, {{71.8, 498.7}, {34.3, 40.7}}, label: 'Ideas, 0'
+                              StaticText, 0x117055180, {{82.7, 498.7}, {12.7, 24.3}}, label: '0'
+                              StaticText, 0x1170552c0, {{71.8, 527.0}, {34.3, 12.3}}, label: 'Ideas'
+                            Other, 0x117055400, {{163.2, 498.7}, {63.7, 40.7}}, label: 'This week, 1'
+                              StaticText, 0x117055540, {{191.0, 498.7}, {8.0, 24.3}}, label: '1'
+                              StaticText, 0x117055680, {{163.2, 527.0}, {63.7, 12.3}}, label: 'This week'
+                            Other, 0x1170557c0, {{274.8, 498.7}, {52.3, 40.7}}, label: 'Usage, 100%'
+                              StaticText, 0x117055900, {{274.8, 498.7}, {52.3, 24.3}}, label: '100%'
+                              StaticText, 0x117055a40, {{281.5, 527.0}, {39.0, 12.3}}, label: 'Usage'
+                            StaticText, 0x117055b80, {{36.0, 603.3}, {131.7, 12.3}}, label: 'Secondary pillars'
+                            StaticText, 0x117055cc0, {{315.3, 603.3}, {38.7, 12.3}}, label: '2 of 5 secondary pillars'
+                            Button, 0x117055e00, {{35.6, 633.7}, {318.4, 64.7}}, label: 'Behind the work, 1 idea, 0 this week, 0 percent usage, Tue and Thu'
+                              StaticText, 0x117055f40, {{56.0, 633.7}, {128.3, 20.7}}, label: 'Behind the work'
+                              Image, 0x117056080, {{343.0, 638.7}, {11.0, 11.0}}, label: 'agent-icon-forward'
+                              StaticText, 0x1170561c0, {{36.0, 664.3}, {5.7, 16.0}}, label: '1'
+                              StaticText, 0x117056300, {{46.7, 667.3}, {34.3, 12.3}}, label: 'Ideas'
+                              StaticText, 0x117056440, {{97.0, 664.3}, {8.7, 16.0}}, label: '0'
+                              StaticText, 0x117056580, {{110.7, 667.3}, {63.7, 12.3}}, label: 'This week'
+                              StaticText, 0x1170566c0, {{262.7, 666.2}, {91.3, 12.3}}, label: 'Tue · Thu · 0%'
+                            Button, 0x117056800, {{35.6, 716.3}, {318.4, 64.7}}, label: 'Practical tutorials, 0 ideas, 0 this week, 0 percent usage, Mon and Wed and Fri'
+                              StaticText, 0x117056940, {{56.0, 716.3}, {137.3, 20.7}}, label: 'Practical tutorials'
+                              Image, 0x117056a80, {{343.0, 721.0}, {11.0, 11.3}}, label: 'agent-icon-forward'
+                              StaticText, 0x117056bc0, {{36.0, 747.0}, {8.7, 16.0}}, label: '0'
+                              StaticText, 0x117056d00, {{49.7, 750.0}, {34.3, 12.3}}, label: 'Ideas'
+                              StaticText, 0x117056e40, {{100.0, 747.0}, {8.7, 16.0}}, label: '0'
+                              StaticText, 0x117056f80, {{113.7, 750.0}, {63.7, 12.3}}, label: 'This week'
+                              StaticText, 0x1170570c0, {{226.0, 748.8}, {128.0, 12.3}}, label: 'Mon · Wed · Fri · 0%'
+                            Button, 0x117057200, {{36.0, 793.0}, {318.0, 44.0}}, label: 'Add pillar'
+                              Image, 0x117057340, {{147.0, 809.0}, {12.0, 12.0}}, label: 'agent-icon-add'
+                              StaticText, 0x117057480, {{36.0, 793.0}, {318.0, 44.0}}, label: 'Add pillar'
+                          Other, 0x1170575c0, {{357.0, 47.3}, {30.0, 749.3}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                          Other, 0x117057700, {{357.0, 47.3}, {30.0, 749.3}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                Other, 0x117057840, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x117057980, {{0.0, 0.0}, {0.0, 0.0}}
+                  Other, 0x117057ac0, {{0.0, 0.0}, {390.0, 844.0}}
+              Other, 0x117057c00, {{0.0, 0.0}, {390.0, 844.0}}
+                Other, 0x117057d40, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x117057e80, {{0.0, 0.0}, {390.0, 844.0}}
+                    Other, 0x117058000, {{0.0, 0.0}, {390.0, 844.0}}
+                      Other, 0x117058140, {{0.0, 0.0}, {390.0, 844.0}}
+                        ScrollView, 0x117058280, {{0.0, 0.0}, {390.0, 844.0}}
+                          Other, 0x1170583c0, {{0.0, 47.0}, {390.0, 835.0}}
+                            StaticText, 0x117058500, {{24.0, 94.3}, {72.0, 13.3}}, label: 'Idea Bank'
+                            Button, 0x117058640, {{225.8, 78.8}, {44.5, 44.5}}, label: 'Select items'
+                              Image, 0x117058780, {{226.0, 79.0}, {44.0, 44.0}}, label: 'agent-icon-tasks'
+                            Button, 0x1170588c0, {{273.8, 78.8}, {44.5, 44.5}}, label: 'Filter ideas', value: All ideas
+                              Image, 0x117058a00, {{274.0, 79.0}, {44.0, 44.0}}, label: 'agent-icon-filter'
+                            Button, 0x117058b40, {{322.0, 79.0}, {44.0, 44.0}}, label: 'Profile and settings'
+                            StaticText, 0x117058c80, {{24.0, 139.0}, {131.7, 39.0}}, label: 'What’s on'
+                            StaticText, 0x117058dc0, {{24.0, 180.0}, {159.0, 39.0}}, label: 'your mind?'
+                            Other, 0x117058f00, {{35.6, 282.6}, {318.8, 48.8}}
+                              Image, 0x117059040, {{52.0, 299.7}, {15.0, 15.0}}, label: 'agent-icon-search'
+                              TextField, 0x117059180, {{79.0, 296.0}, {259.0, 22.0}}, label: 'Search ideas and saved posts', placeholderValue: 'Search Idea Bank'
+                            StaticText, 0x1170592c0, {{36.0, 355.0}, {91.7, 13.3}}, label: 'Saved Posts'
+                            StaticText, 0x117059400, {{346.7, 355.0}, {7.3, 13.3}}, label: '0'
+                            Button, 0x117059540, {{36.0, 388.3}, {318.0, 44.0}}, label: 'Save a post'
+                              Image, 0x117059680, {{142.7, 404.3}, {12.0, 12.0}}, label: 'agent-icon-add'
+                              StaticText, 0x1170597c0, {{36.0, 388.3}, {318.0, 44.0}}, label: 'Save a post'
+                            StaticText, 0x117059900, {{36.0, 456.3}, {72.0, 13.3}}, label: 'Idea Bank'
+                            StaticText, 0x117059a40, {{346.7, 456.3}, {7.3, 13.3}}, label: '1'
+                            Button, 0x117059b80, {{36.0, 489.7}, {318.0, 44.0}}, label: 'Add idea'
+                              Image, 0x117059cc0, {{154.3, 505.7}, {12.0, 12.0}}, label: 'agent-icon-add'
+                              StaticText, 0x117059e00, {{36.0, 489.7}, {318.0, 44.0}}, label: 'Add idea'
+                            Button, 0x117059f40, {{36.0, 541.7}, {318.0, 73.0}}, label: 'What I stopped tracking', value: Behind the work · ...
+                              StaticText, 0x11705a080, {{36.0, 557.7}, {189.3, 20.7}}, label: 'What I stopped tracking'
+                              StaticText, 0x11705a1c0, {{51.0, 586.3}, {270.0, 12.3}}, label: 'Behind the work · In progress · 4 seconds ago'
+                              Image, 0x11705a300, {{343.0, 572.7}, {11.0, 11.0}}, label: 'agent-icon-forward'
+                          Other, 0x11705a440, {{357.0, 47.3}, {30.0, 749.3}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                          Other, 0x11705a580, {{357.0, 47.3}, {30.0, 749.3}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                Other, 0x11705a6c0, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11705a800, {{0.0, 0.0}, {0.0, 0.0}}
+                  Other, 0x11705a940, {{0.0, 0.0}, {390.0, 844.0}}
+              Other, 0x11705aa80, {{0.0, 0.0}, {390.0, 844.0}}
+                Other, 0x11705abc0, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11705ad00, {{0.0, 0.0}, {390.0, 844.0}}
+                    Other, 0x11705ae40, {{0.0, 0.0}, {390.0, 844.0}}
+                      Other, 0x11705af80, {{0.0, 0.0}, {390.0, 844.0}}
+                        Other, 0x11705b0c0, {{24.0, 94.3}, {175.0, 13.3}}, label: 'Agent Cy, Unavailable'
+                          StaticText, 0x11705b200, {{24.0, 94.3}, {78.7, 13.3}}, label: 'Agent (Cy)'
+                          StaticText, 0x11705b340, {{110.7, 94.3}, {4.0, 13.3}}, label: '|'
+                          Other, 0x11705b480, {{122.7, 97.7}, {7.0, 7.0}}
+                          StaticText, 0x11705b5c0, {{137.7, 94.3}, {61.3, 13.3}}, label: 'Unavailable'
+                        Button, 0x11705b700, {{274.0, 79.0}, {44.0, 44.0}}
+                          Button, 0x11705b840, {{274.0, 79.0}, {44.0, 44.0}}
+                            Image, 0x11705b980, {{287.0, 92.0}, {18.0, 18.0}}, label: 'agent-icon-more'
+                        Button, 0x11705bac0, {{322.0, 79.0}, {44.0, 44.0}}, label: 'Profile and settings'
+                        ScrollView, 0x11705bc00, {{0.0, 140.0}, {390.0, 704.0}}
+                          Other, 0x11705bd40, {{0.0, 140.0}, {390.0, 60.0}}
+                            Other, 0x11705be80, {{0.0, 140.0}, {390.0, 60.0}}
+                              Other, 0x11705c000, {{145.0, 120.0}, {100.0, 100.0}}
+                                Other, 0x11705c140, {{145.0, 120.0}, {100.0, 100.0}}
+                                  Other, 0x11705c280, {{193.3, 155.0}, {3.7, 10.0}}
+                              StaticText, 0x11705c3c0, {{10.0, 188.7}, {370.0, 0.0}}
+                          Other, 0x11705c500, {{0.0, 140.0}, {390.0, 680.0}}
+                            StaticText, 0x11705c640, {{40.0, 172.0}, {95.7, 13.3}}, label: 'CY IS OFFLINE'
+                            StaticText, 0x11705c780, {{40.0, 197.3}, {301.7, 36.3}}, label: 'Connect Claude or Codex on your Mac, or turn on hosted Agent Cy.'
+                            Button, 0x11705c8c0, {{40.0, 245.7}, {310.0, 44.0}}, label: 'Open settings'
+                              StaticText, 0x11705ca00, {{40.0, 245.7}, {310.0, 44.0}}, label: 'Open settings'
+                              Image, 0x11705cb40, {{332.0, 258.7}, {18.0, 18.0}}, label: 'agent-icon-forward'
+                            StaticText, 0x11705cc80, {{24.0, 381.7}, {140.7, 39.0}}, label: 'Hey Maya,'
+                            StaticText, 0x11705cdc0, {{24.0, 422.7}, {222.7, 77.7}}, label: 'what are we creating today?'
+                            Button, 0x11705cf00, {{23.5, 515.8}, {343.0, 106.3}}, label: 'On your plate, 1, Idea is waiting to be scheduled, Let’s expand on some of these ideas'
+                              StaticText, 0x11705d040, {{40.0, 530.3}, {106.0, 13.3}}, label: 'On your plate'
+                              StaticText, 0x11705d180, {{40.0, 561.7}, {4.7, 13.3}}, label: '1'
+                              StaticText, 0x11705d2c0, {{76.0, 559.7}, {190.3, 16.0}}, label: 'Idea is waiting to be scheduled'
+                              StaticText, 0x11705d400, {{40.0, 591.7}, {226.7, 16.0}}, label: 'Let’s expand on some of these ideas'
+                              Image, 0x11705d540, {{339.0, 593.3}, {11.0, 11.0}}, label: 'agent-icon-forward'
+                            StaticText, 0x11705d680, {{24.0, 653.7}, {82.0, 13.3}}, label: 'Start with'
+                            Button, 0x11705d7c0, {{24.0, 679.0}, {342.0, 50.0}}, label: 'Keep shaping “What I stopped tracking”'
+                              StaticText, 0x11705d900, {{40.0, 696.0}, {248.7, 16.0}}, label: 'Keep shaping “What I stopped tracking”'
+                              Image, 0x11705da40, {{339.0, 698.7}, {11.0, 11.0}}, label: 'agent-icon-forward'
+                            Button, 0x11705db80, {{24.0, 737.0}, {342.0, 50.0}}, label: 'Turn a rough note into a post'
+                              StaticText, 0x11705dcc0, {{40.0, 754.0}, {178.7, 16.0}}, label: 'Turn a rough note into a post'
+                              Image, 0x11705de00, {{339.0, 756.7}, {11.0, 11.0}}, label: 'agent-icon-forward'
+                          Other, 0x11705df40, {{357.0, 161.0}, {30.0, 501.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                          Other, 0x11705e080, {{357.0, 161.0}, {30.0, 501.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                        TextField, 0x11705e1c0, {{40.0, 688.7}, {266.0, 19.0}}, identifier: 'cy-composer-input', label: 'Ask Cy anything'
+                          Other, 0x11705e300, {{40.0, 695.2}, {266.0, 9.5}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+                        StaticText, 0x11705e440, {{40.0, 688.8}, {115.3, 18.3}}, label: 'Ask Cy anything'
+                        Button, 0x11705e580, {{315.5, 675.5}, {45.0, 45.0}}, label: 'Send', Disabled
+                          Image, 0x11705e6c0, {{329.0, 689.0}, {18.0, 18.0}}, label: 'agent-icon-arrow-up', Disabled
+                Other, 0x11705e800, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11705e940, {{0.0, 0.0}, {0.0, 0.0}}
+                  Other, 0x11705ea80, {{0.0, 0.0}, {390.0, 844.0}}
+              Other, 0x11705ebc0, {{0.0, 0.0}, {390.0, 844.0}}
+                Other, 0x11705ed00, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x11705ee40, {{0.0, 0.0}, {390.0, 844.0}}
+                    Other, 0x11705ef80, {{0.0, 0.0}, {390.0, 844.0}}
+                      Other, 0x11705f0c0, {{0.0, 0.0}, {390.0, 844.0}}
+                        ScrollView, 0x11705f200, {{0.0, 0.0}, {390.0, 844.0}}
+                          Other, 0x11705f340, {{0.0, 47.0}, {390.0, 1961.0}}
+                            StaticText, 0x11705f480, {{24.0, 94.3}, {112.7, 13.3}}, label: 'Tue, Sep 1, 2026'
+                            Button, 0x11705f5c0, {{273.8, 78.8}, {44.5, 44.5}}, label: 'Activity'
+                              Image, 0x11705f700, {{274.0, 79.0}, {44.0, 44.0}}, label: 'agent-icon-bell'
+                            Button, 0x11705f840, {{322.0, 79.0}, {44.0, 44.0}}, label: 'Profile and settings'
+                            Button, 0x11705f980, {{24.0, 139.0}, {44.0, 44.0}}, label: 'Open Cy'
+                              Other, 0x11705fac0, {{24.0, 139.0}, {44.0, 44.0}}
+                            StaticText, 0x11705fc00, {{24.0, 199.0}, {301.7, 39.0}}, label: 'Good afternoon, Maya.'
+                            StaticText, 0x11705fd40, {{24.0, 240.0}, {231.0, 39.0}}, label: 'Today is for rest.'
+                            Other, 0x11705fe80, {{40.0, 319.0}, {310.0, 1264.4}}
+                              StaticText, 0x117060000, {{40.0, 319.0}, {81.0, 26.7}}, label: 'Up next'
+                              Button, 0x117060140, {{268.7, 327.7}, {81.3, 16.0}}, label: 'View the day'
+                              StaticText, 0x117060280, {{40.0, 386.7}, {196.0, 18.3}}, label: 'Nothing is scheduled today.'
+                              StaticText, 0x1170603c0, {{40.0, 469.0}, {237.0, 26.7}}, label: 'Continue working on…'
+                              Button, 0x117060500, {{301.0, 477.7}, {49.0, 16.0}}, label: 'View all'
+                              StaticText, 0x117060640, {{40.0, 536.7}, {214.3, 18.3}}, label: 'No drafts or posts in progress.'
+                              StaticText, 0x117060780, {{40.0, 619.0}, {142.7, 26.7}}, label: 'Today’s tasks'
+                              Button, 0x1170608c0, {{301.0, 627.7}, {49.0, 16.0}}, label: 'View all'
+                              StaticText, 0x117060a00, {{40.0, 678.7}, {68.3, 13.3}}, label: 'POST TASKS'
+                              StaticText, 0x117060b40, {{345.3, 678.7}, {4.7, 13.3}}, label: '1'
+                              Button, 0x117060c80, {{68.0, 708.0}, {282.0, 64.0}}, label: 'Open task Film the one-job walkthrough'
+                                StaticText, 0x117060dc0, {{68.0, 721.2}, {211.7, 18.3}}, label: 'Film the one-job walkthrough'
+                                StaticText, 0x117060f00, {{68.0, 745.5}, {233.0, 13.3}}, label: 'THE ONE-JOB IDEA TEST, TODAY, NONE'
+                                  StaticText, 0x117061040, {{68.0, 745.5}, {134.3, 13.3}}, label: 'THE ONE-JOB IDEA TEST'
+                                  Other, 0x117061180, {{208.5, 751.0}, {2.3, 2.3}}
+                                  StaticText, 0x1170612c0, {{216.8, 745.5}, {37.7, 13.3}}, label: 'TODAY'
+                                  Other, 0x117061400, {{260.7, 751.0}, {2.3, 2.3}}
+                                  StaticText, 0x117061540, {{269.0, 745.5}, {32.0, 13.3}}, label: 'NONE'
+                                Image, 0x117061680, {{332.0, 734.0}, {12.0, 12.0}}, label: 'agent-icon-forward'
+                              Button, 0x1170617c0, {{40.0, 725.0}, {20.0, 44.0}}, identifier: 'task-checkbox-7007033C-1D4F-4F7F-81E4-36D6F7779014', label: 'Complete task'
+                                Image, 0x117061900, {{40.0, 725.0}, {20.0, 44.0}}, label: 'agent-icon-check'
+                              StaticText, 0x117061a40, {{96.0, 786.0}, {93.3, 16.0}}, label: 'Set the camera'
+                              Button, 0x117061b80, {{68.0, 789.3}, {20.0, 44.0}}, identifier: 'task-checkbox-5B461032-A684-4EAD-BEC2-A4D9C529DCB7', label: 'Complete subtask'
+                                Image, 0x117061cc0, {{68.0, 789.3}, {20.0, 44.0}}, label: 'agent-icon-check'
+                              StaticText, 0x117061e00, {{96.0, 847.2}, {106.7, 16.0}}, label: 'Record two takes'
+                              Button, 0x117061f40, {{68.0, 850.3}, {20.0, 44.0}}, identifier: 'task-checkbox-FA73600A-B467-48C9-8400-0EAE5B392253', label: 'Complete subtask'
+                                Image, 0x117062080, {{68.0, 850.3}, {20.0, 44.0}}, label: 'agent-icon-check'
+                              StaticText, 0x1170621c0, {{40.0, 966.4}, {186.0, 26.7}}, label: 'Needs a new date'
+                              StaticText, 0x117062300, {{40.0, 1034.1}, {122.0, 18.3}}, label: 'No missed posts.'
+                              StaticText, 0x117062440, {{40.0, 1116.4}, {135.3, 26.7}}, label: 'Recent ideas'
+                              Button, 0x117062580, {{301.0, 1125.1}, {49.0, 16.0}}, label: 'View all'
+                              Button, 0x1170626c0, {{40.0, 1176.0}, {310.0, 56.0}}, label: 'What I stopped tracking', value: Behind the work
+                                StaticText, 0x117062800, {{60.0, 1186.3}, {172.3, 18.3}}, label: 'What I stopped tracking'
+                                StaticText, 0x117062940, {{60.0, 1208.6}, {103.3, 13.3}}, label: 'BEHIND THE WORK'
+                                Image, 0x117062a80, {{338.0, 1198.0}, {12.0, 12.0}}, label: 'agent-icon-forward'
+                              StaticText, 0x117062bc0, {{40.0, 1288.1}, {106.7, 26.7}}, label: 'This week'
+                              Button, 0x117062d00, {{266.0, 1296.8}, {84.0, 16.0}}, label: 'Open agenda'
+                              Button, 0x117062e40, {{40.0, 1363.7}, {310.0, 53.7}}, label: 'Wed, 2, POST, The one-job idea test, Instagram'
+                                StaticText, 0x117062f80, {{49.0, 1373.1}, {24.0, 13.3}}, label: 'Wed'
+                                StaticText, 0x1170630c0, {{55.7, 1387.4}, {10.7, 20.7}}, label: '2'
+                                StaticText, 0x117063200, {{114.0, 1363.8}, {30.0, 13.3}}, label: 'POST'
+                                StaticText, 0x117063340, {{114.0, 1380.1}, {154.0, 18.3}}, label: 'The one-job idea test'
+                                StaticText, 0x117063480, {{114.0, 1401.4}, {61.3, 16.0}}, label: 'Instagram'
+                                Image, 0x1170635c0, {{337.0, 1384.0}, {13.0, 13.0}}, label: 'agent-icon-forward'
+                              StaticText, 0x117063700, {{40.0, 1489.4}, {110.7, 26.7}}, label: 'Next week'
+                              Button, 0x117063840, {{266.0, 1498.1}, {84.0, 16.0}}, label: 'Open agenda'
+                              StaticText, 0x117063980, {{40.0, 1565.1}, {134.7, 18.3}}, label: 'Next week is open.'
+                            Button, 0x117063ac0, {{130.5, 1843.5}, {129.0, 45.0}}, label: 'Customize'
+                          Other, 0x117063c00, {{357.0, 47.3}, {30.0, 749.3}}, label: 'Vertical scroll bar, 3 pages', value: 0%
+                            Other, 0x117063d40, {{384.0, 50.3}, {3.0, 287.7}}
+                          Other, 0x117063e80, {{357.0, 47.3}, {30.0, 749.3}}, label: 'Vertical scroll bar, 3 pages', value: 0%
+                            Other, 0x117064000, {{384.0, 50.3}, {3.0, 287.7}}
+                Other, 0x117064140, {{0.0, 0.0}, {390.0, 844.0}}
+                  Other, 0x117064280, {{0.0, 0.0}, {390.0, 844.0}}
+              Other, 0x1170643c0, {{17.0, 730.0}, {356.0, 68.0}}
+              Button, 0x117064500, {{23.0, 741.0}, {46.0, 46.0}}, label: 'Home', Selected
+                Image, 0x117064640, {{23.0, 741.0}, {46.0, 46.0}}, label: 'agent-icon-home'
+              Button, 0x117064780, {{69.0, 741.0}, {46.0, 46.0}}, label: 'Plan'
+                Image, 0x1170648c0, {{69.0, 741.0}, {46.0, 46.0}}, label: 'agent-icon-calendar'
+              Button, 0x117064a00, {{115.0, 741.0}, {46.0, 46.0}}, label: 'Tasks'
+                Image, 0x117064b40, {{115.0, 741.0}, {46.0, 46.0}}, label: 'agent-icon-tasks'
+              Button, 0x117064c80, {{161.0, 741.0}, {46.0, 46.0}}, label: 'Pillars'
+                Image, 0x117064dc0, {{161.0, 741.0}, {46.0, 46.0}}, label: 'agent-icon-pillars'
+              Button, 0x117064f00, {{207.0, 741.0}, {46.0, 46.0}}, label: 'Idea Bank'
+                Image, 0x117065040, {{207.0, 741.0}, {46.0, 46.0}}, label: 'agent-icon-ideas'
+              Button, 0x117065180, {{253.0, 741.0}, {46.0, 46.0}}, label: 'Cy'
+                Other, 0x1170652c0, {{253.0, 741.0}, {46.0, 46.0}}
+              Button, 0x117065400, {{317.0, 736.0}, {56.0, 56.0}}, label: 'Create'
+                Image, 0x117065540, {{333.0, 752.0}, {24.0, 24.0}}, label: 'agent-icon-add'
+      Other, 0x117065680, {{0.0, 0.0}, {390.0, 844.0}}
+        Other, 0x1170657c0, {{-390.0, -844.0}, {1170.0, 2532.0}}
+        Other, 0x117065900, {{0.0, 47.0}, {390.0, 797.0}}
+          Other, 0x117065a40, {{0.0, 47.0}, {390.0, 797.0}}
+          Other, 0x117065b80, {{0.0, 47.0}, {390.0, 797.0}}
+            Other, 0x117065cc0, {{0.0, 47.0}, {390.0, 797.0}}
+              Other, 0x117065e00, {{0.0, 47.0}, {390.0, 797.0}}
+                Other, 0x117065f40, {{0.0, 47.0}, {390.0, 797.0}}
+                  Other, 0x117066080, {{0.0, 47.0}, {390.0, 797.0}}
+                    Other, 0x1170661c0, {{0.0, 47.0}, {390.0, 797.0}}
+                      Other, 0x117066300, {{0.0, 47.0}, {390.0, 797.0}}
+                        Other, 0x117066440, {{0.0, 47.0}, {390.0, 797.0}}
+                          Other, 0x117066580, {{0.0, 47.0}, {390.0, 797.0}}
+                            ScrollView, 0x1170666c0, {{0.0, 47.0}, {390.0, 797.0}}
+                              Other, 0x117066800, {{0.0, 47.0}, {390.0, 891.3}}
+                                Button, 0x117066940, {{23.8, 78.8}, {44.5, 44.5}}, label: 'Close'
+                                  Image, 0x117066a80, {{37.7, 92.7}, {17.0, 17.0}}, label: 'agent-icon-close'
+                                StaticText, 0x117066bc0, {{142.0, 94.3}, {106.0, 13.3}}, label: 'Quick actions'
+                                StaticText, 0x117066d00, {{24.0, 147.0}, {316.7, 39.0}}, label: 'Let’s make something.'
+                                StaticText, 0x117066e40, {{24.0, 194.0}, {238.3, 18.3}}, label: 'Start small. You can shape it later.'
+                                StaticText, 0x117066f80, {{32.0, 264.3}, {51.0, 13.3}}, label: 'Create'
+                                Button, 0x1170670c0, {{12.0, 285.7}, {366.0, 76.0}}, label: 'Idea, Save a thought to shape later.'
+                                  StaticText, 0x117067200, {{32.0, 302.7}, {37.0, 22.0}}, label: 'Idea'
+                                  StaticText, 0x117067340, {{32.0, 328.7}, {182.3, 16.0}}, label: 'Save a thought to shape later.'
+                                  Image, 0x117067480, {{330.7, 316.3}, {15.0, 15.0}}, label: 'agent-icon-add'
+                                Button, 0x1170675c0, {{12.0, 361.7}, {366.0, 76.0}}, label: 'Post, Choose the platform, format, and date.'
+                                  StaticText, 0x117067700, {{32.0, 378.7}, {38.3, 22.0}}, label: 'Post'
+                                  StaticText, 0x117067840, {{32.0, 404.7}, {237.7, 16.0}}, label: 'Choose the platform, format, and date.'
+                                  Image, 0x117067980, {{330.7, 392.3}, {15.0, 15.0}}, label: 'agent-icon-add'
+                                Button, 0x117067ac0, {{12.0, 437.7}, {366.0, 76.0}}, label: 'Task, Add one clear next step.'
+                                  StaticText, 0x117067c00, {{32.0, 454.7}, {40.3, 22.0}}, label: 'Task'
+                                  StaticText, 0x117067d40, {{32.0, 480.7}, {150.0, 16.0}}, label: 'Add one clear next step.'
+                                  Image, 0x117067e80, {{330.7, 468.3}, {15.0, 15.0}}, label: 'agent-icon-add'
+                                Button, 0x117068000, {{12.0, 513.7}, {366.0, 76.0}}, label: 'Live post, Track a published post by link.'
+                                  StaticText, 0x117068140, {{32.0, 530.7}, {77.7, 22.0}}, label: 'Live post'
+                                  StaticText, 0x117068280, {{32.0, 556.7}, {187.0, 16.0}}, label: 'Track a published post by link.'
+                                  Image, 0x1170683c0, {{330.7, 544.3}, {15.0, 15.0}}, label: 'agent-icon-add'
+                                StaticText, 0x117068500, {{32.0, 641.7}, {129.3, 13.3}}, label: 'Create on iPhone'
+                                Button, 0x117068640, {{12.0, 663.0}, {366.0, 76.0}}, label: 'Voice Spark, Record a thought and save the editable transcript.'
+                                  StaticText, 0x117068780, {{32.0, 681.7}, {103.0, 22.0}}, label: 'Voice Spark'
+                                  StaticText, 0x1170688c0, {{32.0, 707.7}, {241.7, 12.7}}, label: 'Record a thought and save the editable transcript.'
+                                  Image, 0x117068a00, {{330.7, 693.7}, {15.0, 15.0}}, label: 'agent-icon-add'
+                                StaticText, 0x117068b40, {{24.0, 771.0}, {58.0, 13.3}}, label: 'With Cy'
+                                Button, 0x117068c80, {{12.0, 796.3}, {366.0, 78.0}}, label: 'Find three ideas, Grounded in your pillars and saved work.'
+                                  Other, 0x117068dc0, {{34.0, 824.3}, {22.0, 22.0}}
+                                  StaticText, 0x117068f00, {{74.0, 815.7}, {137.3, 22.0}}, label: 'Find three ideas'
+                                  StaticText, 0x117069040, {{74.0, 841.7}, {208.0, 13.3}}, label: 'Grounded in your pillars and saved work.'
+                                  Image, 0x117069180, {{335.7, 829.0}, {13.0, 13.0}}, label: 'agent-icon-arrow-right'
+                              Other, 0x1170692c0, {{357.0, 85.0}, {30.0, 711.7}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                                Other, 0x117069400, {{384.0, 88.0}, {3.0, 612.3}}
+                              Other, 0x117069540, {{357.0, 85.0}, {30.0, 711.7}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                                Other, 0x117069680, {{384.0, 88.0}, {3.0, 612.3}}
+                    Other, 0x1170697c0, {{0.0, 47.0}, {390.0, 797.0}}
+                      Other, 0x117069900, {{0.0, 47.0}, {390.0, 797.0}}
+Path to element:
+ →Application, 0x10831e440, pid: 22394, label: 'agent.cy'
+Query chain:
+ →Find: Application 'com.agentcy.app'
+  Output: {
+    Application, 0x117069a40, pid: 22394, label: 'agent.cy'
+  }

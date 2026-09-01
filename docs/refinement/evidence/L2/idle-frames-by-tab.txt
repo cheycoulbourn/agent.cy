@@ -1,0 +1,53 @@
+L2 · Idle render cost per tab root
+==================================
+
+Device : simulator "iPhone 17", iOS 26.5, UDID 1F605047-4304-48C2-8DA0-1D5C72D585BC
+         ("iPhone 17 Pro" was in use by lane L1)
+Build  : prebuilt Debug agent.cy.app (com.agentcy.app)
+Date   : 2026-09-01
+
+Method
+------
+xcrun simctl io <udid> recordVideo writes a VARIABLE-frame-rate H.264 file: one frame is
+emitted per composited screen update. Frame count over a fixed wall-clock window is
+therefore a direct read-out of how often the app rendered.
+
+  xcrun simctl terminate <udid> com.agentcy.app
+  xcrun simctl launch <udid> com.agentcy.app -agentCyPreviewData -agentCyPreviewTab <tab>
+  sleep 12                          # let the launch settle
+  xcrun simctl io <udid> recordVideo --codec h264 --force idle_<tab>.mov &
+  sleep 10                          # NO INPUT AT ALL during this window
+  <stop recorder>
+  ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames,duration idle_<tab>.mov
+
+Script: scratchpad/l2/idletab.sh
+
+Results (10 s untouched)
+------------------------
+  TAB home      : frames=300  duration=9.978333   -> 30.1 fps, never idles
+  TAB cy        : frames=599  duration=9.978333   -> 60.0 fps, never idles
+  TAB today     : frames=1    duration=0.066667   -> idle
+  TAB tasks     : frames=1    duration=0.066667   -> idle
+  TAB pillars   : frames=1    duration=0.066667   -> idle
+  TAB ideaBank  : frames=1    duration=0.066667   -> idle
+
+Confirming run, 12 s untouched, same session, switching between tabs by tap
+rather than by launch flag:
+  plan-week (today) : frames=1   duration=12.0    -> idle
+  home              : frames=716 duration=11.913  -> 60.1 fps, never idles
+
+Cause
+-----
+CyAnimatedLogo — Design/DesignTokens.swift:1644-1680 — a TimelineView(.animation(
+minimumInterval: 1/30)) that rotates, scales AND animates a shadow radius on a 2.8 s
+cycle with no end condition.
+
+  Home  : Views/Home/HomeDashboardView.swift:811   CyAnimatedLogo()
+  Cy    : Views/Cy/AskCyView.swift:918, 1211, 1387 CyAnimatedLogo(...)
+
+The four tabs that idle contain no CyAnimatedLogo.
+
+Fixture note
+------------
+-agentCyPreviewData seeds a small fixture set (34 inserts, Preview/PreviewData.swift),
+so these numbers are a floor, not a worst case.

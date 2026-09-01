@@ -1,0 +1,10 @@
+Swift package dependencies
+
+ios/project.yml declares no `packages:` block and ios/AgentCy.xcodeproj/project.pbxproj contains zero XCRemoteSwiftPackageReference entries.
+No Package.resolved exists anywhere under ios/.
+The iOS app, widgets and share extension link only Apple system frameworks (SwiftUI, SwiftData, AVFoundation, Speech, Vision, EventKit, Security, CryptoKit, UserNotifications).
+Therefore there is no third-party iOS SDK to advisory-check and no third-party SDK data collection.
+
+Verified 2026-09-01 by:
+  grep -c "XCRemoteSwiftPackageReference|packageReferences" ios/AgentCy.xcodeproj/project.pbxproj  -> 0
+  find ios -name Package.resolved -> (no results)
