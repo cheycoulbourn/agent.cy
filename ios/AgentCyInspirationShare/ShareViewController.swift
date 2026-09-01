@@ -5,14 +5,14 @@ import UniformTypeIdentifiers
 @MainActor
 final class ShareViewController: UIViewController {
     private let model = InspirationShareViewModel()
+    private var loadTask: Task<Void, Never>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         let root = InspirationShareView(
             model: model,
             close: { [weak self] in
-                self?.model.cleanupStagedAssetsIfNeeded()
-                self?.finish()
+                self?.close()
             }
         )
         let hostingController = UIHostingController(rootView: root)
@@ -28,7 +28,9 @@ final class ShareViewController: UIViewController {
         ])
         hostingController.didMove(toParent: self)
 
-        Task { await loadSharedPost() }
+        loadTask = Task { [weak self] in
+            await self?.loadSharedPost()
+        }
     }
 
     private func loadSharedPost() async {
@@ -38,12 +40,14 @@ final class ShareViewController: UIViewController {
             result.append(contentsOf: item.attachments ?? [])
         }
         let urlValues = await loadURLValues(from: providers)
+        guard !Task.isCancelled else { return }
         var textValues = items.compactMap { item in
             let text = item.attributedContentText?.string
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return text?.isEmpty == false ? text : nil
         }
         textValues.append(contentsOf: await loadTextValues(from: providers))
+        guard !Task.isCancelled else { return }
         do {
             let candidate = try InspirationShareCandidateResolver.resolveCandidate(
                 urlValues: urlValues,
@@ -51,16 +55,20 @@ final class ShareViewController: UIViewController {
             )
             model.url = candidate.url
             model.sourceCaption = candidate.sourceCaption
-            model.sharedVideoFilename = await stageFirstAsset(
+            let videoFilename = await stageFirstAsset(
                 from: providers,
                 type: .movie,
                 kind: .video
             )
-            model.sharedThumbnailFilename = await stageFirstAsset(
+            model.sharedVideoFilename = finalizeStagedFile(videoFilename)
+            guard !Task.isCancelled else { return }
+            let thumbnailFilename = await stageFirstAsset(
                 from: providers,
                 type: .image,
                 kind: .thumbnail
             )
+            model.sharedThumbnailFilename = finalizeStagedFile(thumbnailFilename)
+            guard !Task.isCancelled else { return }
             if let filename = model.sharedThumbnailFilename,
                let store = try? InspirationSharedAssetStore(),
                let data = try? store.data(
@@ -72,7 +80,8 @@ final class ShareViewController: UIViewController {
             model.stage = .ready
             await model.prepareLinkThumbnailIfNeeded()
         } catch {
-            model.errorMessage = (error as? LocalizedError)?.errorDescription
+            guard !Task.isCancelled else { return }
+            model.unavailableMessage = (error as? LocalizedError)?.errorDescription
                 ?? "Share one public HTTPS post link at a time."
             model.stage = .unavailable
         }
@@ -106,6 +115,7 @@ final class ShareViewController: UIViewController {
     private func loadURLValues(from providers: [NSItemProvider]) async -> [String] {
         var values: [String] = []
         for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+            guard !Task.isCancelled else { return values }
             if let value = await loadURL(from: provider) { values.append(value) }
         }
         return values
@@ -114,6 +124,7 @@ final class ShareViewController: UIViewController {
     private func loadTextValues(from providers: [NSItemProvider]) async -> [String] {
         var values: [String] = []
         for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+            guard !Task.isCancelled else { return values }
             if let value = await loadText(from: provider) { values.append(value) }
         }
         return values
@@ -135,7 +146,18 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func finish() {
+    private func finalizeStagedFile(_ filename: String?) -> String? {
+        guard let store = try? InspirationSharedAssetStore() else { return nil }
+        return store.finalizeStagedFile(
+            filename,
+            taskWasCancelled: Task.isCancelled
+        )
+    }
+
+    private func close() {
+        loadTask?.cancel()
+        loadTask = nil
+        model.cancelPendingWorkAndCleanup()
         extensionContext?.completeRequest(returningItems: nil)
     }
 }
@@ -175,6 +197,7 @@ private final class InspirationShareViewModel: ObservableObject {
     @Published var progressTitle = "Preparing the post"
     @Published var progressDetail = "Reading the link and anything the platform shared with agent.cy."
     @Published var errorMessage: String?
+    @Published var unavailableMessage: String?
 
     private let apiClient = InspirationShareAPIClient()
     private let mediaDownloader = InspirationShareMediaDownloader()
@@ -182,8 +205,25 @@ private final class InspirationShareViewModel: ObservableObject {
     private var preparedEnvelope: InspirationShareEnvelope?
     private var hasQueuedEnvelope = false
     private var linkExtractionTask: Task<ShareExtraction, Error>?
+    private var activeOperationTask: Task<Void, Never>?
 
-    func analyze() async {
+    func startAnalysis() {
+        guard activeOperationTask == nil else { return }
+        activeOperationTask = Task { [weak self] in
+            await self?.analyze()
+            self?.activeOperationTask = nil
+        }
+    }
+
+    func startSavingLinkOnly() {
+        guard activeOperationTask == nil else { return }
+        activeOperationTask = Task { [weak self] in
+            await self?.saveLinkOnly()
+            self?.activeOperationTask = nil
+        }
+    }
+
+    private func analyze() async {
         guard let url else {
             errorMessage = InspirationShareTransportError.invalidURL.localizedDescription
             return
@@ -197,11 +237,13 @@ private final class InspirationShareViewModel: ObservableObject {
                 throw InspirationShareAPIError.invalidCreatorContext
             }
             let extraction = try await loadExtraction(for: url)
+            try Task.checkCancellation()
 
             progressTitle = "Studying the video"
             progressDetail = "Reviewing the spoken message, on-screen text, and content format."
             await acquireThumbnail(from: extraction)
             let mediaAnalysis = await analyzeMedia(from: extraction)
+            try Task.checkCancellation()
 
             progressTitle = "Making it yours"
             progressDetail = "Connecting the post’s actual message to your pillars and past content."
@@ -216,6 +258,7 @@ private final class InspirationShareViewModel: ObservableObject {
                 snapshot: snapshot,
                 operationID: operationID
             )
+            try Task.checkCancellation()
             shapeResult = shaped.result
             let suggestedPillar = pillar(
                 id: shaped.result.suggestedPillarId,
@@ -248,6 +291,10 @@ private final class InspirationShareViewModel: ObservableObject {
             )
             stage = .review
         } catch {
+            guard !Task.isCancelled else {
+                cleanupStagedAssetsIfNeeded()
+                return
+            }
             stage = .ready
             errorMessage = (error as? LocalizedError)?.errorDescription
                 ?? "Cy could not analyze this post right now. Try again."
@@ -273,13 +320,17 @@ private final class InspirationShareViewModel: ObservableObject {
         }
     }
 
-    func saveLinkOnly() async {
+    private func saveLinkOnly() async {
         guard let url else { return }
         guard let normalizedSaveTitle else {
             errorMessage = "Add a title before saving this post."
             return
         }
         await prepareLinkThumbnailIfNeeded()
+        guard !Task.isCancelled else {
+            cleanupStagedAssetsIfNeeded()
+            return
+        }
         do {
             let envelope = InspirationShareEnvelope(
                 id: captureID,
@@ -310,6 +361,14 @@ private final class InspirationShareViewModel: ObservableObject {
         store.remove(filename: sharedThumbnailFilename)
     }
 
+    func cancelPendingWorkAndCleanup() {
+        activeOperationTask?.cancel()
+        activeOperationTask = nil
+        linkExtractionTask?.cancel()
+        linkExtractionTask = nil
+        cleanupStagedAssetsIfNeeded()
+    }
+
     var canSave: Bool {
         normalizedSaveTitle != nil
     }
@@ -320,6 +379,7 @@ private final class InspirationShareViewModel: ObservableObject {
               let url,
               let extraction = try? await loadExtraction(for: url)
         else { return }
+        guard !Task.isCancelled else { return }
         await acquireThumbnail(from: extraction)
     }
 
@@ -335,6 +395,7 @@ private final class InspirationShareViewModel: ObservableObject {
         linkExtractionTask = task
         defer { linkExtractionTask = nil }
         let extraction = try await task.value
+        try Task.checkCancellation()
         self.extraction = extraction
         return extraction
     }
@@ -347,7 +408,12 @@ private final class InspirationShareViewModel: ObservableObject {
                   from: thumbnailURL,
                   captureID: captureID
               ) else { return }
-        sharedThumbnailFilename = downloaded.0
+        guard let store = try? InspirationSharedAssetStore() else { return }
+        sharedThumbnailFilename = store.finalizeStagedFile(
+            downloaded.0,
+            taskWasCancelled: Task.isCancelled
+        )
+        guard !Task.isCancelled else { return }
         previewImage = UIImage(data: downloaded.1)
     }
 
@@ -355,17 +421,25 @@ private final class InspirationShareViewModel: ObservableObject {
         if sharedVideoFilename == nil,
            extraction.mediaKind == "video",
            let mediaURL = extraction.mediaUrls.first {
-            sharedVideoFilename = try? await mediaDownloader.downloadVideo(
+            let downloadedFilename = try? await mediaDownloader.downloadVideo(
                 from: mediaURL,
                 captureID: captureID
             )
+            if let store = try? InspirationSharedAssetStore() {
+                sharedVideoFilename = store.finalizeStagedFile(
+                    downloadedFilename,
+                    taskWasCancelled: Task.isCancelled
+                )
+            }
         }
+        guard !Task.isCancelled else { return nil }
         guard let sharedVideoFilename,
               let store = try? InspirationSharedAssetStore(),
               let videoURL = try? store.assetURL(filename: sharedVideoFilename),
               let analysis = try? await mediaAnalyzer.analyze(url: videoURL) else {
             return nil
         }
+        guard !Task.isCancelled else { return nil }
         if previewImage == nil,
            self.sharedThumbnailFilename == nil,
            let thumbnailData = analysis.thumbnailData,
@@ -375,7 +449,11 @@ private final class InspirationShareViewModel: ObservableObject {
                kind: .thumbnail,
                fileExtension: "jpg"
            ) {
-            self.sharedThumbnailFilename = filename
+            self.sharedThumbnailFilename = store.finalizeStagedFile(
+                filename,
+                taskWasCancelled: Task.isCancelled
+            )
+            guard !Task.isCancelled else { return nil }
             previewImage = UIImage(data: thumbnailData)
         }
         return analysis
@@ -550,7 +628,7 @@ private struct InspirationShareView: View {
 
             VStack(spacing: ShareSpacing.x3) {
                 Button {
-                    Task { await model.analyze() }
+                    model.startAnalysis()
                 } label: {
                     Label("Analyze with Cy", systemImage: "sparkles")
                 }
@@ -558,7 +636,7 @@ private struct InspirationShareView: View {
 
                 Button("Save post link without analyzing") {
                     guard validateSaveTitle() else { return }
-                    Task { await model.saveLinkOnly() }
+                    model.startSavingLinkOnly()
                 }
                 .buttonStyle(ShareSecondaryButtonStyle())
             }
@@ -788,7 +866,7 @@ private struct InspirationShareView: View {
             VStack(spacing: ShareSpacing.x2) {
                 Text("Share one public post")
                     .font(.shareHeadline)
-                Text(model.errorMessage ?? "Choose a public Instagram post, reel, or supported web link.")
+                Text(model.unavailableMessage ?? "Choose a public Instagram post, reel, or supported web link.")
                     .font(.shareBody)
                     .foregroundStyle(Color.shareSecondary)
                     .multilineTextAlignment(.center)

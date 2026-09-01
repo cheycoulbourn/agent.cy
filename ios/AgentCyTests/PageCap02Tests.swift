@@ -5,6 +5,26 @@ import XCTest
 @MainActor
 final class PageCap02Tests: XCTestCase {
 
+    func testFindIdeasFailurePreservesAuthoredRecoveryGuidance() {
+        let offlineMessage = "Cy is offline. Open Claude or Codex on your Mac, or open Access in Settings to use hosted Agent Cy."
+        let profileMessage = "Finish your creator profile before asking Cy for ideas."
+
+        XCTAssertEqual(
+            CyIdeaFailureMessagePolicy.creatorMessage(for: offlineMessage),
+            offlineMessage
+        )
+        XCTAssertEqual(CyIdeaFailureMessagePolicy.creatorMessage(for: profileMessage), profileMessage)
+    }
+
+    func testFindIdeasFailureHidesUnrecognizedTechnicalDetails() {
+        let technicalMessage = "The operation couldn’t be completed. (NSURLErrorDomain error -1001.)"
+
+        XCTAssertEqual(
+            CyIdeaFailureMessagePolicy.creatorMessage(for: technicalMessage),
+            "Cy couldn’t finish the request. Nothing was saved."
+        )
+    }
+
     // Creator feature 2026-08-19: the idea quick action offers an optional
     // Platform, and once a platform is chosen, the formats under it. Both
     // stay optional; a format never outlives its platform.

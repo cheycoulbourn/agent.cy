@@ -88,19 +88,22 @@ actor InspirationShareMediaDownloader {
 
 actor InspirationShareMediaAnalyzer {
     func analyze(url: URL) async throws -> ShareMediaAnalysis {
+        try Task.checkCancellation()
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration)
+        try Task.checkCancellation()
         let rawSeconds = CMTimeGetSeconds(duration)
         let durationSeconds = rawSeconds.isFinite && rawSeconds > 0
             ? Int(rawSeconds.rounded())
             : nil
-        let frames = sampleFrames(asset: asset, durationSeconds: rawSeconds)
+        let frames = try sampleFrames(asset: asset, durationSeconds: rawSeconds)
         var observations: [String] = []
         var didReadText = false
         var prominentFaceFrames = 0
         var visualLabels: [String] = []
 
         for (index, frame) in frames.enumerated() {
+            try Task.checkCancellation()
             let result = try analyzeFrame(frame)
             if !result.text.isEmpty {
                 didReadText = true
@@ -117,7 +120,9 @@ actor InspirationShareMediaAnalyzer {
         if let category = broadVisualCategory(for: visualLabels) {
             observations.append("Visual format: \(category).")
         }
+        try Task.checkCancellation()
         let transcript = await transcribeIfAvailable(url: url)
+        try Task.checkCancellation()
         let thumbnailData = frames.first.flatMap {
             UIImage(cgImage: $0).jpegData(compressionQuality: 0.82)
         }
@@ -131,17 +136,22 @@ actor InspirationShareMediaAnalyzer {
         )
     }
 
-    private func sampleFrames(asset: AVAsset, durationSeconds: Double) -> [CGImage] {
+    private func sampleFrames(asset: AVAsset, durationSeconds: Double) throws -> [CGImage] {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 1_280, height: 1_280)
         let safeDuration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : 1
-        return [0.05, 0.25, 0.5, 0.75, 0.95].compactMap { fraction in
-            try? generator.copyCGImage(
+        var frames: [CGImage] = []
+        for fraction in [0.05, 0.25, 0.5, 0.75, 0.95] {
+            try Task.checkCancellation()
+            if let frame = try? generator.copyCGImage(
                 at: CMTime(seconds: safeDuration * fraction, preferredTimescale: 600),
                 actualTime: nil
-            )
+            ) {
+                frames.append(frame)
+            }
         }
+        return frames
     }
 
     private func analyzeFrame(
@@ -211,6 +221,7 @@ actor InspirationShareMediaAnalyzer {
     private func collectTranscript(from transcriber: SpeechTranscriber) async throws -> String? {
         var text = ""
         for try await result in transcriber.results where result.isFinal {
+            try Task.checkCancellation()
             text += String(result.text.characters)
         }
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -440,7 +440,7 @@ final class WeeklyFocusTests: XCTestCase {
         )
     }
 
-    func testFocusTaskMaterializerIncludesTheWholeCurrentWeekWhenSavedMidweek() throws {
+    func testFocusTaskMaterializerDoesNotBackfillPastDaysWhenSavedMidweek() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
         let monday = try XCTUnwrap(testCalendar.date(from: DateComponents(
@@ -474,20 +474,8 @@ final class WeeklyFocusTests: XCTestCase {
         )
 
         let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
-        XCTAssertEqual(tasks.count, 1)
-        XCTAssertEqual(
-            tasks.first?.targetDate.map(testCalendar.startOfDay(for:)),
-            testCalendar.startOfDay(for: monday)
-        )
-        XCTAssertTrue(TaskListVisibilityPolicy.includes(
-            collection: .myTasks,
-            focusTaskTemplateID: tasks.first?.focusTaskTemplateID,
-            recurrence: tasks.first?.recurrence ?? .none,
-            recurrenceRootTaskID: tasks.first?.recurrenceRootTaskID,
-            targetDate: tasks.first?.targetDate,
-            now: thursday,
-            calendar: testCalendar
-        ))
+        XCTAssertTrue(tasks.isEmpty)
+        XCTAssertLessThan(monday, thursday)
     }
 
     func testFocusTemplateTaskDoesNotSpawnASecondRecurrenceChain() throws {

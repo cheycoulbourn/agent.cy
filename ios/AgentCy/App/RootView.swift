@@ -149,7 +149,11 @@ struct RootView: View {
     var body: some View {
         Group {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewScheduledPost") {
+            if IdeaDraftRuntimeFixture.requestsIdeaDraft() {
+                PreviewIdeaDraftRoot()
+            } else if PostEditorRuntimeFixture.requestsPostEditor() {
+                PreviewPostEditorRoot()
+            } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewScheduledPost") {
                 PreviewScheduledPostRoot()
             } else {
                 destinationView
@@ -344,6 +348,27 @@ struct RootView: View {
 }
 
 #if DEBUG
+private struct PreviewIdeaDraftRoot: View {
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
+
+    var body: some View {
+        NavigationStack {
+            if let brief = briefs.first(where: {
+                IdeaDraftRoutePolicy.destination(for: $0.status) == .editor
+                    && $0.ideaBankPlacement == .idea
+            }) {
+                IdeaPostDraftView(brief: brief, isAlreadyInIdeaBank: true)
+            } else {
+                AgentEmptyState(
+                    title: "No idea draft",
+                    message: "Seed preview data to open the Idea Draft fixture.",
+                    icon: .ideas
+                )
+            }
+        }
+    }
+}
+
 private struct PreviewScheduledPostRoot: View {
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
     @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var outputs: [PlatformOutput]
@@ -362,6 +387,26 @@ private struct PreviewScheduledPostRoot: View {
                 AgentEmptyState(
                     title: "No scheduled preview post",
                     message: "Schedule a post to preview the finalized page.",
+                    icon: .calendar
+                )
+            }
+        }
+    }
+}
+
+private struct PreviewPostEditorRoot: View {
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var outputs: [PlatformOutput]
+
+    var body: some View {
+        NavigationStack {
+            if let output = outputs.first,
+               let brief = briefs.first(where: { $0.id == output.briefID }) {
+                ResumablePostEditorView(brief: brief, output: output, onSpark: {})
+            } else {
+                AgentEmptyState(
+                    title: "No post editor fixture",
+                    message: "Seed preview data to open the resumable post editor.",
                     icon: .calendar
                 )
             }

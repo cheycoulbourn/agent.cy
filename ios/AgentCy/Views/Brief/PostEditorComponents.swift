@@ -53,7 +53,7 @@ enum PostDraftResumePolicy {
     }
 
     static func outputStatus(briefStatus: BriefStatus, current: PlatformOutputStatus) -> PlatformOutputStatus {
-        shouldResume(briefStatus: briefStatus, outputStatus: current) ? .draft : current
+        current
     }
 }
 

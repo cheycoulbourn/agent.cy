@@ -188,6 +188,137 @@ enum LivePostURLPolicy {
     }
 }
 
+enum LivePostDuplicatePolicy {
+    static func containsDuplicate(
+        url: URL,
+        outputs: [PlatformOutput],
+        workspaceID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> Bool {
+        let canonicalURL = url.absoluteString
+        return outputs.contains { output in
+            canonicalURLString(output.publishedURLString) == canonicalURL &&
+                WorkspaceScope.includes(
+                    output.workspaceID,
+                    activeWorkspaceID: workspaceID,
+                    workspaces: workspaces
+                )
+        }
+    }
+
+    private static func canonicalURLString(_ rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var candidate = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        if candidate.lowercased().hasPrefix("http://") {
+            candidate = "https://" + candidate.dropFirst("http://".count)
+        }
+        return try? InspirationLinkCanonicalizer.canonicalize(candidate).absoluteString
+    }
+}
+
+enum LivePostPersistenceError: Error {
+    case duplicate
+}
+
+@MainActor
+enum LivePostPersistenceService {
+    struct Result {
+        let brief: CreativeBrief
+        let output: PlatformOutput
+    }
+
+    static func save(
+        descriptor: LivePostLinkDescriptor,
+        metadata: PostLinkMetadata?,
+        postedAt: Date,
+        workspaceID: UUID?,
+        workspaces: [CreatorWorkspace],
+        context: ModelContext
+    ) throws -> Result {
+        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
+        guard !LivePostDuplicatePolicy.containsDuplicate(
+            url: descriptor.url,
+            outputs: outputs,
+            workspaceID: workspaceID,
+            workspaces: workspaces
+        ) else {
+            throw LivePostPersistenceError.duplicate
+        }
+
+        let accounts = try context.fetch(FetchDescriptor<CreatorSocialAccount>(
+            sortBy: [SortDescriptor(\CreatorSocialAccount.sortOrder)]
+        ))
+        let scopedAccounts = accounts.filter {
+            $0.destinationID == descriptor.destinationID &&
+                WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: workspaceID,
+                    workspaces: workspaces
+                ) && !$0.isArchived
+        }
+        let accountID = scopedAccounts.first(where: \.isPrimary)?.id ?? scopedAccounts.first?.id
+        let now = Date()
+        let brief = CreativeBrief(
+            title: metadataTitle(metadata?.title, fallback: descriptor.fallbackTitle),
+            source: .text,
+            status: .posted,
+            createdAt: now
+        )
+        brief.workspaceID = workspaceID
+        brief.ideaBankPlacement = .post
+        brief.agendaDate = postedAt
+
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: descriptor.creatorPlatform,
+            destinationID: descriptor.destinationID,
+            formatID: descriptor.formatID,
+            socialAccountID: accountID,
+            status: .posted,
+            createdAt: now
+        )
+        output.workspaceID = workspaceID
+        output.targetDate = postedAt
+        output.includesTargetTime = true
+        output.postedAt = postedAt
+        output.publishedURLString = descriptor.url.absoluteString
+        context.insert(brief)
+        context.insert(output)
+
+        if let thumbnailData = metadata?.thumbnailData {
+            let attachment = CreatorAttachment(
+                ownerKind: .postMedia,
+                briefID: brief.id,
+                platformOutputID: output.id,
+                fileName: "published-thumbnail-\(output.id.uuidString.prefix(8)).jpg",
+                kind: .photo,
+                uniformTypeIdentifier: "public.image",
+                byteCount: Int64(thumbnailData.count),
+                localRelativePath: "",
+                cloudData: thumbnailData,
+                syncState: .synced
+            )
+            attachment.workspaceID = workspaceID
+            output.coverAttachmentID = attachment.id
+            context.insert(attachment)
+        }
+
+        do {
+            try context.save()
+            return Result(brief: brief, output: output)
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    private static func metadataTitle(_ value: String?, fallback: String) -> String {
+        let title = SocialGridURLPolicy.title(from: value)
+        return title == "Instagram post" ? fallback : title
+    }
+}
+
 enum SocialGridTextPolicy {
     static func nonempty(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -884,9 +1015,6 @@ struct AddLivePostView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
-    @Query private var allOutputs: [PlatformOutput]
-    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
     private let onDismiss: (() -> Void)?
     private let linkScope: LivePostLinkScope
     @State private var urlText = ""
@@ -964,6 +1092,7 @@ struct AddLivePostView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .scrollIndicators(.hidden)
+            .disabled(isSaving)
 
             Rectangle().fill(Color.agentHairline).frame(height: 1)
 
@@ -979,7 +1108,7 @@ struct AddLivePostView: View {
                 Spacer(minLength: AgentSpacing.x4)
 #endif
                 Button {
-                    Task { await addPost() }
+                    addPost()
                 } label: {
                     HStack(spacing: AgentSpacing.x3) {
                         if isSaving { ProgressView().controlSize(.small) }
@@ -1136,7 +1265,7 @@ struct AddLivePostView: View {
 #endif
 
     @MainActor
-    private func addPost() async {
+    private func addPost() {
         guard !isSaving else { return }
         guard let descriptor = LivePostURLPolicy.descriptor(from: urlText) else {
             errorMessage = linkScope.invalidLinkMessage
@@ -1148,101 +1277,72 @@ struct AddLivePostView: View {
             urlIsFocused = true
             return
         }
-        guard PostedDatePolicy.isValid(postedAt) else {
+        let submittedPostedAt = postedAt
+        guard PostedDatePolicy.isValid(submittedPostedAt) else {
             errorMessage = "A live post cannot have a future posted date."
             return
         }
-        let workspaceID = WorkspaceScope.activeWorkspaceID(
-            preferredID: appModel.activeWorkspaceID,
-            workspaces: workspaces
-        ) ?? appModel.resolvedWorkspaceID(context: modelContext)
-        guard !allOutputs.contains(where: {
-            $0.publishedURLString.trimmingCharacters(in: .whitespacesAndNewlines) == descriptor.url.absoluteString
-                && WorkspaceScope.includes(
-                    $0.workspaceID,
-                    activeWorkspaceID: workspaceID,
-                    workspaces: workspaces
-                )
-        }) else {
-            errorMessage = "That live post is already saved."
+        var currentWorkspaces: [CreatorWorkspace]
+        do {
+            currentWorkspaces = try modelContext.fetch(FetchDescriptor<CreatorWorkspace>(
+                sortBy: [SortDescriptor(\CreatorWorkspace.sortOrder)]
+            ))
+        } catch {
+            errorMessage = "This post could not be added. Try again."
             return
         }
-
+        var workspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: appModel.activeWorkspaceID,
+            workspaces: currentWorkspaces
+        )
+        if workspaceID == nil {
+            workspaceID = appModel.resolvedWorkspaceID(context: modelContext)
+            do {
+                currentWorkspaces = try modelContext.fetch(FetchDescriptor<CreatorWorkspace>(
+                    sortBy: [SortDescriptor(\CreatorWorkspace.sortOrder)]
+                ))
+            } catch {
+                errorMessage = "This post could not be added. Try again."
+                return
+            }
+        }
         isSaving = true
         errorMessage = nil
         defer { isSaving = false }
 
-        let metadata = try? await PostLinkMetadataService().fetch(
-            url: descriptor.url,
-            platform: descriptor.sourcePlatform
-        )
-        let now = Date()
-
-        let brief = CreativeBrief(
-            title: metadataTitle(metadata?.title, fallback: descriptor.fallbackTitle),
-            source: .text,
-            status: .posted,
-            createdAt: now
-        )
-        brief.workspaceID = workspaceID
-        brief.ideaBankPlacement = .post
-        brief.agendaDate = postedAt
-
-        let output = PlatformOutput(
-            briefID: brief.id,
-            platform: descriptor.creatorPlatform,
-            destinationID: descriptor.destinationID,
-            formatID: descriptor.formatID,
-            status: .posted,
-            createdAt: now
-        )
-        output.workspaceID = workspaceID
-        output.targetDate = postedAt
-        output.includesTargetTime = true
-        output.postedAt = postedAt
-        output.publishedURLString = descriptor.url.absoluteString
-        output.socialAccountID = allSocialAccounts.first(where: {
-            $0.destinationID == descriptor.destinationID &&
-                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces) &&
-                $0.isPrimary && !$0.isArchived
-        })?.id ?? allSocialAccounts.first(where: {
-            $0.destinationID == descriptor.destinationID &&
-                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces) &&
-                !$0.isArchived
-        })?.id
-
-        modelContext.insert(brief)
-        modelContext.insert(output)
-
-        if let thumbnailData = metadata?.thumbnailData {
-            let attachment = CreatorAttachment(
-                ownerKind: .postMedia,
-                briefID: brief.id,
-                platformOutputID: output.id,
-                fileName: "published-thumbnail-\(output.id.uuidString.prefix(8)).jpg",
-                kind: .photo,
-                uniformTypeIdentifier: "public.image",
-                byteCount: Int64(thumbnailData.count),
-                localRelativePath: "",
-                cloudData: thumbnailData,
-                syncState: .synced
-            )
-            attachment.workspaceID = workspaceID
-            output.coverAttachmentID = attachment.id
-            modelContext.insert(attachment)
-        }
-
         do {
-            try modelContext.save()
-            WidgetSnapshotService.refresh(context: modelContext, workspaceID: workspaceID)
-            close()
+            let result = try LivePostPersistenceService.save(
+                descriptor: descriptor,
+                metadata: nil,
+                postedAt: submittedPostedAt,
+                workspaceID: workspaceID,
+                workspaces: currentWorkspaces,
+                context: modelContext
+            )
+            Task { @MainActor in
+                await Task.yield()
+                WidgetSnapshotService.refresh(context: modelContext, workspaceID: workspaceID)
+                if await PublishedPostThumbnailHydrator().hydrate(
+                    brief: result.brief,
+                    output: result.output,
+                    context: modelContext
+                ) != nil {
+                    WidgetSnapshotService.refresh(context: modelContext, workspaceID: workspaceID)
+                }
+            }
+            finishClose()
+        } catch LivePostPersistenceError.duplicate {
+            errorMessage = "That live post is already saved."
         } catch {
-            modelContext.rollback()
             errorMessage = "This post could not be added. Try again."
         }
     }
 
     private func close() {
+        finishClose()
+    }
+
+    private func finishClose() {
         if let onDismiss {
             onDismiss()
         } else {
@@ -1250,8 +1350,4 @@ struct AddLivePostView: View {
         }
     }
 
-    private func metadataTitle(_ value: String?, fallback: String) -> String {
-        let title = SocialGridURLPolicy.title(from: value)
-        return title == "Instagram post" ? fallback : title
-    }
 }

@@ -136,8 +136,9 @@ struct WeeklyFocusSetupView: View {
     private func load() {
         guard !didLoad else { return }
         didLoad = true
+        let templateByWeekday = DailyFocusTemplateIndex.canonicalByWeekday(templates)
         for day in PillarWeekday.mondayFirst {
-            guard let template = templates.first(where: { $0.weekday == day && $0.isActive }) else {
+            guard let template = templateByWeekday[day], template.isActive else {
                 assignments[day] = []
                 continue
             }
@@ -447,6 +448,12 @@ private struct WeeklyFocusTaskTemplateEditor: View {
 }
 
 struct DailyFocusDetailView: View {
+    private struct DetailDraftSnapshot: Equatable {
+        let note: String
+        let reminderEnabled: Bool
+        let reminderDate: Date?
+    }
+
     let date: Date
 
     @Environment(AppModel.self) private var appModel
@@ -455,8 +462,6 @@ struct DailyFocusDetailView: View {
     @Query private var allTemplates: [DailyFocusTemplateEntry]
     @Query private var allOverrides: [DailyFocusOverride]
     @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
     @Query private var allSavedDetails: [DailyFocusDayDetail]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var detailRecord: DailyFocusDayDetail?
@@ -464,12 +469,13 @@ struct DailyFocusDetailView: View {
     @State private var reminderEnabled = false
     @State private var reminderDate = Date()
     @State private var didLoad = false
+    @State private var detailsSaveTask: Task<Void, Never>?
+    @State private var pendingReminderSync = false
+    @State private var savedDetailSnapshot: DetailDraftSnapshot?
 
     private var templates: [DailyFocusTemplateEntry] { scoped(allTemplates) }
     private var overrides: [DailyFocusOverride] { scoped(allOverrides) }
     private var tasks: [CreatorTask] { scoped(allTasks) }
-    private var briefs: [CreativeBrief] { scoped(allBriefs) }
-    private var outputs: [PlatformOutput] { scoped(allOutputs) }
     private var savedDetails: [DailyFocusDayDetail] { scoped(allSavedDetails) }
     private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
         values.filter {
@@ -488,34 +494,10 @@ struct DailyFocusDetailView: View {
             ? (focus?.note ?? "")
             : DailyFocusKind.combinedDirective(focus?.kinds ?? [])
     }
-    private var activeBriefs: [CreativeBrief] { briefs.filter { $0.status != .archived } }
-    private var activeBriefIDs: Set<UUID> { Set(activeBriefs.map(\.id)) }
-    private var dayOutputs: [PlatformOutput] {
-        outputs.filter {
-            activeBriefIDs.contains($0.briefID) &&
-                $0.targetDate.map { Calendar.current.isDate($0, inSameDayAs: date) } == true
-        }
-    }
-    private var dayTasks: [CreatorTask] {
-        tasks
-            .filter {
-                $0.parentTaskID == nil &&
-                    !$0.isSkipped &&
-                    AgendaContentVisibility.includesTask(
-                        briefID: $0.briefID,
-                        activeBriefIDs: activeBriefIDs
-                    ) &&
-                    taskBelongsToDay($0)
-            }
-            .sorted(by: sortTasks)
-    }
     private var myTasks: [CreatorTask] {
-        dayTasks.filter {
-            TaskCollectionPolicy.collection(
-                briefID: $0.briefID,
-                platformOutputID: $0.platformOutputID
-            ) == .myTasks
-        }
+        tasks
+            .filter { DailyFocusTaskProjection.includes($0, on: date) }
+            .sorted(by: sortTasks)
     }
     private var reminderIsAvailable: Bool {
         Calendar.current.startOfDay(for: date) >= Calendar.current.startOfDay(for: Date())
@@ -544,10 +526,10 @@ struct DailyFocusDetailView: View {
             DailyFocusEditorView(date: date)
         }
         .onAppear(perform: loadDetails)
-        .onChange(of: note) { _, _ in persistDetails(scheduleReminder: false) }
-        .onChange(of: reminderEnabled) { _, _ in persistDetails(scheduleReminder: true) }
-        .onChange(of: reminderDate) { _, _ in persistDetails(scheduleReminder: reminderEnabled) }
-        .onDisappear { persistDetails(scheduleReminder: reminderEnabled) }
+        .onChange(of: note) { _, _ in scheduleDetailsSave(syncReminder: false) }
+        .onChange(of: reminderEnabled) { _, _ in scheduleDetailsSave(syncReminder: true) }
+        .onChange(of: reminderDate) { _, _ in scheduleDetailsSave(syncReminder: reminderEnabled) }
+        .onDisappear(perform: flushPendingDetailsSave)
         .agentScreen()
         .agentKeyboardDismissal()
     }
@@ -705,8 +687,7 @@ struct DailyFocusDetailView: View {
         ForEach(collectionTasks) { task in
             TaskRow(
                 task: task,
-                allTasks: tasks,
-                linkedPostTitle: linkedPostTitle(for: task)
+                allTasks: tasks
             )
         }
     }
@@ -748,38 +729,22 @@ struct DailyFocusDetailView: View {
         return lhs.createdAt < rhs.createdAt
     }
 
-    private func taskBelongsToDay(_ task: CreatorTask) -> Bool {
-        if task.dailyFocusDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) == true ||
-            task.targetDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) == true {
-            return true
-        }
-        if let outputID = task.platformOutputID,
-           dayOutputs.contains(where: { $0.id == outputID }) {
-            return true
-        }
-        return task.briefID.map { briefID in
-            dayOutputs.contains(where: { $0.briefID == briefID })
-        } == true
-    }
-
-    private func linkedPostTitle(for task: CreatorTask) -> String? {
-        let output = task.platformOutputID.flatMap { outputID in
-            outputs.first { $0.id == outputID }
-        }
-        let briefID = task.briefID ?? output?.briefID
-        guard let briefID,
-              let brief = activeBriefs.first(where: { $0.id == briefID }) else { return nil }
-        let override = output?.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return override.isEmpty ? brief.title : override
-    }
-
     private func loadDetails() {
         guard !didLoad else { return }
         didLoad = true
-        detailRecord = savedDetails.first { Calendar.current.isDate($0.date, inSameDayAs: date) }
+        detailRecord = DailyFocusDayDetailIndex.canonical(on: date, from: savedDetails)
         note = detailRecord?.note ?? ""
         reminderEnabled = detailRecord?.reminderEnabled ?? false
         reminderDate = detailRecord?.reminderDate ?? defaultReminderDate
+        savedDetailSnapshot = currentDetailSnapshot
+    }
+
+    private var currentDetailSnapshot: DetailDraftSnapshot {
+        DetailDraftSnapshot(
+            note: note,
+            reminderEnabled: reminderEnabled,
+            reminderDate: reminderEnabled ? reminderDate : nil
+        )
     }
 
     private var defaultReminderDate: Date {
@@ -790,11 +755,36 @@ struct DailyFocusDetailView: View {
         return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: date) ?? date
     }
 
+    private func scheduleDetailsSave(syncReminder: Bool) {
+        guard didLoad else { return }
+        guard currentDetailSnapshot != savedDetailSnapshot else { return }
+        pendingReminderSync = pendingReminderSync || syncReminder
+        detailsSaveTask?.cancel()
+        detailsSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            let shouldSyncReminder = pendingReminderSync
+            pendingReminderSync = false
+            persistDetails(scheduleReminder: shouldSyncReminder)
+            detailsSaveTask = nil
+        }
+    }
+
+    private func flushPendingDetailsSave() {
+        detailsSaveTask?.cancel()
+        detailsSaveTask = nil
+        let shouldSyncReminder = pendingReminderSync
+        pendingReminderSync = false
+        guard currentDetailSnapshot != savedDetailSnapshot || shouldSyncReminder else { return }
+        persistDetails(scheduleReminder: shouldSyncReminder)
+    }
+
     private func persistDetails(scheduleReminder: Bool) {
         guard didLoad else { return }
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard detailRecord != nil || !trimmedNote.isEmpty || reminderEnabled else { return }
 
+        let isNewRecord = detailRecord == nil
         let item = detailRecord ?? DailyFocusDayDetail(date: date)
         if item.modelContext == nil {
             item.workspaceID = appModel.resolvedWorkspaceID(context: context)
@@ -805,8 +795,15 @@ struct DailyFocusDetailView: View {
         item.reminderEnabled = reminderEnabled
         item.reminderDate = reminderEnabled ? reminderDate : nil
         item.updatedAt = Date()
-        try? context.save()
-        WidgetSnapshotService.refresh(context: context)
+        do {
+            try context.save()
+            savedDetailSnapshot = currentDetailSnapshot
+        } catch {
+            context.rollback()
+            if isNewRecord { detailRecord = nil }
+            appModel.presentCreatorError(error, action: "Focus details")
+            return
+        }
 
         guard scheduleReminder else { return }
         Task { @MainActor in
@@ -831,15 +828,10 @@ struct DailyFocusDetailView: View {
 }
 
 struct DailyFocusEditorView: View {
-    private enum Scope: Hashable {
-        case date
-        case recurring
-    }
-
     private struct DraftSnapshot: Equatable {
         let selection: [DailyFocusKind]
         let note: String
-        let scope: Scope
+        let scope: DailyFocusEditScope
         let includeDuration: Bool
         let durationMinutes: Int
         let includeTime: Bool
@@ -855,7 +847,7 @@ struct DailyFocusEditorView: View {
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var selection: [DailyFocusKind] = []
     @State private var note = ""
-    @State private var scope: Scope
+    @State private var scope: DailyFocusEditScope
     @State private var includeDuration = false
     @State private var durationMinutes = 60
     @State private var includeTime = false
@@ -895,8 +887,8 @@ struct DailyFocusEditorView: View {
                     )
 
                     Picker("Apply focus", selection: $scope) {
-                        Text("This date").tag(Scope.date)
-                        Text("Every \(weekday.title)").tag(Scope.recurring)
+                        Text("This date").tag(DailyFocusEditScope.date)
+                        Text("Every \(weekday.title)").tag(DailyFocusEditScope.recurring)
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: .infinity)
@@ -1072,10 +1064,15 @@ struct DailyFocusEditorView: View {
 
     private var storedCustomNote: String {
         let calendar = Calendar.current
-        if let item = overrides.first(where: { calendar.isDate($0.date, inSameDayAs: date) && !$0.isCleared }) {
+        if let item = DailyFocusOverrideIndex.canonical(
+            on: date,
+            from: overrides,
+            calendar: calendar
+        ), !item.isCleared {
             return [.custom, .posting, .admin].contains(item.kind) ? "" : item.note
         }
-        guard let template = templates.first(where: { $0.weekday == weekday && $0.isActive }) else { return "" }
+        guard let template = DailyFocusTemplateIndex.canonicalByWeekday(templates)[weekday],
+              template.isActive else { return "" }
         return [.custom, .posting, .admin].contains(template.kind) ? "" : template.note
     }
 
@@ -1084,59 +1081,16 @@ struct DailyFocusEditorView: View {
         let minutes = includeTime
             ? calendar.component(.hour, from: startTime) * 60 + calendar.component(.minute, from: startTime)
             : nil
-        let title = DailyFocusKind.combinedTitle(selection)
-        let now = Date()
-
-        if scope == .recurring {
-            let entry = templates.first(where: { $0.weekday == weekday })
-                ?? DailyFocusTemplateEntry(weekday: weekday, kind: .custom, title: "Rest")
-            if entry.modelContext == nil {
-                entry.workspaceID = appModel.resolvedWorkspaceID(context: context)
-                context.insert(entry)
-            }
-            entry.kind = selection.first ?? .custom
-            entry.secondaryKind = selection.count > 1 ? selection[1] : nil
-            entry.title = title
-            entry.note = selection.isEmpty ? "" : note.trimmingCharacters(in: .whitespacesAndNewlines)
-            entry.durationMinutes = selection.isEmpty || !includeDuration ? nil : durationMinutes
-            entry.startMinutesFromMidnight = selection.isEmpty ? nil : minutes
-            entry.isActive = !selection.isEmpty
-            entry.updatedAt = now
-
-            overrides
-                .filter { calendar.isDate($0.date, inSameDayAs: date) }
-                .forEach(context.delete)
-        } else {
-            let item = overrides.first(where: { calendar.isDate($0.date, inSameDayAs: date) })
-                ?? DailyFocusOverride(date: date)
-            if item.modelContext == nil {
-                item.workspaceID = appModel.resolvedWorkspaceID(context: context)
-                context.insert(item)
-            }
-            item.templateEntryID = templates.first(where: { $0.weekday == weekday })?.id
-            item.kind = selection.first ?? .custom
-            item.secondaryKind = selection.count > 1 ? selection[1] : nil
-            item.title = title
-            item.note = selection.isEmpty ? "" : note.trimmingCharacters(in: .whitespacesAndNewlines)
-            item.durationMinutes = selection.isEmpty || !includeDuration ? nil : durationMinutes
-            item.startMinutesFromMidnight = selection.isEmpty ? nil : minutes
-            item.isCleared = selection.isEmpty
-            item.updatedAt = now
-        }
-
-        do {
-            try context.save()
-            if scope == .recurring {
-                try FocusTaskRecurrenceService.reconcile(
-                    context: context,
-                    workspaceID: appModel.resolvedWorkspaceID(context: context)
-                )
-                appModel.queueCalendarSync(context: context)
-            }
-            WidgetSnapshotService.refresh(context: context)
+        if appModel.saveDailyFocus(
+            date: date,
+            scope: scope,
+            selection: selection,
+            note: note,
+            durationMinutes: selection.isEmpty || !includeDuration ? nil : durationMinutes,
+            startMinutesFromMidnight: selection.isEmpty ? nil : minutes,
+            context: context
+        ) {
             dismiss()
-        } catch {
-            appModel.presentCreatorError(error, action: "The focus")
         }
     }
 }

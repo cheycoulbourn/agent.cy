@@ -149,7 +149,11 @@ final class VoiceSparkRecorder: ObservableObject {
         }
     }
 
-    private func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+    // The first-ever TCC prompt calls back on a system queue. `nonisolated`
+    // keeps the callback free of this class's MainActor assumption — with it
+    // inherited, the isolation check traps on first grant (crash reproduced
+    // 2026-08-19, DEFECT-CAP-04-01).
+    private nonisolated func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         let current = SFSpeechRecognizer.authorizationStatus()
         guard current == .notDetermined else { return current }
         return await withCheckedContinuation { continuation in
@@ -337,6 +341,7 @@ struct VoiceSparkView: View {
                         recordedAt: recording.createdAt,
                         durationSeconds: recording.durationSeconds,
                         byteCount: recordingByteCount(recording),
+                        playbackSource: audioURL.map(VoiceRecordingPlaybackSource.file),
                         downloadURL: audioURL,
                         isDownloadEnabled: audioURL != nil,
                         onDownload: {},
@@ -922,13 +927,21 @@ struct VoiceSparkView: View {
 
     @discardableResult
     private func connect(_ recording: VoiceSparkRecording, to brief: CreativeBrief) -> Bool {
+        let selectedRecordings = VoiceSparkLinkSelectionPolicy.recordingsToAttach(
+            from: recordings,
+            selected: recording.id
+        )
+        guard !selectedRecordings.isEmpty else {
+            libraryErrorMessage = "That recording is no longer available to connect."
+            return false
+        }
+
         do {
-            let actionRecordings = actionRecordings(for: recording)
-            for sessionRecording in actionRecordings {
-                try attach(sessionRecording, to: brief)
+            for selectedRecording in selectedRecordings {
+                try attach(selectedRecording, to: brief)
             }
             let placement: IdeaBankPlacement = IdeaBankPlacementPolicy.includes(brief) ? .idea : .post
-            finishCurrentSession(removing: placement == .post ? actionRecordings : [])
+            finishCurrentSession(removing: placement == .post ? selectedRecordings : [])
             if placement == .idea {
                 appModel.notice = .info("Recording connected to the idea “\(brief.title)”. A new Voice Spark is ready.")
             }
@@ -1080,6 +1093,15 @@ private struct VoiceSparkLinkRequest: Identifiable {
     var id: UUID { recording.id }
 }
 
+enum VoiceSparkLinkSelectionPolicy {
+    static func recordingsToAttach(
+        from recordings: [VoiceSparkRecording],
+        selected recordingID: UUID
+    ) -> [VoiceSparkRecording] {
+        recordings.filter { $0.id == recordingID }
+    }
+}
+
 enum VoiceSparkConnectDateKind: Int, Equatable {
     case work
     case post
@@ -1197,6 +1219,22 @@ enum VoiceSparkConnectPostPolicy {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return titleOverride.isEmpty ? post.brief.title : titleOverride
     }
+
+    static func filteredPosts(
+        _ posts: [VoiceSparkConnectPost],
+        query: String,
+        platformLabel: (PlatformOutput) -> String,
+        pillarName: (CreativeBrief) -> String
+    ) -> [VoiceSparkConnectPost] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return posts }
+        return posts.filter { post in
+            displayTitle(for: post).localizedCaseInsensitiveContains(normalizedQuery)
+                || post.brief.premise.localizedCaseInsensitiveContains(normalizedQuery)
+                || platformLabel(post.output).localizedCaseInsensitiveContains(normalizedQuery)
+                || pillarName(post.brief).localizedCaseInsensitiveContains(normalizedQuery)
+        }
+    }
 }
 
 private struct VoiceSparkLinkPickerView: View {
@@ -1209,17 +1247,20 @@ private struct VoiceSparkLinkPickerView: View {
     @State private var searchText = ""
 
     var body: some View {
+        let visiblePosts = filteredPosts
+        let visibleGroups = postGroups(from: visiblePosts)
+
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AgentSpacing.x5) {
-                    if filteredPosts.isEmpty {
+                    if visiblePosts.isEmpty {
                         Text(searchText.isEmpty ? "No open posts yet." : "No matching open posts.")
                             .font(.agentBody)
                             .foregroundStyle(Color.agentSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, AgentSpacing.x5)
                     } else {
-                        ForEach(postGroups) { group in
+                        ForEach(visibleGroups) { group in
                             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                                 HStack(alignment: .firstTextBaseline) {
                                     Text(group.dateLabel.uppercased())
@@ -1301,23 +1342,22 @@ private struct VoiceSparkLinkPickerView: View {
     }
 
     private var filteredPosts: [VoiceSparkConnectPost] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return posts }
-        return posts.filter { post in
-            VoiceSparkConnectPostPolicy.displayTitle(for: post)
-                .localizedCaseInsensitiveContains(query)
-                || post.brief.premise.localizedCaseInsensitiveContains(query)
-                || platformLabel(for: post.output).localizedCaseInsensitiveContains(query)
-                || pillarName(for: post.brief).localizedCaseInsensitiveContains(query)
-        }
+        VoiceSparkConnectPostPolicy.filteredPosts(
+            posts,
+            query: searchText,
+            platformLabel: platformLabel,
+            pillarName: pillarName
+        )
     }
 
-    private var postGroups: [VoiceSparkConnectPostGroup] {
+    private func postGroups(
+        from posts: [VoiceSparkConnectPost]
+    ) -> [VoiceSparkConnectPostGroup] {
         var groups: [VoiceSparkConnectPostGroup] = []
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
 
-        for post in filteredPosts {
+        for post in posts {
             let day = post.date.map { calendar.startOfDay(for: $0) }
             let key = day.map { String($0.timeIntervalSinceReferenceDate) } ?? "undated"
             if groups.last?.id == key {

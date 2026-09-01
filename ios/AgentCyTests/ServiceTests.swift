@@ -267,6 +267,165 @@ final class ServiceTests: XCTestCase {
         XCTAssertFalse(appModel.isWorking)
     }
 
+    func testCancellingPostCompositionDoesNotStageAProposalOrShowAnErrorNotice() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        )
+        context.insert(SubscriptionState(access: .paid))
+        context.insert(profile)
+        for index in 0..<3 {
+            context.insert(VoiceExample(
+                profileID: profile.id,
+                text: "Creator-owned example \(index) with a clear practical point.",
+                sortOrder: index
+            ))
+        }
+        let brief = CreativeBrief(title: "Keep this spark", premise: "A useful starting point")
+        context.insert(brief)
+        try context.save()
+        let appModel = AppModel(
+            creativeService: CancelledIdeasCreativeService(),
+            reminderService: PreviewReminderService()
+        )
+
+        let succeeded = await appModel.compose(brief: brief, context: context)
+
+        XCTAssertFalse(succeeded)
+        XCTAssertNil(appModel.proposal(for: brief, context: context))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PendingBriefProposal>()).isEmpty)
+        XCTAssertEqual(brief.status, .spark)
+        XCTAssertNil(appModel.notice)
+        XCTAssertFalse(appModel.isWorking)
+    }
+
+    func testCancellingPostDialogueDoesNotAppendMessagesOrShowAnErrorNotice() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        )
+        context.insert(SubscriptionState(access: .paid))
+        context.insert(profile)
+        for index in 0..<3 {
+            context.insert(VoiceExample(
+                profileID: profile.id,
+                text: "Creator-owned example \(index) with a clear practical point.",
+                sortOrder: index
+            ))
+        }
+        let brief = CreativeBrief(title: "Keep this spark", premise: "A useful starting point")
+        context.insert(brief)
+        try context.save()
+        let appModel = AppModel(
+            creativeService: CancelledIdeasCreativeService(),
+            reminderService: PreviewReminderService()
+        )
+        let thread = appModel.developmentThread(for: brief, context: context)
+        let originalMessageIDs = appModel.messages(for: thread, context: context).map(\.id)
+
+        let succeeded = await appModel.sendDialogueTurn(
+            brief: brief,
+            answer: "Help me sharpen this",
+            context: context
+        )
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(appModel.messages(for: thread, context: context).map(\.id), originalMessageIDs)
+        XCTAssertEqual(thread.turnCount, 0)
+        XCTAssertEqual(brief.status, .spark)
+        XCTAssertNil(appModel.notice)
+        XCTAssertFalse(appModel.isWorking)
+    }
+
+    func testDevelopBriefIgnoresASecondDialogueRequestWhileTheFirstIsRunning() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        )
+        context.insert(SubscriptionState(access: .paid))
+        context.insert(profile)
+        for index in 0..<3 {
+            context.insert(VoiceExample(
+                profileID: profile.id,
+                text: "Creator-owned example \(index) with a clear practical point.",
+                sortOrder: index
+            ))
+        }
+        let brief = CreativeBrief(title: "Keep this spark", premise: "A useful starting point")
+        context.insert(brief)
+        try context.save()
+        let appModel = AppModel(
+            creativeService: SlowDialogueCreativeService(),
+            reminderService: PreviewReminderService()
+        )
+        let thread = appModel.developmentThread(for: brief, context: context)
+        let originalMessageCount = appModel.messages(for: thread, context: context).count
+
+        let first = Task { @MainActor in
+            await appModel.sendDialogueTurn(brief: brief, answer: "First request", context: context)
+        }
+        let second = Task { @MainActor in
+            await appModel.sendDialogueTurn(brief: brief, answer: "Second request", context: context)
+        }
+        let firstSucceeded = await first.value
+        let secondSucceeded = await second.value
+
+        XCTAssertEqual([firstSucceeded, secondSucceeded].filter { $0 }.count, 1)
+        XCTAssertEqual(thread.turnCount, 1)
+        XCTAssertEqual(appModel.messages(for: thread, context: context).count, originalMessageCount + 2)
+        XCTAssertEqual(brief.status, .developing)
+        XCTAssertFalse(appModel.isWorking)
+    }
+
+    func testFailedPostDialoguePreservesTheSparkAndReportsFailure() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        context.insert(SubscriptionState(access: .paid))
+        context.insert(CreatorProfile(
+            name: "Chey",
+            goal: "Create useful content",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        ))
+        let brief = CreativeBrief(title: "Keep this spark", premise: "A useful starting point")
+        context.insert(brief)
+        try context.save()
+        let appModel = AppModel(
+            creativeService: FailedIdeasCreativeService(),
+            reminderService: PreviewReminderService()
+        )
+        let thread = appModel.developmentThread(for: brief, context: context)
+        let originalMessageIDs = appModel.messages(for: thread, context: context).map(\.id)
+
+        let succeeded = await appModel.sendDialogueTurn(
+            brief: brief,
+            answer: "Keep this available for retry",
+            context: context
+        )
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(appModel.messages(for: thread, context: context).map(\.id), originalMessageIDs)
+        XCTAssertEqual(brief.status, .spark)
+        XCTAssertEqual(appModel.notice?.message, "Cy couldn’t be completed. Your work is saved. Try again.")
+        XCTAssertFalse(appModel.isWorking)
+    }
+
     func testSuggestionFailureStaysInlineInsteadOfShowingGlobalNotice() async throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -1738,6 +1897,57 @@ final class ServiceTests: XCTestCase {
 private extension UIView {
     var agentDescendants: [UIView] {
         subviews + subviews.flatMap(\.agentDescendants)
+    }
+}
+
+@MainActor
+private struct SlowDialogueCreativeService: CreativeServicing {
+    func extractVoiceProfile(context: CreatorContextWire, mode: AssistanceMode) async throws -> VoiceProfileExtraction {
+        throw CancellationError()
+    }
+
+    func findIdeas(context: CreatorContextWire, mode: AssistanceMode) async throws -> [IdeaDirection] {
+        throw CancellationError()
+    }
+
+    func nextQuestion(for brief: CreativeBrief, turn: Int, answer: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], postContext: String?) async throws -> String {
+        try await Task.sleep(for: .milliseconds(100))
+        return "A focused response for \(answer)."
+    }
+
+    func composeProposal(from brief: CreativeBrief, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire]) async throws -> BriefProposal {
+        throw CancellationError()
+    }
+
+    func proposeRevision(
+        of brief: ReadyBriefWire,
+        localBriefID: UUID,
+        revisionNumber: Int,
+        scope: BriefRevisionFieldWire,
+        instruction: String,
+        mode: AssistanceMode,
+        context: CreatorContextWire,
+        baseline: BriefProposal,
+        sourceUpdatedAt: Date,
+        sourceTaskIDs: [UUID]
+    ) async throws -> BriefRevisionProposal {
+        throw CancellationError()
+    }
+
+    func proposeVoiceProfileChange(
+        profileID: UUID,
+        sourceVersion: Int,
+        sourceUpdatedAt: Date,
+        current: VoiceProfileDraft,
+        instruction: String,
+        mode: AssistanceMode,
+        context: CreatorContextWire
+    ) async throws -> VoiceProfileChangeProposal {
+        throw CancellationError()
+    }
+
+    func reply(to message: String, mode: AssistanceMode, context: CreatorContextWire, conversation: [ConversationMessageWire], relevantBriefIDs: [UUID]) async throws -> String {
+        throw CancellationError()
     }
 }
 

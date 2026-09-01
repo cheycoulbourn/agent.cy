@@ -95,12 +95,13 @@ struct ResumablePostEditorView: View {
     let onSpark: () -> Void
     let contextLabel: String?
     let isReviewEditing: Bool
-    let isAlreadyInIdeaBank: Bool
     let bottomActionClearance: CGFloat
     let closeAction: (() -> Void)?
     /// Hosts that draw their own header (the Quick Add card) suppress the
-    /// editor's desktop rail so back/title/spark/delete never appear twice.
-    let showsDesktopDetailRail: Bool
+    /// editor's chrome — the desktop rail and the phone toolbar actions — so
+    /// back/title/spark/delete never appear inside quick add (creator
+    /// direction 2026-08-19).
+    let showsEditorChrome: Bool
 
     @State private var targetDate: Date
     @State private var hasTargetDate: Bool
@@ -144,6 +145,8 @@ struct ResumablePostEditorView: View {
     @State private var isKeyboardVisible = false
     @State private var draftNotes: String
     @State private var showSparkDevelopment = false
+    @State private var suppressExitPersistence = false
+    @State private var textCommitCoordinator = PostEditorTextCommitCoordinator()
 #if !targetEnvironment(macCatalyst)
     @State private var voiceRecorderBrief: CreativeBrief?
 #endif
@@ -183,10 +186,9 @@ struct ResumablePostEditorView: View {
         suggestedTargetDate: Date? = nil,
         contextLabel: String? = nil,
         isReviewEditing: Bool = false,
-        isAlreadyInIdeaBank: Bool = false,
         bottomActionClearance: CGFloat = 88,
         closeAction: (() -> Void)? = nil,
-        showsDesktopDetailRail: Bool = true,
+        showsEditorChrome: Bool = true,
         onSpark: @escaping () -> Void
     ) {
         self.brief = brief
@@ -194,10 +196,9 @@ struct ResumablePostEditorView: View {
         self.onSpark = onSpark
         self.contextLabel = contextLabel
         self.isReviewEditing = isReviewEditing
-        self.isAlreadyInIdeaBank = isAlreadyInIdeaBank
         self.bottomActionClearance = bottomActionClearance
         self.closeAction = closeAction
-        self.showsDesktopDetailRail = showsDesktopDetailRail
+        self.showsEditorChrome = showsEditorChrome
         let briefID = brief.id
         _outputs = Query(
             filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
@@ -211,6 +212,32 @@ struct ResumablePostEditorView: View {
             filter: #Predicate<CreatorAttachment> { $0.briefID == briefID },
             sort: \CreatorAttachment.createdAt
         )
+        if let workspaceID = brief.workspaceID {
+            _allPillars = Query(
+                filter: #Predicate<Pillar> {
+                    $0.workspaceID == workspaceID || $0.workspaceID == nil
+                },
+                sort: \Pillar.createdAt
+            )
+            _allSocialAccounts = Query(
+                filter: #Predicate<CreatorSocialAccount> {
+                    $0.workspaceID == workspaceID || $0.workspaceID == nil
+                },
+                sort: \CreatorSocialAccount.sortOrder
+            )
+            _allSeries = Query(
+                filter: #Predicate<ContentSeries> {
+                    $0.workspaceID == workspaceID || $0.workspaceID == nil
+                },
+                sort: \ContentSeries.createdAt
+            )
+            _allBrandPartners = Query(
+                filter: #Predicate<BrandPartner> {
+                    $0.workspaceID == workspaceID || $0.workspaceID == nil
+                },
+                sort: \BrandPartner.name
+            )
+        }
         let existingTargetDate = output.targetDate ?? brief.agendaDate
         _targetDate = State(initialValue: existingTargetDate ?? suggestedTargetDate ?? Date())
         _hasTargetDate = State(initialValue: existingTargetDate != nil || suggestedTargetDate != nil)
@@ -226,6 +253,7 @@ struct ResumablePostEditorView: View {
 
     var body: some View {
         editorImportExportContainer
+            .environment(textCommitCoordinator)
     }
 
     private var editorScrollContainer: some View {
@@ -247,7 +275,7 @@ struct ResumablePostEditorView: View {
         }
 #if targetEnvironment(macCatalyst)
         .safeAreaInset(edge: .top, spacing: 0) {
-            if showsDesktopDetailRail {
+            if showsEditorChrome {
                 desktopDetailRail
             }
         }
@@ -256,15 +284,24 @@ struct ResumablePostEditorView: View {
 #endif
         .toolbar {
 #if !targetEnvironment(macCatalyst)
+            ToolbarItem(placement: .topBarLeading) {
+                if showsEditorChrome {
+                    AgentToolbarIconButton(title: "Back", icon: .back, action: requestCloseEditor)
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: AgentSpacing.x1) {
-                    compactSparkToolbarButton
-                    navigationToolbarActionControl
+                if showsEditorChrome {
+                    HStack(spacing: AgentSpacing.x1) {
+                        compactSparkToolbarButton
+                        navigationToolbarActionControl
+                    }
                 }
             }
             .sharedBackgroundVisibility(.hidden)
 #endif
         }
+        .navigationBarBackButtonHidden(showsEditorChrome)
     }
 
     private var editorSheetContainer: some View {
@@ -373,14 +410,13 @@ struct ResumablePostEditorView: View {
         .onDisappear {
             if PostDraftExitPersistencePolicy.shouldPersist(
                 isDeleting: isDeletingDraft,
-                didMoveToIdeaBank: didMoveToIdeaBank
+                didMoveToIdeaBank: didMoveToIdeaBank,
+                didPersistBeforeExit: suppressExitPersistence
             ) {
-                persistChanges()
+                _ = persistChanges()
             }
         }
         .onAppear {
-            repairIdeaBankPlacementIfNeeded()
-            repairLegacyWorkDateIfNeeded()
             pendingProposal = appModel.proposal(for: brief, context: context)
         }
         .sheet(item: $pendingProposal) { proposal in
@@ -480,7 +516,7 @@ struct ResumablePostEditorView: View {
 
 #if targetEnvironment(macCatalyst)
     private var desktopDetailRail: some View {
-        AgentDesktopDetailRail(title: "Edit post", backAction: closeEditor) {
+        AgentDesktopDetailRail(title: "Edit post", backAction: requestCloseEditor) {
             HStack(spacing: AgentSpacing.x2) {
                 compactSparkToolbarButton
                 desktopEditorActionControl
@@ -1518,12 +1554,17 @@ struct ResumablePostEditorView: View {
 
     @discardableResult
     private func updateVoiceRecordingTitle(_ attachment: CreatorAttachment, title: String) -> Bool {
+        let previousTitle = attachment.displayTitle
+        let previousUpdatedAt = attachment.updatedAt
         attachment.displayTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         attachment.updatedAt = Date()
         do {
             try context.save()
             return true
         } catch {
+            context.rollback()
+            attachment.displayTitle = previousTitle
+            attachment.updatedAt = previousUpdatedAt
             appModel.notice = .error("That recording title could not be saved.")
             return false
         }
@@ -1764,11 +1805,24 @@ struct ResumablePostEditorView: View {
         }
         .sheet(isPresented: $showBrandPartnerPicker) {
             BrandPartnerPickerView(selectedPartnerID: brief.brandPartnerID) { partner in
+                let previousPartnerID = brief.brandPartnerID
+                let previousBrandName = brief.brandName
+                let wasBrandCollaboration = brief.isBrandCollaboration
+                let previousUpdatedAt = brief.updatedAt
                 brief.brandPartnerID = partner.id
                 brief.brandName = partner.name
                 brief.isBrandCollaboration = true
                 brief.updatedAt = Date()
-                try? context.save()
+                do {
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    brief.brandPartnerID = previousPartnerID
+                    brief.brandName = previousBrandName
+                    brief.isBrandCollaboration = wasBrandCollaboration
+                    brief.updatedAt = previousUpdatedAt
+                    appModelNotice("That brand partner could not be saved.")
+                }
             }
         }
     }
@@ -2035,7 +2089,12 @@ struct ResumablePostEditorView: View {
                 appModelNotice("One mood board image could not be added.")
             }
         }
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            appModelNotice("Those mood board images could not be saved.")
+        }
     }
 
     private func importCollaborationFiles(_ result: Result<[URL], Error>) {
@@ -2068,13 +2127,19 @@ struct ResumablePostEditorView: View {
             }
             try context.save()
         } catch {
+            context.rollback()
             appModelNotice("That contract or brief could not be added.")
         }
     }
 
     private func deleteAttachment(_ attachment: CreatorAttachment) {
         context.delete(attachment)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            appModelNotice("That attachment could not be removed.")
+        }
     }
 
     private func appModelNotice(_ message: String) {
@@ -2150,16 +2215,6 @@ struct ResumablePostEditorView: View {
         showDatePicker = true
     }
 
-    private func repairLegacyWorkDateIfNeeded() {
-        guard brief.workDate == nil,
-              brief.status == .developing,
-              hasWorkDate else { return }
-
-        brief.workDate = workDate
-        brief.updatedAt = Date()
-        try? context.save()
-    }
-
     private func requestInProgress() {
         guard appModel.allows(.schedule, context: context) else {
             appModelNotice("Adding work to the agenda is not available with your current access.")
@@ -2206,7 +2261,7 @@ struct ResumablePostEditorView: View {
         case .idea:
             confirmMoveToIdeaBank = true
         case .draft:
-            persistChanges(commitSuggestedTargetDate: true)
+            guard persistChanges(commitSuggestedTargetDate: true) else { return }
             _ = appModel.markPostDraft(brief: brief, output: output, context: context)
         case .inProgress:
             requestInProgress()
@@ -2268,7 +2323,7 @@ struct ResumablePostEditorView: View {
             output.includesTargetTime = true
         }
 
-        persistChanges(commitSuggestedTargetDate: true)
+        guard persistChanges(commitSuggestedTargetDate: true) else { return }
         if output.status != .scheduled {
             guard appModel.scheduleSinglePost(output: output, date: targetDate, context: context) else { return }
         }
@@ -2286,7 +2341,7 @@ struct ResumablePostEditorView: View {
             requestInProgress()
             return
         }
-        persistChanges()
+        guard persistChanges() else { return }
         guard appModel.markPostInProgress(
             brief: brief,
             output: output,
@@ -2307,7 +2362,7 @@ struct ResumablePostEditorView: View {
             return
         }
 
-        persistChanges(commitSuggestedTargetDate: true)
+        guard persistChanges(commitSuggestedTargetDate: true) else { return }
         guard appModel.scheduleSinglePost(output: output, date: targetDate, context: context) else { return }
         if brief.seriesID != nil {
             showEpisodeScheduledConfirmation = true
@@ -2317,6 +2372,7 @@ struct ResumablePostEditorView: View {
     }
 
     private func openWeeklyAgenda() {
+        suppressExitPersistence = true
         closeEditor()
         Task { @MainActor in
             await Task.yield()
@@ -2325,17 +2381,18 @@ struct ResumablePostEditorView: View {
     }
 
     private func openSpark() {
-        persistChanges()
+        guard persistChanges() else { return }
         showSparkDevelopment = true
     }
 
     private func saveDraft() {
-        persistChanges(commitSuggestedTargetDate: true)
+        guard persistChanges(commitSuggestedTargetDate: true) else { return }
+        suppressExitPersistence = true
         closeEditor()
     }
 
     private func makeIdea() {
-        persistChanges()
+        guard persistChanges() else { return }
         guard appModel.movePostToIdeaBank(brief: brief, output: output, context: context) else { return }
         hasTargetDate = false
         shouldPersistTargetDate = false
@@ -2345,30 +2402,8 @@ struct ResumablePostEditorView: View {
         closeEditor()
     }
 
-    private func repairIdeaBankPlacementIfNeeded() {
-        guard isAlreadyInIdeaBank else { return }
-        brief.ideaBankPlacement = .idea
-
-        guard brief.status == .spark,
-              brief.agendaDate != nil || output.targetDate != nil else {
-            try? context.save()
-            return
-        }
-        guard appModel.movePostToIdeaBank(
-            brief: brief,
-            output: output,
-            showsNotice: false,
-            context: context
-        ) else { return }
-
-        hasTargetDate = false
-        shouldPersistTargetDate = true
-        output.includesTargetTime = false
-        hasWorkDate = false
-    }
-
     private func duplicateDraft() {
-        persistChanges()
+        guard persistChanges() else { return }
         guard appModel.duplicatePostDraft(brief: brief, output: output, context: context) != nil else { return }
         appModel.notice = .info("Draft duplicated.")
     }
@@ -2390,45 +2425,75 @@ struct ResumablePostEditorView: View {
         }
     }
 
-    private func persistChanges(commitSuggestedTargetDate: Bool = false) {
-        brief.notes = draftNotes
-        PostDraftSavePolicy.prepare(brief)
-        output.status = PostDraftResumePolicy.outputStatus(briefStatus: brief.status, current: output.status)
-        if hasTargetDate {
-            targetDate = RecurringPostSchedule.normalizedTargetDate(
-                targetDate,
-                includesTime: output.includesTargetTime
-            )
-        }
+    private func requestCloseEditor() {
+        guard persistChanges() else { return }
+        suppressExitPersistence = true
+        closeEditor()
+    }
+
+    @discardableResult
+    private func persistChanges(commitSuggestedTargetDate: Bool = false) -> Bool {
+        let storedState = try? PostDraftEditorStoredState.load(
+            briefID: brief.id,
+            outputID: output.id,
+            context: context
+        )
+        textCommitCoordinator.commitAll()
         let writesTargetDate = PostDraftTargetPersistencePolicy.shouldWriteTargetDate(
             hadPersistedTargetDate: shouldPersistTargetDate,
             explicitlyCommitted: commitSuggestedTargetDate
         )
+        do {
+            targetDate = try PostDraftEditorPersistencePolicy.save(
+                brief: brief,
+                output: output,
+                outputs: outputs,
+                notes: draftNotes,
+                hasWorkDate: hasWorkDate,
+                workDate: workDate,
+                hasTargetDate: hasTargetDate,
+                targetDate: targetDate,
+                writesTargetDate: writesTargetDate,
+                rescheduleLinkedTasks: { previousDate, newDate in
+                    appModel.rescheduleLinkedTasks(
+                        for: output,
+                        from: previousDate,
+                        to: newDate,
+                        context: context
+                    )
+                },
+                persist: { try context.save() },
+                rollback: {
+                    context.rollback()
+                    storedState?.restore(
+                        brief: brief,
+                        output: output,
+                        tasks: tasks
+                    )
+                }
+            )
+        } catch PostDraftEditorPersistencePolicy.Error.emptyTitle {
+            appModel.notice = .info("Name the post before saving it.")
+            return false
+        } catch {
+            appModel.notice = .error("That post could not be saved. Your previous saved version is still intact.")
+            return false
+        }
         if writesTargetDate {
             shouldPersistTargetDate = true
-            appModel.rescheduleLinkedTasks(
-                for: output,
-                from: output.targetDate,
-                to: hasTargetDate ? targetDate : nil,
-                context: context
-            )
-            output.targetDate = hasTargetDate ? targetDate : nil
-            brief.agendaDate = hasTargetDate ? targetDate : nil
         }
-        brief.durationSeconds = output.durationSeconds
-        brief.updatedAt = Date()
-        try? context.save()
         appModel.queueCalendarSync(context: context)
+        return true
     }
 
     private func copyMarkdown() {
-        persistChanges()
+        guard persistChanges() else { return }
         UIPasteboard.general.string = postMarkdownDocument.text
         appModel.notice = .info("Markdown copied.")
     }
 
     private func exportMarkdown() {
-        persistChanges()
+        guard persistChanges() else { return }
         markdownDocument = postMarkdownDocument
         showMarkdownExporter = true
     }
@@ -2528,21 +2593,52 @@ struct ResumablePostEditorView: View {
         return targetDate
     }
 
-    private func assignSeries(_ series: ContentSeries) {
+    @discardableResult
+    private func assignSeries(_ series: ContentSeries) -> Bool {
+        let previousSeriesID = brief.seriesID
+        let previousSeriesName = output.seriesName
+        let previousUpdatedAt = brief.updatedAt
+        let wasSeriesEnabled = seriesEnabled
         brief.seriesID = series.id
         output.seriesName = series.name
         brief.updatedAt = Date()
         seriesEnabled = true
-        try? context.save()
+        do {
+            try context.save()
+            return true
+        } catch {
+            context.rollback()
+            brief.seriesID = previousSeriesID
+            output.seriesName = previousSeriesName
+            brief.updatedAt = previousUpdatedAt
+            seriesEnabled = wasSeriesEnabled
+            appModelNotice("That series could not be assigned.")
+            return false
+        }
     }
 
     private func detachFromSeries() {
+        let previousSeriesID = brief.seriesID
+        let previousEpisodeNumber = brief.episodeNumber
+        let previousEpisodeLabel = brief.episodeLabel
+        let previousSeriesName = output.seriesName
+        let previousUpdatedAt = brief.updatedAt
         brief.seriesID = nil
         brief.episodeNumber = nil
         brief.episodeLabel = ""
         output.seriesName = ""
         brief.updatedAt = Date()
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            brief.seriesID = previousSeriesID
+            brief.episodeNumber = previousEpisodeNumber
+            brief.episodeLabel = previousEpisodeLabel
+            output.seriesName = previousSeriesName
+            brief.updatedAt = previousUpdatedAt
+            appModelNotice("That post could not be removed from its series.")
+        }
     }
 
     private func createSeries() {
@@ -2559,7 +2655,7 @@ struct ResumablePostEditorView: View {
             durationSeconds: output.durationSeconds
         )
         context.insert(series)
-        assignSeries(series)
+        guard assignSeries(series) else { return }
         newSeriesName = ""
         isAddingSeries = false
         activeSetupPicker = nil
@@ -2767,6 +2863,14 @@ private struct SeriesDetailsEditorView: View {
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
+        let previousName = series.name
+        let previousCadence = series.cadence
+        let previousStartDate = series.cadenceStartDate
+        let previousWeekdays = series.cadenceWeekdays
+        let previousMonthDay = series.cadenceMonthDay
+        let previousEndDate = series.cadenceEndDate
+        let previouslyIncludedTime = series.cadenceIncludesTime
+        let previousUpdatedAt = series.updatedAt
         series.name = trimmedName
         series.cadence = frequency
         series.cadenceStartDate = RecurringPostSchedule.normalizedTargetDate(
@@ -2783,6 +2887,14 @@ private struct SeriesDetailsEditorView: View {
             dismiss()
         } catch {
             context.rollback()
+            series.name = previousName
+            series.cadence = previousCadence
+            series.cadenceStartDate = previousStartDate
+            series.cadenceWeekdays = previousWeekdays
+            series.cadenceMonthDay = previousMonthDay
+            series.cadenceEndDate = previousEndDate
+            series.cadenceIncludesTime = previouslyIncludedTime
+            series.updatedAt = previousUpdatedAt
             notice = "The series details could not be saved. Your existing plan is unchanged."
         }
     }
@@ -3000,6 +3112,7 @@ struct SeriesDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
+    @Environment(AppModel.self) private var appModel
     @Bindable var series: ContentSeries
     @Query(sort: \SeriesEpisodeSlot.plannedDate) private var allSlots: [SeriesEpisodeSlot]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
@@ -3010,6 +3123,27 @@ struct SeriesDetailView: View {
     @State private var editingEpisodeBrief: CreativeBrief?
     @State private var confirmRemoveFutureSlots = false
     @State private var confirmArchive = false
+
+    init(series: ContentSeries) {
+        self.series = series
+        let seriesID = series.id
+        _allSlots = Query(
+            filter: #Predicate<SeriesEpisodeSlot> { $0.seriesID == seriesID },
+            sort: \SeriesEpisodeSlot.plannedDate
+        )
+        _allBriefs = Query(
+            filter: #Predicate<CreativeBrief> { $0.seriesID == seriesID },
+            sort: \CreativeBrief.updatedAt,
+            order: .reverse
+        )
+        if let workspaceID = series.workspaceID {
+            _allOutputs = Query(
+                filter: #Predicate<PlatformOutput> {
+                    $0.workspaceID == workspaceID || $0.workspaceID == nil
+                }
+            )
+        }
+    }
 
     private var slots: [SeriesEpisodeSlot] {
         allSlots.filter { $0.seriesID == series.id && $0.workspaceID == series.workspaceID }
@@ -3137,8 +3271,15 @@ struct SeriesDetailView: View {
                                 ? "Make this series active again."
                                 : "Keep every episode and stop planning new ones."
                         ) {
+                            let previousState = series.state
                             series.state = series.state == .paused ? .active : .paused
-                            try? context.save()
+                            do {
+                                try context.save()
+                            } catch {
+                                context.rollback()
+                                series.state = previousState
+                                appModel.notice = .error("That series status could not be saved.")
+                            }
                         }
 
                         Divider().overlay(Color.agentHairline)
@@ -3220,7 +3361,12 @@ struct SeriesDetailView: View {
                     slots
                         .filter { $0.status == .open && $0.plannedDate >= today }
                         .forEach(context.delete)
-                    try? context.save()
+                    do {
+                        try context.save()
+                    } catch {
+                        context.rollback()
+                        appModel.notice = .error("Those future episode slots could not be removed.")
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -3228,9 +3374,16 @@ struct SeriesDetailView: View {
             }
             .alert("Archive this series?", isPresented: $confirmArchive) {
                 Button("Archive series", role: .destructive) {
+                    let previousState = series.state
                     series.state = .archived
-                    try? context.save()
-                    dismiss()
+                    do {
+                        try context.save()
+                        dismiss()
+                    } catch {
+                        context.rollback()
+                        series.state = previousState
+                        appModel.notice = .error("That series could not be archived.")
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -3554,9 +3707,385 @@ enum PostDraftTargetPersistencePolicy {
     }
 }
 
+@MainActor
+struct PostDraftEditorStoredState {
+    private struct BriefState {
+        let workspaceID: UUID?
+        let title: String
+        let premise: String
+        let notes: String
+        let scriptEnabled: Bool
+        let audience: String
+        let creativeGoal: String
+        let takeaway: String
+        let durationSeconds: Int
+        let spokenHook: String
+        let firstFrameText: String
+        let scriptBeatsText: String
+        let close: String
+        let ctaIntent: String
+        let filmingGuidance: String
+        let editingGuidance: String
+        let assumptionsText: String
+        let voiceConfidence: Double
+        let readyBriefPayloadJSON: String
+        let lifecycleHistoryText: String
+        let sourceRaw: String
+        let statusRaw: String
+        let customStatusLabel: String?
+        let ideaBankPlacementRaw: String?
+        let pillarID: UUID?
+        let preferredDestinationID: UUID?
+        let preferredFormatID: UUID?
+        let seriesID: UUID?
+        let inspirationSourceID: UUID?
+        let episodeNumber: Int?
+        let episodeLabel: String
+        let brandPartnerID: UUID?
+        let isBrandCollaboration: Bool
+        let brandName: String
+        let compensationTypeRaw: String
+        let compensationAmount: Double?
+        let compensationCurrencyCode: String
+        let brandHasNetTerms: Bool
+        let brandNetTermsDays: Int
+        let giftedProductDescription: String
+        let giftedEstimatedValue: Double?
+        let promoCode: String
+        let promoLinkString: String
+        let moodBoardEnabled: Bool
+        let moodBoardURLString: String
+        let workDate: Date?
+        let includesWorkTime: Bool
+        let agendaDate: Date?
+        let updatedAt: Date
+
+        init(_ brief: CreativeBrief) {
+            workspaceID = brief.workspaceID
+            title = brief.title
+            premise = brief.premise
+            notes = brief.notes
+            scriptEnabled = brief.scriptEnabled
+            audience = brief.audience
+            creativeGoal = brief.creativeGoal
+            takeaway = brief.takeaway
+            durationSeconds = brief.durationSeconds
+            spokenHook = brief.spokenHook
+            firstFrameText = brief.firstFrameText
+            scriptBeatsText = brief.scriptBeatsText
+            close = brief.close
+            ctaIntent = brief.ctaIntent
+            filmingGuidance = brief.filmingGuidance
+            editingGuidance = brief.editingGuidance
+            assumptionsText = brief.assumptionsText
+            voiceConfidence = brief.voiceConfidence
+            readyBriefPayloadJSON = brief.readyBriefPayloadJSON
+            lifecycleHistoryText = brief.lifecycleHistoryText
+            sourceRaw = brief.sourceRaw
+            statusRaw = brief.statusRaw
+            customStatusLabel = brief.customStatusLabel
+            ideaBankPlacementRaw = brief.ideaBankPlacementRaw
+            pillarID = brief.pillarID
+            preferredDestinationID = brief.preferredDestinationID
+            preferredFormatID = brief.preferredFormatID
+            seriesID = brief.seriesID
+            inspirationSourceID = brief.inspirationSourceID
+            episodeNumber = brief.episodeNumber
+            episodeLabel = brief.episodeLabel
+            brandPartnerID = brief.brandPartnerID
+            isBrandCollaboration = brief.isBrandCollaboration
+            brandName = brief.brandName
+            compensationTypeRaw = brief.compensationTypeRaw
+            compensationAmount = brief.compensationAmount
+            compensationCurrencyCode = brief.compensationCurrencyCode
+            brandHasNetTerms = brief.brandHasNetTerms
+            brandNetTermsDays = brief.brandNetTermsDays
+            giftedProductDescription = brief.giftedProductDescription
+            giftedEstimatedValue = brief.giftedEstimatedValue
+            promoCode = brief.promoCode
+            promoLinkString = brief.promoLinkString
+            moodBoardEnabled = brief.moodBoardEnabled
+            moodBoardURLString = brief.moodBoardURLString
+            workDate = brief.workDate
+            includesWorkTime = brief.includesWorkTime
+            agendaDate = brief.agendaDate
+            updatedAt = brief.updatedAt
+        }
+
+        func restore(_ brief: CreativeBrief) {
+            brief.workspaceID = workspaceID
+            brief.title = title
+            brief.premise = premise
+            brief.notes = notes
+            brief.scriptEnabled = scriptEnabled
+            brief.audience = audience
+            brief.creativeGoal = creativeGoal
+            brief.takeaway = takeaway
+            brief.durationSeconds = durationSeconds
+            brief.spokenHook = spokenHook
+            brief.firstFrameText = firstFrameText
+            brief.scriptBeatsText = scriptBeatsText
+            brief.close = close
+            brief.ctaIntent = ctaIntent
+            brief.filmingGuidance = filmingGuidance
+            brief.editingGuidance = editingGuidance
+            brief.assumptionsText = assumptionsText
+            brief.voiceConfidence = voiceConfidence
+            brief.readyBriefPayloadJSON = readyBriefPayloadJSON
+            brief.lifecycleHistoryText = lifecycleHistoryText
+            brief.sourceRaw = sourceRaw
+            brief.statusRaw = statusRaw
+            brief.customStatusLabel = customStatusLabel
+            brief.ideaBankPlacementRaw = ideaBankPlacementRaw
+            brief.pillarID = pillarID
+            brief.preferredDestinationID = preferredDestinationID
+            brief.preferredFormatID = preferredFormatID
+            brief.seriesID = seriesID
+            brief.inspirationSourceID = inspirationSourceID
+            brief.episodeNumber = episodeNumber
+            brief.episodeLabel = episodeLabel
+            brief.brandPartnerID = brandPartnerID
+            brief.isBrandCollaboration = isBrandCollaboration
+            brief.brandName = brandName
+            brief.compensationTypeRaw = compensationTypeRaw
+            brief.compensationAmount = compensationAmount
+            brief.compensationCurrencyCode = compensationCurrencyCode
+            brief.brandHasNetTerms = brandHasNetTerms
+            brief.brandNetTermsDays = brandNetTermsDays
+            brief.giftedProductDescription = giftedProductDescription
+            brief.giftedEstimatedValue = giftedEstimatedValue
+            brief.promoCode = promoCode
+            brief.promoLinkString = promoLinkString
+            brief.moodBoardEnabled = moodBoardEnabled
+            brief.moodBoardURLString = moodBoardURLString
+            brief.workDate = workDate
+            brief.includesWorkTime = includesWorkTime
+            brief.agendaDate = agendaDate
+            brief.updatedAt = updatedAt
+        }
+    }
+
+    private struct OutputState {
+        let workspaceID: UUID?
+        let platformRaw: String
+        let destinationID: UUID?
+        let formatID: UUID?
+        let socialAccountID: UUID?
+        let durationSeconds: Int
+        let caption: String
+        let openingAdjustment: String
+        let titleOverride: String
+        let cta: String
+        let editChanges: String
+        let statusRaw: String
+        let targetDate: Date?
+        let postedAt: Date?
+        let seriesName: String
+        let recurrenceRaw: String
+        let recurrenceWeekdaysRaw: String
+        let recurrenceMonthDay: Int?
+        let recurrenceEndDate: Date?
+        let includesTargetTime: Bool
+        let seriesRootOutputID: UUID?
+        let coverAttachmentID: UUID?
+        let publishedURLString: String
+
+        init(_ output: PlatformOutput) {
+            workspaceID = output.workspaceID
+            platformRaw = output.platformRaw
+            destinationID = output.destinationID
+            formatID = output.formatID
+            socialAccountID = output.socialAccountID
+            durationSeconds = output.durationSeconds
+            caption = output.caption
+            openingAdjustment = output.openingAdjustment
+            titleOverride = output.titleOverride
+            cta = output.cta
+            editChanges = output.editChanges
+            statusRaw = output.statusRaw
+            targetDate = output.targetDate
+            postedAt = output.postedAt
+            seriesName = output.seriesName
+            recurrenceRaw = output.recurrenceRaw
+            recurrenceWeekdaysRaw = output.recurrenceWeekdaysRaw
+            recurrenceMonthDay = output.recurrenceMonthDay
+            recurrenceEndDate = output.recurrenceEndDate
+            includesTargetTime = output.includesTargetTime
+            seriesRootOutputID = output.seriesRootOutputID
+            coverAttachmentID = output.coverAttachmentID
+            publishedURLString = output.publishedURLString
+        }
+
+        func restore(_ output: PlatformOutput) {
+            output.workspaceID = workspaceID
+            output.platformRaw = platformRaw
+            output.destinationID = destinationID
+            output.formatID = formatID
+            output.socialAccountID = socialAccountID
+            output.durationSeconds = durationSeconds
+            output.caption = caption
+            output.openingAdjustment = openingAdjustment
+            output.titleOverride = titleOverride
+            output.cta = cta
+            output.editChanges = editChanges
+            output.statusRaw = statusRaw
+            output.targetDate = targetDate
+            output.postedAt = postedAt
+            output.seriesName = seriesName
+            output.recurrenceRaw = recurrenceRaw
+            output.recurrenceWeekdaysRaw = recurrenceWeekdaysRaw
+            output.recurrenceMonthDay = recurrenceMonthDay
+            output.recurrenceEndDate = recurrenceEndDate
+            output.includesTargetTime = includesTargetTime
+            output.seriesRootOutputID = seriesRootOutputID
+            output.coverAttachmentID = coverAttachmentID
+            output.publishedURLString = publishedURLString
+        }
+    }
+
+    private struct TaskState {
+        let id: UUID
+        let targetDate: Date?
+        let includesTargetTime: Bool
+        let dailyFocusDate: Date?
+
+        init(_ task: CreatorTask) {
+            id = task.id
+            targetDate = task.targetDate
+            includesTargetTime = task.includesTargetTime
+            dailyFocusDate = task.dailyFocusDate
+        }
+
+        func restore(_ task: CreatorTask) {
+            task.targetDate = targetDate
+            task.includesTargetTime = includesTargetTime
+            task.dailyFocusDate = dailyFocusDate
+        }
+    }
+
+    private let brief: BriefState
+    private let output: OutputState
+    private let tasks: [UUID: TaskState]
+
+    static func load(
+        briefID: UUID,
+        outputID: UUID,
+        context: ModelContext
+    ) throws -> Self {
+        let reader = ModelContext(context.container)
+        guard let storedBrief = try reader.fetch(FetchDescriptor<CreativeBrief>(
+            predicate: #Predicate { $0.id == briefID }
+        )).first,
+        let storedOutput = try reader.fetch(FetchDescriptor<PlatformOutput>(
+            predicate: #Predicate { $0.id == outputID }
+        )).first else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let storedTasks = try reader.fetch(FetchDescriptor<CreatorTask>(
+            predicate: #Predicate { $0.briefID == briefID }
+        ))
+        return Self(
+            brief: BriefState(storedBrief),
+            output: OutputState(storedOutput),
+            tasks: Dictionary(uniqueKeysWithValues: storedTasks.map { ($0.id, TaskState($0)) })
+        )
+    }
+
+    private init(
+        brief: BriefState,
+        output: OutputState,
+        tasks: [UUID: TaskState]
+    ) {
+        self.brief = brief
+        self.output = output
+        self.tasks = tasks
+    }
+
+    func restore(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        tasks currentTasks: [CreatorTask]
+    ) {
+        self.brief.restore(brief)
+        self.output.restore(output)
+        for task in currentTasks {
+            tasks[task.id]?.restore(task)
+        }
+    }
+}
+
+@MainActor
+enum PostDraftEditorPersistencePolicy {
+    enum Error: Swift.Error, Equatable {
+        case emptyTitle
+    }
+
+    @discardableResult
+    static func save(
+        brief: CreativeBrief,
+        output: PlatformOutput,
+        outputs: [PlatformOutput],
+        notes: String,
+        hasWorkDate: Bool,
+        workDate: Date,
+        hasTargetDate: Bool,
+        targetDate: Date,
+        writesTargetDate: Bool,
+        now: Date = Date(),
+        rescheduleLinkedTasks: (_ previousDate: Date?, _ newDate: Date?) -> Void,
+        persist: () throws -> Void,
+        rollback: () -> Void
+    ) throws -> Date {
+        let cleanTitle = brief.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else {
+            rollback()
+            throw Error.emptyTitle
+        }
+
+        let normalizedTargetDate = hasTargetDate
+            ? RecurringPostSchedule.normalizedTargetDate(
+                targetDate,
+                includesTime: output.includesTargetTime
+            )
+            : targetDate
+        let normalizedWorkDate = hasWorkDate
+            ? RecurringPostSchedule.normalizedTargetDate(
+                workDate,
+                includesTime: brief.includesWorkTime
+            )
+            : nil
+
+        brief.title = cleanTitle
+        brief.notes = notes
+        brief.workDate = normalizedWorkDate
+        PostDraftSavePolicy.prepare(brief)
+        if writesTargetDate {
+            let previousDate = output.targetDate
+            let nextDate = hasTargetDate ? normalizedTargetDate : nil
+            rescheduleLinkedTasks(previousDate, nextDate)
+            output.targetDate = nextDate
+            brief.agendaDate = outputs.compactMap(\.targetDate).min()
+        }
+        brief.durationSeconds = output.durationSeconds
+        brief.updatedAt = now
+
+        do {
+            try persist()
+            return normalizedTargetDate
+        } catch {
+            rollback()
+            throw error
+        }
+    }
+}
+
 enum PostDraftExitPersistencePolicy {
-    static func shouldPersist(isDeleting: Bool, didMoveToIdeaBank: Bool) -> Bool {
-        !isDeleting && !didMoveToIdeaBank
+    static func shouldPersist(
+        isDeleting: Bool,
+        didMoveToIdeaBank: Bool,
+        didPersistBeforeExit: Bool = false
+    ) -> Bool {
+        !isDeleting && !didMoveToIdeaBank && !didPersistBeforeExit
     }
 }
 
@@ -3610,7 +4139,33 @@ enum EmptyPostDraftDeletionPolicy {
     }
 }
 
+@MainActor
+@Observable
+final class PostEditorTextCommitCoordinator {
+    private struct PendingValue {
+        var value: String
+        let write: (String) -> Void
+    }
+
+    @ObservationIgnored private var pending: [String: PendingValue] = [:]
+
+    func update(key: String, value: String, write: @escaping (String) -> Void) {
+        pending[key] = PendingValue(value: value, write: write)
+    }
+
+    func remove(key: String) {
+        pending.removeValue(forKey: key)
+    }
+
+    func commitAll() {
+        for pendingValue in pending.values {
+            pendingValue.write(pendingValue.value)
+        }
+    }
+}
+
 private struct PostEditorTextField: View {
+    @Environment(PostEditorTextCommitCoordinator.self) private var commitCoordinator
     let label: String
     @Binding var text: String
     @State private var draftText: String
@@ -3658,13 +4213,11 @@ private struct PostEditorTextField: View {
                 }
                 .focused($isFocused)
         }
-        .task(id: draftText) {
-            do {
-                try await Task.sleep(nanoseconds: 250_000_000)
-            } catch {
-                return
-            }
-            commitDraft()
+        .onAppear {
+            registerDraft(draftText)
+        }
+        .onChange(of: draftText) { _, newValue in
+            registerDraft(newValue)
         }
         .onChange(of: isFocused) { _, focused in
             if !focused { commitDraft() }
@@ -3673,7 +4226,14 @@ private struct PostEditorTextField: View {
             guard !isFocused, newValue != draftText else { return }
             draftText = newValue
         }
-        .onDisappear(perform: commitDraft)
+        .onDisappear {
+            commitDraft()
+            commitCoordinator.remove(key: label)
+        }
+    }
+
+    private func registerDraft(_ value: String) {
+        commitCoordinator.update(key: label, value: value) { text = $0 }
     }
 
     private func commitDraft() {
@@ -3683,6 +4243,7 @@ private struct PostEditorTextField: View {
 }
 
 private struct BufferedPostTitleField: View {
+    @Environment(PostEditorTextCommitCoordinator.self) private var commitCoordinator
     @Binding var text: String
     @State private var draftText: String
     @FocusState private var isFocused: Bool
@@ -3698,13 +4259,11 @@ private struct BufferedPostTitleField: View {
             .tracking(-0.56)
             .lineLimit(1...3)
             .focused($isFocused)
-            .task(id: draftText) {
-                do {
-                    try await Task.sleep(nanoseconds: 250_000_000)
-                } catch {
-                    return
-                }
-                commitDraft()
+            .onAppear {
+                registerDraft(draftText)
+            }
+            .onChange(of: draftText) { _, newValue in
+                registerDraft(newValue)
             }
             .onChange(of: isFocused) { _, focused in
                 if !focused { commitDraft() }
@@ -3713,7 +4272,14 @@ private struct BufferedPostTitleField: View {
                 guard !isFocused, newValue != draftText else { return }
                 draftText = newValue
             }
-            .onDisappear(perform: commitDraft)
+            .onDisappear {
+                commitDraft()
+                commitCoordinator.remove(key: "post-title")
+            }
+    }
+
+    private func registerDraft(_ value: String) {
+        commitCoordinator.update(key: "post-title", value: value) { text = $0 }
     }
 
     private func commitDraft() {
@@ -4791,7 +5357,13 @@ struct PostDraftTaskComposer: View {
         )
         task.workspaceID = brief.workspaceID ?? appModel.resolvedWorkspaceID(context: context)
         context.insert(task)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            appModel.notice = .error("Couldn’t save this task. Try again.")
+            return
+        }
         appModel.queueCalendarSync(context: context)
         dismiss()
     }
@@ -4828,3 +5400,13 @@ private struct PostTaskDatePicker: View {
         .agentScreen()
     }
 }
+
+#if DEBUG
+enum PostEditorRuntimeFixture {
+    static func requestsPostEditor(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        arguments.contains("-agentCyPreviewPostEditor")
+    }
+}
+#endif

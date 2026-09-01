@@ -178,6 +178,44 @@ final class InspirationShapingTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<CreativeBrief>()).isEmpty)
     }
 
+    func testManualDraftKeepsItsOwnPillarWithoutReplacingAnalyzedSuggestion() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let workspaceID = UUID()
+        let suggestedPillar = Pillar(name: "Creator Life", colorHex: "D22630")
+        suggestedPillar.workspaceID = workspaceID
+        let manualPillar = Pillar(name: "Business", colorHex: "5E8069")
+        manualPillar.workspaceID = workspaceID
+        let source = InspirationSource(
+            workspaceID: workspaceID,
+            canonicalURLString: "https://example.com/two-directions",
+            platform: .web,
+            status: .ready
+        )
+        source.shapePayloadJSON = "{\"saved\":true}"
+        source.pillarID = suggestedPillar.id
+        context.insert(suggestedPillar)
+        context.insert(manualPillar)
+        context.insert(source)
+        try context.save()
+
+        let savedDraft = try InspirationShapePersistenceCoordinator.persistManualDraft(
+            ManualInspirationIdeaDraft(
+                title: "My own direction",
+                pillarID: manualPillar.id
+            ),
+            to: source,
+            context: context
+        )
+
+        XCTAssertEqual(savedDraft.pillarID, manualPillar.id)
+        XCTAssertEqual(source.pillarID, suggestedPillar.id)
+        XCTAssertEqual(
+            InspirationShapePersistenceCoordinator.manualDraft(for: source).pillarID,
+            manualPillar.id
+        )
+    }
+
     func testManualIdeaCreatesOneLinkedPostWithoutCyOrChangingTheReference() throws {
         let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
         let context = container.mainContext
@@ -339,6 +377,93 @@ final class InspirationShapingTests: XCTestCase {
         XCTAssertEqual(second.briefID, brief.id)
         XCTAssertEqual(second.kind, .filming)
         XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorTask>()).count, 1)
+    }
+
+    func testSchedulingFilmingRejectsALinkedBriefFromAnotherWorkspace() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let source = InspirationSource(
+            workspaceID: UUID(),
+            canonicalURLString: "https://www.instagram.com/reel/private-source/",
+            platform: .instagram,
+            status: .converted
+        )
+        let brief = CreativeBrief(
+            title: "A brief in another workspace",
+            premise: "This must not become scheduled work.",
+            source: .sharedInspiration
+        )
+        brief.workspaceID = UUID()
+        brief.inspirationSourceID = source.id
+        source.linkedBriefID = brief.id
+        context.insert(source)
+        context.insert(brief)
+        try context.save()
+
+        XCTAssertThrowsError(
+            try InspirationFilmingScheduler.schedule(
+                source: source,
+                brief: brief,
+                date: Date(timeIntervalSince1970: 1_786_400_000),
+                includesTime: false,
+                context: context
+            )
+        ) { error in
+            XCTAssertEqual(error as? InspirationShapingError, .invalidSourceState)
+        }
+        XCTAssertNil(source.filmingTaskID)
+        XCTAssertNil(brief.workDate)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<CreatorTask>()).isEmpty)
+    }
+
+    func testSchedulingFilmingDoesNotRewriteAStaleTaskLink() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let workspaceID = UUID()
+        let source = InspirationSource(
+            workspaceID: workspaceID,
+            canonicalURLString: "https://www.instagram.com/reel/private-source/",
+            platform: .instagram,
+            status: .converted
+        )
+        let brief = CreativeBrief(
+            title: "The linked filming brief",
+            premise: "Schedule only the work derived from this brief.",
+            source: .sharedInspiration
+        )
+        brief.workspaceID = workspaceID
+        brief.inspirationSourceID = source.id
+        source.linkedBriefID = brief.id
+        let unrelatedBriefID = UUID()
+        let unrelatedTask = CreatorTask(
+            briefID: unrelatedBriefID,
+            title: "Do not rewrite this task",
+            kind: .editing,
+            targetDate: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        unrelatedTask.workspaceID = workspaceID
+        source.filmingTaskID = unrelatedTask.id
+        context.insert(source)
+        context.insert(brief)
+        context.insert(unrelatedTask)
+        try context.save()
+
+        let filmingTask = try InspirationFilmingScheduler.schedule(
+            source: source,
+            brief: brief,
+            date: Date(timeIntervalSince1970: 1_786_400_000),
+            includesTime: false,
+            context: context
+        )
+
+        XCTAssertNotEqual(filmingTask.id, unrelatedTask.id)
+        XCTAssertEqual(filmingTask.briefID, brief.id)
+        XCTAssertEqual(filmingTask.workspaceID, workspaceID)
+        XCTAssertEqual(source.filmingTaskID, filmingTask.id)
+        XCTAssertEqual(unrelatedTask.title, "Do not rewrite this task")
+        XCTAssertEqual(unrelatedTask.briefID, unrelatedBriefID)
+        XCTAssertEqual(unrelatedTask.kind, .editing)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<CreatorTask>()).count, 2)
     }
 
     private var creatorContext: CreatorContextWire {

@@ -171,4 +171,59 @@ final class InspirationShareTransportTests: XCTestCase {
         XCTAssertThrowsError(try store.enqueue(envelope))
         XCTAssertEqual(try store.pending(), [])
     }
+
+    func testQueueReplayIsIdempotentAndConflictingCaptureIsRejected() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = InspirationImportQueueStore(
+            rootDirectoryURL: root,
+            appliesFileProtection: false
+        )
+        let envelope = InspirationShareEnvelope(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000456")!,
+            capturedAt: Date(timeIntervalSince1970: 100),
+            workspaceHintID: nil,
+            canonicalURLString: "https://example.com/post",
+            platform: .web,
+            sourceTitle: "Original title"
+        )
+
+        try store.enqueue(envelope)
+        XCTAssertNoThrow(try store.enqueue(envelope))
+        XCTAssertEqual(try store.pending(), [envelope])
+
+        var conflictingEnvelope = envelope
+        conflictingEnvelope.sourceTitle = "Conflicting title"
+        XCTAssertThrowsError(try store.enqueue(conflictingEnvelope)) { error in
+            XCTAssertEqual(error as? InspirationShareTransportError, .fileCollision)
+        }
+        XCTAssertEqual(try store.pending(), [envelope])
+    }
+
+    func testCancelledShareLoadDiscardsAssetThatFinishedStagingLate() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = InspirationSharedAssetStore(
+            rootDirectoryURL: root,
+            appliesFileProtection: false
+        )
+        let filename = try store.stageData(
+            Data("thumbnail".utf8),
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000123")!,
+            kind: .thumbnail,
+            fileExtension: "jpg"
+        )
+
+        let retainedFilename = store.finalizeStagedFile(
+            filename,
+            taskWasCancelled: true
+        )
+
+        XCTAssertNil(retainedFilename)
+        XCTAssertThrowsError(try store.assetURL(filename: filename))
+    }
 }

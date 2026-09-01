@@ -98,6 +98,18 @@ struct InspirationReviewFailurePresentation: Equatable {
     }
 }
 
+enum InspirationReviewUnsavedWorkPolicy {
+    static func hasChanges(
+        hasLinkedBrief: Bool,
+        generatedDraftChanged: Bool,
+        manualDraft: ManualInspirationIdeaDraft,
+        manualDraftBaseline: ManualInspirationIdeaDraft
+    ) -> Bool {
+        guard !hasLinkedBrief else { return false }
+        return generatedDraftChanged || manualDraft != manualDraftBaseline
+    }
+}
+
 struct InspirationReviewView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
@@ -111,7 +123,8 @@ struct InspirationReviewView: View {
     @State private var draft: InspirationEditableIdea?
     @State private var isEditing = false
     @State private var isAnalyzing = false
-    @State private var isScheduling = false
+    @State private var analysisRequestID: UUID?
+    @State private var filmingSchedule: InspirationFilmingScheduleSelection?
     @State private var confirmsDeletion = false
     @State private var confirmsUnsavedClose = false
     @State private var isSavingChanges = false
@@ -131,8 +144,10 @@ struct InspirationReviewView: View {
     }
 
     private var linkedBrief: CreativeBrief? {
-        guard let linkedBriefID = source?.linkedBriefID else { return nil }
-        return briefs.first { $0.id == linkedBriefID }
+        guard let source, let linkedBriefID = source.linkedBriefID else { return nil }
+        return briefs.first {
+            $0.id == linkedBriefID && $0.workspaceID == source.workspaceID
+        }
     }
 
     private var result: InspirationShapeResultWire? {
@@ -206,6 +221,10 @@ struct InspirationReviewView: View {
         .agentSheetDragIndicator()
         .presentationBackground(Color.agentCanvas)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: source?.shapePayloadJSON)
+        .task(id: analysisRequestID) {
+            guard analysisRequestID != nil, let source else { return }
+            await analyze(source)
+        }
         .onChange(of: source?.shapePayloadJSON, initial: true) { _, _ in
             guard let result else { return }
             let latestDraft = InspirationEditableIdea(result: result)
@@ -220,10 +239,8 @@ struct InspirationReviewView: View {
             manualDraftBaseline = savedDraft
             loadedSourceID = source.id
         }
-        .sheet(isPresented: $isScheduling) {
-            if let source, let linkedBrief {
-                InspirationFilmingScheduleView(source: source, brief: linkedBrief)
-            }
+        .sheet(item: $filmingSchedule) { selection in
+            InspirationFilmingScheduleView(source: selection.source, brief: selection.brief)
         }
         .confirmationDialog(
             "Delete saved post?",
@@ -387,7 +404,9 @@ struct InspirationReviewView: View {
                     .buttonStyle(AgentCyPrimaryButtonStyle())
                     .contentTransition(.opacity)
 
-                    Button("Schedule filming") { isScheduling = true }
+                    Button("Schedule filming") {
+                        filmingSchedule = InspirationFilmingScheduleSelection(source: source, brief: brief)
+                    }
                         .buttonStyle(AgentSecondaryButtonStyle())
                 } else if source.saveMode != .originalOnly {
                     Button("Create post from this") {
@@ -396,6 +415,10 @@ struct InspirationReviewView: View {
                     .buttonStyle(AgentCyPrimaryButtonStyle())
                     .disabled(draft?.isValid != true)
                     .contentTransition(.opacity)
+                }
+
+                if brief == nil, manualDraft.hasContent {
+                    manualIdeaCard(source)
                 }
 
                 Button("Done", action: requestClose)
@@ -424,7 +447,8 @@ struct InspirationReviewView: View {
         Button {
             guard analysisAction != .processing else { return }
             manualFocus = nil
-            Task { await analyze(source) }
+            guard preserveManualDraftBeforeAnalysis(source) else { return }
+            analysisRequestID = UUID()
         } label: {
             HStack(spacing: AgentSpacing.x3) {
                 CyAnalysisToolbarMark(isProcessing: analysisAction == .processing)
@@ -460,7 +484,7 @@ struct InspirationReviewView: View {
                 .stroke(Color.cyAccent.opacity(0.22), lineWidth: 1)
         }
         .shadow(color: Color.cyAccent.opacity(0.08), radius: 14, y: 5)
-        .allowsHitTesting(analysisAction != .processing)
+        .disabled(analysisAction == .processing)
         .accessibilityLabel(analysisAction.accessibilityLabel)
     }
 
@@ -524,6 +548,7 @@ struct InspirationReviewView: View {
         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
         .agentSurfaceChrome(cornerRadius: AgentRadius.panel)
         .accessibilityElement(children: .contain)
+        .disabled(isAnalyzing)
     }
 
     private func manualBriefContent(
@@ -567,7 +592,9 @@ struct InspirationReviewView: View {
                 }
                 .buttonStyle(AgentPrimaryButtonStyle())
 
-                Button("Schedule filming") { isScheduling = true }
+                Button("Schedule filming") {
+                    filmingSchedule = InspirationFilmingScheduleSelection(source: source, brief: brief)
+                }
                     .buttonStyle(AgentSecondaryButtonStyle())
 
                 Button("Done", action: requestClose)
@@ -594,6 +621,7 @@ struct InspirationReviewView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.plain)
+        .disabled(isAnalyzing || isSavingChanges)
         .accessibilityHint("Removes the saved reference after confirmation")
     }
 
@@ -638,6 +666,7 @@ struct InspirationReviewView: View {
             TextField(placeholder, text: text, axis: .vertical)
                 .lineLimit(singleLine ? 1...3 : 2...8)
                 .font(.agentBody)
+                .accessibilityLabel(label)
                 .focused($manualFocus, equals: focus)
                 .submitLabel(singleLine ? .next : .return)
                 .onSubmit {
@@ -910,16 +939,17 @@ struct InspirationReviewView: View {
     private func analyze(_ source: InspirationSource) async {
         guard !isAnalyzing else { return }
         isAnalyzing = true
+        defer { isAnalyzing = false }
         _ = await appModel.analyzeInspiration(source, context: context)
-        isAnalyzing = false
     }
 
     private var hasUnsavedChanges: Bool {
-        guard linkedBrief == nil else { return false }
-        if result != nil {
-            return draft != draftBaseline
-        }
-        return manualDraft != manualDraftBaseline
+        InspirationReviewUnsavedWorkPolicy.hasChanges(
+            hasLinkedBrief: linkedBrief != nil,
+            generatedDraftChanged: result != nil && draft != draftBaseline,
+            manualDraft: manualDraft,
+            manualDraftBaseline: manualDraftBaseline
+        )
     }
 
     private var canSaveChanges: Bool {
@@ -944,7 +974,9 @@ struct InspirationReviewView: View {
         isSavingChanges = true
         var didSave = false
 
-        if let result, let draft,
+        var didSaveAllChanges = true
+
+        if let result, let draft, draft != draftBaseline,
            let savedResult = appModel.saveInspirationEdits(
                source: source,
                result: result,
@@ -956,21 +988,39 @@ struct InspirationReviewView: View {
             draftBaseline = savedDraft
             isEditing = false
             didSave = true
-        } else if result == nil,
-                  let savedDraft = appModel.saveManualInspirationDraft(
+        } else if result != nil, draft != draftBaseline {
+            didSaveAllChanges = false
+        }
+
+        if manualDraft != manualDraftBaseline,
+           let savedDraft = appModel.saveManualInspirationDraft(
                       source: source,
                       draft: manualDraft,
                       context: context
-                  ) {
+           ) {
             manualDraft = savedDraft
             manualDraftBaseline = savedDraft
             didSave = true
+        } else if manualDraft != manualDraftBaseline {
+            didSaveAllChanges = false
         }
 
         isSavingChanges = false
-        if didSave, dismissAfterSave {
+        if didSave, didSaveAllChanges, dismissAfterSave {
             dismiss()
         }
+    }
+
+    private func preserveManualDraftBeforeAnalysis(_ source: InspirationSource) -> Bool {
+        guard manualDraft != manualDraftBaseline else { return true }
+        guard let savedDraft = appModel.saveManualInspirationDraft(
+            source: source,
+            draft: manualDraft,
+            context: context
+        ) else { return false }
+        manualDraft = savedDraft
+        manualDraftBaseline = savedDraft
+        return true
     }
 
     private func saveIdea(source: InspirationSource, result: InspirationShapeResultWire) {
@@ -998,6 +1048,13 @@ struct InspirationReviewView: View {
         case .web: "Web"
         }
     }
+}
+
+private struct InspirationFilmingScheduleSelection: Identifiable {
+    let source: InspirationSource
+    let brief: CreativeBrief
+
+    var id: UUID { brief.id }
 }
 
 private struct InspirationFilmingScheduleView: View {

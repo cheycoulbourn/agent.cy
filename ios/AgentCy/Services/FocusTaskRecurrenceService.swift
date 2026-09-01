@@ -15,12 +15,17 @@ enum FocusTaskRecurrenceService {
         let requestedDay = calendar.startOfDay(for: requestedStart)
         let weekday = calendar.component(.weekday, from: requestedDay)
         let daysSinceMonday = (weekday + 5) % 7
-        let start = calendar.date(
+        let weekStart = calendar.date(
             byAdding: .day,
             value: -daysSinceMonday,
             to: requestedDay
         ) ?? requestedDay
-        guard let end = calendar.date(byAdding: .weekOfYear, value: max(1, weekCount), to: start) else {
+        let start = requestedDay
+        guard let end = calendar.date(
+            byAdding: .weekOfYear,
+            value: max(1, weekCount),
+            to: weekStart
+        ) else {
             return
         }
 
@@ -30,22 +35,26 @@ enum FocusTaskRecurrenceService {
             workspaces: workspaces
         )
         let templates = try context.fetch(FetchDescriptor<DailyFocusTemplateEntry>())
-        let activeTemplates = templates.filter {
-            $0.isActive && WorkspaceScope.includes(
+        let scopedTemplates = templates.filter {
+            WorkspaceScope.includes(
                 $0.workspaceID,
                 activeWorkspaceID: workspaceID,
                 workspaces: workspaces
             )
         }
-        let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        let activeTemplateByWeekday = DailyFocusTemplateIndex.canonicalByWeekday(scopedTemplates)
+            .filter { $0.value.isActive }
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>(
+            predicate: #Predicate {
+                $0.focusTaskTemplateID != nil && $0.parentTaskID == nil
+            }
+        ))
         let generated = tasks.filter {
-            $0.focusTaskTemplateID != nil &&
-                $0.parentTaskID == nil &&
-                WorkspaceScope.includes(
-                    $0.workspaceID,
-                    activeWorkspaceID: workspaceID,
-                    workspaces: workspaces
-                )
+            WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: workspaceID,
+                workspaces: workspaces
+            )
         }
 
         var desired: [OccurrenceKey: DesiredOccurrence] = [:]
@@ -55,7 +64,7 @@ enum FocusTaskRecurrenceService {
                 day = calendar.date(byAdding: .day, value: 1, to: day) ?? end
                 continue
             }
-            if let template = activeTemplates.first(where: { $0.weekday == weekday }) {
+            if let template = activeTemplateByWeekday[weekday] {
                 let selectedKinds = Set(DailyFocusResolver.normalizedKinds(
                     primary: template.kind,
                     secondary: template.secondaryKind,

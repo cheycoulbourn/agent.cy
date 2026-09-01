@@ -435,6 +435,15 @@ struct InspirationSharedAssetStore {
         try? fileManager.removeItem(at: url)
     }
 
+    func finalizeStagedFile(
+        _ filename: String?,
+        taskWasCancelled: Bool
+    ) -> String? {
+        guard taskWasCancelled else { return filename }
+        remove(filename: filename)
+        return nil
+    }
+
     private func ensureDirectory() throws {
         try fileManager.createDirectory(
             at: rootDirectoryURL,

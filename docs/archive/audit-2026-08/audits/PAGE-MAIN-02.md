@@ -101,7 +101,7 @@ Classification: **two resolved deterministic work risks plus one open profiling 
 6. `DEFECT-MAIN-02-06` — **Resolved**: accessibility Week/List controls no longer truncate or overflow; weekday chips are removed at accessibility sizes.
 7. `PERF-RISK-10` — **Open**: root query ownership and remaining derived scans need Release-device profiling.
 8. `GAP-MAIN-02-01` — **Open**: unlocked tap, VoiceOver, actual Reduce Motion, lifecycle, external-route, and bottom-clearance replay remains required.
-9. `GAP-PLAN-01-01` — **Open**: explicit production task-row behavior must be resolved under the deeper planning-page contract.
+9. `GAP-PLAN-01-01` — **Resolved 2026-08-21 under PAGE-PLAN-01**: Week and selected-day Calendar now expose task-owned production work in a separate canonical task section without using task dates for post placement.
 
 ## Classification and next gate
 

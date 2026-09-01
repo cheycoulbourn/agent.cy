@@ -44,6 +44,15 @@ struct AppShellView: View {
     @State private var presentedMCPRequestIDs: Set<UUID> = []
     @State private var hasPendingMCPReview = false
     @State private var walkthroughIsWaitingForQuickAddDismissal = false
+    @State private var showsPreviewDailyFocusEditor = PlanRuntimeFixture.requestsDailyFocusEditor(
+        arguments: ProcessInfo.processInfo.arguments
+    )
+    @State private var showsPreviewEpisodeSlotActions = PlanRuntimeFixture.requestsEpisodeSlotActions(
+        arguments: ProcessInfo.processInfo.arguments
+    )
+    @State private var showsPreviewAddLivePost = PlanRuntimeFixture.requestsAddLivePost(
+        arguments: ProcessInfo.processInfo.arguments
+    )
     private let bottomNavigationClearance: CGFloat = 76
 
     var body: some View {
@@ -187,6 +196,15 @@ struct AppShellView: View {
         .sheet(item: $model.inspirationReviewRoute) { route in
             InspirationReviewView(sourceID: route.id)
         }
+        .sheet(isPresented: $showsPreviewDailyFocusEditor) {
+            DailyFocusEditorView(date: Calendar.current.startOfDay(for: Date()))
+        }
+        .sheet(isPresented: $showsPreviewEpisodeSlotActions) {
+            EpisodeSlotActionsPreviewHost()
+        }
+        .sheet(isPresented: $showsPreviewAddLivePost) {
+            AddLivePostView()
+        }
         .alert("agent.cy", isPresented: Binding(
             get: { appModel.notice != nil },
             set: { if !$0 { appModel.notice = nil } }
@@ -209,6 +227,13 @@ struct AppShellView: View {
                 context: modelContext,
                 presentsImportedSource: false
             )
+            #if DEBUG
+            let launchArguments = ProcessInfo.processInfo.arguments
+            if PlanRuntimeFixture.requestsDailyFocusDetail(arguments: launchArguments), planPath.isEmpty {
+                appModel.selectedTab = .today
+                planPath.append(PlanNavigationRoute.dailyFocusDetail)
+            }
+            #endif
             openRequestedTaskIfNeeded()
         }
         .task(id: scenePhase) {
@@ -419,6 +444,21 @@ struct AppShellView: View {
         appModel.presentMCPReview()
     }
 
+}
+
+private struct EpisodeSlotActionsPreviewHost: View {
+    @Query(sort: \SeriesEpisodeSlot.plannedDate) private var slots: [SeriesEpisodeSlot]
+
+    var body: some View {
+        if let slot = slots.first(where: { $0.status == .open }) {
+            EpisodeSlotActionsView(slot: slot) { _ in }
+        } else {
+            ContentUnavailableView(
+                "Episode slot unavailable",
+                systemImage: "calendar.badge.exclamationmark"
+            )
+        }
+    }
 }
 
 private extension AppWalkthroughStep {

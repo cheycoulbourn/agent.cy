@@ -1,6 +1,16 @@
 import SwiftData
 import SwiftUI
 
+private struct DevelopBriefRequest: Identifiable {
+    enum Action {
+        case dialogue(answer: String, postContext: String?)
+        case compose
+    }
+
+    let id = UUID()
+    let action: Action
+}
+
 struct DevelopBriefView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
@@ -8,24 +18,20 @@ struct DevelopBriefView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let brief: CreativeBrief
     let output: PlatformOutput?
-    @Query(sort: \ConversationMessage.createdAt) private var allMessages: [ConversationMessage]
     @Query(sort: \Pillar.createdAt) private var pillars: [Pillar]
     @Query(sort: \PublishingDestination.sortOrder) private var destinations: [PublishingDestination]
     @Query(sort: \PublishingFormat.sortOrder) private var formats: [PublishingFormat]
     @State private var thread: ConversationThread?
+    @State private var messages: [ConversationMessage] = []
     @State private var answer = ""
     @State private var postProposal: BriefProposal?
     @State private var confirmsArchive = false
+    @State private var request: DevelopBriefRequest?
     @FocusState private var answerIsFocused: Bool
 
     init(brief: CreativeBrief, output: PlatformOutput? = nil) {
         self.brief = brief
         self.output = output
-    }
-
-    private var messages: [ConversationMessage] {
-        guard let thread else { return [] }
-        return allMessages.filter { $0.threadID == thread.id }
     }
 
     private var selectedPillar: Pillar? {
@@ -68,7 +74,7 @@ struct DevelopBriefView: View {
                                 }
                             }
 
-                            if appModel.isWorking { typingIndicator }
+                            if isRequestPending { typingIndicator }
                             Color.clear
                                 .frame(height: 1)
                                 .id("post-spark-bottom")
@@ -85,7 +91,7 @@ struct DevelopBriefView: View {
                         guard previousID != nil else { return }
                         revealLatestMessage(using: proxy)
                     }
-                    .onChange(of: appModel.isWorking) { _, working in
+                    .onChange(of: isRequestPending) { _, working in
                         guard working else { return }
                         revealThinkingState(using: proxy)
                     }
@@ -98,11 +104,17 @@ struct DevelopBriefView: View {
                 composer
             }
             .toolbar(.hidden, for: .navigationBar)
-            .interactiveDismissDisabled(appModel.isWorking)
             .agentScreen()
             .onAppear {
                 thread = appModel.developmentThread(for: brief, context: context)
+                reloadMessages()
                 postProposal = appModel.proposal(for: brief, context: context)
+            }
+            .task(id: request?.id) {
+                guard let request else { return }
+                await perform(request)
+                guard !Task.isCancelled, self.request?.id == request.id else { return }
+                self.request = nil
             }
             .sheet(item: $postProposal) { proposal in
                 PostProposalReviewView(brief: brief, initialProposal: proposal)
@@ -113,7 +125,10 @@ struct DevelopBriefView: View {
 
     private var topRail: some View {
         HStack(spacing: AgentSpacing.x2) {
-            Button { dismiss() } label: {
+            Button {
+                request = nil
+                dismiss()
+            } label: {
                 AgentIconView(.close, size: 16)
                     .frame(width: 44, height: 44)
                     .background(Color.agentSurface, in: .circle)
@@ -136,6 +151,7 @@ struct DevelopBriefView: View {
                         .contentShape(.circle)
                 }
                 .accessibilityLabel("Conversation options")
+                .disabled(isRequestPending)
                 .confirmationDialog(
                     "Archive this conversation?",
                     isPresented: $confirmsArchive,
@@ -151,8 +167,10 @@ struct DevelopBriefView: View {
     }
 
     private func archiveConversation() {
+        guard !isRequestPending else { return }
         appModel.archiveDevelopmentThread(for: brief, context: context)
         thread = appModel.developmentThread(for: brief, context: context)
+        reloadMessages()
     }
 
     private var opening: some View {
@@ -229,7 +247,7 @@ struct DevelopBriefView: View {
                     }
                 }
                 .buttonStyle(AgentPressButtonStyle())
-                .disabled(appModel.isWorking || (thread?.turnCount ?? 0) >= 8)
+                .disabled(isRequestPending || (thread?.turnCount ?? 0) >= 8)
             }
         }
     }
@@ -302,6 +320,8 @@ struct DevelopBriefView: View {
                 .foregroundStyle(Color.agentSecondary)
         }
         .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Cy is thinking about this post")
     }
 
     private var composer: some View {
@@ -357,7 +377,7 @@ struct DevelopBriefView: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .disabled(appModel.isWorking)
+                .disabled(isRequestPending)
                 if answerIsFocused {
                     Button { answerIsFocused = false } label: {
                         AgentIconView(.keyboardDown)
@@ -411,8 +431,12 @@ struct DevelopBriefView: View {
 
     private var canSend: Bool {
         !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !appModel.isWorking
+            && !isRequestPending
             && (thread?.turnCount ?? 0) < 8
+    }
+
+    private var isRequestPending: Bool {
+        request != nil || appModel.isWorking
     }
 
     private func revealLatestMessage(using proxy: ScrollViewProxy) {
@@ -446,21 +470,38 @@ struct DevelopBriefView: View {
         guard !text.isEmpty else { return }
         answer = ""
         answerIsFocused = false
-        Task {
-            await appModel.sendDialogueTurn(
-                brief: brief,
-                answer: text,
-                postContext: postContext,
-                context: context
-            )
-        }
+        request = DevelopBriefRequest(
+            action: .dialogue(answer: text, postContext: postContext)
+        )
     }
 
     private func composePost() {
         answerIsFocused = false
-        Task {
-            await appModel.compose(brief: brief, context: context)
+        request = DevelopBriefRequest(action: .compose)
+    }
+
+    private func perform(_ request: DevelopBriefRequest) async {
+        switch request.action {
+        case .dialogue(let answer, let postContext):
+            let succeeded = await appModel.sendDialogueTurn(
+                brief: brief,
+                answer: answer,
+                postContext: postContext,
+                context: context
+            )
+            guard !Task.isCancelled else { return }
+            reloadMessages()
+            if !succeeded, self.answer.isEmpty {
+                self.answer = answer
+            }
+        case .compose:
+            let succeeded = await appModel.compose(brief: brief, context: context)
+            guard succeeded, !Task.isCancelled else { return }
             postProposal = appModel.proposal(for: brief, context: context)
         }
+    }
+
+    private func reloadMessages() {
+        messages = thread.map { appModel.messages(for: $0, context: context) } ?? []
     }
 }

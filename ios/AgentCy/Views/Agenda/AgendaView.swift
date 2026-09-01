@@ -98,15 +98,101 @@ private struct AgendaListProjection {
     let undatedPosts: [AgendaUndatedPost]
 }
 
+struct AgendaTaskProjection {
+    let datedTasks: [CreatorTask]
+    private let tasksByDay: [Date: [CreatorTask]]
+
+    static func make(
+        tasks: [CreatorTask],
+        outputByID: [UUID: PlatformOutput],
+        activeBriefIDs: Set<UUID>,
+        calendar: Calendar = .current
+    ) -> AgendaTaskProjection {
+        let datedTasks = tasks
+            .filter { task in
+                guard task.parentTaskID == nil,
+                      !task.isSkipped,
+                      TaskRootDatePolicy.taskOwnedDate(
+                        targetDate: task.targetDate,
+                        dailyFocusDate: task.dailyFocusDate
+                      ) != nil else {
+                    return false
+                }
+                let linkedBriefID = task.briefID ?? task.platformOutputID.flatMap {
+                    outputByID[$0]?.briefID
+                }
+                return AgendaContentVisibility.includesTask(
+                    briefID: linkedBriefID,
+                    activeBriefIDs: activeBriefIDs
+                )
+            }
+            .sorted { lhs, rhs in
+                let lhsDate = TaskRootDatePolicy.taskOwnedDate(
+                    targetDate: lhs.targetDate,
+                    dailyFocusDate: lhs.dailyFocusDate
+                ) ?? .distantFuture
+                let rhsDate = TaskRootDatePolicy.taskOwnedDate(
+                    targetDate: rhs.targetDate,
+                    dailyFocusDate: rhs.dailyFocusDate
+                ) ?? .distantFuture
+                if lhsDate != rhsDate { return lhsDate < rhsDate }
+                let priorityRank: (CreatorTask) -> Int = { task in
+                    switch task.priority.normalized {
+                    case .urgent: 0
+                    case .high: 1
+                    default: 2
+                    }
+                }
+                if priorityRank(lhs) != priorityRank(rhs) {
+                    return priorityRank(lhs) < priorityRank(rhs)
+                }
+                return lhs.createdAt < rhs.createdAt
+            }
+        let tasksByDay = Dictionary(grouping: datedTasks) { task in
+            calendar.startOfDay(for: TaskRootDatePolicy.taskOwnedDate(
+                targetDate: task.targetDate,
+                dailyFocusDate: task.dailyFocusDate
+            ) ?? .distantFuture)
+        }
+        return AgendaTaskProjection(
+            datedTasks: datedTasks,
+            tasksByDay: tasksByDay
+        )
+    }
+
+    func tasks(on day: Date, calendar: Calendar = .current) -> [CreatorTask] {
+        tasksByDay[calendar.startOfDay(for: day)] ?? []
+    }
+}
+
 private struct AgendaRenderSnapshot {
     let briefByID: [UUID: CreativeBrief]
+    let outputByID: [UUID: PlatformOutput]
+    let outputs: [PlatformOutput]
+    let tasks: [CreatorTask]
+    let taskProjection: AgendaTaskProjection
+    let pillars: [Pillar]
+    let pillarByID: [UUID: Pillar]
+    let seriesByID: [UUID: ContentSeries]
+    let focusTemplates: [DailyFocusTemplateEntry]
+    let focusOverrides: [DailyFocusOverride]
+    let destinationByID: [UUID: PublishingDestination]
+    let formatByID: [UUID: PublishingFormat]
     let occurrences: [AgendaPostOccurrence]
     let occurrencesByDay: [Date: [AgendaPostOccurrence]]
+    let episodeSlotsByDay: [Date: [SeriesEpisodeSlot]]
 
     func occurrences(on day: Date, calendar: Calendar = .current) -> [AgendaPostOccurrence] {
         occurrencesByDay[calendar.startOfDay(for: day)] ?? []
     }
 
+    func tasks(on day: Date, calendar: Calendar = .current) -> [CreatorTask] {
+        taskProjection.tasks(on: day, calendar: calendar)
+    }
+
+    func episodeSlots(on day: Date, calendar: Calendar = .current) -> [SeriesEpisodeSlot] {
+        episodeSlotsByDay[calendar.startOfDay(for: day)] ?? []
+    }
 }
 
 private enum AgendaLayout {
@@ -116,9 +202,7 @@ private enum AgendaLayout {
 struct AgendaView: View {
     @Binding var weekOffset: Int
     @Binding var selectedDay: Date
-    let showsHeader: Bool
     @Environment(AppModel.self) private var appModel
-    @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
@@ -126,14 +210,12 @@ struct AgendaView: View {
     @Query(sort: \Pillar.createdAt) private var allPillars: [Pillar]
     @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
     @Query(sort: \SeriesEpisodeSlot.plannedDate) private var allEpisodeSlots: [SeriesEpisodeSlot]
+    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
     @Query private var destinations: [PublishingDestination]
     @Query private var formats: [PublishingFormat]
-    @Query(sort: \CreatorSocialAccount.sortOrder) private var allSocialAccounts: [CreatorSocialAccount]
-    @Query private var profiles: [CreatorProfile]
     @Query private var allFocusTemplates: [DailyFocusTemplateEntry]
     @Query private var allFocusOverrides: [DailyFocusOverride]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
-    @State private var headerHeight: CGFloat = 0
     @State private var schedulingPost: AgendaDaySelection?
     @State private var reschedulingOutput: PlatformOutput?
     @State private var focusedDay: AgendaDaySelection?
@@ -146,20 +228,13 @@ struct AgendaView: View {
     @State private var listStatusFilter: AgendaListStatusFilter = .defaultFilter
     @State private var isListPillarFilterPresented = false
     @State private var isListStatusFilterPresented = false
+#if DEBUG
+    @State private var didApplyPreviewRescheduleRoute = false
+#endif
     let referenceDate: Date
 
     private var briefs: [CreativeBrief] { scoped(allBriefs) }
-    private var outputs: [PlatformOutput] { scoped(allOutputs) }
     private var pillars: [Pillar] { scoped(allPillars) }
-    private var seriesRecords: [ContentSeries] {
-        scoped(allSeries).filter { $0.state != .archived }
-    }
-    private var episodeSlots: [SeriesEpisodeSlot] {
-        scoped(allEpisodeSlots).filter { $0.status == .open }
-    }
-    private var socialAccounts: [CreatorSocialAccount] { scoped(allSocialAccounts) }
-    private var focusTemplates: [DailyFocusTemplateEntry] { scoped(allFocusTemplates) }
-    private var focusOverrides: [DailyFocusOverride] { scoped(allFocusOverrides) }
 
     private func scoped<T>(_ values: [T]) -> [T] where T: WorkspaceScopedRecord {
         values.filter {
@@ -194,17 +269,18 @@ struct AgendaView: View {
     init(
         weekOffset: Binding<Int>,
         selectedDay: Binding<Date>,
-        referenceDate: Date,
-        showsHeader: Bool = true
+        referenceDate: Date
     ) {
         _weekOffset = weekOffset
         _selectedDay = selectedDay
         _calendarMonth = State(initialValue: referenceDate)
         self.referenceDate = referenceDate
-        self.showsHeader = showsHeader
 #if DEBUG
         if let previewMode = PreviewAgendaRuntimeFixture.initialDisplayMode() {
             _displayMode = State(initialValue: previewMode)
+        }
+        if PreviewAgendaRuntimeFixture.requestsSchedulePost() {
+            _schedulingPost = State(initialValue: AgendaDaySelection(day: selectedDay.wrappedValue))
         }
 #endif
     }
@@ -214,11 +290,6 @@ struct AgendaView: View {
 
         GeometryReader { proxy in
             VStack(alignment: .leading, spacing: 0) {
-                if showsHeader {
-                    header
-                        .reportAgentViewHeight()
-                }
-
                 agendaModeRail
                     .padding(.horizontal, AgentLayout.dashboardGutter)
                     .padding(.bottom, AgentSpacing.x3)
@@ -230,7 +301,6 @@ struct AgendaView: View {
                             minimumHeight: max(
                                 0,
                                 proxy.size.height -
-                                    (showsHeader ? headerHeight : 0) -
                                     AgendaLayout.modeRailReservedHeight
                             )
                         ) {
@@ -268,15 +338,32 @@ struct AgendaView: View {
         .navigationDestination(item: $schedulingPost) { selection in
             AgendaPostIdeaPickerView(day: selection.day)
         }
+#if DEBUG
+        .task(id: snapshot.outputs.map(\.id)) {
+            guard PreviewAgendaRuntimeFixture.requestsPostReschedule(),
+                  !didApplyPreviewRescheduleRoute else { return }
+            guard let previewOutput = snapshot.outputs.first(where: {
+                AgendaDayPresentation.isOverdue(
+                    targetDate: $0.targetDate,
+                    status: $0.status,
+                    now: referenceDate
+                )
+            }) ?? snapshot.outputs.first(where: {
+                $0.targetDate != nil && $0.status != .posted
+            }) else { return }
+            didApplyPreviewRescheduleRoute = true
+            reschedulingOutput = previewOutput
+        }
+#endif
         .navigationDestination(item: $deepLinkedBrief) { brief in
             if deepLinkedBriefOpensEditor,
-               let output = outputs.first(where: { $0.briefID == brief.id && $0.status != .posted }) {
+               let output = snapshot.outputs.first(where: { $0.briefID == brief.id && $0.status != .posted }) {
                 ResumablePostEditorView(brief: brief, output: output, onSpark: {})
                 .navigationTitle("Edit post")
                 .navigationBarTitleDisplayMode(.inline)
                 .agentScreen()
                 .agentKeyboardDismissal()
-            } else if let output = outputs.first(where: {
+            } else if let output = snapshot.outputs.first(where: {
                 $0.briefID == brief.id && PostOutputDetailPolicy.usesFinalizedView(
                     outputStatus: $0.status,
                     targetDate: $0.targetDate
@@ -287,7 +374,6 @@ struct AgendaView: View {
                 IdeaPostDraftView(brief: brief)
             }
         }
-        .onPreferenceChange(AgentViewHeightPreferenceKey.self) { headerHeight = $0 }
         .onChange(of: displayMode) { _, mode in
             guard mode == .calendar else { return }
             calendarMonth = selectedDay
@@ -351,29 +437,6 @@ struct AgendaView: View {
         .accessibilityHint("Switch between week, calendar, and post list views")
     }
 
-    private var header: some View {
-        PlanHeader(
-            breadcrumb: weekSummary,
-            identity: activeIdentity,
-            firstLine: "\(greeting),",
-            secondLine: "here's your week.",
-            openSettings: { appModel.presentedSheet = .settings }
-        ) {
-                HStack(spacing: AgentSpacing.x1) {
-                    weekButton(symbol: "chevron.left", label: "Previous week", amount: -1)
-                    weekButton(symbol: "chevron.right", label: "Next week", amount: 1)
-                }
-        }
-    }
-
-    private var activeIdentity: ActiveCreatorIdentity {
-        ActiveCreatorIdentity.resolve(
-            profile: profiles.first,
-            workspaces: workspaces,
-            preferredWorkspaceID: appModel.activeWorkspaceID
-        )
-    }
-
     private func weekButton(symbol: String, label: String, amount: Int) -> some View {
         Button { moveWeek(amount) } label: {
             ZStack {
@@ -407,12 +470,14 @@ struct AgendaView: View {
     }
 
     private var weekdayChipStrip: some View {
-        HStack(spacing: AgentSpacing.x1) {
+        let pillarHexByWeekday = calendarPillarHexByWeekday()
+
+        return HStack(spacing: AgentSpacing.x1) {
             weekButton(symbol: "chevron.left", label: "Previous week", amount: -1)
 
             HStack(spacing: 0) {
                 ForEach(weekDays, id: \.self) { day in
-                    calendarDay(day)
+                    calendarDay(day, pillarHexByWeekday: pillarHexByWeekday)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -442,9 +507,13 @@ struct AgendaView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func calendarDay(_ day: Date) -> some View {
+    private func calendarDay(
+        _ day: Date,
+        pillarHexByWeekday: [PillarWeekday: String]
+    ) -> some View {
         let isToday = Calendar.current.isDate(day, inSameDayAs: referenceDate)
-        let dotColor = pillarHex(on: day).map {
+        let weekday = PillarWeekday(rawValue: Calendar.current.component(.weekday, from: day))
+        let dotColor = weekday.flatMap { pillarHexByWeekday[$0] }.map {
             Color(agentHex: AgendaPillarDotPresentation.displayedHex(storedHex: $0))
         }
         return Button {
@@ -493,7 +562,8 @@ struct AgendaView: View {
 
     private func calendarAgendaView(snapshot: AgendaRenderSnapshot) -> some View {
         let selectedOccurrences = snapshot.occurrences(on: selectedDay)
-        let selectedSlots = episodeSlots(on: selectedDay)
+        let selectedTasks = snapshot.tasks(on: selectedDay)
+        let selectedSlots = snapshot.episodeSlots(on: selectedDay)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: AgentSpacing.x5) {
@@ -510,13 +580,14 @@ struct AgendaView: View {
                             title: selectedDay.formatted(
                                 .dateTime.weekday(.wide).month(.abbreviated).day()
                             ),
-                            trailing: AgendaDayPresentation.postCountLabel(
-                                selectedOccurrences.count
+                            trailing: AgendaDayPresentation.contentCountLabel(
+                                postCount: selectedOccurrences.count,
+                                taskCount: selectedTasks.count
                             )
                         )
 
-                        if selectedOccurrences.isEmpty && selectedSlots.isEmpty {
-                            Text("No posts planned.")
+                        if selectedOccurrences.isEmpty && selectedSlots.isEmpty && selectedTasks.isEmpty {
+                            Text("Nothing planned.")
                                 .font(.agentBody)
                                 .foregroundStyle(Color.agentSecondary)
                                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
@@ -526,14 +597,20 @@ struct AgendaView: View {
                                     if let brief = snapshot.briefByID[occurrence.output.briefID] {
                                         agendaPostCard(
                                             occurrence: occurrence,
-                                            brief: brief
+                                            brief: brief,
+                                            snapshot: snapshot
                                         )
                                     }
                                 }
 
                                 ForEach(selectedSlots) { slot in
-                                    episodeSlotCard(slot)
+                                    episodeSlotCard(slot, snapshot: snapshot)
                                 }
+
+                                agendaTaskSection(
+                                    selectedTasks,
+                                    snapshot: snapshot
+                                )
                             }
                         }
 
@@ -604,7 +681,8 @@ struct AgendaView: View {
                 ForEach(calendarMonthDays, id: \.self) { day in
                     calendarMonthCell(
                         day,
-                        postCount: snapshot.occurrences(on: day).count
+                        postCount: snapshot.occurrences(on: day).count,
+                        taskCount: snapshot.tasks(on: day).count
                     )
                 }
             }
@@ -644,7 +722,8 @@ struct AgendaView: View {
 
     private func calendarMonthCell(
         _ day: Date,
-        postCount: Int
+        postCount: Int,
+        taskCount: Int
     ) -> some View {
         let calendar = Calendar.current
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
@@ -694,7 +773,8 @@ struct AgendaView: View {
         .accessibilityLabel(
             [
                 day.formatted(.dateTime.weekday(.wide).month(.wide).day()),
-                AgendaDayPresentation.postCountLabel(postCount)
+                AgendaDayPresentation.postCountLabel(postCount),
+                AgendaDayPresentation.taskCountLabel(taskCount)
             ].joined(separator: ", ")
         )
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -712,9 +792,9 @@ struct AgendaView: View {
                     projection.undatedPosts.isEmpty {
                     agendaListEmptyState
                 } else {
-                    agendaListSection(title: "Upcoming", groups: projection.upcomingGroups)
-                    agendaListSection(title: "Past", groups: projection.pastGroups)
-                    agendaUndatedListSection(posts: projection.undatedPosts)
+                    agendaListSection(title: "Upcoming", groups: projection.upcomingGroups, snapshot: snapshot)
+                    agendaListSection(title: "Past", groups: projection.pastGroups, snapshot: snapshot)
+                    agendaUndatedListSection(posts: projection.undatedPosts, snapshot: snapshot)
                 }
             }
             .agentBottomNavigationClearance()
@@ -1006,7 +1086,8 @@ struct AgendaView: View {
     @ViewBuilder
     private func agendaListSection(
         title: String,
-        groups: [AgendaOutputDayGroup]
+        groups: [AgendaOutputDayGroup],
+        snapshot: AgendaRenderSnapshot
     ) -> some View {
         if !groups.isEmpty {
             AgentInsetSurface {
@@ -1042,13 +1123,12 @@ struct AgendaView: View {
                             .buttonStyle(.plain)
 
                             ForEach(group.occurrences) { occurrence in
-                                if let brief = activeBriefs.first(where: {
-                                    $0.id == occurrence.output.briefID
-                                }) {
+                                if let brief = snapshot.briefByID[occurrence.output.briefID] {
                                     let statusOverride = listStatusOverride(for: brief)
                                     agendaPostCard(
                                         occurrence: occurrence,
                                         brief: brief,
+                                        snapshot: snapshot,
                                         statusTextOverride: statusOverride?.text,
                                         displayStatusOverride: statusOverride?.status
                                     )
@@ -1062,7 +1142,10 @@ struct AgendaView: View {
     }
 
     @ViewBuilder
-    private func agendaUndatedListSection(posts: [AgendaUndatedPost]) -> some View {
+    private func agendaUndatedListSection(
+        posts: [AgendaUndatedPost],
+        snapshot: AgendaRenderSnapshot
+    ) -> some View {
         if !posts.isEmpty {
             AgentInsetSurface {
                 VStack(alignment: .leading, spacing: AgentSpacing.x5) {
@@ -1075,10 +1158,10 @@ struct AgendaView: View {
                         let statusOverride = listStatusOverride(for: item.brief)
                         AgentPostCard(
                             title: outputTitle(item.output, brief: item.brief),
-                            pillar: pillarName(for: item.brief),
-                            accent: pillarAccent(for: item.brief),
+                            pillar: pillarName(for: item.brief, snapshot: snapshot),
+                            accent: pillarAccent(for: item.brief, snapshot: snapshot),
                             status: statusOverride?.status ?? item.output.status,
-                            metadata: platformLabel(for: item.output),
+                            metadata: platformLabel(for: item.output, snapshot: snapshot),
                             timeText: nil,
                             statusTextOverride: statusOverride?.text ??
                                 CustomPostStatusPolicy.displayLabel(
@@ -1101,11 +1184,12 @@ struct AgendaView: View {
     @ViewBuilder
     private func weekRow(_ day: Date, snapshot: AgendaRenderSnapshot) -> some View {
         let dayOccurrences = snapshot.occurrences(on: day)
+        let dayTasks = snapshot.tasks(on: day)
         let dayOutputs = dayOccurrences.map(\.output)
-        let dayFocus = focus(on: day)
-        let dayEpisodeSlots = episodeSlots(on: day)
+        let dayFocus = focus(on: day, snapshot: snapshot)
+        let dayEpisodeSlots = snapshot.episodeSlots(on: day)
 
-        if dayEpisodeSlots.isEmpty && AgendaDayPresentation.shouldCompact(
+        if dayEpisodeSlots.isEmpty && dayTasks.isEmpty && AgendaDayPresentation.shouldCompact(
             day: day,
             outputs: dayOutputs.map { output in
                 AgendaOutputState(
@@ -1118,7 +1202,7 @@ struct AgendaView: View {
             compactCompletedDay(
                 day: day,
                 focus: dayFocus,
-                postCount: nonDraftPostCount(in: dayOutputs)
+                postCount: nonDraftPostCount(in: dayOutputs, snapshot: snapshot)
             )
         } else {
             VStack(alignment: .leading, spacing: 14) {
@@ -1131,14 +1215,17 @@ struct AgendaView: View {
                     if let brief = snapshot.briefByID[occurrence.output.briefID] {
                         agendaPostCard(
                             occurrence: occurrence,
-                            brief: brief
+                            brief: brief,
+                            snapshot: snapshot
                         )
                     }
                 }
 
                 ForEach(dayEpisodeSlots) { slot in
-                    episodeSlotCard(slot)
+                    episodeSlotCard(slot, snapshot: snapshot)
                 }
+
+                agendaTaskSection(dayTasks, snapshot: snapshot)
             }
             .foregroundStyle(Color.agentText)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1149,13 +1236,38 @@ struct AgendaView: View {
         }
     }
 
-    private func episodeSlots(on day: Date) -> [SeriesEpisodeSlot] {
-        episodeSlots.filter { Calendar.current.isDate($0.plannedDate, inSameDayAs: day) }
+    @ViewBuilder
+    private func agendaTaskSection(
+        _ dayTasks: [CreatorTask],
+        snapshot: AgendaRenderSnapshot
+    ) -> some View {
+        if !dayTasks.isEmpty {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                SectionRuleHeader(
+                    title: "Production tasks",
+                    trailing: AgendaDayPresentation.taskCountLabel(dayTasks.count)
+                )
+
+                ForEach(dayTasks) { task in
+                    TaskRow(
+                        task: task,
+                        allTasks: snapshot.tasks,
+                        linkedPostTitle: linkedPostTitle(for: task, snapshot: snapshot),
+                        referenceDate: referenceDate,
+                        verticalInset: 0
+                    )
+                }
+            }
+            .padding(.top, AgentSpacing.x2)
+        }
     }
 
     @ViewBuilder
-    private func episodeSlotCard(_ slot: SeriesEpisodeSlot) -> some View {
-        if let series = seriesRecords.first(where: { $0.id == slot.seriesID }) {
+    private func episodeSlotCard(
+        _ slot: SeriesEpisodeSlot,
+        snapshot: AgendaRenderSnapshot
+    ) -> some View {
+        if let series = snapshot.seriesByID[slot.seriesID] {
             Button {
                 selectedEpisodeSlot = slot
             } label: {
@@ -1267,11 +1379,14 @@ struct AgendaView: View {
         }
     }
 
-    private func nonDraftPostCount(in outputs: [PlatformOutput]) -> Int {
+    private func nonDraftPostCount(
+        in outputs: [PlatformOutput],
+        snapshot: AgendaRenderSnapshot
+    ) -> Int {
         outputs.filter { output in
             TodayOutputPresentation.section(
                 outputStatus: output.status,
-                briefStatus: activeBriefs.first(where: { $0.id == output.briefID })?.status
+                briefStatus: snapshot.briefByID[output.briefID]?.status
             ) != .drafted
         }.count
     }
@@ -1339,6 +1454,7 @@ struct AgendaView: View {
     private func agendaPostCard(
         occurrence: AgendaPostOccurrence,
         brief: CreativeBrief,
+        snapshot: AgendaRenderSnapshot,
         statusTextOverride: String? = nil,
         displayStatusOverride: PlatformOutputStatus? = nil
     ) -> some View {
@@ -1359,7 +1475,7 @@ struct AgendaView: View {
             briefStatus: brief.status,
             outputStatus: output.status
         )
-        let accent = pillarAccent(for: brief)
+        let accent = pillarAccent(for: brief, snapshot: snapshot)
         let isScheduledDraftOccurrence = occurrence.kind == .post && displaysAsDraft
         let inferredDisplayStatus: PlatformOutputStatus = if isScheduledDraftOccurrence {
             .scheduled
@@ -1388,11 +1504,11 @@ struct AgendaView: View {
                 ideaBankPlacement: brief.ideaBankPlacement
             )
         }
-        let metadata = "\(occurrence.kind.label) · \(platformLabel(for: output))"
+        let metadata = "\(occurrence.kind.label) · \(platformLabel(for: output, snapshot: snapshot))"
 
         return AgentPostCard(
             title: outputTitle(output, brief: brief),
-            pillar: pillarName(for: brief),
+            pillar: pillarName(for: brief, snapshot: snapshot),
             accent: accent,
             status: displayStatus,
             metadata: metadata,
@@ -1429,18 +1545,19 @@ struct AgendaView: View {
         AgendaDayPresentation.weekdayMonthDayLabel(day)
     }
 
-    private func pillar(for brief: CreativeBrief) -> Pillar? {
+    private func pillar(for brief: CreativeBrief, snapshot: AgendaRenderSnapshot) -> Pillar? {
         guard let pillarID = brief.pillarID else { return nil }
-        return pillars.first(where: { $0.id == pillarID && !$0.isArchived })
+        guard let pillar = snapshot.pillarByID[pillarID], !pillar.isArchived else { return nil }
+        return pillar
     }
 
-    private func pillarName(for brief: CreativeBrief) -> String {
-        pillar(for: brief)?.name ?? "Unfiled"
+    private func pillarName(for brief: CreativeBrief, snapshot: AgendaRenderSnapshot) -> String {
+        pillar(for: brief, snapshot: snapshot)?.name ?? "Unfiled"
     }
 
-    private func pillarAccent(for brief: CreativeBrief) -> Color {
-        guard let pillar = pillar(for: brief) else { return .agentSecondary }
-        return Color(agentHex: pillar.resolvedColorHex(in: pillars))
+    private func pillarAccent(for brief: CreativeBrief, snapshot: AgendaRenderSnapshot) -> Color {
+        guard let pillar = pillar(for: brief, snapshot: snapshot) else { return .agentSecondary }
+        return Color(agentHex: pillar.resolvedColorHex(in: snapshot.pillars))
     }
 
     private func outputTitle(_ output: PlatformOutput, brief: CreativeBrief) -> String {
@@ -1448,13 +1565,13 @@ struct AgendaView: View {
         return override.isEmpty ? brief.title : override
     }
 
-    private func platformLabel(for output: PlatformOutput) -> String {
+    private func platformLabel(for output: PlatformOutput, snapshot: AgendaRenderSnapshot) -> String {
         if let destinationID = output.destinationID,
-           let destination = destinations.first(where: { $0.id == destinationID }) {
+           let destination = snapshot.destinationByID[destinationID] {
             return destination.name
         }
         if let formatID = output.formatID,
-           let format = formats.first(where: { $0.id == formatID }) {
+           let format = snapshot.formatByID[formatID] {
             return format.name
         }
         return output.platform.title
@@ -1466,12 +1583,6 @@ struct AgendaView: View {
             return "\(weekStart.formatted(.dateTime.month(.abbreviated))) \(weekStart.formatted(.dateTime.day())) – \(last.formatted(.dateTime.day()))"
         }
         return "\(weekStart.formatted(.dateTime.month(.abbreviated).day())) – \(last.formatted(.dateTime.month(.abbreviated).day()))"
-    }
-    private var weekSummary: String {
-        "\(weekRange) · Week \(Calendar.current.component(.weekOfYear, from: weekStart))"
-    }
-    private var greeting: String {
-        PlanClockPolicy.greeting(referenceDate: referenceDate, calendar: .current)
     }
     private func moveWeek(_ amount: Int) {
         performAgendaUpdate(animation: .snappy) {
@@ -1503,9 +1614,26 @@ struct AgendaView: View {
     }
     private func makeRenderSnapshot() -> AgendaRenderSnapshot {
         let calendar = Calendar.current
-        let activeBriefs = briefs.filter { $0.status != .archived }
+        let activeBriefs = scoped(allBriefs).filter { $0.status != .archived }
         let briefByID = AgendaBriefIndexPolicy.index(activeBriefs)
         let activeBriefIDs = Set(briefByID.keys)
+        let outputs = scoped(allOutputs)
+        let outputByID = DuplicateSafeIndex.firstValues(outputs.map { ($0.id, $0) })
+        let tasks = scoped(allTasks)
+        let taskProjection = AgendaTaskProjection.make(
+            tasks: tasks,
+            outputByID: outputByID,
+            activeBriefIDs: activeBriefIDs,
+            calendar: calendar
+        )
+        let pillars = scoped(allPillars)
+        let series = scoped(allSeries).filter { $0.state != .archived }
+        let episodeSlots = scoped(allEpisodeSlots).filter { $0.status == .open }
+        let episodeSlotsByDay = Dictionary(grouping: episodeSlots) {
+            calendar.startOfDay(for: $0.plannedDate)
+        }
+        let focusTemplates = scoped(allFocusTemplates)
+        let focusOverrides = scoped(allFocusOverrides)
         let occurrences = outputs
             .filter {
                 AgendaContentVisibility.includesOutput(
@@ -1562,8 +1690,20 @@ struct AgendaView: View {
         }
         return AgendaRenderSnapshot(
             briefByID: briefByID,
+            outputByID: outputByID,
+            outputs: outputs,
+            tasks: tasks,
+            taskProjection: taskProjection,
+            pillars: pillars,
+            pillarByID: DuplicateSafeIndex.firstValues(pillars.map { ($0.id, $0) }),
+            seriesByID: DuplicateSafeIndex.firstValues(series.map { ($0.id, $0) }),
+            focusTemplates: focusTemplates,
+            focusOverrides: focusOverrides,
+            destinationByID: DuplicateSafeIndex.firstValues(destinations.map { ($0.id, $0) }),
+            formatByID: DuplicateSafeIndex.firstValues(formats.map { ($0.id, $0) }),
             occurrences: occurrences,
-            occurrencesByDay: occurrencesByDay
+            occurrencesByDay: occurrencesByDay,
+            episodeSlotsByDay: episodeSlotsByDay
         )
     }
 
@@ -1590,13 +1730,13 @@ struct AgendaView: View {
     private func filteredListAgendaOccurrences(
         snapshot: AgendaRenderSnapshot
     ) -> [AgendaPostOccurrence] {
-        let briefByID = AgendaBriefIndexPolicy.index(activeBriefs)
+        let briefByID = snapshot.briefByID
         let occurrencesByOutputID = Dictionary(
             grouping: snapshot.occurrences,
             by: { $0.output.id }
         )
 
-        return outputs
+        return snapshot.outputs
             .compactMap { output -> [AgendaPostOccurrence]? in
                 guard let brief = briefByID[output.briefID],
                       matchesListFilters(brief: brief, output: output) else {
@@ -1633,9 +1773,9 @@ struct AgendaView: View {
     ) -> [AgendaUndatedPost] {
         guard !listStatusRequiresPostDate else { return [] }
 
-        let briefByID = AgendaBriefIndexPolicy.index(activeBriefs)
+        let briefByID = snapshot.briefByID
         let datedOutputIDs = Set(snapshot.occurrences.map(\.output.id))
-        return outputs
+        return snapshot.outputs
             .compactMap { output in
                 guard !datedOutputIDs.contains(output.id),
                       let brief = briefByID[output.briefID],
@@ -1857,23 +1997,18 @@ struct AgendaView: View {
             briefStatus: briefByID[rhs.output.briefID]?.status
         )
     }
-    private func focus(on day: Date) -> ResolvedDailyFocus? { DailyFocusResolver.resolve(date: day, templates: focusTemplates, overrides: focusOverrides) }
+    private func focus(on day: Date, snapshot: AgendaRenderSnapshot) -> ResolvedDailyFocus? {
+        DailyFocusResolver.resolve(
+            date: day,
+            templates: snapshot.focusTemplates,
+            overrides: snapshot.focusOverrides
+        )
+    }
     private func agendaFocusTitle(_ focus: ResolvedDailyFocus?) -> String {
         "\(focus?.title ?? "Rest") Day"
     }
-    private func color(for brief: CreativeBrief) -> Color {
-        guard let id = brief.pillarID, let pillar = pillars.first(where: { $0.id == id }) else { return .agentSecondary }
-        return Color(agentHex: pillar.resolvedColorHex(in: pillars))
-    }
-    private func pillarHex(on day: Date) -> String? {
-        guard let weekday = PillarWeekday(rawValue: Calendar.current.component(.weekday, from: day)),
-              let pillar = pillars.first(where: {
-                  !$0.isArchived && $0.resolvedWeekdays(in: pillars).contains(weekday)
-              }) else { return nil }
-        return pillar.resolvedColorHex(in: pillars)
-    }
-
     private func calendarPillarHexByWeekday() -> [PillarWeekday: String] {
+        let pillars = pillars
         var result: [PillarWeekday: String] = [:]
         for pillar in pillars where !pillar.isArchived {
             for weekday in pillar.resolvedWeekdays(in: pillars) where result[weekday] == nil {
@@ -1883,14 +2018,27 @@ struct AgendaView: View {
         return result
     }
 
-    private func accountLabel(for output: PlatformOutput) -> String? {
-        output.socialAccountID.flatMap { id in socialAccounts.first { $0.id == id } }?.label
+    private func linkedPostTitle(
+        for task: CreatorTask,
+        snapshot: AgendaRenderSnapshot
+    ) -> String? {
+        let output = task.platformOutputID.flatMap { snapshot.outputByID[$0] }
+        let briefID = task.briefID ?? output?.briefID
+        guard let briefID,
+              let brief = snapshot.briefByID[briefID] else { return nil }
+        let override = output?.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return override.isEmpty ? brief.title : override
     }
 }
 
 #if DEBUG
-private enum PreviewAgendaRuntimeFixture {
-    static func initialDisplayMode(
+enum PreviewAgendaSchedulePostRoute: String {
+    case newPost = "new"
+    case firstIdea = "idea"
+}
+
+enum PreviewAgendaRuntimeFixture {
+    fileprivate static func initialDisplayMode(
         arguments: [String] = ProcessInfo.processInfo.arguments
     ) -> AgendaDisplayMode? {
         guard let marker = arguments.firstIndex(of: "-agentCyPreviewAgendaMode"),
@@ -1898,6 +2046,28 @@ private enum PreviewAgendaRuntimeFixture {
             return nil
         }
         return AgendaDisplayMode(rawValue: arguments[marker + 1])
+    }
+
+    static func requestsSchedulePost(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        arguments.contains("-agentCyPreviewSchedulePost")
+    }
+
+    static func requestsPostReschedule(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        arguments.contains("-agentCyPreviewPostReschedule")
+    }
+
+    static func schedulePostEditorRoute(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> PreviewAgendaSchedulePostRoute? {
+        guard let marker = arguments.firstIndex(of: "-agentCyPreviewSchedulePostEditor"),
+              arguments.indices.contains(marker + 1) else {
+            return nil
+        }
+        return PreviewAgendaSchedulePostRoute(rawValue: arguments[marker + 1])
     }
 }
 #endif
@@ -2115,6 +2285,14 @@ enum AgendaDayPresentation {
         "\(count) \(count == 1 ? "post" : "posts")"
     }
 
+    static func taskCountLabel(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "task" : "tasks")"
+    }
+
+    static func contentCountLabel(postCount: Int, taskCount: Int) -> String {
+        [postCountLabel(postCount), taskCountLabel(taskCount)].joined(separator: " · ")
+    }
+
     static func compactPostCountLabel(_ count: Int) -> String? {
         count > 0 ? postCountLabel(count) : nil
     }
@@ -2180,6 +2358,124 @@ enum DayAgendaPostGrouping {
             outputStatus: outputStatus,
             briefStatus: briefStatus
         ) == .goingLive ? .scheduled : .production
+    }
+}
+
+struct DayAgendaTaskProjection {
+    let dayTasks: [CreatorTask]
+    let postTasks: [CreatorTask]
+    let focusTasks: [CreatorTask]
+
+    static func make(
+        tasks: [CreatorTask],
+        outputByID: [UUID: PlatformOutput],
+        activeBriefIDs: Set<UUID>,
+        day: Date,
+        calendar: Calendar = .current
+    ) -> DayAgendaTaskProjection {
+        let dayTasks = AgendaTaskProjection.make(
+            tasks: tasks,
+            outputByID: outputByID,
+            activeBriefIDs: activeBriefIDs,
+            calendar: calendar
+        )
+        .tasks(on: day, calendar: calendar)
+
+        return DayAgendaTaskProjection(
+            dayTasks: dayTasks,
+            postTasks: dayTasks.filter {
+                TaskCollectionPolicy.collection(
+                    briefID: $0.briefID,
+                    platformOutputID: $0.platformOutputID
+                ) == .postTasks
+            },
+            focusTasks: dayTasks.filter {
+                TaskCollectionPolicy.collection(
+                    briefID: $0.briefID,
+                    platformOutputID: $0.platformOutputID
+                ) == .myTasks
+            }
+        )
+    }
+}
+
+enum DayAgendaOutputMetadata {
+    static func label(
+        destination: String?,
+        format: String?,
+        account: String?,
+        platform: String
+    ) -> String {
+        let details = [destination, format, account].compactMap { value in
+            let clean = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return clean.isEmpty ? nil : clean
+        }
+        return details.isEmpty ? platform : details.joined(separator: " · ")
+    }
+}
+
+enum AgendaAssignedPillarPolicy {
+    static func pillar(
+        for weekday: PillarWeekday,
+        in pillars: [Pillar]
+    ) -> Pillar? {
+        pillars
+            .filter { !$0.isArchived && $0.assignedWeekdays.contains(weekday) }
+            .sorted(by: precedes)
+            .first
+    }
+
+    private static func precedes(_ lhs: Pillar, _ rhs: Pillar) -> Bool {
+        let lhsRoleRank = lhs.role == .anchor ? 0 : 1
+        let rhsRoleRank = rhs.role == .anchor ? 0 : 1
+        if lhsRoleRank != rhsRoleRank {
+            return lhsRoleRank < rhsRoleRank
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt < rhs.createdAt
+        }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+}
+
+enum DayAgendaChangeSignature {
+    static func make(
+        assignedPillarID: UUID?,
+        focusTitle: String?,
+        outputs: [PlatformOutput],
+        tasks: [CreatorTask],
+        briefByID: [UUID: CreativeBrief]
+    ) -> String {
+        let outputSignature = outputs.map { output in
+            let brief = briefByID[output.briefID]
+            return [
+                output.id.uuidString,
+                output.status.rawValue,
+                String(output.targetDate?.timeIntervalSinceReferenceDate ?? -1),
+                brief?.title ?? "",
+                brief?.pillarID?.uuidString ?? ""
+            ].joined(separator: "|")
+        }
+        .sorted()
+        .joined(separator: ";")
+
+        let taskSignature = tasks.map { task in
+            [
+                task.id.uuidString,
+                task.title,
+                String(task.isCompleted),
+                String(task.targetDate?.timeIntervalSinceReferenceDate ?? -1)
+            ].joined(separator: "|")
+        }
+        .sorted()
+        .joined(separator: ";")
+
+        return [
+            assignedPillarID?.uuidString ?? "",
+            focusTitle ?? "Rest",
+            outputSignature,
+            taskSignature
+        ].joined(separator: "::")
     }
 }
 
@@ -2286,10 +2582,10 @@ struct EpisodeSlotActionsView: View {
     let slot: SeriesEpisodeSlot
     let onConverted: (SeriesEpisodePlanner.ConversionResult) -> Void
     @Query(sort: \ContentSeries.createdAt) private var allSeries: [ContentSeries]
-    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt) private var allOutputs: [PlatformOutput]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+    @State private var savedIdeas: [CreativeBrief] = []
     @State private var showsIdeas = false
+    @State private var showsSkipConfirmation = false
     @State private var errorMessage: String?
 
     private var series: ContentSeries? {
@@ -2300,17 +2596,6 @@ struct EpisodeSlotActionsView: View {
                     activeWorkspaceID: appModel.activeWorkspaceID,
                     workspaces: workspaces
                 )
-        }
-    }
-
-    private var savedIdeas: [CreativeBrief] {
-        allBriefs.filter {
-            WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            ) &&
-                IdeaBankPlacementPolicy.includes($0)
         }
     }
 
@@ -2362,7 +2647,7 @@ struct EpisodeSlotActionsView: View {
                                     convertNew(series: series)
                                 }
                                 episodeAction("Use an Idea Bank Idea") {
-                                    showsIdeas = true
+                                    loadIdeas()
                                 }
                                 episodeAction("Duplicate Previous Episode") {
                                     duplicatePrevious(series: series)
@@ -2370,7 +2655,7 @@ struct EpisodeSlotActionsView: View {
                             }
 
                             Button("Skip this slot", role: .destructive) {
-                                skip()
+                                showsSkipConfirmation = true
                             }
                             .font(.agentSubtext.weight(.semibold))
                             .frame(minHeight: 44)
@@ -2402,6 +2687,18 @@ struct EpisodeSlotActionsView: View {
                         }
                     }
                 }
+            }
+            .confirmationDialog(
+                "Skip this episode slot?",
+                isPresented: $showsSkipConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Skip slot", role: .destructive) {
+                    skip()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The series stays active. Only this empty episode date will be skipped.")
             }
         }
     }
@@ -2441,13 +2738,11 @@ struct EpisodeSlotActionsView: View {
     }
 
     private func convert(idea: CreativeBrief, series: ContentSeries) {
-        let output = allOutputs.first(where: { $0.briefID == idea.id })
         perform {
             try SeriesEpisodePlanner.convert(
                 slot: slot,
                 series: series,
                 using: idea,
-                output: output,
                 context: context
             )
         }
@@ -2463,6 +2758,26 @@ struct EpisodeSlotActionsView: View {
         }
     }
 
+    private func loadIdeas() {
+        do {
+            let briefs = try context.fetch(FetchDescriptor<CreativeBrief>(
+                sortBy: [SortDescriptor(\CreativeBrief.updatedAt, order: .reverse)]
+            ))
+            savedIdeas = briefs.filter {
+                WorkspaceScope.includes(
+                    $0.workspaceID,
+                    activeWorkspaceID: appModel.activeWorkspaceID,
+                    workspaces: workspaces
+                ) && IdeaBankPlacementPolicy.includes($0)
+            }
+            errorMessage = nil
+            showsIdeas = true
+        } catch {
+            savedIdeas = []
+            errorMessage = "Your Idea Bank could not be loaded. Your plan is unchanged."
+        }
+    }
+
     private func perform(
         _ operation: () throws -> SeriesEpisodePlanner.ConversionResult
     ) {
@@ -2471,8 +2786,16 @@ struct EpisodeSlotActionsView: View {
             onConverted(result)
             dismiss()
         } catch SeriesEpisodePlannerError.noPreviousEpisode {
+            context.rollback()
             errorMessage = "Create the first episode before duplicating a previous one."
+        } catch SeriesEpisodePlannerError.slotUnavailable {
+            context.rollback()
+            errorMessage = "This episode slot is no longer open. Your plan is unchanged."
+        } catch SeriesEpisodePlannerError.incompleteConversion {
+            context.rollback()
+            errorMessage = "This slot is linked to an episode that cannot be opened. Your plan is unchanged."
         } catch {
+            context.rollback()
             errorMessage = "This episode could not be created. Your plan is unchanged."
         }
     }
@@ -2482,6 +2805,7 @@ struct EpisodeSlotActionsView: View {
             try SeriesEpisodePlanner.skip(slot, context: context)
             dismiss()
         } catch {
+            context.rollback()
             errorMessage = "This episode could not be skipped. Your plan is unchanged."
         }
     }
@@ -2587,38 +2911,6 @@ struct DayAgendaView: View {
             )
         }
     }
-    private var dayTasks: [CreatorTask] {
-        // One pass over the day's outputs; membership checks per task are set
-        // lookups instead of recomputing dayOutputs (a full-store filter) for
-        // every task.
-        let outputsForDay = dayOutputs
-        let dayOutputIDs = Set(outputsForDay.map(\.id))
-        let dayOutputBriefIDs = Set(outputsForDay.map(\.briefID))
-        let briefIDs = activeBriefIDs
-        return tasks.filter {
-            $0.parentTaskID == nil &&
-                !$0.isSkipped &&
-                AgendaContentVisibility.includesTask(briefID: $0.briefID, activeBriefIDs: briefIDs) &&
-                taskBelongsToDay($0, dayOutputIDs: dayOutputIDs, dayOutputBriefIDs: dayOutputBriefIDs)
-        }
-        .sorted(by: sortTasks)
-    }
-    private var postTasks: [CreatorTask] {
-        dayTasks.filter {
-            TaskCollectionPolicy.collection(
-                briefID: $0.briefID,
-                platformOutputID: $0.platformOutputID
-            ) == .postTasks
-        }
-    }
-    private var myTasks: [CreatorTask] {
-        dayTasks.filter {
-            TaskCollectionPolicy.collection(
-                briefID: $0.briefID,
-                platformOutputID: $0.platformOutputID
-            ) == .myTasks
-        }
-    }
     private var dayFocus: ResolvedDailyFocus? { DailyFocusResolver.resolve(date: day, templates: focusTemplates, overrides: focusOverrides) }
 
     var body: some View {
@@ -2626,7 +2918,7 @@ struct DayAgendaView: View {
 
         VStack(spacing: 0) {
 #if targetEnvironment(macCatalyst)
-            desktopDayNavigationHeader
+            desktopDayNavigationHeader(snapshot)
 #endif
 
             ScrollView {
@@ -2654,6 +2946,7 @@ struct DayAgendaView: View {
                                 snapshot: snapshot,
                                 emptyMessage: "No focus tasks.",
                                 taskTopPadding: AgentSpacing.x1,
+                                showsAddAction: allowsTaskCreation,
                                 addAction: addMyTaskForDay
                             )
                             postTasksSection(snapshot)
@@ -2682,10 +2975,10 @@ struct DayAgendaView: View {
             if AgendaDayPresentation.showsSaveControl(
                 day: day,
                 now: referenceDate,
-                hasChanges: hasDayChanges
+                hasChanges: hasDayChanges(snapshot: snapshot)
             ) {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: saveAndDismiss) {
+                    Button(action: { saveAndDismiss(snapshot: snapshot) }) {
                         AgentIconView(.check, size: 15)
                             .foregroundStyle(Color.agentPureBlack)
                             .frame(width: 18, height: 18)
@@ -2746,7 +3039,7 @@ struct DayAgendaView: View {
             }
         }
         .sheet(isPresented: $showAddLivePost, onDismiss: {
-            baselineDaySignature = currentDaySignature
+            baselineDaySignature = makeDayRenderSnapshot().daySignature
         }) {
             AddLivePostView(suggestedPostedAt: day)
                 .environment(appModel)
@@ -2779,10 +3072,10 @@ struct DayAgendaView: View {
         }
         .onAppear {
             if baselineDaySignature == nil {
-                baselineDaySignature = currentDaySignature
+                baselineDaySignature = snapshot.daySignature
             }
             guard !hasLoadedPillarDraft else { return }
-            draftPillarID = assignedPillar?.id
+            draftPillarID = snapshot.assignedPillarID
             hasLoadedPillarDraft = true
         }
         .task(id: AgendaDaySelection.normalizedDay(day)) {
@@ -2795,7 +3088,9 @@ struct DayAgendaView: View {
     }
 
 #if targetEnvironment(macCatalyst)
-    private var desktopDayNavigationHeader: some View {
+    private func desktopDayNavigationHeader(
+        _ snapshot: DayAgendaRenderSnapshot
+    ) -> some View {
         AgentDesktopDetailRail(
             title: day.formatted(.dateTime.weekday(.wide)),
             backAction: dismiss.callAsFunction
@@ -2803,12 +3098,12 @@ struct DayAgendaView: View {
             if AgendaDayPresentation.showsSaveControl(
                 day: day,
                 now: referenceDate,
-                hasChanges: hasDayChanges
+                hasChanges: hasDayChanges(snapshot: snapshot)
             ) {
                 AgentDesktopDetailIconButton(
                     title: "Save day",
                     icon: .check,
-                    action: saveAndDismiss
+                    action: { saveAndDismiss(snapshot: snapshot) }
                 )
             } else {
                 Color.clear
@@ -2854,49 +3149,39 @@ struct DayAgendaView: View {
             )
         }
 
-        let dayOutputIDs = Set(dayOutputs.map(\.id))
-        let dayBriefIDs = Set(dayOutputs.map(\.briefID))
         let tasks = scoped(allTasks)
-        let dayTasks = tasks.filter { task in
-            guard task.parentTaskID == nil,
-                  !task.isSkipped,
-                  AgendaContentVisibility.includesTask(
-                    briefID: task.briefID,
-                    activeBriefIDs: activeBriefIDs
-                  ) else {
-                return false
-            }
-
-            if task.dailyFocusDate.map({ calendar.isDate($0, inSameDayAs: day) }) == true ||
-                task.targetDate.map({ calendar.isDate($0, inSameDayAs: day) }) == true {
-                return true
-            }
-            if let outputID = task.platformOutputID, dayOutputIDs.contains(outputID) {
-                return true
-            }
-            return task.briefID.map { dayBriefIDs.contains($0) } == true
-        }
-        .sorted(by: sortTasks)
-
-        let postTasks = dayTasks.filter {
-            TaskCollectionPolicy.collection(
-                briefID: $0.briefID,
-                platformOutputID: $0.platformOutputID
-            ) == .postTasks
-        }
-        let focusTasks = dayTasks.filter {
-            TaskCollectionPolicy.collection(
-                briefID: $0.briefID,
-                platformOutputID: $0.platformOutputID
-            ) == .myTasks
-        }
+        let taskProjection = DayAgendaTaskProjection.make(
+            tasks: tasks,
+            outputByID: outputByID,
+            activeBriefIDs: activeBriefIDs,
+            day: day,
+            calendar: calendar
+        )
 
         let pillars = scoped(allPillars)
+        let activePillars = pillars.filter { !$0.isArchived }
+        let assignedPillarID = AgendaAssignedPillarPolicy.pillar(
+            for: weekday,
+            in: activePillars
+        )?.id
+        let dayFocus = DailyFocusResolver.resolve(
+            date: day,
+            templates: scoped(allFocusTemplates),
+            overrides: scoped(allFocusOverrides)
+        )
         let socialAccounts = scoped(allSocialAccounts)
         let series = scoped(allSeries).filter { $0.state != .archived }
         let episodeSlots = scoped(allEpisodeSlots).filter {
             $0.status == .open && calendar.isDate($0.plannedDate, inSameDayAs: day)
         }
+
+        let daySignature = DayAgendaChangeSignature.make(
+            assignedPillarID: assignedPillarID,
+            focusTitle: dayFocus?.title,
+            outputs: dayOutputs,
+            tasks: taskProjection.dayTasks,
+            briefByID: briefByID
+        )
 
         return DayAgendaRenderSnapshot(
             briefs: briefs,
@@ -2910,15 +3195,17 @@ struct DayAgendaView: View {
             socialAccountByID: Dictionary(socialAccounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
             seriesByID: Dictionary(series.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
             episodeSlots: episodeSlots,
+            assignedPillarID: assignedPillarID,
+            daySignature: daySignature,
             dayOutputs: dayOutputs,
-            dayTasks: dayTasks,
-            postTasks: postTasks,
-            focusTasks: focusTasks
+            dayTasks: taskProjection.dayTasks,
+            postTasks: taskProjection.postTasks,
+            focusTasks: taskProjection.focusTasks
         )
     }
 
-    private func saveAndDismiss() {
-        if hasPendingPillarChange {
+    private func saveAndDismiss(snapshot: DayAgendaRenderSnapshot) {
+        if hasPendingPillarChange(assignedPillarID: snapshot.assignedPillarID) {
             dismissAfterPillarSave = true
             showPillarOverwriteConfirmation = true
             return
@@ -3150,7 +3437,7 @@ struct DayAgendaView: View {
     }
 
     private var assignedPillar: Pillar? {
-        activePillars.first { $0.assignedWeekdays.contains(weekday) }
+        AgendaAssignedPillarPolicy.pillar(for: weekday, in: activePillars)
     }
 
     private var displayedPillar: Pillar? {
@@ -3158,52 +3445,21 @@ struct DayAgendaView: View {
         return activePillars.first { $0.id == draftPillarID }
     }
 
-    private var hasPendingPillarChange: Bool {
-        hasLoadedPillarDraft && draftPillarID != assignedPillar?.id
+    private func hasPendingPillarChange(assignedPillarID: UUID?) -> Bool {
+        hasLoadedPillarDraft && draftPillarID != assignedPillarID
     }
 
-    private var hasDayChanges: Bool {
-        hasPendingPillarChange || baselineDaySignature.map { $0 != currentDaySignature } == true
-    }
-
-    private var currentDaySignature: String {
-        // Computed on every body evaluation via hasDayChanges: reuse the one
-        // shared index instead of building a second dictionary.
-        let briefByID = activeBriefByID
-        let outputSignature = dayOutputs.map { output in
-            let brief = briefByID[output.briefID]
-            return [
-                output.id.uuidString,
-                output.status.rawValue,
-                String(output.targetDate?.timeIntervalSinceReferenceDate ?? -1),
-                brief?.title ?? "",
-                brief?.pillarID?.uuidString ?? ""
-            ].joined(separator: "|")
-        }
-        .sorted()
-        .joined(separator: ";")
-
-        let taskSignature = dayTasks.map { task in
-            [
-                task.id.uuidString,
-                task.title,
-                String(task.isCompleted),
-                String(task.targetDate?.timeIntervalSinceReferenceDate ?? -1)
-            ].joined(separator: "|")
-        }
-        .sorted()
-        .joined(separator: ";")
-
-        return [
-            assignedPillar?.id.uuidString ?? "",
-            dayFocus?.title ?? "Rest",
-            outputSignature,
-            taskSignature
-        ].joined(separator: "::")
+    private func hasDayChanges(snapshot: DayAgendaRenderSnapshot) -> Bool {
+        hasPendingPillarChange(assignedPillarID: snapshot.assignedPillarID) ||
+            baselineDaySignature.map { $0 != snapshot.daySignature } == true
     }
 
     private var isPastDay: Bool {
         AgendaDayPresentation.showsPastDaySaveControl(day: day, now: referenceDate)
+    }
+
+    private var allowsTaskCreation: Bool {
+        AgendaDayPresentation.allowsTaskCreation(day: day, now: referenceDate)
     }
 
     private func choosePillar(_ selected: Pillar?) {
@@ -3384,6 +3640,7 @@ struct DayAgendaView: View {
                 tasks: snapshot.postTasks,
                 snapshot: snapshot,
                 emptyMessage: "No post tasks.",
+                showsAddAction: allowsTaskCreation,
                 addAction: addPostTaskForDay
             )
 
@@ -3414,6 +3671,7 @@ struct DayAgendaView: View {
         snapshot: DayAgendaRenderSnapshot,
         emptyMessage: String,
         taskTopPadding: CGFloat = 0,
+        showsAddAction: Bool,
         addAction: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -3437,8 +3695,10 @@ struct DayAgendaView: View {
                 }
             }
 
-            AgentBlockAddActionButton(title: "Add task", action: addAction)
-                .padding(.top, AgentSpacing.x3)
+            if showsAddAction {
+                AgentBlockAddActionButton(title: "Add task", action: addAction)
+                    .padding(.top, AgentSpacing.x3)
+            }
         }
     }
 
@@ -3524,23 +3784,6 @@ struct DayAgendaView: View {
         return lhs.createdAt < rhs.createdAt
     }
 
-    private func taskBelongsToDay(
-        _ task: CreatorTask,
-        dayOutputIDs: Set<UUID>,
-        dayOutputBriefIDs: Set<UUID>
-    ) -> Bool {
-        if task.dailyFocusDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true ||
-            task.targetDate.map({ Calendar.current.isDate($0, inSameDayAs: day) }) == true {
-            return true
-        }
-
-        if let outputID = task.platformOutputID, dayOutputIDs.contains(outputID) {
-            return true
-        }
-
-        return task.briefID.map { dayOutputBriefIDs.contains($0) } == true
-    }
-
     private func linkedPostTitle(
         for task: CreatorTask,
         snapshot: DayAgendaRenderSnapshot
@@ -3578,7 +3821,12 @@ struct DayAgendaView: View {
         let destination = output.destinationID.flatMap { snapshot.destinationByID[$0] }?.name
         let format = output.formatID.flatMap { snapshot.formatByID[$0] }?.name
         let account = output.socialAccountID.flatMap { snapshot.socialAccountByID[$0] }?.label
-        return [destination, format, account].compactMap { $0 }.joined(separator: " · ")
+        return DayAgendaOutputMetadata.label(
+            destination: destination,
+            format: format,
+            account: account,
+            platform: output.platform.title
+        )
     }
 }
 
@@ -3632,6 +3880,8 @@ private struct DayAgendaRenderSnapshot {
     let socialAccountByID: [UUID: CreatorSocialAccount]
     let seriesByID: [UUID: ContentSeries]
     let episodeSlots: [SeriesEpisodeSlot]
+    let assignedPillarID: UUID?
+    let daySignature: String
     let dayOutputs: [PlatformOutput]
     let dayTasks: [CreatorTask]
     let postTasks: [CreatorTask]
@@ -3668,9 +3918,9 @@ struct PostRescheduleSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                     EditorialHeader(
-                        kicker: "Due date",
+                        kicker: "Scheduled date",
                         title: "Choose a new date.",
-                        subtitle: "Move this post without changing the rest of your week."
+                        subtitle: "Move this post and keep its open linked tasks aligned."
                     )
 
                     VStack(alignment: .leading, spacing: AgentSpacing.x3) {
@@ -3696,7 +3946,12 @@ struct PostRescheduleSheet: View {
                     .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.panel))
 
                     Button("Save new date", action: saveAndDismiss)
-                    .buttonStyle(AgentPrimaryButtonStyle())
+                        .buttonStyle(AgentPrimaryButtonStyle())
+
+                    if output.targetDate != nil {
+                        Button("Clear scheduled date", role: .destructive, action: clearAndDismiss)
+                            .buttonStyle(AgentSecondaryButtonStyle())
+                    }
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)
                 .padding(.top, AgentSpacing.x6)
@@ -3797,6 +4052,13 @@ struct PostRescheduleSheet: View {
                     .contentShape(.rect(cornerRadius: AgentRadius.card))
                     .buttonStyle(.plain)
 
+                if output.targetDate != nil {
+                    Button("Clear date", role: .destructive, action: clearAndDismiss)
+                        .font(.agentSubtext.weight(.medium))
+                        .frame(minHeight: 44)
+                        .buttonStyle(.plain)
+                }
+
                 Button(action: saveAndDismiss) {
                     Text("Save new date")
                         .font(.agentSubtext.weight(.medium))
@@ -3822,11 +4084,21 @@ struct PostRescheduleSheet: View {
 #endif
 
     private func saveAndDismiss() {
-        output.includesTargetTime = includesTime
-        let resolvedDate = includesTime
-            ? targetDate
-            : Calendar.current.startOfDay(for: targetDate)
-        appModel.schedule(output: output, date: resolvedDate, context: context)
+        let resolvedDate = RecurringPostSchedule.normalizedTargetDate(
+            targetDate,
+            includesTime: includesTime
+        )
+        guard appModel.schedule(
+            output: output,
+            date: resolvedDate,
+            includesTargetTime: includesTime,
+            context: context
+        ) else { return }
+        dismiss()
+    }
+
+    private func clearAndDismiss() {
+        guard appModel.clearPostDate(output: output, context: context) else { return }
         dismiss()
     }
 }

@@ -8,6 +8,49 @@ enum PlanMode: Sendable {
 
 enum PlanNavigationRoute: Hashable, CaseIterable {
     case socialGrid
+    case dailyFocusDetail
+}
+
+enum PlanRuntimeFixture {
+    static func requestsDailyFocusDetail(arguments: [String]) -> Bool {
+        arguments.contains("-agentCyPreviewDailyFocusDetail")
+    }
+
+    static func requestsDailyFocusEditor(arguments: [String]) -> Bool {
+        #if DEBUG
+        arguments.contains("-agentCyPreviewDailyFocusEditor")
+        #else
+        false
+        #endif
+    }
+
+    static func requestsEpisodeSlotActions(arguments: [String]) -> Bool {
+        #if DEBUG
+        arguments.contains("-agentCyPreviewEpisodeSlotActions")
+        #else
+        false
+        #endif
+    }
+
+    static func requestsAddLivePost(arguments: [String]) -> Bool {
+        #if DEBUG
+        arguments.contains("-agentCyPreviewAddLivePost")
+        #else
+        false
+        #endif
+    }
+
+    static func requestsPostSearch(arguments: [String]) -> Bool {
+        arguments.contains("-agentCyPreviewPostSearch")
+    }
+
+    static func postSearchQuery(arguments: [String]) -> String? {
+        guard let marker = arguments.firstIndex(of: "-agentCyPreviewPostSearchQuery"),
+              arguments.indices.contains(marker + 1) else {
+            return nil
+        }
+        return arguments[marker + 1]
+    }
 }
 
 extension View {
@@ -16,6 +59,8 @@ extension View {
             switch route {
             case .socialGrid:
                 SocialGridView(presentation: .phone(bottomClearance: bottomClearance))
+            case .dailyFocusDetail:
+                DailyFocusDetailView(date: Calendar.current.startOfDay(for: Date()))
             }
         }
     }
@@ -35,6 +80,11 @@ struct PlanView: View {
 
     init(showsFeedShortcut: Bool = false) {
         self.showsFeedShortcut = showsFeedShortcut
+        #if DEBUG
+        _isSearchingPosts = State(initialValue: PlanRuntimeFixture.requestsPostSearch(
+            arguments: ProcessInfo.processInfo.arguments
+        ))
+        #endif
     }
 
     var body: some View {
@@ -44,8 +94,7 @@ struct PlanView: View {
             AgendaView(
                 weekOffset: $weekOffset,
                 selectedDay: $selectedDay,
-                referenceDate: planNow,
-                showsHeader: false
+                referenceDate: planNow
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -270,6 +319,98 @@ enum PlanClockPolicy {
     }
 }
 
+struct AgendaPostSearchResult: Identifiable {
+    let output: PlatformOutput
+    let brief: CreativeBrief
+    let pillar: Pillar?
+    let metadata: String
+
+    var id: UUID { output.id }
+}
+
+struct AgendaPostSearchProjection {
+    let results: [AgendaPostSearchResult]
+
+    static func make(
+        briefs: [CreativeBrief],
+        outputs: [PlatformOutput],
+        pillars: [Pillar],
+        destinations: [PublishingDestination],
+        formats: [PublishingFormat],
+        preferredWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace],
+        query: String
+    ) -> AgendaPostSearchProjection {
+        let resolvedWorkspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: preferredWorkspaceID,
+            workspaces: workspaces
+        )
+        let defaultWorkspaceID = WorkspaceScope.defaultWorkspace(in: workspaces)?.id
+        let includesWorkspace: (UUID?) -> Bool = { recordWorkspaceID in
+            guard let resolvedWorkspaceID else { return recordWorkspaceID == nil }
+            if let recordWorkspaceID { return recordWorkspaceID == resolvedWorkspaceID }
+            return defaultWorkspaceID == resolvedWorkspaceID
+        }
+
+        let activeBriefs = briefs.filter {
+            $0.status != .archived && includesWorkspace($0.workspaceID)
+        }
+        let briefByID = DuplicateSafeIndex.firstValues(activeBriefs.map { ($0.id, $0) })
+        let activePillars = pillars.filter {
+            !$0.isArchived && includesWorkspace($0.workspaceID)
+        }
+        let pillarByID = DuplicateSafeIndex.firstValues(activePillars.map { ($0.id, $0) })
+        let destinationByID = DuplicateSafeIndex.firstValues(destinations.map { ($0.id, $0) })
+        let formatByID = DuplicateSafeIndex.firstValues(formats.map { ($0.id, $0) })
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let results = outputs.compactMap { output -> AgendaPostSearchResult? in
+            guard includesWorkspace(output.workspaceID),
+                  let brief = briefByID[output.briefID] else {
+                return nil
+            }
+            let pillar = brief.pillarID.flatMap { pillarByID[$0] }
+            let destination = output.destinationID.flatMap { destinationByID[$0] }
+            let format = output.formatID.flatMap { formatByID[$0] }
+            let metadata = destination?.name ?? format?.name ?? output.platform.title
+            let searchText = [
+                output.titleOverride,
+                brief.title,
+                brief.notes,
+                brief.spokenHook,
+                brief.scriptBeatsText,
+                brief.ctaIntent,
+                output.caption,
+                output.cta,
+                output.platform.title,
+                destination?.name ?? "",
+                format?.name ?? "",
+                pillar?.name ?? ""
+            ].joined(separator: " ")
+            guard cleanQuery.isEmpty || searchText.localizedStandardContains(cleanQuery) else {
+                return nil
+            }
+            return AgendaPostSearchResult(
+                output: output,
+                brief: brief,
+                pillar: pillar,
+                metadata: metadata
+            )
+        }
+        .sorted { lhs, rhs in
+            let leftDate = lhs.output.targetDate ?? lhs.brief.updatedAt
+            let rightDate = rhs.output.targetDate ?? rhs.brief.updatedAt
+            if leftDate != rightDate { return leftDate > rightDate }
+            if lhs.output.createdAt != rhs.output.createdAt {
+                return lhs.output.createdAt > rhs.output.createdAt
+            }
+            return lhs.output.id.uuidString < rhs.output.id.uuidString
+        }
+
+        return AgendaPostSearchProjection(results: results)
+    }
+}
+
 private struct AgendaPostSearchView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
@@ -281,54 +422,26 @@ private struct AgendaPostSearchView: View {
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var query = ""
 
-    private var briefs: [CreativeBrief] {
-        allBriefs.filter {
-            $0.status != .archived && WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
-        }
-    }
-
-    private var pillars: [Pillar] {
-        allPillars.filter {
-            !$0.isArchived && WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
-        }
-    }
-
-    private var outputs: [PlatformOutput] {
-        let briefIDs = Set(briefs.map(\.id))
-        return allOutputs.filter {
-            briefIDs.contains($0.briefID) && WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
-        }
-    }
-
-    private var results: [(PlatformOutput, CreativeBrief)] {
-        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return outputs.compactMap { output in
-            guard let brief = brief(for: output) else { return nil }
-            if !cleanQuery.isEmpty, !searchText(for: output, brief: brief).localizedStandardContains(cleanQuery) {
-                return nil
-            }
-            return (output, brief)
-        }
-        .sorted { lhs, rhs in
-            let left = lhs.0.targetDate ?? lhs.1.updatedAt
-            let right = rhs.0.targetDate ?? rhs.1.updatedAt
-            return left > right
-        }
+    init() {
+        #if DEBUG
+        _query = State(initialValue: PlanRuntimeFixture.postSearchQuery(
+            arguments: ProcessInfo.processInfo.arguments
+        ) ?? "")
+        #endif
     }
 
     var body: some View {
+        let results = AgendaPostSearchProjection.make(
+            briefs: allBriefs,
+            outputs: allOutputs,
+            pillars: allPillars,
+            destinations: destinations,
+            formats: formats,
+            preferredWorkspaceID: appModel.activeWorkspaceID,
+            workspaces: workspaces,
+            query: query
+        ).results
+
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AgentSpacing.x3) {
@@ -353,8 +466,8 @@ private struct AgendaPostSearchView: View {
                         )
                         .frame(minHeight: 300)
                     } else {
-                        ForEach(results, id: \.0.id) { output, brief in
-                            resultCard(output: output, brief: brief)
+                        ForEach(results) { result in
+                            resultCard(result)
                         }
                     }
                 }
@@ -404,18 +517,19 @@ private struct AgendaPostSearchView: View {
         }
     }
 
-    private func resultCard(output: PlatformOutput, brief: CreativeBrief) -> some View {
-        let pillar = pillar(for: brief)
+    private func resultCard(_ result: AgendaPostSearchResult) -> some View {
+        let output = result.output
+        let brief = result.brief
         let missed = FinalizedPostPresentation.isMissed(
             outputStatus: output.status,
             targetDate: output.targetDate
         )
         return AgentPostCard(
             title: postTitle(output: output, brief: brief),
-            pillar: pillar?.name ?? "Unfiled",
-            accent: pillar.map { Color(agentHex: $0.resolvedColorHex(in: pillars)) } ?? .agentSecondary,
+            pillar: result.pillar?.name ?? "Unfiled",
+            accent: result.pillar.map { Color(agentHex: $0.colorHex) } ?? .agentSecondary,
             status: output.status,
-            metadata: platformLabel(for: output),
+            metadata: result.metadata,
             timeText: output.targetDate?.formatted(.dateTime.month(.abbreviated).day().hour().minute()),
             isLate: missed || PostWorkDateStatusPolicy.isLate(
                 workDate: brief.workDate,
@@ -426,43 +540,11 @@ private struct AgendaPostSearchView: View {
         )
     }
 
-    private func brief(for output: PlatformOutput) -> CreativeBrief? {
-        briefs.first { $0.id == output.briefID }
-    }
-
-    private func pillar(for brief: CreativeBrief) -> Pillar? {
-        brief.pillarID.flatMap { id in pillars.first { $0.id == id } }
-    }
-
-    private func platformLabel(for output: PlatformOutput) -> String {
-        if let id = output.destinationID, let destination = destinations.first(where: { $0.id == id }) {
-            return destination.name
-        }
-        if let id = output.formatID, let format = formats.first(where: { $0.id == id }) {
-            return format.name
-        }
-        return output.platform.title
-    }
-
     private func postTitle(output: PlatformOutput, brief: CreativeBrief) -> String {
         let override = output.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         return override.isEmpty ? brief.title : override
     }
 
-    private func searchText(for output: PlatformOutput, brief: CreativeBrief) -> String {
-        [
-            output.titleOverride,
-            brief.title,
-            brief.notes,
-            brief.spokenHook,
-            brief.scriptBeatsText,
-            brief.ctaIntent,
-            output.caption,
-            output.cta,
-            platformLabel(for: output),
-            pillar(for: brief)?.name ?? ""
-        ].joined(separator: " ")
-    }
 }
 
 struct PlanHeader<Actions: View>: View {

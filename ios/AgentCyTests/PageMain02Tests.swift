@@ -204,4 +204,98 @@ final class PageMain02Tests: XCTestCase {
         ])
         XCTAssertFalse(AgendaMonthCalendarColorPolicy.showsPillarColorOnMonthDates)
     }
+
+    func testAgendaProjectsOnlyTopLevelTasksUsingTaskOwnedDates() throws {
+        let targetDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 18,
+            hour: 9
+        )))
+        let focusDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: targetDate))
+        let parent = CreatorTask(
+            title: "Edit the launch post",
+            targetDate: targetDate,
+            dailyFocusDate: focusDate
+        )
+        let subtask = CreatorTask(
+            parentTaskID: parent.id,
+            title: "Trim the intro",
+            targetDate: targetDate
+        )
+        let skipped = CreatorTask(title: "Old task", targetDate: targetDate)
+        skipped.isSkipped = true
+        let undated = CreatorTask(title: "Someday")
+
+        let projection = AgendaTaskProjection.make(
+            tasks: [parent, subtask, skipped, undated],
+            outputByID: [:],
+            activeBriefIDs: [],
+            calendar: calendar
+        )
+
+        XCTAssertEqual(projection.datedTasks.map(\.id), [parent.id])
+        XCTAssertEqual(projection.tasks(on: targetDate, calendar: calendar).map(\.id), [parent.id])
+        XCTAssertTrue(projection.tasks(on: focusDate, calendar: calendar).isEmpty)
+    }
+
+    func testAgendaDoesNotUsePostPlacementAsAnUndatedTasksDate() throws {
+        let postDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 20
+        )))
+        let brief = CreativeBrief(title: "Studio update")
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels)
+        output.targetDate = postDate
+        let task = CreatorTask(
+            briefID: brief.id,
+            platformOutputID: output.id,
+            title: "Choose the cover"
+        )
+
+        let projection = AgendaTaskProjection.make(
+            tasks: [task],
+            outputByID: [output.id: output],
+            activeBriefIDs: [brief.id],
+            calendar: calendar
+        )
+
+        XCTAssertTrue(projection.datedTasks.isEmpty)
+        XCTAssertTrue(projection.tasks(on: postDate, calendar: calendar).isEmpty)
+    }
+
+    func testAgendaHidesTasksLinkedOnlyToArchivedWork() throws {
+        let day = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 21
+        )))
+        let activeBrief = CreativeBrief(title: "Active")
+        let archivedBrief = CreativeBrief(title: "Archived", status: .archived)
+        let activeOutput = PlatformOutput(briefID: activeBrief.id, platform: .instagramReels)
+        let archivedOutput = PlatformOutput(briefID: archivedBrief.id, platform: .youtubeShorts)
+        let activeTask = CreatorTask(
+            platformOutputID: activeOutput.id,
+            title: "Active task",
+            targetDate: day
+        )
+        let archivedTask = CreatorTask(
+            platformOutputID: archivedOutput.id,
+            title: "Archived task",
+            targetDate: day
+        )
+
+        let projection = AgendaTaskProjection.make(
+            tasks: [activeTask, archivedTask],
+            outputByID: [
+                activeOutput.id: activeOutput,
+                archivedOutput.id: archivedOutput
+            ],
+            activeBriefIDs: [activeBrief.id],
+            calendar: calendar
+        )
+
+        XCTAssertEqual(projection.datedTasks.map(\.id), [activeTask.id])
+    }
 }

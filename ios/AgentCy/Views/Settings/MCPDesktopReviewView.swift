@@ -136,7 +136,7 @@ struct MCPDesktopReviewView: View {
                 contextLabel: "Edit before approval",
                 isReviewEditing: true,
                 bottomActionClearance: AgentSpacing.x3,
-                showsDesktopDetailRail: false,
+                showsEditorChrome: false,
                 onSpark: {}
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)

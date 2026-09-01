@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "2600"
-   version = "1.3">
+   version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
-      buildImplicitDependencies = "YES">
+      buildImplicitDependencies = "YES"
+      runPostActionsOnFailure = "NO">
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
@@ -15,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "39E3A13ACF233B118D625776"
-               BuildableName = "agent.cy.app"
+               BuildableName = "AgentCy.app"
                BlueprintName = "AgentCy"
                ReferencedContainer = "container:AgentCy.xcodeproj">
             </BuildableReference>
@@ -29,7 +30,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "69E670C0C74DB19D41BDD24A"
-               BuildableName = "agent.cy.appex"
+               BuildableName = "AgentCyInspirationShare.appex"
                BlueprintName = "AgentCyInspirationShare"
                ReferencedContainer = "container:AgentCy.xcodeproj">
             </BuildableReference>
@@ -57,7 +58,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "496E3E1A1599D5B15C095137"
-               BuildableName = "agent.cy Widgets.appex"
+               BuildableName = "AgentCyWidgets.appex"
                BlueprintName = "AgentCyWidgets"
                ReferencedContainer = "container:AgentCy.xcodeproj">
             </BuildableReference>
@@ -69,12 +70,13 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
-      codeCoverageEnabled = "YES">
+      codeCoverageEnabled = "YES"
+      onlyGenerateCoverageForSpecifiedTargets = "NO">
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "39E3A13ACF233B118D625776"
-            BuildableName = "agent.cy.app"
+            BuildableName = "AgentCy.app"
             BlueprintName = "AgentCy"
             ReferencedContainer = "container:AgentCy.xcodeproj">
          </BuildableReference>
@@ -92,6 +94,8 @@
             </BuildableReference>
          </TestableReference>
       </Testables>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -108,7 +112,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "39E3A13ACF233B118D625776"
-            BuildableName = "agent.cy.app"
+            BuildableName = "AgentCy.app"
             BlueprintName = "AgentCy"
             ReferencedContainer = "container:AgentCy.xcodeproj">
          </BuildableReference>
@@ -125,7 +129,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "39E3A13ACF233B118D625776"
-            BuildableName = "agent.cy.app"
+            BuildableName = "AgentCy.app"
             BlueprintName = "AgentCy"
             ReferencedContainer = "container:AgentCy.xcodeproj">
          </BuildableReference>

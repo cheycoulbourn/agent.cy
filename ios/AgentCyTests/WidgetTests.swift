@@ -78,6 +78,23 @@ final class WidgetTests: XCTestCase {
         XCTAssertNil(CreatorSessionRecordStore.load(defaults: defaults))
     }
 
+    func testCreatorSessionAvailabilityGateRemainsClosed() {
+        XCTAssertFalse(CreatorSessionFeatureAvailability.isEnabled)
+    }
+
+    func testUnavailableCreatorSessionCannotBePresented() {
+        let model = AppModel(reminderService: PreviewReminderService())
+
+        model.presentCreatorSession(
+            linkedPostID: UUID(),
+            linkedPostTitle: "Studio update"
+        )
+
+        XCTAssertNil(model.presentedSheet)
+        XCTAssertNil(model.requestedCreatorSessionPostID)
+        XCTAssertNil(model.requestedCreatorSessionPostTitle)
+    }
+
     func testCreatorSessionLogKeepsLinkedPostAndDeduplicatesSession() throws {
         let suite = "AgentCyCreatorSessionLogTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

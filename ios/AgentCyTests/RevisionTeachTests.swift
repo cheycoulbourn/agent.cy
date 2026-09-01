@@ -30,7 +30,7 @@ final class RevisionTeachTests: XCTestCase {
         XCTAssertEqual(fixture.state.revisionRequestsUsed, 3)
         XCTAssertNotNil(fixture.model.revisionProposal(for: fixture.brief, context: fixture.context))
 
-        fixture.model.discardRevision(for: fixture.brief, context: fixture.context)
+        XCTAssertTrue(fixture.model.discardRevision(for: fixture.brief, context: fixture.context))
         XCTAssertEqual(fixture.state.revisionRequestsUsed, 3)
         await fixture.model.requestRevision(for: fixture.brief, scope: .close, instruction: "Make it calmer.", context: fixture.context)
         XCTAssertNil(fixture.model.revisionProposal(for: fixture.brief, context: fixture.context))
@@ -53,7 +53,7 @@ final class RevisionTeachTests: XCTestCase {
 
         await fixture.model.requestRevision(for: fixture.brief, scope: .wholeBrief, instruction: "Make it more grounded.", context: fixture.context)
         let revision = try XCTUnwrap(fixture.model.revisionProposal(for: fixture.brief, context: fixture.context))
-        fixture.model.acceptRevision(revision, for: fixture.brief, context: fixture.context)
+        XCTAssertTrue(fixture.model.acceptRevision(revision, for: fixture.brief, context: fixture.context))
 
         XCTAssertEqual(fixture.brief.status, .posted)
         XCTAssertEqual(fixture.output.id, outputID)
@@ -76,7 +76,7 @@ final class RevisionTeachTests: XCTestCase {
         let revision = try XCTUnwrap(fixture.model.revisionProposal(for: fixture.brief, context: fixture.context))
         fixture.brief.updatedAt = revision.sourceUpdatedAt.addingTimeInterval(1)
 
-        fixture.model.acceptRevision(revision, for: fixture.brief, context: fixture.context)
+        XCTAssertFalse(fixture.model.acceptRevision(revision, for: fixture.brief, context: fixture.context))
 
         XCTAssertEqual(fixture.brief.title, originalTitle)
         XCTAssertNotNil(fixture.model.revisionProposal(for: fixture.brief, context: fixture.context))

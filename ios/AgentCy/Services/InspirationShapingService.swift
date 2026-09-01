@@ -310,6 +310,11 @@ struct ManualInspirationIdeaDraft: Codable, Equatable, Sendable {
             }
     }
 
+    var hasContent: Bool {
+        pillarID != nil || [title, premise, spokenHook, takeaway, filmingApproach]
+            .contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
     init(
         title: String = "",
         premise: String = "",
@@ -513,7 +518,9 @@ enum InspirationShapePersistenceCoordinator {
         persistedDraft.pillarID = selectedPillarID
         let payload = try JSONEncoder.agentCy.encode(persistedDraft)
         source.manualDraftPayloadJSON = String(decoding: payload, as: UTF8.self)
-        source.pillarID = selectedPillarID
+        if source.shapePayloadJSON.isEmpty {
+            source.pillarID = selectedPillarID
+        }
         source.updatedAt = Date()
 
         do {
@@ -598,15 +605,22 @@ enum InspirationFilmingScheduler {
         includesTime: Bool,
         context: ModelContext
     ) throws -> CreatorTask {
-        guard source.linkedBriefID == brief.id,
+        guard source.workspaceID == brief.workspaceID,
+              source.linkedBriefID == brief.id,
               brief.inspirationSourceID == source.id else {
             throw InspirationShapingError.invalidSourceState
         }
 
-        let tasks = try context.fetch(FetchDescriptor<CreatorTask>())
+        let briefID = brief.id
+        let tasks = try context.fetch(FetchDescriptor<CreatorTask>(
+            predicate: #Predicate { $0.briefID == briefID }
+        ))
+        let filmingTasks = tasks.filter {
+            $0.workspaceID == brief.workspaceID && $0.kind == .filming
+        }
         let task = source.filmingTaskID
-            .flatMap { taskID in tasks.first(where: { $0.id == taskID }) }
-            ?? tasks.first(where: { $0.briefID == brief.id && $0.kind == .filming })
+            .flatMap { taskID in filmingTasks.first(where: { $0.id == taskID }) }
+            ?? filmingTasks.first
             ?? CreatorTask(
                 briefID: brief.id,
                 title: "Film \(brief.title)",
@@ -621,6 +635,7 @@ enum InspirationFilmingScheduler {
             task.workspaceID = brief.workspaceID
             context.insert(task)
         }
+        task.briefID = brief.id
         task.title = "Film \(brief.title)"
         task.targetDate = date
         task.includesTargetTime = includesTime

@@ -3,7 +3,10 @@ import XCTest
 
 final class SocialGridTests: XCTestCase {
     func testPhoneGridLivesInsidePlanWithoutAddingASeventhTab() {
-        XCTAssertEqual(PlanNavigationRoute.allCases, [.socialGrid])
+        XCTAssertEqual(
+            PlanNavigationRoute.allCases,
+            [.socialGrid, .dailyFocusDetail]
+        )
         XCTAssertEqual(AppTab.allCases, [.home, .today, .tasks, .pillars, .ideaBank, .cy])
     }
 

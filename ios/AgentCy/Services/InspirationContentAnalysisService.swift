@@ -90,13 +90,16 @@ actor RuntimeInspirationContentAnalysisService: InspirationContentAnalyzing {
         sharedVideoFilename: String?,
         existingThumbnailData: Data?
     ) async throws -> InspirationContentAnalysis {
+        try Task.checkCancellation()
         async let fetchedMetadata = metadataService.fetch(url: url, platform: platform)
         var videoAnalysis: SharedVideoAnalysis?
         if let sharedVideoFilename,
            let videoURL = try? assetStore?.assetURL(filename: sharedVideoFilename) {
             videoAnalysis = try? await videoAnalyzer.analyze(url: videoURL)
         }
+        try Task.checkCancellation()
         let metadata = try? await fetchedMetadata
+        try Task.checkCancellation()
         let caption = firstNonempty(hostCaption, metadata?.caption)
         let title = firstNonempty(
             creatorAttribution(metadata?.creatorName, platform: platform),
@@ -303,8 +306,10 @@ struct SharedVideoAnalysis: Sendable {
 
 actor SharedVideoAnalyzer {
     func analyze(url: URL) async throws -> SharedVideoAnalysis {
+        try Task.checkCancellation()
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration)
+        try Task.checkCancellation()
         let rawSeconds = CMTimeGetSeconds(duration)
         let durationSeconds = rawSeconds.isFinite && rawSeconds > 0 ? Int(rawSeconds.rounded()) : nil
         let frames = try sampleFrames(asset: asset, durationSeconds: rawSeconds)
@@ -313,6 +318,7 @@ actor SharedVideoAnalyzer {
         var prominentFaceFrames = 0
         var visualLabels: [String] = []
         for (index, frame) in frames.enumerated() {
+            try Task.checkCancellation()
             let result = try analyzeFrame(frame)
             if !result.text.isEmpty {
                 didReadText = true
@@ -327,7 +333,9 @@ actor SharedVideoAnalyzer {
         if let category = broadVisualCategory(for: visualLabels) {
             observations.append("Visual category: \(category).")
         }
+        try Task.checkCancellation()
         let transcript = try? await transcribe(url: url)
+        try Task.checkCancellation()
         let thumbnailData = frames.first.flatMap {
             UIImage(cgImage: $0).jpegData(compressionQuality: 0.82)
         }
@@ -347,10 +355,15 @@ actor SharedVideoAnalyzer {
         generator.maximumSize = CGSize(width: 1_280, height: 1_280)
         let safeDuration = durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : 1
         let fractions = [0.05, 0.25, 0.5, 0.75, 0.95]
-        return fractions.compactMap { fraction in
+        var frames: [CGImage] = []
+        for fraction in fractions {
+            try Task.checkCancellation()
             let time = CMTime(seconds: safeDuration * fraction, preferredTimescale: 600)
-            return try? generator.copyCGImage(at: time, actualTime: nil)
+            if let frame = try? generator.copyCGImage(at: time, actualTime: nil) {
+                frames.append(frame)
+            }
         }
+        return frames
     }
 
     private func analyzeFrame(_ image: CGImage) throws -> (text: [String], labels: [String], hasProminentFace: Bool) {
@@ -405,7 +418,9 @@ actor SharedVideoAnalyzer {
         }
     }
 
-    private func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+    // Same hardening as VoiceSparkRecorder: the TCC callback arrives on a
+    // system queue, so the continuation must not inherit actor isolation.
+    private nonisolated func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         let current = SFSpeechRecognizer.authorizationStatus()
         guard current == .notDetermined else { return current }
         return await withCheckedContinuation { continuation in

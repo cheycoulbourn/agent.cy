@@ -1,5 +1,10 @@
 import Foundation
 
+enum DailyFocusEditScope: Hashable, Sendable {
+    case date
+    case recurring
+}
+
 struct DailyFocusTaskTemplateDefinition: Codable, Hashable, Identifiable, Sendable {
     var id: UUID
     var focusKind: DailyFocusKind
@@ -162,6 +167,87 @@ struct DailyFocusTaskAssignment: Hashable {
     let templateEntryID: UUID?
 }
 
+enum DailyFocusTaskProjection {
+    static func includes(
+        _ task: CreatorTask,
+        on date: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard task.parentTaskID == nil,
+              !task.isSkipped,
+              TaskCollectionPolicy.collection(
+                briefID: task.briefID,
+                platformOutputID: task.platformOutputID
+              ) == .myTasks,
+              let ownedDate = task.targetDate ?? task.dailyFocusDate
+        else {
+            return false
+        }
+        return calendar.isDate(ownedDate, inSameDayAs: date)
+    }
+}
+
+enum DailyFocusTemplateIndex {
+    static func canonicalByWeekday(
+        _ templates: [DailyFocusTemplateEntry]
+    ) -> [PillarWeekday: DailyFocusTemplateEntry] {
+        var result: [PillarWeekday: DailyFocusTemplateEntry] = [:]
+        for template in templates {
+            let weekday = template.weekday
+            if let current = result[weekday], !prefers(template, over: current) {
+                continue
+            }
+            result[weekday] = template
+        }
+        return result
+    }
+
+    private static func prefers(
+        _ lhs: DailyFocusTemplateEntry,
+        over rhs: DailyFocusTemplateEntry
+    ) -> Bool {
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+}
+
+enum DailyFocusOverrideIndex {
+    static func canonical(
+        on date: Date,
+        from overrides: [DailyFocusOverride],
+        calendar: Calendar = .current
+    ) -> DailyFocusOverride? {
+        overrides
+            .filter { calendar.isDate($0.date, inSameDayAs: date) }
+            .max(by: { prefers($1, over: $0) })
+    }
+
+    private static func prefers(_ lhs: DailyFocusOverride, over rhs: DailyFocusOverride) -> Bool {
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+}
+
+enum DailyFocusDayDetailIndex {
+    static func canonical(
+        on date: Date,
+        from details: [DailyFocusDayDetail],
+        calendar: Calendar = .current
+    ) -> DailyFocusDayDetail? {
+        details
+            .filter { calendar.isDate($0.date, inSameDayAs: date) }
+            .max(by: { prefers($1, over: $0) })
+    }
+
+    private static func prefers(_ lhs: DailyFocusDayDetail, over rhs: DailyFocusDayDetail) -> Bool {
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+}
+
 enum DailyFocusResolver {
     static func resolve(
         date: Date,
@@ -169,7 +255,11 @@ enum DailyFocusResolver {
         overrides: [DailyFocusOverride],
         calendar: Calendar = .current
     ) -> ResolvedDailyFocus? {
-        if let override = overrides.first(where: { calendar.isDate($0.date, inSameDayAs: date) }) {
+        if let override = DailyFocusOverrideIndex.canonical(
+            on: date,
+            from: overrides,
+            calendar: calendar
+        ) {
             guard !override.isCleared else { return nil }
             let kinds = normalizedKinds(
                 primary: override.kind,
@@ -191,7 +281,8 @@ enum DailyFocusResolver {
         }
 
         guard let weekday = PillarWeekday(rawValue: calendar.component(.weekday, from: date)),
-              let template = templates.first(where: { $0.weekday == weekday && $0.isActive }) else {
+              let template = DailyFocusTemplateIndex.canonicalByWeekday(templates)[weekday],
+              template.isActive else {
             return nil
         }
 

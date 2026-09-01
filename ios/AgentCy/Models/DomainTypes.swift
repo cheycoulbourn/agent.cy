@@ -718,6 +718,103 @@ enum TaskCollectionPolicy {
     }
 }
 
+struct TaskCreationSubtaskDraft: Equatable, Sendable {
+    let title: String
+    let isCompleted: Bool
+}
+
+struct CaptureTaskDueDateState: Equatable, Sendable {
+    let hasDueDate: Bool
+    let includesTime: Bool
+}
+
+enum CaptureTaskDueDatePolicy {
+    static func removingDate(from state: CaptureTaskDueDateState) -> CaptureTaskDueDateState {
+        guard state.hasDueDate else { return state }
+        return CaptureTaskDueDateState(hasDueDate: false, includesTime: false)
+    }
+}
+
+@MainActor
+enum TaskDueDatePolicy {
+    enum Error: Swift.Error, Equatable {
+        case recurringRequiresDate
+    }
+
+    static func allowsRemoval(recurrence: TaskRecurrenceFrequency) -> Bool {
+        recurrence == .none
+    }
+
+    static func initialHasDate(
+        targetDate: Date?,
+        dailyFocusDate: Date?,
+        recurrence: TaskRecurrenceFrequency
+    ) -> Bool {
+        targetDate != nil || dailyFocusDate != nil || recurrence != .none
+    }
+
+    static func apply(
+        to task: CreatorTask,
+        hasDate: Bool,
+        selectedDate: Date,
+        includesTime: Bool,
+        calendar: Calendar = .current,
+        persist: () throws -> Void
+    ) throws {
+        let effectiveHasDate = task.dailyFocusDate != nil || hasDate
+        guard effectiveHasDate || allowsRemoval(recurrence: task.recurrence) else {
+            throw Error.recurringRequiresDate
+        }
+
+        let originalTargetDate = task.targetDate
+        let originalIncludesTime = task.includesTargetTime
+        let originalCustomized = task.isFocusTemplateCustomized
+        let nextIncludesTime = effectiveHasDate && includesTime
+        let nextTargetDate: Date?
+        if effectiveHasDate {
+            let day = task.dailyFocusDate ?? selectedDate
+            nextTargetDate = normalizedDate(
+                day: day,
+                timeSource: selectedDate,
+                includesTime: nextIncludesTime,
+                calendar: calendar
+            )
+        } else {
+            nextTargetDate = nil
+        }
+
+        task.targetDate = nextTargetDate
+        task.includesTargetTime = nextIncludesTime
+        if task.focusTaskTemplateID != nil,
+           originalTargetDate != nextTargetDate || originalIncludesTime != nextIncludesTime {
+            task.isFocusTemplateCustomized = true
+        }
+
+        do {
+            try persist()
+        } catch {
+            task.targetDate = originalTargetDate
+            task.includesTargetTime = originalIncludesTime
+            task.isFocusTemplateCustomized = originalCustomized
+            throw error
+        }
+    }
+
+    private static func normalizedDate(
+        day: Date,
+        timeSource: Date,
+        includesTime: Bool,
+        calendar: Calendar
+    ) -> Date {
+        guard includesTime else { return calendar.startOfDay(for: day) }
+        let time = calendar.dateComponents([.hour, .minute], from: timeSource)
+        var components = calendar.dateComponents([.year, .month, .day], from: day)
+        components.hour = time.hour
+        components.minute = time.minute
+        return calendar.date(from: components) ?? day
+    }
+}
+
 enum TaskCalendarPolicy {
     static func mondayWeekInterval(
         containing date: Date,

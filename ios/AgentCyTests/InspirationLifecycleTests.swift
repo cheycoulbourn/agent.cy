@@ -253,6 +253,52 @@ final class InspirationLifecycleTests: XCTestCase {
         )
     }
 
+    func testCancellingSavedPostAnalysisRestoresItsPreviousStateWithoutAnError() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(name: "Chey", onboardingCompleted: true)
+        let source = InspirationSource(
+            canonicalURLString: "https://example.com/cancelled-analysis",
+            platform: .web,
+            status: .pending
+        )
+        source.sourceCaption = "A useful source caption."
+        source.analyzedInputs = [.caption]
+        context.insert(profile)
+        context.insert(source)
+        context.insert(SubscriptionState(access: .paid))
+        try context.save()
+        let model = AppModel(
+            inspirationShapingService: CancelledInspirationShapingService()
+        )
+
+        let result = await model.analyzeInspiration(source, context: context)
+
+        XCTAssertNil(result)
+        XCTAssertEqual(source.status, .pending)
+        XCTAssertNil(source.lastErrorCode)
+        XCTAssertNil(model.notice)
+    }
+
+    func testGeneratedAnalysisCannotHideUnsavedCreatorDraftChanges() {
+        let baseline = ManualInspirationIdeaDraft()
+        var edited = baseline
+        edited.title = "My own direction"
+
+        XCTAssertTrue(InspirationReviewUnsavedWorkPolicy.hasChanges(
+            hasLinkedBrief: false,
+            generatedDraftChanged: false,
+            manualDraft: edited,
+            manualDraftBaseline: baseline
+        ))
+        XCTAssertFalse(InspirationReviewUnsavedWorkPolicy.hasChanges(
+            hasLinkedBrief: true,
+            generatedDraftChanged: false,
+            manualDraft: edited,
+            manualDraftBaseline: baseline
+        ))
+    }
+
     func testSavedPostUsesGeneratedTitleAndKeepsCreatorAttribution() throws {
         let source = InspirationSource(
             canonicalURLString: "https://www.instagram.com/reel/example/",
@@ -296,5 +342,17 @@ final class InspirationLifecycleTests: XCTestCase {
             SavedPostPresentation.metadata(for: source),
             "Julia Broome on Instagram · Idea ready"
         )
+    }
+}
+
+private struct CancelledInspirationShapingService: InspirationShapingServicing {
+    func shape(
+        sourcePlatform _: InspirationPlatform,
+        sourceMaterial _: InspirationSourceMaterialWire,
+        creatorContext _: CreatorContextWire,
+        assistanceMode _: AssistanceMode,
+        operationID _: UUID
+    ) async throws -> InspirationShapeResultWire {
+        throw CancellationError()
     }
 }

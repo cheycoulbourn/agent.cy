@@ -1908,7 +1908,7 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(brief.agendaDate, postDate)
     }
 
-    func testDraftPostResumesEditorEvenIfItsOutputWasMarkedScheduled() {
+    func testDraftPostCanResumeWithoutDowngradingItsOutputLifecycle() {
         XCTAssertTrue(PostDraftResumePolicy.shouldResume(briefStatus: .spark))
         XCTAssertTrue(PostDraftResumePolicy.shouldResume(briefStatus: .developing))
         XCTAssertFalse(PostDraftResumePolicy.shouldResume(briefStatus: .ready))
@@ -1920,7 +1920,7 @@ final class DomainTests: XCTestCase {
         )
         XCTAssertEqual(
             PostDraftResumePolicy.outputStatus(briefStatus: .developing, current: .scheduled),
-            .draft
+            .scheduled
         )
     }
 
@@ -2002,6 +2002,7 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(outputs.count, 1)
         XCTAssertEqual(first.status, .draft)
         XCTAssertEqual(first.platform, .youtubeShorts)
+        XCTAssertEqual(idea.ideaBankPlacement, .post)
         XCTAssertNil(first.targetDate)
         XCTAssertNil(idea.agendaDate)
         XCTAssertEqual(idea.title, "The one-job idea")
@@ -4024,6 +4025,7 @@ final class DomainTests: XCTestCase {
 
         let stagedProposal = try XCTUnwrap(model.proposal(for: brief, context: context))
         XCTAssertEqual(stagedProposal.draft.title, "A rough spark")
+        XCTAssertEqual(brief.status, .developing)
         XCTAssertTrue(brief.spokenHook.isEmpty)
         XCTAssertTrue(model.outputs(for: brief, context: context).isEmpty)
         XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
@@ -4034,10 +4036,109 @@ final class DomainTests: XCTestCase {
         let proposal = try XCTUnwrap(relaunchedModel.proposal(for: brief, context: context))
         relaunchedModel.acceptProposal(proposal, for: brief, context: context)
         XCTAssertEqual(brief.title, "A rough spark")
+        XCTAssertEqual(brief.status, .developing)
         XCTAssertFalse(brief.spokenHook.isEmpty)
         XCTAssertEqual(relaunchedModel.outputs(for: brief, context: context).count, 2)
         XCTAssertEqual(relaunchedModel.tasks(for: brief, context: context).count, 4)
         XCTAssertTrue(try context.fetch(FetchDescriptor<PendingBriefProposal>()).isEmpty)
+    }
+
+    func testCompositionReviewRejectsAProposalThatIsNoLongerPending() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            name: "Casey",
+            goal: "Teach creators",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        )
+        context.insert(profile)
+        context.insert(SubscriptionState(access: .paid))
+        let brief = CreativeBrief(title: "Original spark", premise: "Keep this premise")
+        context.insert(brief)
+        let model = AppModel(reminderService: PreviewReminderService())
+        await model.compose(brief: brief, context: context)
+        let pending = try XCTUnwrap(model.proposal(for: brief, context: context))
+        var staleDraft = pending.draft
+        staleDraft.title = "Stale overwrite"
+        let stale = BriefProposal(
+            briefID: brief.id,
+            draft: staleDraft,
+            variants: pending.variants,
+            tasks: pending.tasks,
+            canonicalBrief: pending.canonicalBrief
+        )
+
+        let accepted = model.acceptProposal(stale, for: brief, context: context)
+
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(brief.title, "Original spark")
+        XCTAssertEqual(model.proposal(for: brief, context: context)?.id, pending.id)
+        XCTAssertTrue(model.outputs(for: brief, context: context).isEmpty)
+        XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
+    }
+
+    func testCompositionReviewRejectsInvalidRecordingMilestones() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            name: "Casey",
+            goal: "Teach creators",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        )
+        context.insert(profile)
+        context.insert(SubscriptionState(access: .paid))
+        let brief = CreativeBrief(title: "Original spark", premise: "Keep this premise")
+        context.insert(brief)
+        let model = AppModel(reminderService: PreviewReminderService())
+        await model.compose(brief: brief, context: context)
+        var invalid = try XCTUnwrap(model.proposal(for: brief, context: context))
+        invalid.tasks = [
+            ProposedCreatorTask(title: "Film take one", kind: .filming, isRecordingMilestone: true),
+            ProposedCreatorTask(title: "Film take two", kind: .filming, isRecordingMilestone: true)
+        ]
+
+        let accepted = model.acceptProposal(invalid, for: brief, context: context)
+
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(brief.title, "Original spark")
+        XCTAssertNotNil(model.proposal(for: brief, context: context))
+        XCTAssertTrue(model.outputs(for: brief, context: context).isEmpty)
+        XCTAssertTrue(model.tasks(for: brief, context: context).isEmpty)
+    }
+
+    func testAcceptingCompositionAppliesReviewedVariantToAnExistingDraftOutput() async throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let profile = CreatorProfile(
+            name: "Casey",
+            goal: "Teach creators",
+            selectedPlatforms: [.instagramReels],
+            adultConfirmed: true,
+            onboardingCompleted: true
+        )
+        context.insert(profile)
+        context.insert(SubscriptionState(access: .paid))
+        let brief = CreativeBrief(title: "Original spark", premise: "Keep this premise")
+        let output = PlatformOutput(briefID: brief.id, platform: .instagramReels, status: .draft)
+        context.insert(brief)
+        context.insert(output)
+        let model = AppModel(reminderService: PreviewReminderService())
+        await model.compose(brief: brief, context: context)
+        let proposal = try XCTUnwrap(model.proposal(for: brief, context: context))
+        let reviewedVariant = try XCTUnwrap(proposal.variants.first(where: { $0.platform == .instagramReels }))
+
+        let accepted = model.acceptProposal(proposal, for: brief, context: context)
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(output.caption, reviewedVariant.caption)
+        XCTAssertEqual(output.titleOverride, reviewedVariant.titleOverride)
+        XCTAssertEqual(output.openingAdjustment, reviewedVariant.openingAdjustment)
+        XCTAssertEqual(output.status, .draft)
+        XCTAssertEqual(model.outputs(for: brief, context: context).count, 1)
     }
 
     func testAcceptingRegenerationPreservesScheduledOutputAndCompletedTask() async throws {

@@ -180,8 +180,12 @@ enum VoiceSparkRecordingStore {
         rootURL: URL? = nil,
         fileManager: FileManager = .default
     ) throws -> URL {
-        try directory(rootURL: rootURL, fileManager: fileManager)
+        let url = try directory(rootURL: rootURL, fileManager: fileManager)
             .appendingPathComponent(recording.fileName)
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw VoiceSparkRecordingStoreError.missingAudio
+        }
+        return url
     }
 
     static func audioData(
@@ -284,9 +288,15 @@ enum VoiceSparkRecordingStore {
 
 enum VoiceSparkRecordingStoreError: LocalizedError {
     case missingRecording
+    case missingAudio
 
     var errorDescription: String? {
-        "That Voice Spark recording is no longer available."
+        switch self {
+        case .missingRecording:
+            "That Voice Spark recording is no longer available."
+        case .missingAudio:
+            "The original Voice Spark audio is no longer available on this device."
+        }
     }
 }
 #endif

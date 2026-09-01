@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreTransferable
 import Foundation
 import SwiftUI
@@ -11,6 +12,12 @@ enum VoiceRecordingDetailTitlePolicy {
 
     static func hasChanges(current: String, saved: String) -> Bool {
         normalized(current) != normalized(saved)
+    }
+}
+
+enum VoiceRecordingDetailTranscriptPolicy {
+    static func normalized(_ transcript: String) -> String {
+        transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -43,6 +50,112 @@ enum VoiceRecordingDetailNavigationPolicy {
                 deletesRecording: true
             )
         }
+    }
+}
+
+enum VoiceRecordingDetailAudioState: Equatable {
+    case ready
+    case unavailable(message: String)
+}
+
+enum VoiceRecordingDetailAudioPolicy {
+    static func state(hasPlayableAudio: Bool) -> VoiceRecordingDetailAudioState {
+        hasPlayableAudio
+            ? .ready
+            : .unavailable(message: "The original audio isn’t available on this device.")
+    }
+}
+
+enum VoiceRecordingPlaybackSource {
+    case file(URL)
+    case data(Data)
+
+    fileprivate func makePlayer() throws -> AVAudioPlayer {
+        switch self {
+        case .file(let url):
+            try AVAudioPlayer(contentsOf: url)
+        case .data(let data):
+            try AVAudioPlayer(data: data)
+        }
+    }
+}
+
+@MainActor
+final class VoiceRecordingDetailPlaybackController: ObservableObject {
+    @Published private(set) var isPlaying = false
+
+    private var player: AVAudioPlayer?
+    private var completionTask: Task<Void, Never>?
+
+    func toggle(_ source: VoiceRecordingPlaybackSource) throws {
+        if player?.isPlaying == true {
+            stop()
+            return
+        }
+
+        stop()
+        try activatePlaybackSession()
+        do {
+            let player = try source.makePlayer()
+            player.prepareToPlay()
+            guard player.play() else {
+                throw VoiceRecordingDetailPlaybackError.couldNotStart
+            }
+            self.player = player
+            isPlaying = true
+            monitorCompletion()
+        } catch {
+            deactivatePlaybackSession()
+            throw error
+        }
+    }
+
+    func stop() {
+        completionTask?.cancel()
+        completionTask = nil
+        player?.stop()
+        player = nil
+        isPlaying = false
+        deactivatePlaybackSession()
+    }
+
+    private func monitorCompletion() {
+        completionTask?.cancel()
+        completionTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled, let self else { return }
+                guard self.player?.isPlaying == true else {
+                    self.completionTask = nil
+                    self.player = nil
+                    self.isPlaying = false
+                    self.deactivatePlaybackSession()
+                    return
+                }
+            }
+        }
+    }
+
+    private func activatePlaybackSession() throws {
+#if !targetEnvironment(macCatalyst)
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .spokenAudio)
+        try session.setActive(true)
+#endif
+    }
+
+    private func deactivatePlaybackSession() {
+#if !targetEnvironment(macCatalyst)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+#endif
+    }
+}
+
+private enum VoiceRecordingDetailPlaybackError: LocalizedError {
+    case couldNotStart
+
+    var errorDescription: String? {
+        "That recording could not begin playing."
     }
 }
 
@@ -115,6 +228,7 @@ struct VoiceRecordingDetailPage: View {
     let recordedAt: Date
     let durationSeconds: TimeInterval
     let byteCount: Int64?
+    let playbackSource: VoiceRecordingPlaybackSource?
     let downloadURL: URL?
     let isDownloadEnabled: Bool
     let onDownload: () -> Void
@@ -124,6 +238,8 @@ struct VoiceRecordingDetailPage: View {
 
     @State private var title: String
     @State private var savedTitle: String
+    @State private var playbackErrorMessage: String?
+    @StateObject private var playback = VoiceRecordingDetailPlaybackController()
 
     init(
         title: String,
@@ -131,6 +247,7 @@ struct VoiceRecordingDetailPage: View {
         recordedAt: Date,
         durationSeconds: TimeInterval,
         byteCount: Int64?,
+        playbackSource: VoiceRecordingPlaybackSource?,
         downloadURL: URL?,
         isDownloadEnabled: Bool,
         onDownload: @escaping () -> Void,
@@ -139,10 +256,11 @@ struct VoiceRecordingDetailPage: View {
         onConnect: (() -> Void)? = nil
     ) {
         let normalizedTitle = VoiceRecordingDetailTitlePolicy.normalized(title)
-        self.transcript = transcript
+        self.transcript = VoiceRecordingDetailTranscriptPolicy.normalized(transcript)
         self.recordedAt = recordedAt
         self.durationSeconds = durationSeconds
         self.byteCount = byteCount
+        self.playbackSource = playbackSource
         self.downloadURL = downloadURL
         self.isDownloadEnabled = isDownloadEnabled
         self.onDownload = onDownload
@@ -151,6 +269,7 @@ struct VoiceRecordingDetailPage: View {
         self.onConnect = onConnect
         _title = State(initialValue: normalizedTitle)
         _savedTitle = State(initialValue: normalizedTitle)
+        _playbackErrorMessage = State(initialValue: nil)
     }
 
     var body: some View {
@@ -160,6 +279,7 @@ struct VoiceRecordingDetailPage: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                     titleSection
+                    playbackSection
                     transcriptSection
                     detailsSection
                     connectToPostSection
@@ -174,6 +294,7 @@ struct VoiceRecordingDetailPage: View {
         .background(Color.agentCanvas.ignoresSafeArea())
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onDisappear { playback.stop() }
     }
 
     private var header: some View {
@@ -222,12 +343,66 @@ struct VoiceRecordingDetailPage: View {
         }
     }
 
+    private var playbackSection: some View {
+        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
+            SectionRuleHeader(title: "Audio")
+
+            switch VoiceRecordingDetailAudioPolicy.state(
+                hasPlayableAudio: playbackSource != nil
+            ) {
+            case .ready:
+                Button(action: togglePlayback) {
+                    HStack(spacing: AgentSpacing.x3) {
+                        AgentIconView(playback.isPlaying ? .stop : .play, size: 16)
+                            .offset(x: playback.isPlaying ? 0 : 1)
+                        Text(playback.isPlaying ? "Stop recording" : "Play recording")
+                            .font(.agentSubtext.weight(.semibold))
+                        Spacer(minLength: AgentSpacing.x3)
+                        Text(Self.durationText(durationSeconds))
+                            .font(.agentMetadata.monospacedDigit())
+                            .foregroundStyle(Color.agentSecondary)
+                    }
+                    .foregroundStyle(Color.agentText)
+                    .padding(.horizontal, AgentSpacing.x4)
+                    .frame(minHeight: 54)
+                    .contentShape(.rect)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+                    .agentSurfaceChrome(cornerRadius: AgentRadius.card)
+                }
+                .buttonStyle(AgentPressButtonStyle())
+                .accessibilityLabel(playback.isPlaying ? "Stop recording playback" : "Play recording")
+
+            case .unavailable(let message):
+                HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                    AgentIconView(.warning, size: 16)
+                        .foregroundStyle(Color.agentSecondary)
+                    Text(message)
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(AgentSpacing.x4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.card))
+                .agentSurfaceChrome(cornerRadius: AgentRadius.card)
+            }
+
+            if let playbackErrorMessage {
+                Text(playbackErrorMessage)
+                    .font(.agentMetadata)
+                    .foregroundStyle(Color.agentDestructive)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Playback error: \(playbackErrorMessage)")
+            }
+        }
+    }
+
     private var transcriptSection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             SectionRuleHeader(title: "Transcript")
-            Text(cleanTranscript.isEmpty ? "No transcript is available for this recording." : cleanTranscript)
+            Text(transcript.isEmpty ? "No transcript is available for this recording." : transcript)
                 .font(.agentBody)
-                .foregroundStyle(cleanTranscript.isEmpty ? Color.agentSecondary : Color.agentText)
+                .foregroundStyle(transcript.isEmpty ? Color.agentSecondary : Color.agentText)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, AgentSpacing.x4)
@@ -237,7 +412,7 @@ struct VoiceRecordingDetailPage: View {
                 .agentSurfaceChrome(cornerRadius: AgentRadius.card)
                 .overlay(alignment: .topTrailing) {
                     Button {
-                        UIPasteboard.general.string = cleanTranscript
+                        UIPasteboard.general.string = transcript
                     } label: {
                         AgentIconView(.copy, size: 16)
                             .foregroundStyle(Color.agentText)
@@ -245,8 +420,8 @@ struct VoiceRecordingDetailPage: View {
                             .contentShape(.rect)
                     }
                     .buttonStyle(AgentPressButtonStyle())
-                    .disabled(cleanTranscript.isEmpty)
-                    .opacity(cleanTranscript.isEmpty ? 0.34 : 1)
+                    .disabled(transcript.isEmpty)
+                    .opacity(transcript.isEmpty ? 0.34 : 1)
                     .accessibilityLabel("Copy transcript")
                     .padding(.top, AgentSpacing.x1)
                     .padding(.trailing, AgentSpacing.x1)
@@ -311,10 +486,6 @@ struct VoiceRecordingDetailPage: View {
                 .accessibilityHint("Shows open posts that can receive this recording")
             }
         }
-    }
-
-    private var cleanTranscript: String {
-        transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var hasTitleChanges: Bool {
@@ -397,6 +568,16 @@ struct VoiceRecordingDetailPage: View {
         guard hasTitleChanges, onTitleChange(normalizedTitle) else { return }
         title = normalizedTitle
         savedTitle = normalizedTitle
+    }
+
+    private func togglePlayback() {
+        guard let playbackSource else { return }
+        do {
+            playbackErrorMessage = nil
+            try playback.toggle(playbackSource)
+        } catch {
+            playbackErrorMessage = error.localizedDescription
+        }
     }
 
     private static func durationText(_ seconds: TimeInterval) -> String {

@@ -13,6 +13,33 @@ enum CyIdeaRequestPhase: Equatable {
     }
 }
 
+enum CyIdeaFailureMessagePolicy {
+    private static let authoredRecoveryMessages: Set<String> = [
+        "Cy is offline. Open Claude or Codex on your Mac, or open Access in Settings to use hosted Agent Cy.",
+        "Finish your creator profile before asking Cy for ideas."
+    ]
+
+    static func creatorMessage(for message: String) -> String {
+        if authoredRecoveryMessages.contains(message) {
+            return message
+        }
+
+        let normalized = message.lowercased()
+        // Credit and quota messages are actionable, while unrecognized
+        // provider errors should not expose technical details to creators.
+        if normalized.contains("credit") || normalized.contains("quota") {
+            return message
+        }
+        if normalized.contains("ended before") || normalized.contains("complete result") {
+            return "Cy’s response stopped early. Nothing was saved."
+        }
+        if normalized.contains("timed out") || normalized.contains("timeout") {
+            return "Cy took too long to respond. Nothing was saved."
+        }
+        return "Cy couldn’t finish the request. Nothing was saved."
+    }
+}
+
 struct CyProUpsellView: View {
     let message: String
     let primaryAction: () -> Void
@@ -300,7 +327,7 @@ struct QuickCaptureView: View {
                             output: quickPostDraft.output,
                             contextLabel: "New post",
                             bottomActionClearance: AgentSpacing.x3,
-                            showsDesktopDetailRail: false,
+                            showsEditorChrome: false,
                             onSpark: { showPostDevelopment = true }
                         )
                     }
@@ -353,15 +380,9 @@ struct QuickCaptureView: View {
                 }
                 .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .confirmationAction) {
-                    if !showingCySuggestions {
-                        HStack(spacing: AgentSpacing.x1) {
-                            if kind == .spark {
-                                newIdeaSparkToolbarButton
-                            }
-                            if kind == .spark || (kind == .task && quickTaskType == .focus) {
-                                saveCaptureToolbarButton
-                            }
-                        }
+                    if !showingCySuggestions,
+                       kind == .spark || (kind == .task && quickTaskType == .focus) {
+                        saveCaptureToolbarButton
                     }
                 }
                 .sharedBackgroundVisibility(.hidden)
@@ -445,7 +466,8 @@ struct QuickCaptureView: View {
                 CaptureTaskDueDateSheet(
                     date: $targetDate,
                     hasDueDate: $addTarget,
-                    includesTime: $taskIncludesTime
+                    includesTime: $taskIncludesTime,
+                    allowsRemoval: TaskDueDatePolicy.allowsRemoval(recurrence: taskRecurrence)
                 )
                 .presentationDetents([.large])
                 .agentDesktopWorkspaceModal()
@@ -478,38 +500,14 @@ struct QuickCaptureView: View {
 
             Spacer(minLength: AgentSpacing.x4)
 
-            if !showingCySuggestions {
-                HStack(spacing: AgentSpacing.x1) {
-                    if kind == .spark {
-                        newIdeaSparkToolbarButton
-                    }
-                    if kind == .spark || (kind == .task && quickTaskType == .focus) {
-                        saveCaptureToolbarButton
-                    }
-                }
+            if !showingCySuggestions,
+               kind == .spark || (kind == .task && quickTaskType == .focus) {
+                saveCaptureToolbarButton
             }
         }
         .padding(.horizontal, AgentSpacing.x5)
         .agentQuickAddHeaderSurface()
         .zIndex(1)
-    }
-
-    private var newIdeaSparkToolbarButton: some View {
-        Button {
-            Task { await loadIdeas() }
-        } label: {
-            CyAsterisk(color: .cyAccent, size: 16, strokeWidth: 1.5)
-                .frame(width: 18, height: 18)
-                .frame(width: 44, height: 44)
-                .glassEffect(.clear.interactive(), in: .circle)
-                .overlay {
-                    Circle().stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                }
-                .contentShape(.circle)
-        }
-        .buttonStyle(AgentPressButtonStyle())
-        .accessibilityLabel("Spark new ideas")
-        .accessibilityHint("Asks Cy for three ideas")
     }
 
     private var saveCaptureToolbarButton: some View {
@@ -642,7 +640,7 @@ struct QuickCaptureView: View {
                     .tracking(-0.2)
                     .multilineTextAlignment(.center)
 
-                Text(friendlyCyFailureMessage(message))
+                Text(CyIdeaFailureMessagePolicy.creatorMessage(for: message))
                     .font(.paperInter(size: 14, weight: .regular, relativeTo: .body))
                     .foregroundStyle(Color.agentSecondary)
                     .multilineTextAlignment(.center)
@@ -696,23 +694,6 @@ struct QuickCaptureView: View {
                 .frame(minHeight: 44)
                 .buttonStyle(.plain)
         }
-    }
-
-    private func friendlyCyFailureMessage(_ message: String) -> String {
-        let normalized = message.lowercased()
-        // Credit and quota messages are actionable — the server's own words
-        // beat a generic apology (field-diagnosed 2026-08-19: exhausted
-        // provider credits surfaced as "couldn't finish the request").
-        if normalized.contains("credit") || normalized.contains("quota") {
-            return message
-        }
-        if normalized.contains("ended before") || normalized.contains("complete result") {
-            return "Cy’s response stopped early. Nothing was saved."
-        }
-        if normalized.contains("timed out") || normalized.contains("timeout") {
-            return "Cy took too long to respond. Nothing was saved."
-        }
-        return "Cy couldn’t finish the request. Nothing was saved."
     }
 
     private var sparkComposer: some View {
@@ -2081,13 +2062,20 @@ struct CaptureTaskDueDateSheet: View {
     @Binding private var date: Date
     @Binding private var hasDueDate: Bool
     @Binding private var includesTime: Bool
+    private let allowsRemoval: Bool
     @State private var selectedDate: Date
     @State private var selectedIncludesTime: Bool
 
-    init(date: Binding<Date>, hasDueDate: Binding<Bool>, includesTime: Binding<Bool>) {
+    init(
+        date: Binding<Date>,
+        hasDueDate: Binding<Bool>,
+        includesTime: Binding<Bool>,
+        allowsRemoval: Bool = true
+    ) {
         _date = date
         _hasDueDate = hasDueDate
         _includesTime = includesTime
+        self.allowsRemoval = allowsRemoval
         _selectedDate = State(initialValue: date.wrappedValue)
         _selectedIncludesTime = State(initialValue: includesTime.wrappedValue)
     }
@@ -2103,12 +2091,8 @@ struct CaptureTaskDueDateSheet: View {
                             .foregroundStyle(Color.agentText)
                     }
 
-                    DatePicker(
-                        "Date",
-                        selection: $selectedDate,
-                        displayedComponents: .date
-                    )
-                    .datePickerStyle(.graphical)
+                    PillarCalendarDatePicker(date: $selectedDate, pillarMarkers: [])
+                        .frame(minHeight: 330)
 
                     VStack(spacing: 0) {
                         Toggle("Include a time", isOn: $selectedIncludesTime)
@@ -2132,13 +2116,25 @@ struct CaptureTaskDueDateSheet: View {
                         }
                     }
 
-                    if hasDueDate {
+                    if hasDueDate, allowsRemoval {
                         Button("Remove due date", role: .destructive) {
-                            hasDueDate = false
+                            let cleared = CaptureTaskDueDatePolicy.removingDate(
+                                from: CaptureTaskDueDateState(
+                                    hasDueDate: hasDueDate,
+                                    includesTime: includesTime
+                                )
+                            )
+                            hasDueDate = cleared.hasDueDate
+                            includesTime = cleared.includesTime
                             dismiss()
                         }
                         .font(.agentSubtext.weight(.medium))
                         .frame(maxWidth: .infinity, minHeight: 48)
+                    } else if hasDueDate {
+                        Text("Repeating tasks need a due date.")
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)

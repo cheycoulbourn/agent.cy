@@ -98,9 +98,16 @@ struct AgentCyApp: App {
             model.presentedSheet = sheet
         }
         if usesPreviewData,
-           AppShellRuntimeFixture.requestsFirstPreviewTask(arguments: arguments),
-           let task = try? container.mainContext.fetch(FetchDescriptor<CreatorTask>()).first {
-            model.requestedTaskID = task.id
+           AppShellRuntimeFixture.requestsFirstPreviewTask(arguments: arguments) {
+            let tasks = (try? container.mainContext.fetch(FetchDescriptor<CreatorTask>(
+                sortBy: [SortDescriptor(\.createdAt)]
+            ))) ?? []
+            model.requestedTaskID = AppShellRuntimeFixture.firstPreviewTask(in: tasks)?.id
+        }
+        if usesPreviewData,
+           AppShellRuntimeFixture.requestsPreviewAgendaDay(arguments: arguments) {
+            model.selectedTab = .today
+            model.widgetAgendaDay = Calendar.current.startOfDay(for: Date())
         }
         #endif
         _appModel = State(initialValue: model)
@@ -129,10 +136,20 @@ struct AgentCyApp: App {
 
 #if DEBUG
 enum AppShellRuntimeFixture {
+    static func firstPreviewTask(in tasks: [CreatorTask]) -> CreatorTask? {
+        tasks.first(where: { $0.parentTaskID == nil })
+    }
+
     static func requestsFirstPreviewTask(
         arguments: [String] = ProcessInfo.processInfo.arguments
     ) -> Bool {
         arguments.contains("-agentCyPreviewTaskRoute")
+    }
+
+    static func requestsPreviewAgendaDay(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        arguments.contains("-agentCyPreviewAgendaDay")
     }
 }
 #endif

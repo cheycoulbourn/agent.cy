@@ -1,6 +1,71 @@
 import SwiftData
 import SwiftUI
 
+struct AgendaPostIdeaPickerProjection {
+    let ideas: [CreativeBrief]
+    let activePillarByID: [UUID: Pillar]
+
+    static func make(
+        briefs: [CreativeBrief],
+        pillars: [Pillar],
+        preferredWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace],
+        query: String
+    ) -> AgendaPostIdeaPickerProjection {
+        let resolvedWorkspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: preferredWorkspaceID,
+            workspaces: workspaces
+        )
+        let defaultWorkspaceID = WorkspaceScope.defaultWorkspace(in: workspaces)?.id
+        let includesWorkspace: (UUID?) -> Bool = { recordWorkspaceID in
+            guard let resolvedWorkspaceID else { return recordWorkspaceID == nil }
+            if let recordWorkspaceID { return recordWorkspaceID == resolvedWorkspaceID }
+            return defaultWorkspaceID == resolvedWorkspaceID
+        }
+
+        let scopedPillars = pillars.filter { includesWorkspace($0.workspaceID) }
+        let activePillarByID = DuplicateSafeIndex.firstValues(
+            scopedPillars.filter { !$0.isArchived }.map { ($0.id, $0) }
+        )
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ideas = briefs.filter { brief in
+            guard includesWorkspace(brief.workspaceID),
+                  IdeaBankPlacementPolicy.includes(brief) else {
+                return false
+            }
+            guard !cleanQuery.isEmpty else { return true }
+            let searchText = [
+                brief.title,
+                brief.premise,
+                brief.notes,
+                brief.spokenHook,
+                brief.scriptBeatsText,
+                brief.ctaIntent,
+                brief.pillarID.flatMap { activePillarByID[$0]?.name } ?? ""
+            ].joined(separator: " ")
+            return searchText.localizedStandardContains(cleanQuery)
+        }
+        .sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+
+        return AgendaPostIdeaPickerProjection(
+            ideas: ideas,
+            activePillarByID: activePillarByID
+        )
+    }
+}
+
+enum AgendaPostIdeaPickerDatePolicy {
+    static func plannedDate(
+        for day: Date,
+        calendar: Calendar = .current
+    ) -> Date {
+        calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+    }
+}
+
 struct AgendaPostIdeaPickerView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
@@ -13,28 +78,23 @@ struct AgendaPostIdeaPickerView: View {
     let day: Date
 
     @State private var editorRoute: AgendaPostEditorRoute?
+    @State private var query = ""
+    @State private var didApplyPreviewEditorRoute = false
 
-    private var briefs: [CreativeBrief] { scoped(allBriefs) }
-    private var pillars: [Pillar] { scoped(allPillars) }
-    private func scoped<T: WorkspaceScopedRecord>(_ values: [T]) -> [T] {
-        values.filter {
-            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: appModel.activeWorkspaceID, workspaces: workspaces)
-        }
-    }
-
-    private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
-    private var activePillarIDs: Set<UUID> { Set(activePillars.map(\.id)) }
-    private var ideas: [CreativeBrief] {
-        briefs.filter { brief in
-            let isFiledHere = brief.pillarID.map(activePillarIDs.contains) ?? true
-            return isFiledHere && brief.status == .spark
-        }
-    }
     private var plannedDate: Date {
-        Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+        AgendaPostIdeaPickerDatePolicy.plannedDate(for: day)
     }
 
     var body: some View {
+        let projection = AgendaPostIdeaPickerProjection.make(
+            briefs: allBriefs,
+            pillars: allPillars,
+            preferredWorkspaceID: appModel.activeWorkspaceID,
+            workspaces: workspaces,
+            query: query
+        )
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
         VStack(spacing: 0) {
 #if targetEnvironment(macCatalyst)
             desktopNavigationHeader
@@ -75,23 +135,31 @@ struct AgendaPostIdeaPickerView: View {
                             .buttonStyle(.plain)
                             .accessibilityHint("Opens a new post editor for the selected day")
 
-                            SectionRuleHeader(title: "Idea Bank", trailing: "\(ideas.count)")
+                            ideaSearchField
                                 .padding(.top, AgentSpacing.x4)
 
-                            if ideas.isEmpty {
-                                Text("No saved ideas yet. Start a new post above.")
+                            SectionRuleHeader(
+                                title: cleanQuery.isEmpty ? "Idea Bank" : "Results",
+                                trailing: "\(projection.ideas.count)"
+                            )
+                                .padding(.top, AgentSpacing.x4)
+
+                            if projection.ideas.isEmpty {
+                                Text(cleanQuery.isEmpty
+                                    ? "No saved ideas yet. Start a new post above."
+                                    : "No ideas found. Try another title, pillar, or phrase.")
                                     .font(.paperInter(size: 15, weight: .regular, relativeTo: .body))
                                     .foregroundStyle(Color.agentSecondary)
                                     .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
                             } else {
-                                ForEach(Array(ideas.enumerated()), id: \.element.id) { index, brief in
+                                ForEach(projection.ideas) { brief in
                                     Button {
                                         openIdea(brief)
                                     } label: {
                                         AgendaIdeaBankRow(
                                             brief: brief,
-                                            pillar: activePillars.first { $0.id == brief.pillarID },
-                                            showsDivider: index < ideas.count - 1
+                                            pillar: brief.pillarID.flatMap { projection.activePillarByID[$0] },
+                                            showsDivider: brief.id != projection.ideas.last?.id
                                         )
                                     }
                                     .buttonStyle(.plain)
@@ -117,6 +185,49 @@ struct AgendaPostIdeaPickerView: View {
             AgendaPostEditorDestination(route: route)
         }
         .agentScreen()
+        #if DEBUG
+        .task {
+            guard !didApplyPreviewEditorRoute else { return }
+            didApplyPreviewEditorRoute = true
+            switch PreviewAgendaRuntimeFixture.schedulePostEditorRoute() {
+            case .newPost:
+                startNewPost()
+            case .firstIdea:
+                if let idea = projection.ideas.first { openIdea(idea) }
+            case nil:
+                break
+            }
+        }
+        #endif
+    }
+
+    private var ideaSearchField: some View {
+        HStack(spacing: AgentSpacing.x3) {
+            AgentIconView(.search, size: 15)
+                .foregroundStyle(Color.agentSecondary)
+            TextField("Search saved ideas", text: $query)
+                .font(.agentBody)
+                .submitLabel(.search)
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    AgentIconView(.close)
+                        .foregroundStyle(Color.agentSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear idea search")
+            }
+        }
+        .padding(.horizontal, AgentSpacing.x4)
+        .frame(minHeight: 48)
+        .background(Color.agentCanvas, in: .rect(cornerRadius: AgentRadius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: AgentRadius.control)
+                .stroke(Color.agentBorder, lineWidth: 0.75)
+        }
     }
 
 #if targetEnvironment(macCatalyst)

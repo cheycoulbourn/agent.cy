@@ -163,8 +163,11 @@ struct PostVoiceRecordingsSection: View {
                     recordedAt: recording.createdAt,
                     durationSeconds: recording.voiceDurationSeconds,
                     byteCount: recording.byteCount,
+                    playbackSource: recording.cloudData.flatMap {
+                        $0.isEmpty ? nil : VoiceRecordingPlaybackSource.data($0)
+                    },
                     downloadURL: nil,
-                    isDownloadEnabled: recording.cloudData != nil,
+                    isDownloadEnabled: recording.cloudData?.isEmpty == false,
                     onDownload: { onDownload(recording) },
                     onDelete: { delete(recording) },
                     onTitleChange: { onTitleChange(recording, $0) }

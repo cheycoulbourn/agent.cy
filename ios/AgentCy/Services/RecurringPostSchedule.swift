@@ -191,19 +191,11 @@ enum SeriesEpisodePlanner {
         series: ContentSeries,
         context: ModelContext
     ) throws -> ConversionResult {
-        guard slot.seriesID == series.id,
-              slot.workspaceID == series.workspaceID else {
-            throw SeriesEpisodePlannerError.seriesMismatch
+        try validate(slot: slot, series: series)
+        if let converted = try existingConversion(for: slot, context: context) {
+            return converted
         }
-
-        if let convertedBriefID = slot.convertedBriefID {
-            let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-            let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
-            if let existingBrief = briefs.first(where: { $0.id == convertedBriefID }),
-               let existingOutput = outputs.first(where: { $0.briefID == convertedBriefID }) {
-                return ConversionResult(brief: existingBrief, output: existingOutput)
-            }
-        }
+        try validateOpen(slot)
 
         let episodeNumber = try episodeNumber(for: slot, series: series, context: context)
 
@@ -263,7 +255,7 @@ enum SeriesEpisodePlanner {
         slot: SeriesEpisodeSlot,
         series: ContentSeries,
         using brief: CreativeBrief,
-        output existingOutput: PlatformOutput?,
+        output existingOutput: PlatformOutput? = nil,
         context: ModelContext
     ) throws -> ConversionResult {
         try validate(slot: slot, series: series)
@@ -271,6 +263,13 @@ enum SeriesEpisodePlanner {
         if let converted = try existingConversion(for: slot, context: context) {
             return converted
         }
+        try validateOpen(slot)
+
+        let reusableOutput = try reusableIdeaOutput(
+            for: brief,
+            preferred: existingOutput,
+            context: context
+        )
 
         let episodeNumber = try episodeNumber(for: slot, series: series, context: context)
         brief.workspaceID = series.workspaceID
@@ -288,13 +287,14 @@ enum SeriesEpisodePlanner {
         }
 
         let output: PlatformOutput
-        if let existingOutput {
-            output = existingOutput
+        if let reusableOutput {
+            output = reusableOutput
             output.workspaceID = series.workspaceID
             output.status = .draft
             output.targetDate = nil
             output.postedAt = nil
             output.publishedURLString = ""
+            output.recurrence = .none
             output.seriesRootOutputID = nil
             if output.destinationID == nil { output.destinationID = series.defaultDestinationID }
             if output.formatID == nil { output.formatID = series.defaultFormatID }
@@ -339,6 +339,7 @@ enum SeriesEpisodePlanner {
         if let converted = try existingConversion(for: slot, context: context) {
             return converted
         }
+        try validateOpen(slot)
 
         let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
         let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
@@ -454,6 +455,10 @@ enum SeriesEpisodePlanner {
     }
 
     static func skip(_ slot: SeriesEpisodeSlot, context: ModelContext) throws {
+        try validateOpen(slot)
+        guard slot.convertedBriefID == nil else {
+            throw SeriesEpisodePlannerError.incompleteConversion
+        }
         slot.convertedBriefID = nil
         slot.status = .skipped
         try context.save()
@@ -466,18 +471,62 @@ enum SeriesEpisodePlanner {
         }
     }
 
+    private static func validateOpen(_ slot: SeriesEpisodeSlot) throws {
+        guard slot.status == .open else {
+            throw SeriesEpisodePlannerError.slotUnavailable
+        }
+    }
+
     private static func existingConversion(
         for slot: SeriesEpisodeSlot,
         context: ModelContext
     ) throws -> ConversionResult? {
         guard let convertedBriefID = slot.convertedBriefID else { return nil }
-        let briefs = try context.fetch(FetchDescriptor<CreativeBrief>())
-        let outputs = try context.fetch(FetchDescriptor<PlatformOutput>())
-        guard let brief = briefs.first(where: { $0.id == convertedBriefID }),
-              let output = outputs.first(where: { $0.briefID == convertedBriefID }) else {
-            return nil
+        let briefID = convertedBriefID
+        var briefDescriptor = FetchDescriptor<CreativeBrief>(
+            predicate: #Predicate { $0.id == briefID }
+        )
+        briefDescriptor.fetchLimit = 1
+        var outputDescriptor = FetchDescriptor<PlatformOutput>(
+            predicate: #Predicate { $0.briefID == briefID },
+            sortBy: [SortDescriptor(\PlatformOutput.createdAt)]
+        )
+        outputDescriptor.fetchLimit = 2
+        guard let brief = try context.fetch(briefDescriptor).first else {
+            throw SeriesEpisodePlannerError.incompleteConversion
+        }
+        let outputs = try context.fetch(outputDescriptor)
+        guard outputs.count == 1, let output = outputs.first else {
+            throw SeriesEpisodePlannerError.incompleteConversion
         }
         return ConversionResult(brief: brief, output: output)
+    }
+
+    private static func reusableIdeaOutput(
+        for brief: CreativeBrief,
+        preferred: PlatformOutput?,
+        context: ModelContext
+    ) throws -> PlatformOutput? {
+        if let preferred, preferred.briefID != brief.id {
+            throw SeriesEpisodePlannerError.outputMismatch
+        }
+        let briefID = brief.id
+        var descriptor = FetchDescriptor<PlatformOutput>(
+            predicate: #Predicate { $0.briefID == briefID },
+            sortBy: [SortDescriptor(\PlatformOutput.createdAt)]
+        )
+        descriptor.fetchLimit = 2
+        let outputs = try context.fetch(descriptor)
+        guard outputs.count <= 1 else {
+            throw SeriesEpisodePlannerError.ambiguousIdeaOutputs
+        }
+        if let preferred {
+            guard outputs.first?.id == preferred.id else {
+                throw SeriesEpisodePlannerError.outputMismatch
+            }
+            return preferred
+        }
+        return outputs.first
     }
 
     private static func episodeNumber(
@@ -537,6 +586,10 @@ enum SeriesEpisodePlanner {
 enum SeriesEpisodePlannerError: Error {
     case seriesMismatch
     case noPreviousEpisode
+    case slotUnavailable
+    case incompleteConversion
+    case outputMismatch
+    case ambiguousIdeaOutputs
 }
 
 @MainActor

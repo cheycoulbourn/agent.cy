@@ -31,6 +31,10 @@ final class VoiceSparkRecorderTests: XCTestCase {
             saved: "Sunday reset"
         ))
         XCTAssertEqual(VoiceRecordingDetailTitlePolicy.normalized("  New title\n"), "New title")
+        XCTAssertEqual(
+            VoiceRecordingDetailTranscriptPolicy.normalized("  A useful thought.\n"),
+            "A useful thought."
+        )
     }
 
     func testRecordingDetailDeleteLetsOwningPostHandleTheSingleNavigationPop() {
@@ -47,6 +51,17 @@ final class VoiceSparkRecorderTests: XCTestCase {
                 dismissesDetail: true,
                 deletesRecording: false
             )
+        )
+    }
+
+    func testRecordingDetailExplainsWhenOriginalAudioIsUnavailable() {
+        XCTAssertEqual(
+            VoiceRecordingDetailAudioPolicy.state(hasPlayableAudio: true),
+            .ready
+        )
+        XCTAssertEqual(
+            VoiceRecordingDetailAudioPolicy.state(hasPlayableAudio: false),
+            .unavailable(message: "The original audio isn’t available on this device.")
         )
     }
 
@@ -156,6 +171,25 @@ final class VoiceSparkRecorderTests: XCTestCase {
         try VoiceSparkRecordingStore.remove(recordingID: saved.id, rootURL: root)
         XCTAssertTrue(try VoiceSparkRecordingStore.load(rootURL: root).isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(saved.fileName).path))
+    }
+
+    func testRecordingStoreTreatsMissingOriginalAudioAsUnavailable() throws {
+        let root = makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("capture.m4a")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("audio".utf8).write(to: source)
+        let saved = try VoiceSparkRecordingStore.save(
+            temporaryURL: source,
+            workspaceID: nil,
+            transcript: "A useful thought",
+            durationSeconds: 3,
+            rootURL: root
+        )
+        let storedURL = try VoiceSparkRecordingStore.audioURL(for: saved, rootURL: root)
+        try FileManager.default.removeItem(at: storedURL)
+
+        XCTAssertThrowsError(try VoiceSparkRecordingStore.audioURL(for: saved, rootURL: root))
     }
 
     func testRecordingStoreClearsOnlyRequestedWorkspace() throws {
@@ -342,6 +376,66 @@ final class VoiceSparkRecorderTests: XCTestCase {
             ),
             [unlinked]
         )
+    }
+
+    func testConnectRecordingAttachesOnlyTheSelectedRecording() {
+        let selected = VoiceSparkRecording(
+            id: UUID(),
+            workspaceID: UUID(),
+            createdAt: Date(),
+            durationSeconds: 5,
+            transcript: "Selected",
+            fileName: "selected.m4a"
+        )
+        var otherSessionRecording = selected
+        otherSessionRecording.id = UUID()
+        otherSessionRecording.transcript = "Other session recording"
+        otherSessionRecording.fileName = "other.m4a"
+
+        XCTAssertEqual(
+            VoiceSparkLinkSelectionPolicy.recordingsToAttach(
+                from: [selected, otherSessionRecording],
+                selected: selected.id
+            ),
+            [selected]
+        )
+    }
+
+    func testConnectRecordingSearchMatchesUsefulPostContext() {
+        let brief = CreativeBrief(
+            title: "Weekly reset",
+            premise: "Batch filming without the Sunday scramble",
+            status: .developing
+        )
+        brief.ideaBankPlacement = .post
+        let output = PlatformOutput(briefID: brief.id, status: .draft)
+        let post = VoiceSparkConnectPost(
+            brief: brief,
+            output: output,
+            date: nil,
+            dateKind: nil
+        )
+        let posts = [post]
+        let platformLabel: (PlatformOutput) -> String = { _ in "Instagram" }
+        let pillarName: (CreativeBrief) -> String = { _ in "Creator systems" }
+
+        for query in ["weekly", "filming", "instagram", "systems"] {
+            XCTAssertEqual(
+                VoiceSparkConnectPostPolicy.filteredPosts(
+                    posts,
+                    query: query,
+                    platformLabel: platformLabel,
+                    pillarName: pillarName
+                ).map(\.id),
+                [post.id]
+            )
+        }
+        XCTAssertTrue(VoiceSparkConnectPostPolicy.filteredPosts(
+            posts,
+            query: "missing",
+            platformLabel: platformLabel,
+            pillarName: pillarName
+        ).isEmpty)
     }
 
     func testConnectRecordingListsOnlyOpenPostsInAgendaOrder() throws {

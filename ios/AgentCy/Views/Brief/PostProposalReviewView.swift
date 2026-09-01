@@ -36,7 +36,7 @@ struct PostProposalReviewView: View {
                     EditorialHeader(
                         kicker: revisionProposal == nil ? "Draft post" : "Post revision",
                         title: revisionProposal == nil ? "Review your post." : "Review the changes.",
-                        subtitle: "Edit anything. Nothing changes until you accept."
+                        subtitle: "Edit the details below. Nothing changes until you accept."
                     )
 
                     if let revisionProposal {
@@ -108,7 +108,7 @@ struct PostProposalReviewView: View {
                                         TextField("Task", text: $proposal.tasks[index].title)
                                             .agentSingleLineSubmit()
                                             .font(.agentBody)
-                                        Picker("Kind", selection: $proposal.tasks[index].kind) {
+                                        Picker("Kind", selection: taskKindBinding(index)) {
                                             ForEach(CreatorTaskKind.allCases) { Text($0.title).tag($0) }
                                         }
                                         AgentMultilineField(
@@ -136,13 +136,16 @@ struct PostProposalReviewView: View {
                     }
 
                     Button {
+                        let accepted: Bool
                         if var revisionProposal {
                             revisionProposal.edited = proposal
-                            appModel.acceptRevision(revisionProposal, for: brief, context: context)
+                            accepted = appModel.acceptRevision(revisionProposal, for: brief, context: context)
                         } else {
-                            appModel.acceptProposal(proposal, for: brief, context: context)
+                            accepted = appModel.acceptProposal(proposal, for: brief, context: context)
                         }
-                        dismiss()
+                        if accepted {
+                            dismiss()
+                        }
                     } label: {
                         AgentIconLabel(
                             title: revisionProposal == nil ? "Use this post" : "Use these changes",
@@ -166,16 +169,21 @@ struct PostProposalReviewView: View {
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
-            .alert("Discard this post?", isPresented: $confirmDiscard) {
+            .alert(
+                revisionProposal == nil ? "Discard this post?" : "Keep your current post?",
+                isPresented: $confirmDiscard
+            ) {
                 if revisionProposal == nil {
                     Button("Discard post", role: .destructive) {
-                        appModel.discardProposal(for: brief, context: context)
-                        dismiss()
+                        if appModel.discardProposal(for: brief, context: context) {
+                            dismiss()
+                        }
                     }
                 } else {
                     Button("Keep current post") {
-                        appModel.discardRevision(for: brief, context: context)
-                        dismiss()
+                        if appModel.discardRevision(for: brief, context: context) {
+                            dismiss()
+                        }
                     }
                 }
                 Button("Cancel", role: .cancel) {}
@@ -185,10 +193,24 @@ struct PostProposalReviewView: View {
         .agentKeyboardDismissal()
     }
 
-    private func estimatedMinutesBinding(_ index: Int) -> Binding<Int> {
+    private func taskKindBinding(_ index: Int) -> Binding<CreatorTaskKind> {
         Binding(
-            get: { proposal.tasks[index].estimatedMinutes ?? 15 },
-            set: { proposal.tasks[index].estimatedMinutes = max(5, min($0, 480)) }
+            get: { proposal.tasks[index].kind },
+            set: { kind in
+                proposal.tasks[index].kind = kind
+                if kind != .filming {
+                    proposal.tasks[index].isRecordingMilestone = false
+                }
+            }
+        )
+    }
+
+    private func estimatedMinutesBinding(_ index: Int) -> Binding<Int?> {
+        Binding(
+            get: { proposal.tasks[index].estimatedMinutes },
+            set: { value in
+                proposal.tasks[index].estimatedMinutes = value.map { max(5, min($0, 480)) }
+            }
         )
     }
 

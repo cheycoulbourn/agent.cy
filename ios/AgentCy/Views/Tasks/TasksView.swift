@@ -10,8 +10,14 @@ struct TaskNavigationRoute: Hashable {
 private struct TaskNavigationDestinationView: View {
     let route: TaskNavigationRoute
     @Environment(AppModel.self) private var appModel
-    @Query(sort: \CreatorTask.createdAt, order: .reverse) private var tasks: [CreatorTask]
+    @Query private var tasks: [CreatorTask]
     @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
+
+    init(route: TaskNavigationRoute) {
+        self.route = route
+        let taskID = route.taskID
+        _tasks = Query(filter: #Predicate<CreatorTask> { $0.id == taskID })
+    }
 
     var body: some View {
         if let task = tasks.first(where: {
@@ -29,6 +35,120 @@ private struct TaskNavigationDestinationView: View {
                 icon: .tasks
             )
             .agentScreen()
+        }
+    }
+}
+
+enum TaskDetailExitState {
+    case editing
+    case persisted
+    case deleted
+}
+
+enum TaskDetailExitPolicy {
+    static func shouldPersistOnDisappear(state: TaskDetailExitState) -> Bool {
+        state == .editing
+    }
+}
+
+enum TaskDetailDuplicationPolicy {
+    static func copy(of task: CreatorTask) -> CreatorTask {
+        let copy = CreatorTask(
+            briefID: task.briefID,
+            pillarID: task.pillarID,
+            platformOutputID: task.platformOutputID,
+            title: "\(task.title) copy",
+            kind: task.kind,
+            lane: task.lane,
+            priority: task.priority.normalized,
+            notes: task.notes,
+            estimatedMinutes: task.estimatedMinutes,
+            targetDate: task.targetDate,
+            includesTargetTime: task.includesTargetTime,
+            dailyFocusDate: task.dailyFocusDate,
+            dailyFocusTitle: task.dailyFocusTitle,
+            dailyFocusTemplateEntryID: task.dailyFocusTemplateEntryID
+        )
+        copy.workspaceID = task.workspaceID
+        copy.brandPartnerID = task.brandPartnerID
+        return copy
+    }
+}
+
+enum TaskDetailPillarPolicy {
+    static func activePillars(
+        from pillars: [Pillar],
+        taskWorkspaceID: UUID?,
+        workspaces: [CreatorWorkspace]
+    ) -> [Pillar] {
+        pillars.filter {
+            !$0.isArchived && WorkspaceScope.includes(
+                $0.workspaceID,
+                activeWorkspaceID: taskWorkspaceID,
+                workspaces: workspaces
+            )
+        }
+    }
+}
+
+private struct TaskLinkedPostSection: View {
+    let task: CreatorTask
+    @Query private var outputs: [PlatformOutput]
+
+    init(task: CreatorTask) {
+        self.task = task
+        if let outputID = task.platformOutputID {
+            _outputs = Query(
+                filter: #Predicate<PlatformOutput> { $0.id == outputID }
+            )
+        } else if let briefID = task.briefID {
+            _outputs = Query(
+                filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
+                sort: \PlatformOutput.createdAt
+            )
+        } else {
+            _outputs = Query(
+                filter: #Predicate<PlatformOutput> { _ in false }
+            )
+        }
+    }
+
+    var body: some View {
+        let linkedOutput = TaskLinkedPostPolicy.output(for: task, in: outputs)
+        if let briefID = task.briefID ?? linkedOutput?.briefID {
+            TaskLinkedBriefSection(briefID: briefID, output: linkedOutput)
+        }
+    }
+}
+
+private struct TaskLinkedBriefSection: View {
+    let output: PlatformOutput?
+    @Query private var briefs: [CreativeBrief]
+
+    init(briefID: UUID, output: PlatformOutput?) {
+        self.output = output
+        _briefs = Query(
+            filter: #Predicate<CreativeBrief> { $0.id == briefID }
+        )
+    }
+
+    var body: some View {
+        if let brief = briefs.first {
+            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                MetaLabel("Linked post")
+                NavigationLink {
+                    if let output {
+                        PostOutputDetailView(brief: brief, output: output)
+                    } else {
+                        IdeaPostDraftView(brief: brief)
+                    }
+                } label: {
+                    Text(brief.title)
+                }
+                .font(.agentBody.weight(.semibold))
+                .foregroundStyle(Color.agentText)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
         }
     }
 }
@@ -285,6 +405,48 @@ private enum TaskRootRuntimeFixture {
 }
 #endif
 
+enum TaskRuntimeFixture {
+    static func requestsCaptureDueDateEditor(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+#if DEBUG
+        arguments.contains("-agentCyPreviewCaptureTaskDueDate")
+#else
+        false
+#endif
+    }
+
+    static func requestsDueDateEditor(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+#if DEBUG
+        arguments.contains("-agentCyPreviewTaskDueDate")
+#else
+        false
+#endif
+    }
+
+    static func requestsPostTaskChooser(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+#if DEBUG
+        arguments.contains("-agentCyPreviewPostTaskChooser")
+#else
+        false
+#endif
+    }
+
+    static func requestsPostTaskComposer(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+#if DEBUG
+        arguments.contains("-agentCyPreviewPostTaskComposer")
+#else
+        false
+#endif
+    }
+}
+
 struct TasksView: View {
     enum StatusFilter: String, CaseIterable, Identifiable {
         case open = "Open"
@@ -333,6 +495,11 @@ struct TasksView: View {
         }
         if arguments.contains("-agentCyPreviewTaskFilterSheet") {
             _isFilterPresented = State(initialValue: true)
+        }
+        if TaskRuntimeFixture.requestsPostTaskChooser(arguments: arguments) ||
+            TaskRuntimeFixture.requestsPostTaskComposer(arguments: arguments) {
+            _collection = State(initialValue: .postTasks)
+            _isAddingPostTask = State(initialValue: true)
         }
 #endif
     }
@@ -1045,6 +1212,93 @@ struct TasksView: View {
 
 }
 
+struct PostTaskCreationCandidate: Identifiable {
+    let brief: CreativeBrief
+    let output: PlatformOutput
+    let pillar: Pillar?
+
+    var id: UUID { output.id }
+}
+
+struct PostTaskCreationProjection {
+    struct Inputs {
+        let briefs: [CreativeBrief]
+        let outputs: [PlatformOutput]
+        let pillars: [Pillar]
+        let workspaces: [CreatorWorkspace]
+        let activeWorkspaceID: UUID?
+        let now: Date
+        let calendar: Calendar
+    }
+
+    let candidates: [PostTaskCreationCandidate]
+    let activePillars: [Pillar]
+
+    static func make(inputs: Inputs, search: String) -> Self {
+        let activeWorkspaceID = WorkspaceScope.activeWorkspaceID(
+            preferredID: inputs.activeWorkspaceID,
+            workspaces: inputs.workspaces
+        )
+        let defaultWorkspaceID = WorkspaceScope.defaultWorkspace(in: inputs.workspaces)?.id
+        let includesWorkspace: (UUID?) -> Bool = { recordWorkspaceID in
+            guard let activeWorkspaceID else { return recordWorkspaceID == nil }
+            if let recordWorkspaceID { return recordWorkspaceID == activeWorkspaceID }
+            return defaultWorkspaceID == activeWorkspaceID
+        }
+        let activePillars = inputs.pillars.filter {
+            !$0.isArchived && includesWorkspace($0.workspaceID)
+        }
+        let pillarsByID = DuplicateSafeIndex.firstValues(activePillars.map { ($0.id, $0) })
+        let scopedBriefPairs: [(UUID, CreativeBrief)] = inputs.briefs.compactMap { brief in
+            guard brief.status != .archived, includesWorkspace(brief.workspaceID) else { return nil }
+            return (brief.id, brief)
+        }
+        let briefsByID = DuplicateSafeIndex.firstValues(scopedBriefPairs)
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let week = TaskCalendarPolicy.mondayWeekInterval(
+            containing: inputs.now,
+            calendar: inputs.calendar
+        )
+
+        let candidates = inputs.outputs.compactMap { output -> PostTaskCreationCandidate? in
+            guard output.status == .scheduled,
+                  let targetDate = output.targetDate,
+                  includesWorkspace(output.workspaceID),
+                  let brief = briefsByID[output.briefID]
+            else { return nil }
+            let pillar = brief.pillarID.flatMap { pillarsByID[$0] }
+            if query.isEmpty {
+                guard let week,
+                      TaskCalendarPolicy.contains(
+                        targetDate,
+                        in: week,
+                        calendar: inputs.calendar
+                      ) else { return nil }
+            } else {
+                let override = output.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = override.isEmpty ? brief.title : override
+                guard title.localizedStandardContains(query)
+                        || brief.notes.localizedStandardContains(query)
+                        || output.platform.title.localizedStandardContains(query)
+                        || pillar?.name.localizedStandardContains(query) == true
+                else { return nil }
+            }
+            return PostTaskCreationCandidate(brief: brief, output: output, pillar: pillar)
+        }
+        .sorted { lhs, rhs in
+            let lhsDate = lhs.output.targetDate ?? .distantFuture
+            let rhsDate = rhs.output.targetDate ?? .distantFuture
+            if lhsDate != rhsDate { return lhsDate < rhsDate }
+            if lhs.output.createdAt != rhs.output.createdAt {
+                return lhs.output.createdAt < rhs.output.createdAt
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+
+        return Self(candidates: candidates, activePillars: activePillars)
+    }
+}
+
 struct PostTaskCreationFlow: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
@@ -1059,132 +1313,102 @@ struct PostTaskCreationFlow: View {
         self.onTaskSaved = onTaskSaved
     }
 
-    private var briefs: [CreativeBrief] {
-        allBriefs.filter {
-            $0.status != .archived && WorkspaceScope.includes(
-                $0.workspaceID,
+    private var projection: PostTaskCreationProjection {
+        PostTaskCreationProjection.make(
+            inputs: .init(
+                briefs: allBriefs,
+                outputs: allOutputs,
+                pillars: allPillars,
+                workspaces: workspaces,
                 activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
-        }
-    }
-
-    private var outputs: [PlatformOutput] {
-        allOutputs.filter {
-            $0.status == .scheduled && WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            ) && brief(for: $0) != nil
-        }
-    }
-
-    private var pillars: [Pillar] {
-        allPillars.filter {
-            !$0.isArchived && WorkspaceScope.includes(
-                $0.workspaceID,
-                activeWorkspaceID: appModel.activeWorkspaceID,
-                workspaces: workspaces
-            )
-        }
-    }
-
-    private var weekStart: Date {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let daysSinceMonday = (calendar.component(.weekday, from: today) + 5) % 7
-        return calendar.date(byAdding: .day, value: -daysSinceMonday, to: today) ?? today
-    }
-
-    private var weekEnd: Date {
-        Calendar.current.date(byAdding: .day, value: 7, to: weekStart) ?? weekStart
-    }
-
-    private var visibleOutputs: [PlatformOutput] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return outputs.filter { output in
-            guard let brief = brief(for: output) else { return false }
-            if query.isEmpty {
-                guard let date = output.targetDate else { return false }
-                return date >= weekStart && date < weekEnd
-            }
-            return displayTitle(for: output, brief: brief).localizedStandardContains(query)
-                || brief.notes.localizedStandardContains(query)
-                || output.platform.title.localizedStandardContains(query)
-                || pillar(for: brief)?.name.localizedStandardContains(query) == true
-        }
-        .sorted { ($0.targetDate ?? .distantFuture) < ($1.targetDate ?? .distantFuture) }
+                now: Date(),
+                calendar: .current
+            ),
+            search: search
+        )
     }
 
     var body: some View {
+        let projection = projection
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AgentSpacing.x6) {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        MetaLabel("Post task")
-                        Text("Choose the scheduled post this task belongs to.")
-                            .font(.agentHeadline)
-                        Text("This week is shown first. Search to find another scheduled post.")
-                            .font(.agentSubtext)
+            if TaskRuntimeFixture.requestsPostTaskComposer(),
+               let candidate = projection.candidates.first {
+                linkedComposer(for: candidate)
+            } else {
+                chooser(projection: projection)
+            }
+        }
+    }
+
+    private func chooser(projection: PostTaskCreationProjection) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AgentSpacing.x6) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+                    MetaLabel("Post task")
+                    Text("Choose the scheduled post this task belongs to.")
+                        .font(.agentHeadline)
+                    Text("This week is shown first. Search to find another scheduled post.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                }
+
+                searchField
+
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionRuleHeader(
+                        title: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "Scheduled this week"
+                            : "Search results",
+                        trailing: "\(projection.candidates.count)"
+                    )
+
+                    if projection.candidates.isEmpty {
+                        Text(emptyMessage)
+                            .font(.agentBody)
                             .foregroundStyle(Color.agentSecondary)
-                    }
-
-                    searchField
-
-                    VStack(alignment: .leading, spacing: 0) {
-                        SectionRuleHeader(
-                            title: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                ? "Scheduled this week"
-                                : "Search results",
-                            trailing: "\(visibleOutputs.count)"
-                        )
-
-                        if visibleOutputs.isEmpty {
-                            Text(emptyMessage)
-                                .font(.agentBody)
-                                .foregroundStyle(Color.agentSecondary)
-                                .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
-                        } else {
-                            ForEach(Array(visibleOutputs.enumerated()), id: \.element.id) { index, output in
-                                if let brief = brief(for: output) {
-                                    NavigationLink {
-                                        LinkedPostTaskComposer(
-                                            brief: brief,
-                                            output: output,
-                                            onSaved: {
-                                                onTaskSaved?()
-                                                dismiss()
-                                            }
-                                        )
-                                    } label: {
-                                        postRow(output: output, brief: brief)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .overlay(alignment: .bottom) {
-                                        if index < visibleOutputs.count - 1 {
-                                            Rectangle().fill(Color.agentHairline).frame(height: 1)
-                                        }
-                                    }
+                            .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+                    } else {
+                        ForEach(Array(projection.candidates.enumerated()), id: \.element.id) { index, candidate in
+                            NavigationLink {
+                                linkedComposer(for: candidate)
+                            } label: {
+                                postRow(candidate: candidate, activePillars: projection.activePillars)
+                            }
+                            .buttonStyle(.plain)
+                            .overlay(alignment: .bottom) {
+                                if index < projection.candidates.count - 1 {
+                                    Rectangle().fill(Color.agentHairline).frame(height: 1)
                                 }
                             }
                         }
                     }
                 }
-                .padding(.horizontal, AgentLayout.pageMargin)
-                .padding(.top, AgentSpacing.x6)
-                .padding(.bottom, AgentSpacing.x12)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("New post task")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
-                }
-                .sharedBackgroundVisibility(.hidden)
-            }
-            .agentScreen()
+            .padding(.horizontal, AgentLayout.pageMargin)
+            .padding(.top, AgentSpacing.x6)
+            .padding(.bottom, AgentSpacing.x12)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .navigationTitle("New post task")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
+            }
+            .sharedBackgroundVisibility(.hidden)
+        }
+        .agentScreen()
+    }
+
+    private func linkedComposer(for candidate: PostTaskCreationCandidate) -> some View {
+        LinkedPostTaskComposer(
+            brief: candidate.brief,
+            output: candidate.output,
+            onSaved: {
+                onTaskSaved?()
+                dismiss()
+            }
+        )
     }
 
     private var searchField: some View {
@@ -1210,18 +1434,23 @@ struct PostTaskCreationFlow: View {
             : "No scheduled posts match this search."
     }
 
-    private func postRow(output: PlatformOutput, brief: CreativeBrief) -> some View {
+    private func postRow(
+        candidate: PostTaskCreationCandidate,
+        activePillars: [Pillar]
+    ) -> some View {
         HStack(spacing: AgentSpacing.x3) {
             Circle()
-                .fill(pillar(for: brief).map { Color(agentHex: $0.resolvedColorHex(in: pillars)) } ?? .agentSecondary)
+                .fill(candidate.pillar.map {
+                    Color(agentHex: $0.resolvedColorHex(in: activePillars))
+                } ?? .agentSecondary)
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                Text(displayTitle(for: output, brief: brief))
+                Text(displayTitle(for: candidate.output, brief: candidate.brief))
                     .font(.agentBody.weight(.semibold))
                     .foregroundStyle(Color.agentText)
                     .lineLimit(2)
-                Text(postMetadata(output: output, brief: brief))
+                Text(postMetadata(candidate: candidate))
                     .font(.agentMetadata)
                     .foregroundStyle(Color.agentSecondary)
                     .lineLimit(1)
@@ -1235,22 +1464,16 @@ struct PostTaskCreationFlow: View {
         .contentShape(.rect)
     }
 
-    private func brief(for output: PlatformOutput) -> CreativeBrief? {
-        briefs.first { $0.id == output.briefID }
-    }
-
-    private func pillar(for brief: CreativeBrief) -> Pillar? {
-        brief.pillarID.flatMap { id in pillars.first { $0.id == id } }
-    }
-
     private func displayTitle(for output: PlatformOutput, brief: CreativeBrief) -> String {
         let override = output.titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         return override.isEmpty ? brief.title : override
     }
 
-    private func postMetadata(output: PlatformOutput, brief: CreativeBrief) -> String {
-        let date = output.targetDate?.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) ?? "No date"
-        return [pillar(for: brief)?.name ?? "Unfiled", output.platform.title, date]
+    private func postMetadata(candidate: PostTaskCreationCandidate) -> String {
+        let date = candidate.output.targetDate?.formatted(
+            .dateTime.weekday(.abbreviated).month(.abbreviated).day()
+        ) ?? "No date"
+        return [candidate.pillar?.name ?? "Unfiled", candidate.output.platform.title, date]
             .joined(separator: " · ")
     }
 }
@@ -1278,6 +1501,9 @@ private struct LinkedPostTaskComposer: View {
         self.onSaved = onSaved
         _includeDate = State(initialValue: output.targetDate != nil)
         _date = State(initialValue: output.targetDate ?? Date())
+        _showDueDatePicker = State(
+            initialValue: TaskRuntimeFixture.requestsCaptureDueDateEditor()
+        )
     }
 
     var body: some View {
@@ -1368,7 +1594,8 @@ private struct LinkedPostTaskComposer: View {
             CaptureTaskDueDateSheet(
                 date: $date,
                 hasDueDate: $includeDate,
-                includesTime: $includesTime
+                includesTime: $includesTime,
+                allowsRemoval: TaskDueDatePolicy.allowsRemoval(recurrence: recurrence)
             )
             .presentationDetents([.large])
         }
@@ -1394,38 +1621,20 @@ private struct LinkedPostTaskComposer: View {
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanTitle.isEmpty else { return }
         let targetDate = includeDate ? date : nil
-        guard let task = appModel.createTask(
+        guard appModel.createLinkedPostTask(
             title: cleanTitle,
-            kind: .planning,
-            lane: .production,
+            notes: notes,
             priority: priority,
             targetDate: targetDate,
             includesTargetTime: includeDate && includesTime,
             recurrence: recurrence,
             briefID: brief.id,
-            pillarID: brief.pillarID,
-            platformOutputID: output.id,
+            outputID: output.id,
+            subtasks: subtasks.map {
+                TaskCreationSubtaskDraft(title: $0.title, isCompleted: $0.isCompleted)
+            },
             context: context
-        ) else { return }
-
-        task.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        for draft in subtasks {
-            let subtaskTitle = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !subtaskTitle.isEmpty,
-                  let subtask = appModel.createSubtask(title: subtaskTitle, parent: task, context: context)
-            else { continue }
-            if draft.isCompleted {
-                subtask.isCompleted = true
-                subtask.completedAt = Date()
-            }
-        }
-        do {
-            try context.save()
-        } catch {
-            context.rollback()
-            appModel.notice = .error("Couldn’t save this task. Try again.")
-            return
-        }
+        ) != nil else { return }
         onSaved()
     }
 }
@@ -1729,10 +1938,9 @@ struct TaskDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Bindable var task: CreatorTask
-    @Query(sort: \CreatorTask.createdAt) private var allTasks: [CreatorTask]
-    @Query private var briefs: [CreativeBrief]
-    @Query(sort: \PlatformOutput.createdAt) private var outputs: [PlatformOutput]
+    @Query private var subtasks: [CreatorTask]
     @Query private var pillars: [Pillar]
+    @Query(sort: \CreatorWorkspace.sortOrder) private var workspaces: [CreatorWorkspace]
     @State private var isAddingSubtask = false
     @State private var newSubtaskTitle = ""
     @State private var showCompletedSubtasks = false
@@ -1742,21 +1950,23 @@ struct TaskDetailView: View {
     @State private var newSubtaskFocused = false
     @State private var textDraft: TaskTextDraft
     @State private var showTaskOptions = false
+    @State private var exitState = TaskDetailExitState.editing
     private static let subtaskComposerID = "task-detail-subtask-composer"
 
     init(task: CreatorTask) {
         self.task = task
+        let parentTaskID = task.id
+        _subtasks = Query(
+            filter: #Predicate<CreatorTask> { $0.parentTaskID == parentTaskID },
+            sort: \CreatorTask.sortOrder
+        )
         _textDraft = State(initialValue: TaskTextDraft(title: task.title, notes: task.notes))
+        _showDueDateEditor = State(initialValue: TaskRuntimeFixture.requestsDueDateEditor())
     }
 
-    private var subtasks: [CreatorTask] { allTasks.filter { $0.parentTaskID == task.id }.sorted { $0.sortOrder < $1.sortOrder } }
     private var completedSubtasks: [CreatorTask] { subtasks.filter(\.isCompleted) }
     private var visibleSubtasks: [CreatorTask] {
         showCompletedSubtasks ? subtasks : subtasks.filter { !$0.isCompleted }
-    }
-    private var linkedOutput: PlatformOutput? { TaskLinkedPostPolicy.output(for: task, in: outputs) }
-    private var linkedBrief: CreativeBrief? {
-        (task.briefID ?? linkedOutput?.briefID).flatMap { id in briefs.first { $0.id == id } }
     }
     private var isLinkedPostTask: Bool { task.briefID != nil || task.platformOutputID != nil }
     private var isDailyFocusLocked: Bool { task.dailyFocusDate != nil }
@@ -1794,22 +2004,8 @@ struct TaskDetailView: View {
 
                 TaskNotesDraftField(draft: textDraft)
 
-                if let linkedBrief {
-                    VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                        MetaLabel("Linked post")
-                        NavigationLink {
-                            if let linkedOutput {
-                                PostOutputDetailView(brief: linkedBrief, output: linkedOutput)
-                            } else {
-                                IdeaPostDraftView(brief: linkedBrief)
-                            }
-                        } label: {
-                            Text(linkedBrief.title)
-                        }
-                        .font(.agentBody.weight(.semibold))
-                        .foregroundStyle(Color.agentText)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }
+                if isLinkedPostTask {
+                    TaskLinkedPostSection(task: task)
                 }
 
                 VStack(alignment: .leading, spacing: 0) {
@@ -1911,18 +2107,10 @@ struct TaskDetailView: View {
             Button("Cancel", role: .cancel) {}
         }
         .onDisappear {
-            commitTextDraft()
-            if task.focusTaskTemplateID != nil,
-               originalFocusTemplateSignature.map({ $0 != focusTemplateSignature }) == true {
-                task.isFocusTemplateCustomized = true
-            }
-            do {
-                try context.save()
-            } catch {
-                // The view is already gone; the notice is the only channel left.
-                appModel.notice = .error("Couldn’t save your task edits. Reopen the task to retry.")
-            }
-            appModel.queueCalendarSync(context: context)
+            guard TaskDetailExitPolicy.shouldPersistOnDisappear(state: exitState) else { return }
+            persistEdits(
+                failureMessage: "Couldn’t save your task edits. Reopen the task to retry."
+            )
         }
         .onAppear {
             if originalFocusTemplateSignature == nil {
@@ -1930,7 +2118,11 @@ struct TaskDetailView: View {
             }
         }
         .confirmationDialog("Delete this task?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Delete task", role: .destructive) { appModel.deleteTask(task, context: context); dismiss() }
+            Button("Delete task", role: .destructive) {
+                guard appModel.deleteTask(task, context: context) else { return }
+                exitState = .deleted
+                dismiss()
+            }
         } message: { Text("This also deletes its subtasks.") }
         .sheet(isPresented: $showDueDateEditor) {
             TaskDueDateEditor(task: task)
@@ -1963,16 +2155,19 @@ struct TaskDetailView: View {
     private var overdueActions: some View {
         HStack(spacing: AgentSpacing.x2) {
             overdueAction("Complete", isPrimary: true) {
-                appModel.toggleTask(task, context: context)
-                dismiss()
+                performActionAndDismiss {
+                    appModel.toggleTask(task, context: context)
+                }
             }
             overdueAction("Move to today") {
-                appModel.moveTaskToToday(task, context: context)
-                dismiss()
+                performActionAndDismiss {
+                    appModel.moveTaskToToday(task, context: context)
+                }
             }
             overdueAction("Skip") {
-                appModel.skipTask(task, context: context)
-                dismiss()
+                performActionAndDismiss {
+                    appModel.skipTask(task, context: context)
+                }
             }
         }
         .padding(AgentSpacing.x2)
@@ -2006,7 +2201,13 @@ struct TaskDetailView: View {
         .buttonStyle(.plain)
     }
 
-    private var activePillars: [Pillar] { pillars.filter { !$0.isArchived } }
+    private var activePillars: [Pillar] {
+        TaskDetailPillarPolicy.activePillars(
+            from: pillars,
+            taskWorkspaceID: task.workspaceID,
+            workspaces: workspaces
+        )
+    }
     private var selectedPillar: Pillar? { activePillars.first { $0.id == task.pillarID } }
     private var dueDateLabel: String {
         guard let date = task.targetDate ?? task.dailyFocusDate else { return "No due date" }
@@ -2125,25 +2326,50 @@ struct TaskDetailView: View {
     }
 
     private func saveAndDismiss() {
-        commitTextDraft()
-        do {
-            try context.save()
-        } catch {
-            appModel.notice = .error("Couldn’t save this task. Try again.")
-            return
-        }
-        appModel.queueCalendarSync(context: context)
+        guard persistEdits(failureMessage: "Couldn’t save this task. Try again.") else { return }
+        exitState = .persisted
         dismiss()
     }
 
     private func duplicate() {
         commitTextDraft()
-        context.insert(CreatorTask(briefID: task.briefID, pillarID: task.pillarID, platformOutputID: task.platformOutputID, title: "\(task.title) copy", kind: task.kind, lane: task.lane, priority: task.priority.normalized, notes: task.notes, targetDate: task.targetDate, includesTargetTime: task.includesTargetTime, dailyFocusDate: task.dailyFocusDate, dailyFocusTitle: task.dailyFocusTitle, dailyFocusTemplateEntryID: task.dailyFocusTemplateEntryID))
+        context.insert(TaskDetailDuplicationPolicy.copy(of: task))
+        do {
+            try context.save()
+            appModel.queueCalendarSync(context: context)
+        } catch {
+            context.rollback()
+            appModel.notice = .error("Couldn’t duplicate this task. Try again.")
+        }
+    }
+
+    @discardableResult
+    private func persistEdits(failureMessage: String) -> Bool {
+        commitTextDraft()
+        markFocusTemplateCustomizedIfNeeded()
         do {
             try context.save()
         } catch {
             context.rollback()
-            appModel.notice = .error("Couldn’t duplicate this task. Try again.")
+            appModel.notice = .error(failureMessage)
+            return false
+        }
+        appModel.queueCalendarSync(context: context)
+        return true
+    }
+
+    private func performActionAndDismiss(_ action: () -> Bool) {
+        commitTextDraft()
+        markFocusTemplateCustomizedIfNeeded()
+        guard action() else { return }
+        exitState = .persisted
+        dismiss()
+    }
+
+    private func markFocusTemplateCustomizedIfNeeded() {
+        if task.focusTaskTemplateID != nil,
+           originalFocusTemplateSignature.map({ $0 != focusTemplateSignature }) == true {
+            task.isFocusTemplateCustomized = true
         }
     }
 
@@ -2295,7 +2521,11 @@ private struct TaskDueDateEditor: View {
     init(task: CreatorTask) {
         self.task = task
         let initialDate = task.targetDate ?? task.dailyFocusDate ?? Date()
-        _hasDate = State(initialValue: task.targetDate != nil || task.dailyFocusDate != nil)
+        _hasDate = State(initialValue: TaskDueDatePolicy.initialHasDate(
+            targetDate: task.targetDate,
+            dailyFocusDate: task.dailyFocusDate,
+            recurrence: task.recurrence
+        ))
         _includesTime = State(initialValue: task.includesTargetTime)
         _date = State(initialValue: initialDate)
     }
@@ -2316,6 +2546,13 @@ private struct TaskDueDateEditor: View {
                         Toggle("Set a due date", isOn: $hasDate)
                             .font(.agentBody.weight(.semibold))
                             .tint(Color.actionAccent)
+                            .disabled(!TaskDueDatePolicy.allowsRemoval(recurrence: task.recurrence))
+
+                        if !TaskDueDatePolicy.allowsRemoval(recurrence: task.recurrence) {
+                            Text("Repeating tasks need a due date.")
+                                .font(.agentSubtext)
+                                .foregroundStyle(Color.agentSecondary)
+                        }
 
                         if hasDate {
                             PillarCalendarDatePicker(date: $date, pillarMarkers: [])
@@ -2334,7 +2571,7 @@ private struct TaskDueDateEditor: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Set date", action: apply)
+                    Button(hasDate ? "Set date" : "Remove date", action: apply)
                         .fontWeight(.semibold)
                 }
             }
@@ -2343,16 +2580,17 @@ private struct TaskDueDateEditor: View {
     }
 
     private func apply() {
-        if let focusDate = task.dailyFocusDate {
-            task.targetDate = date(on: focusDate, usingTimeFrom: date, includesTime: includesTime)
-        } else {
-            task.targetDate = hasDate
-                ? date(on: date, usingTimeFrom: date, includesTime: includesTime)
-                : nil
-        }
-        task.includesTargetTime = hasDate && includesTime
         do {
-            try context.save()
+            try TaskDueDatePolicy.apply(
+                to: task,
+                hasDate: hasDate,
+                selectedDate: date,
+                includesTime: includesTime,
+                persist: context.save
+            )
+        } catch TaskDueDatePolicy.Error.recurringRequiresDate {
+            appModel.notice = .info("Repeating tasks need a due date.")
+            return
         } catch {
             appModel.notice = .error("Couldn’t save this date. Try again.")
             return
@@ -2382,13 +2620,4 @@ private struct TaskDueDateEditor: View {
         }
     }
 
-    private func date(on day: Date, usingTimeFrom timeSource: Date, includesTime: Bool) -> Date {
-        let calendar = Calendar.current
-        guard includesTime else { return calendar.startOfDay(for: day) }
-        let time = calendar.dateComponents([.hour, .minute], from: timeSource)
-        var components = calendar.dateComponents([.year, .month, .day], from: day)
-        components.hour = time.hour
-        components.minute = time.minute
-        return calendar.date(from: components) ?? day
-    }
 }

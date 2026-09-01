@@ -25,7 +25,10 @@ enum PreviewData {
         )
         context.insert(profile)
         var previewWorkspace: CreatorWorkspace?
-        if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewPillarPalette") || ideaBankState != nil {
+        if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewPillarPalette")
+            || PlanRuntimeFixture.requestsEpisodeSlotActions(arguments: ProcessInfo.processInfo.arguments)
+            || PlanRuntimeFixture.requestsAddLivePost(arguments: ProcessInfo.processInfo.arguments)
+            || ideaBankState != nil {
             let workspace = CreatorWorkspace(
                 profileID: profile.id,
                 name: "@maya",
@@ -259,8 +262,127 @@ enum PreviewData {
                 eventDate: filmingTask.targetDate
             ))
         }
+        let previewArguments = ProcessInfo.processInfo.arguments
+        if PlanRuntimeFixture.requestsDailyFocusDetail(arguments: previewArguments)
+            || PlanRuntimeFixture.requestsDailyFocusEditor(arguments: previewArguments) {
+            seedDailyFocusDetail(context)
+        }
+        if PlanRuntimeFixture.requestsEpisodeSlotActions(arguments: previewArguments) {
+            seedEpisodeSlotActions(
+                context,
+                workspaceID: previewWorkspace?.id,
+                pillarID: systemsPillar.id
+            )
+        }
         context.insert(WeekPlan(weekStart: Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date(), rhythmEntriesText: "Monday: choose one idea\nWednesday: film\nFriday: edit and post"))
         try? context.save()
+    }
+
+    private static func seedDailyFocusDetail(_ context: ModelContext) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let weekday = PillarWeekday(rawValue: calendar.component(.weekday, from: today)) else {
+            return
+        }
+        let review = DailyFocusTaskTemplateDefinition(
+            focusKind: .planning,
+            title: "Review your backlog",
+            priority: .high,
+            sortOrder: 0
+        )
+        let schedule = DailyFocusTaskTemplateDefinition(
+            focusKind: .planning,
+            title: "Structure and schedule your next post",
+            sortOrder: 1
+        )
+        let focus = DailyFocusTemplateEntry(
+            weekday: weekday,
+            kind: .planning,
+            title: "Planning",
+            durationMinutes: 90,
+            startMinutesFromMidnight: 9 * 60
+        )
+        focus.focusTaskTemplates = [review, schedule]
+        context.insert(focus)
+
+        let completed = CreatorTask(
+            title: review.title,
+            kind: .planning,
+            lane: .production,
+            priority: review.priority,
+            targetDate: today,
+            includesTargetTime: false,
+            dailyFocusDate: today,
+            dailyFocusTitle: focus.title,
+            dailyFocusTemplateEntryID: focus.id,
+            focusTaskTemplateID: review.id,
+            sortOrder: 0
+        )
+        completed.isCompleted = true
+        completed.completedAt = Date()
+        context.insert(completed)
+        context.insert(CreatorTask(
+            title: schedule.title,
+            kind: .planning,
+            lane: .production,
+            targetDate: today,
+            includesTargetTime: false,
+            dailyFocusDate: today,
+            dailyFocusTitle: focus.title,
+            dailyFocusTemplateEntryID: focus.id,
+            focusTaskTemplateID: schedule.id,
+            sortOrder: 1
+        ))
+        context.insert(DailyFocusDayDetail(
+            date: today,
+            note: "Keep the plan small enough to finish."
+        ))
+    }
+
+    private static func seedEpisodeSlotActions(
+        _ context: ModelContext,
+        workspaceID: UUID?,
+        pillarID: UUID
+    ) {
+        let calendar = Calendar.current
+        let plannedDate = calendar.date(
+            bySettingHour: 12,
+            minute: 0,
+            second: 0,
+            of: calendar.date(byAdding: .day, value: 3, to: Date()) ?? Date()
+        ) ?? Date()
+        let series = ContentSeries(
+            workspaceID: workspaceID,
+            name: "Creator Systems Weekly",
+            pillarID: pillarID,
+            platform: .instagramReels,
+            durationSeconds: 60
+        )
+        series.taskTemplate = [
+            SeriesTaskTemplateItem(
+                title: "Outline this episode",
+                kind: .scripting,
+                priority: .high,
+                estimatedMinutes: 30,
+                sortOrder: 0
+            )
+        ]
+        context.insert(series)
+        context.insert(SeriesEpisodeSlot(
+            workspaceID: workspaceID,
+            seriesID: series.id,
+            plannedDate: plannedDate
+        ))
+
+        let idea = CreativeBrief(
+            title: "The planning habit that finally stuck",
+            premise: "Show the small planning loop that is easy to repeat.",
+            status: .spark
+        )
+        idea.workspaceID = workspaceID
+        idea.ideaBankPlacement = .idea
+        idea.pillarID = pillarID
+        context.insert(idea)
     }
 
     private static func makePostMediaPreviewData() -> Data? {
