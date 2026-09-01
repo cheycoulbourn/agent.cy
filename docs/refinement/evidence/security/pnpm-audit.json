@@ -1,0 +1,449 @@
+{
+  "advisories": {
+    "1124063": {
+      "findings": [
+        {
+          "version": "4.1.0",
+          "paths": [
+            "server>fastify>@fastify/fast-json-stringify-compiler>fast-json-stringify>fast-uri",
+            "server>fastify>fast-json-stringify>fast-uri"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1124063,
+      "title": "fast-uri vulnerable to host confusion via literal backslash authority delimiter",
+      "module_name": "fast-uri",
+      "vulnerable_versions": ">=4.0.0 <=4.1.0",
+      "patched_versions": ">=4.1.1",
+      "severity": "high",
+      "cwe": "CWE-436",
+      "github_advisory_id": "GHSA-v2hh-gcrm-f6hx",
+      "url": "https://github.com/advisories/GHSA-v2hh-gcrm-f6hx"
+    },
+    "1124064": {
+      "findings": [
+        {
+          "version": "3.1.3",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>ajv>fast-uri",
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>ajv-formats>ajv>fast-uri",
+            "mcp>@modelcontextprotocol/sdk>ajv>fast-uri",
+            "mcp>@modelcontextprotocol/sdk>ajv-formats>ajv>fast-uri",
+            "server>fastify>@fastify/ajv-compiler>ajv>fast-uri",
+            "server>fastify>@fastify/ajv-compiler>ajv-formats>ajv>fast-uri",
+            "server>fastify>@fastify/ajv-compiler>fast-uri",
+            "server>fastify>@fastify/fast-json-stringify-compiler>fast-json-stringify>ajv>fast-uri",
+            "server>fastify>@fastify/fast-json-stringify-compiler>fast-json-stringify>ajv-formats>ajv>fast-uri",
+            "server>fastify>fast-json-stringify>ajv>fast-uri",
+            "server>fastify>fast-json-stringify>ajv-formats>ajv>fast-uri"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1124064,
+      "title": "fast-uri vulnerable to host confusion via literal backslash authority delimiter",
+      "module_name": "fast-uri",
+      "vulnerable_versions": ">=3.0.0 <=3.1.3",
+      "patched_versions": ">=3.1.4",
+      "severity": "high",
+      "cwe": "CWE-436",
+      "github_advisory_id": "GHSA-v2hh-gcrm-f6hx",
+      "url": "https://github.com/advisories/GHSA-v2hh-gcrm-f6hx"
+    },
+    "1124273": {
+      "findings": [
+        {
+          "version": "9.6.0",
+          "paths": [
+            "server>fastify>find-my-way"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1124273,
+      "title": "find-my-way: DDoS with HTTP2",
+      "module_name": "find-my-way",
+      "vulnerable_versions": "<=9.6.0",
+      "patched_versions": ">=9.6.1",
+      "severity": "high",
+      "cwe": "CWE-1321",
+      "github_advisory_id": "GHSA-c96f-x56v-gq3h",
+      "url": "https://github.com/advisories/GHSA-c96f-x56v-gq3h"
+    },
+    "1130709": {
+      "findings": [
+        {
+          "version": "8.5.16",
+          "paths": [
+            "contracts>vitest>@vitest/mocker>vite>postcss",
+            "contracts>vitest>vite>postcss",
+            "mcp>vitest>@vitest/mocker>vite>postcss",
+            "mcp>vitest>vite>postcss",
+            "server>vitest>@vitest/mocker>vite>postcss",
+            "server>vitest>vite>postcss"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1130709,
+      "title": "PostCSS: incomplete fix of GHSA-6g55-p6wh-862q — attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset",
+      "module_name": "postcss",
+      "vulnerable_versions": "<=8.5.22",
+      "patched_versions": ">=8.5.23",
+      "severity": "moderate",
+      "cwe": "CWE-22, CWE-200",
+      "github_advisory_id": "GHSA-fxqj-rqcc-2cmp",
+      "url": "https://github.com/advisories/GHSA-fxqj-rqcc-2cmp"
+    },
+    "1130719": {
+      "findings": [
+        {
+          "version": "4.1.0",
+          "paths": [
+            "server>fastify>@fastify/fast-json-stringify-compiler>fast-json-stringify>fast-uri",
+            "server>fastify>fast-json-stringify>fast-uri"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1130719,
+      "title": "fast-uri vulnerable to host confusion via backslash authority introducer",
+      "module_name": "fast-uri",
+      "vulnerable_versions": ">=4.0.0 <4.1.2",
+      "patched_versions": ">=4.1.2",
+      "severity": "high",
+      "cwe": "CWE-436",
+      "github_advisory_id": "GHSA-7p8r-x3mc-p8w7",
+      "url": "https://github.com/advisories/GHSA-7p8r-x3mc-p8w7"
+    },
+    "1130720": {
+      "findings": [
+        {
+          "version": "3.1.3",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>ajv>fast-uri",
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>ajv-formats>ajv>fast-uri",
+            "mcp>@modelcontextprotocol/sdk>ajv>fast-uri",
+            "mcp>@modelcontextprotocol/sdk>ajv-formats>ajv>fast-uri",
+            "server>fastify>@fastify/ajv-compiler>ajv>fast-uri",
+            "server>fastify>@fastify/ajv-compiler>ajv-formats>ajv>fast-uri",
+            "server>fastify>@fastify/ajv-compiler>fast-uri",
+            "server>fastify>@fastify/fast-json-stringify-compiler>fast-json-stringify>ajv>fast-uri",
+            "server>fastify>@fastify/fast-json-stringify-compiler>fast-json-stringify>ajv-formats>ajv>fast-uri",
+            "server>fastify>fast-json-stringify>ajv>fast-uri",
+            "server>fastify>fast-json-stringify>ajv-formats>ajv>fast-uri"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1130720,
+      "title": "fast-uri vulnerable to host confusion via backslash authority introducer",
+      "module_name": "fast-uri",
+      "vulnerable_versions": ">=3.0.0 <3.1.5",
+      "patched_versions": ">=3.1.5",
+      "severity": "high",
+      "cwe": "CWE-436",
+      "github_advisory_id": "GHSA-7p8r-x3mc-p8w7",
+      "url": "https://github.com/advisories/GHSA-7p8r-x3mc-p8w7"
+    },
+    "1130722": {
+      "findings": [
+        {
+          "version": "10.2.0",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>express-rate-limit>ip-address",
+            "mcp>@modelcontextprotocol/sdk>express-rate-limit>ip-address"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1130722,
+      "title": "ip-address: Address4 decodes leading-zero octets as decimal while resolvers decode them as octal, allowing SSRF and trust-boundary bypass",
+      "module_name": "ip-address",
+      "vulnerable_versions": "<=10.3.0",
+      "patched_versions": ">=10.3.1",
+      "severity": "high",
+      "cwe": "CWE-20, CWE-918",
+      "github_advisory_id": "GHSA-mwp4-54f8-5fhr",
+      "url": "https://github.com/advisories/GHSA-mwp4-54f8-5fhr"
+    },
+    "1130723": {
+      "findings": [
+        {
+          "version": "10.2.0",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>express-rate-limit>ip-address",
+            "mcp>@modelcontextprotocol/sdk>express-rate-limit>ip-address"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1130723,
+      "title": "ip-address: a CIDR suffix on the parsed address suppresses special-use classification and can bypass SSRF and trust-boundary checks",
+      "module_name": "ip-address",
+      "vulnerable_versions": ">=10.1.1 <=10.2.1",
+      "patched_versions": ">=10.2.2",
+      "severity": "moderate",
+      "cwe": "CWE-20, CWE-918",
+      "github_advisory_id": "GHSA-4xrf-jv44-h6hh",
+      "url": "https://github.com/advisories/GHSA-4xrf-jv44-h6hh"
+    },
+    "1130724": {
+      "findings": [
+        {
+          "version": "10.2.0",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>express-rate-limit>ip-address",
+            "mcp>@modelcontextprotocol/sdk>express-rate-limit>ip-address"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1130724,
+      "title": "ip-address: misclassification of IPv4-mapped/NAT64 IPv6 addresses can bypass SSRF and trust-boundary checks",
+      "module_name": "ip-address",
+      "vulnerable_versions": ">=10.1.1 <=10.2.0",
+      "patched_versions": ">=10.2.1",
+      "severity": "moderate",
+      "cwe": "CWE-20, CWE-918",
+      "github_advisory_id": "GHSA-22jq-vg5j-6vgg",
+      "url": "https://github.com/advisories/GHSA-22jq-vg5j-6vgg"
+    },
+    "1130733": {
+      "findings": [
+        {
+          "version": "4.12.30",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>hono",
+            "mcp>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@modelcontextprotocol/sdk>hono"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1130733,
+      "title": "Hono: ReDoS in CORS middleware via Access-Control-Request-Headers",
+      "module_name": "hono",
+      "vulnerable_versions": "<4.12.34",
+      "patched_versions": ">=4.12.34",
+      "severity": "moderate",
+      "cwe": "CWE-1333",
+      "github_advisory_id": "GHSA-8j4g-w8fx-2239",
+      "url": "https://github.com/advisories/GHSA-8j4g-w8fx-2239"
+    },
+    "1138771": {
+      "findings": [
+        {
+          "version": "4.12.30",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>hono",
+            "mcp>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@modelcontextprotocol/sdk>hono"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1138771,
+      "title": "Hono: `memo()` retains SSR output across requests, leading to cross-user data disclosure",
+      "module_name": "hono",
+      "vulnerable_versions": ">=3.8.0 <4.12.34",
+      "patched_versions": ">=4.12.34",
+      "severity": "moderate",
+      "cwe": "CWE-488",
+      "github_advisory_id": "GHSA-f23p-vx2j-j53r",
+      "url": "https://github.com/advisories/GHSA-f23p-vx2j-j53r"
+    },
+    "1138772": {
+      "findings": [
+        {
+          "version": "4.12.30",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>hono",
+            "mcp>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@modelcontextprotocol/sdk>hono"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1138772,
+      "title": "Hono: Proxy Helper does not remove response headers listed in the `Connection` header",
+      "module_name": "hono",
+      "vulnerable_versions": ">=4.7.0 <4.12.34",
+      "patched_versions": ">=4.12.34",
+      "severity": "low",
+      "cwe": "CWE-200",
+      "github_advisory_id": "GHSA-79qm-7rj5-m7r9",
+      "url": "https://github.com/advisories/GHSA-79qm-7rj5-m7r9"
+    },
+    "1138773": {
+      "findings": [
+        {
+          "version": "4.12.30",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>hono",
+            "mcp>@modelcontextprotocol/sdk>@hono/node-server>hono",
+            "mcp>@modelcontextprotocol/sdk>hono"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1138773,
+      "title": "Hono: Algorithmic Complexity DoS in Language Middleware",
+      "module_name": "hono",
+      "vulnerable_versions": ">=4.12.0 <4.12.34",
+      "patched_versions": ">=4.12.34",
+      "severity": "moderate",
+      "cwe": "CWE-407",
+      "github_advisory_id": "GHSA-54fx-42gc-7vw4",
+      "url": "https://github.com/advisories/GHSA-54fx-42gc-7vw4"
+    },
+    "1138811": {
+      "findings": [
+        {
+          "version": "3.3.15",
+          "paths": [
+            "contracts>vitest>@vitest/mocker>vite>postcss>nanoid",
+            "contracts>vitest>vite>postcss>nanoid",
+            "mcp>vitest>@vitest/mocker>vite>postcss>nanoid",
+            "mcp>vitest>vite>postcss>nanoid",
+            "server>vitest>@vitest/mocker>vite>postcss>nanoid",
+            "server>vitest>vite>postcss>nanoid"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1138811,
+      "title": "nanoid: non-secure generators can loop indefinitely with negative size",
+      "module_name": "nanoid",
+      "vulnerable_versions": "<3.3.16",
+      "patched_versions": ">=3.3.16",
+      "severity": "high",
+      "cwe": "CWE-835",
+      "github_advisory_id": "GHSA-28wg-ghj8-5hjv",
+      "url": "https://github.com/advisories/GHSA-28wg-ghj8-5hjv"
+    },
+    "1139322": {
+      "findings": [
+        {
+          "version": "1.19.14",
+          "paths": [
+            "mcp>@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk>@hono/node-server",
+            "mcp>@modelcontextprotocol/sdk>@hono/node-server"
+          ],
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1139322,
+      "title": "Node.js Adapter for Hono: Path traversal in `serve-static` on Windows via encoded backslash (`%5C`)",
+      "module_name": "@hono/node-server",
+      "vulnerable_versions": "<1.19.15",
+      "patched_versions": ">=1.19.15",
+      "severity": "moderate",
+      "cwe": "CWE-22",
+      "github_advisory_id": "GHSA-frvp-7c67-39w9",
+      "url": "https://github.com/advisories/GHSA-frvp-7c67-39w9"
+    },
+    "1139427": {
+      "findings": [
+        {
+          "version": "3.3.15",
+          "paths": [
+            "contracts>vitest>@vitest/mocker>vite>postcss>nanoid",
+            "contracts>vitest>vite>postcss>nanoid",
+            "mcp>vitest>@vitest/mocker>vite>postcss>nanoid",
+            "mcp>vitest>vite>postcss>nanoid",
+            "server>vitest>@vitest/mocker>vite>postcss>nanoid",
+            "server>vitest>vite>postcss>nanoid"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1139427,
+      "title": "nanoid: custom generators can loop indefinitely when size is zero",
+      "module_name": "nanoid",
+      "vulnerable_versions": "<3.3.18",
+      "patched_versions": ">=3.3.18",
+      "severity": "high",
+      "cwe": "CWE-835",
+      "github_advisory_id": "GHSA-2v37-7h3g-55p8",
+      "url": "https://github.com/advisories/GHSA-2v37-7h3g-55p8"
+    },
+    "1139510": {
+      "findings": [
+        {
+          "version": "8.5.16",
+          "paths": [
+            "contracts>vitest>@vitest/mocker>vite>postcss",
+            "contracts>vitest>vite>postcss",
+            "mcp>vitest>@vitest/mocker>vite>postcss",
+            "mcp>vitest>vite>postcss",
+            "server>vitest>@vitest/mocker>vite>postcss",
+            "server>vitest>vite>postcss"
+          ],
+          "dev": true,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "id": 1139510,
+      "title": "PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure",
+      "module_name": "postcss",
+      "vulnerable_versions": "<=8.5.17",
+      "patched_versions": ">=8.5.18",
+      "severity": "high",
+      "cwe": "CWE-22",
+      "github_advisory_id": "GHSA-r28c-9q8g-f849",
+      "url": "https://github.com/advisories/GHSA-r28c-9q8g-f849"
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 1,
+      "moderate": 7,
+      "high": 9,
+      "critical": 0
+    },
+    "dependencies": 143,
+    "devDependencies": 137,
+    "optionalDependencies": 93,
+    "totalDependencies": 288
+  }
+}
