@@ -266,12 +266,12 @@ struct MCPDesktopReviewView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title.uppercased())
-                    .font(.caption.weight(.semibold))
+                    .font(.agentMetadata)
                     .tracking(0.6)
                     .foregroundStyle(Color.agentSecondary)
                 Spacer()
                 Text("\(count)")
-                    .font(.caption.monospacedDigit())
+                    .font(.agentMetadata.monospacedDigit())
                     .foregroundStyle(Color.agentSecondary)
             }
             .accessibilityElement(children: .combine)
@@ -354,7 +354,7 @@ struct MCPDesktopReviewView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.agentSubtext)
                     .foregroundStyle(Color.agentSecondary)
                     .lineLimit(1)
             }
@@ -470,12 +470,12 @@ struct MCPDesktopReviewView: View {
                                             .font(.subheadline)
                                             .foregroundStyle(Color.agentText)
                                         Text(episodeSubtitle(episode))
-                                            .font(.caption)
+                                            .font(.agentSubtext)
                                             .foregroundStyle(Color.agentSecondary)
                                     }
                                     Spacer()
                                     Image(systemName: "chevron.right")
-                                        .font(.caption)
+                                        .font(.agentSubtext)
                                         .foregroundStyle(Color.agentSecondary)
                                 }
                                 .padding(14)
@@ -642,7 +642,7 @@ struct MCPDesktopReviewView: View {
         if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Text(label.uppercased())
-                    .font(.caption2.weight(.semibold))
+                    .font(.agentMetadata)
                     .tracking(0.6)
                     .foregroundStyle(Color.agentSecondary)
                 Text(value)

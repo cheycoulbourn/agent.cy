@@ -436,7 +436,7 @@ struct InstallationInviteGate: View {
                         MetaLabel("Invitation code")
                             .accessibilityHidden(true)
                         TextField("Enter your pilot code", text: $inviteCode, axis: .vertical)
-                            .font(.agentBody.monospaced())
+                            .font(.agentBody)
                             .lineLimit(1...3)
                             .submitLabel(.go)
                             .onSubmit { submit() }

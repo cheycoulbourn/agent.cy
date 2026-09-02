@@ -838,7 +838,7 @@ private struct InspirationShareView: View {
                     .fill(Color.shareSuccess.opacity(0.14))
                     .frame(width: 72, height: 72)
                 Image(systemName: "checkmark")
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(.shareTitle)
                     .foregroundStyle(Color.shareSuccess)
             }
             VStack(spacing: ShareSpacing.x3) {
@@ -861,7 +861,7 @@ private struct InspirationShareView: View {
     private var unavailableView: some View {
         VStack(spacing: ShareSpacing.x5) {
             Image(systemName: "link.badge.plus")
-                .font(.system(size: 36, weight: .medium))
+                .font(.shareTitle)
                 .foregroundStyle(Color.shareSecondary)
             VStack(spacing: ShareSpacing.x2) {
                 Text("Share one public post")
@@ -886,7 +886,7 @@ private struct InspirationShareView: View {
                 ZStack {
                     Color.shareCanvas
                     Image(systemName: "link")
-                        .font(.system(size: 22, weight: .medium))
+                        .font(.shareHeadline)
                         .foregroundStyle(Color.shareSecondary)
                 }
             }
@@ -902,7 +902,7 @@ private struct InspirationShareView: View {
     private func outcomeRow(_ title: String, icon: String) -> some View {
         HStack(spacing: ShareSpacing.x3) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.shareBodyStrong)
                 .foregroundStyle(Color.shareCyText)
                 .frame(width: 24)
             Text(title)

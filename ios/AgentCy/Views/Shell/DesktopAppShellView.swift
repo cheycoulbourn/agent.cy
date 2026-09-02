@@ -337,7 +337,7 @@ struct DesktopAppShellView: View {
             appModel.appearancePreference = next
         } label: {
             Image(systemName: appearanceCycleSymbol)
-                .font(.system(size: 15, weight: .medium))
+                .font(.agentInter(size: 15, weight: .medium, relativeTo: .subheadline))
                 .foregroundStyle(Color.agentSecondary)
                 .frame(width: 36, height: 36)
                 .background(Color.agentText.opacity(0.04), in: .circle)

@@ -2,6 +2,6 @@
 # Regenerate with: scripts/check_design_review.sh --update-baseline
 sf_symbols=17
 animation_curves=19
-banned_fonts=171
+banned_fonts=166
 corner_radius=63
 pill_background=10
