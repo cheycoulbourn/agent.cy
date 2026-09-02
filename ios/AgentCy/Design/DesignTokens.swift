@@ -1287,6 +1287,11 @@ struct AgentDesktopPrimaryActionButtonStyle: ButtonStyle {
 /// Compact actions that sit directly above a desktop paper surface. They keep
 /// edit controls discoverable without competing with the content card.
 struct AgentDesktopQuietActionButtonStyle: ButtonStyle {
+    /// Reads the shared action-button token so this style tracks the same
+    /// contract as every other button family instead of drifting back to
+    /// `AgentRadius.control`.
+    static let radius = AgentActionButtonTheme.radius
+
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var isProminent = false
@@ -1309,7 +1314,7 @@ struct AgentDesktopQuietActionButtonStyle: ButtonStyle {
                         pressed: 1.0,
                         isPressed: configuration.isPressed
                     )),
-                in: .rect(cornerRadius: AgentRadius.control)
+                in: .rect(cornerRadius: Self.radius)
             )
             .opacity(isEnabled ? 1 : 0.42)
             .scaleEffect(AgentButtonPressFeedback.scale(
