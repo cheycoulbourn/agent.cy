@@ -63,23 +63,11 @@ struct CyProUpsellView: View {
             }
 
             VStack(spacing: AgentSpacing.x6) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.cyAccent, Color.cyAccent.opacity(0.78)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay {
-                            Circle().stroke(Color.onCyAccent.opacity(0.28), lineWidth: 1)
-                        }
-
+                AgentCyDisc(diameter: 86) {
                     ZStack {
-                        CyAsterisk(color: .onCyAccent, size: 38, strokeWidth: 2.2)
+                        CyAsterisk(color: .cyAccent, size: 38, strokeWidth: 2.2)
                         Circle()
-                            .fill(Color.onCyAccent.opacity(0.8))
+                            .fill(Color.cyAccent.opacity(0.8))
                             .frame(width: 5, height: 5)
                             .offset(y: -36)
                     }
@@ -89,7 +77,6 @@ struct CyProUpsellView: View {
                         value: isRotating
                     )
                 }
-                .frame(width: 86, height: 86)
 
                 VStack(spacing: AgentSpacing.x2) {
                     Text("Your content team, built in.")
@@ -263,7 +250,6 @@ struct QuickCaptureView: View {
     @State private var didSaveIdea = false
     @State private var didSavePost = false
     @State private var didHandleDismissal = false
-    @State private var isCyIdeaCardVisible = true
     @State private var quickPostDraft: QuickPostDraft?
     @State private var showPostDevelopment = false
     @State private var showAccess = false
@@ -429,6 +415,15 @@ struct QuickCaptureView: View {
                     appModel.quickCaptureStartsWithIdeas = false
                     await loadIdeas()
                 }
+#if DEBUG
+                if QuickCaptureIdeasRuntimeFixture.requestsLoadedIdeas() {
+                    kind = .spark
+                    isCySuggestionsMode = true
+                    ideas = QuickCaptureIdeasRuntimeFixture.directions
+                    ideaPhase = .loaded
+                    selectedDetent = .large
+                }
+#endif
             }
             .onChange(of: kind) { _, newKind in
                 if newKind == .post { beginQuickPostDraft() }
@@ -977,94 +972,6 @@ struct QuickCaptureView: View {
                 }
             }
         }
-    }
-
-    private var cyIdeaPrompt: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x3) {
-            HStack(spacing: AgentSpacing.x2) {
-                CyAsterisk(color: .cyAccent, size: 14, strokeWidth: 1.4)
-                MetaLabel(ideas.isEmpty ? "Cy suggests" : "From Cy")
-                    .foregroundStyle(Color.cyAccent)
-                Spacer()
-                Button {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        isCyIdeaCardVisible = false
-                    }
-                } label: {
-                    AgentIconView(.close, size: 12)
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.agentSecondary)
-                .accessibilityLabel("Dismiss Cy suggestion")
-                .padding(.trailing, -12)
-                .padding(.vertical, -12)
-            }
-
-            Text(cyIdeaCardTitle)
-                .font(.agentHeadline)
-                .foregroundStyle(Color.agentText)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(cyIdeaCardMessage)
-                .font(.agentSubtext)
-                .foregroundStyle(Color.agentSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: AgentSpacing.x4) {
-                if ideas.isEmpty {
-                    Button {
-                        Task { await loadIdeas() }
-                    } label: {
-                        HStack(spacing: AgentSpacing.x2) {
-                            Text(isFindingIdeas ? "Finding ideas" : "Three ideas")
-                            if isFindingIdeas {
-                                CyThinkingMark(color: .cyAccentText, size: 14)
-                            } else {
-                                AgentIconView(.arrowRight, size: 11)
-                            }
-                        }
-                    }
-                    .buttonStyle(AgentQuietAccentButtonStyle(isFullWidth: false))
-                    .disabled(isFindingIdeas)
-                }
-
-                Button(action: openIdeaBank) {
-                    HStack(spacing: 6) {
-                        Text("Idea Bank")
-                        AgentIconView(.arrowRight, size: 11)
-                    }
-                    .font(.agentSubtext.weight(.medium))
-                    .foregroundStyle(Color.agentText)
-                    .frame(minHeight: 42)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(AgentSpacing.x4)
-        .background(Color.agentSurface, in: .rect(cornerRadius: 16))
-        .agentSurfaceChrome(
-            cornerRadius: 16,
-            borderColor: Color.cyAccent.opacity(0.24)
-        )
-    }
-
-    private var cyIdeaCardTitle: String {
-        if isFindingIdeas { return "I’m looking for your next angle." }
-        return ideas.isEmpty ? "Let’s find a stronger starting point." : "Three directions, shaped for you."
-    }
-
-    private var cyIdeaCardMessage: String {
-        if isFindingIdeas { return "I’m using your goals, pillars, and saved work. This should only take a moment."
-        }
-        return ideas.isEmpty
-            ? "I can give you three distinct ideas grounded in the work you already care about."
-            : "Save the ideas you want to keep. Unsaved directions disappear when you leave."
-    }
-
-    private func openIdeaBank() {
-        appModel.presentedSheet = nil
-        appModel.selectedTab = .ideaBank
     }
 
     private var taskTypeChooser: some View {
@@ -2351,3 +2258,45 @@ private struct AgentCaptureField: View {
         }
     }
 }
+
+#if DEBUG
+/// Headless route for the acceptance capture of the Cy suggestions state.
+///
+/// `-agentCyPreviewSheet quickCapture` alone lands on the empty New idea form,
+/// which carries none of the sites Task 6 touched. This flag drops the sheet
+/// straight into `ideaPhase == .loaded` with three fixed directions, so the
+/// `IdeaDirectionRow` cards (whose accent glow Task 6 deleted) are on record
+/// without calling the live Cy service.
+enum QuickCaptureIdeasRuntimeFixture {
+    static func requestsLoadedIdeas(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        arguments.contains("-agentCyPreviewQuickCaptureIdeas")
+    }
+
+    /// Stable ids so a capture rerun produces the same three cards.
+    static let directions: [IdeaDirection] = [
+        IdeaDirection(
+            id: UUID(uuidString: "3A1E0001-0000-4000-8000-000000000001")!,
+            title: "The quiet week nobody posts about",
+            premise: "Show the ordinary Tuesday behind the launch reel — the part your audience actually lives in.",
+            opening: "Everyone films the launch. Nobody films the Tuesday before it.",
+            assumption: "Your audience is tired of highlight reels and trusts process more than polish."
+        ),
+        IdeaDirection(
+            id: UUID(uuidString: "3A1E0001-0000-4000-8000-000000000002")!,
+            title: "One tool, three jobs",
+            premise: "Take the tool you reach for most and show the two uses nobody expects from it.",
+            opening: "You bought this for one thing. It quietly does three.",
+            assumption: "Practical range beats novelty for the people already following you."
+        ),
+        IdeaDirection(
+            id: UUID(uuidString: "3A1E0001-0000-4000-8000-000000000003")!,
+            title: "The advice you stopped giving",
+            premise: "Name a rule you used to repeat and explain what changed your mind about it.",
+            opening: "I told people this for two years. I was wrong about half of it.",
+            assumption: "Revising a public position reads as credibility, not as weakness."
+        )
+    ]
+}
+#endif

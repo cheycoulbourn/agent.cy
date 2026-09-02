@@ -112,12 +112,9 @@ struct MCPBridgeSettingsView: View {
             AgentInsetSurface {
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     HStack(alignment: .center, spacing: AgentSpacing.x3) {
-                        ZStack {
-                            Circle()
-                                .fill(localCyStatus?.isRecentlyAvailable == true ? Color.cyAccent : Color.agentCanvas)  // design-review-allow: accent-mark -- status dot
-                                .frame(width: 42, height: 42)
+                        AgentCyDisc(diameter: 42) {
                             CyAsterisk(
-                                color: localCyStatus?.isRecentlyAvailable == true ? .onCyAccent : .agentText,
+                                color: localCyStatus?.isRecentlyAvailable == true ? .cyAccent : .agentSecondary,
                                 size: 19,
                                 strokeWidth: 1.7
                             )
@@ -232,12 +229,9 @@ struct MCPBridgeSettingsView: View {
     private var connectionCard: some View {
         AgentInsetSurface {
             HStack(spacing: AgentSpacing.x4) {
-                ZStack {
-                    Circle()
-                        .fill(MCPBridgePreferences.isConnected ? Color.cyAccent : Color.agentCanvas)  // design-review-allow: accent-mark -- status dot
-                        .frame(width: 48, height: 48)
+                AgentCyDisc(diameter: 48) {
                     AgentIconView(.terminal, size: 18)
-                        .foregroundStyle(MCPBridgePreferences.isConnected ? Color.onCyAccent : Color.agentText)
+                        .foregroundStyle(MCPBridgePreferences.isConnected ? Color.cyAccent : Color.agentSecondary)
                 }
                 VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                     Text(MCPBridgePreferences.isConnected ? "Connected" : "Not connected")

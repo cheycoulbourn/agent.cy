@@ -438,7 +438,7 @@ struct AgentWalkthroughControlCue: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.cyAccent)  // design-review-allow: accent-mark -- the coach-mark dot
+                .fill(Color.cyAccent)  // design-review-allow: accent-mark -- coach-mark disc, drawn behind the glass control the tour points at, never behind a label
 
             Circle()
                 .stroke(Color.cyAccent.opacity(isExpanded ? 0.10 : 0.42), lineWidth: 2)
@@ -1029,6 +1029,58 @@ struct AgentQuietAccentIconLabel: View {
                         lineWidth: AgentQuietAccentTheme.borderWidth
                     )
             }
+    }
+}
+
+/// Metrics for `AgentCyDisc`, kept outside the generic type so a test (and a
+/// caller) can read the hairline without naming a glyph type.
+enum AgentCyDiscMetrics {
+    /// The same 0.75-pt hairline `agentSurfaceChrome` draws on every elevated
+    /// surface, so a Cy disc reads as chrome rather than as a coloured block.
+    static let borderWidth: CGFloat = 0.75
+}
+
+/// The Cy identity disc: a surface-coloured circle carrying a **brick glyph**.
+///
+/// Every round Cy avatar in the app used to be a solid `Color.cyAccent` disc
+/// with a white glyph punched out of it. design.md bans a solid accent fill at
+/// any size ("No solid accent fills, anywhere", 2026-08-14) — a 42-to-86-pt
+/// brick disc is a fill, not a mark, however identity-shaped its intent. This
+/// is the sanctioned replacement: the neutral surface plus the shared hairline
+/// carry the disc, and the brick appears only as the glyph inside it.
+///
+/// The glyph is a closure so the same disc can hold `CyAsterisk`, a rotating
+/// asterisk with its orbit dot, or an `AgentIconView` (the MCP bridge terminal)
+/// without three near-identical local ZStacks.
+struct AgentCyDisc<Glyph: View>: View {
+    private let diameter: CGFloat
+    private let fill: Color
+    private let border: Color
+    private let glyph: Glyph
+
+    init(
+        diameter: CGFloat,
+        fill: Color = .agentSurface,
+        border: Color = .agentBorder,
+        @ViewBuilder glyph: () -> Glyph
+    ) {
+        self.diameter = diameter
+        self.fill = fill
+        self.border = border
+        self.glyph = glyph()
+    }
+
+    var body: some View {
+        ZStack {
+            Circle().fill(fill)
+            glyph
+        }
+        .frame(width: diameter, height: diameter)
+        .overlay {
+            Circle()
+                .strokeBorder(border, lineWidth: AgentCyDiscMetrics.borderWidth)
+                .allowsHitTesting(false)
+        }
     }
 }
 

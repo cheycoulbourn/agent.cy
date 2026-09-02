@@ -57,8 +57,8 @@ RULE_PATTERNS=(
   'background\([^)]*Color\.(cyAccent|actionAccent)[^)]*in: *\.(capsule|circle)'
   'glassEffect\(.*in: *\.circle'
   '\.buttonStyle\(\.borderedProminent\)'
-  'background\([^)]*Color\.cyAccent[^)]*in: *\.(capsule|circle)'
-  '\.fill\([^)]*Color\.cyAccent([^A-Za-z0-9_.]|$)'
+  'background\([^)]*Color\.cyAccent([^A-Za-z0-9_.]|$)'
+  '\.fill\([^)]*Color\.(cyAccent|actionAccent)([^A-Za-z0-9_.]|$)'
   'shadow\(color: *[^)]*\.cyAccent'
 )
 RULE_DESCRIPTIONS=(
@@ -69,8 +69,8 @@ RULE_DESCRIPTIONS=(
   "Accent-filled capsule/circle background, in any argument position (solid-fill pill button banned per design.md)"
   "Hand-rolled circular glassEffect outside DesignTokens.swift — every glass circle goes through .agentGlassCircle() / AgentToolbarIconContainer"
   "Bordered-prominent button style anywhere in shipped UI — SwiftUI renders it as a solid accent fill (design.md: quiet ink tints only); AgentToolbarSaveButton / AgentToolbarIconButton are the shared replacement"
-  "Solid brick-red behind a control (design.md: \"No solid accent fills, anywhere\", decided 2026-08-14) — the accent action is AgentQuietAccentButtonStyle / AgentQuietAccentIconLabel: cy@12% fill, 0.75pt cy@40% border, brick label. A brand *mark* opts out with // design-review-allow: accent-mark"
-  "Solid brick-red shape fill (Circle()/Capsule().fill(Color.cyAccent), including the ternary form) — same ban, same escape hatch for a real mark"
+  "Solid brick-red anywhere in a background() argument list, whatever the shape (design.md: \"No solid accent fills, anywhere\", decided 2026-08-14) — the accent action is AgentQuietAccentButtonStyle / AgentQuietAccentIconLabel: cy@12% fill, 0.75pt cy@40% border, brick label. An opacity tint (Color.cyAccent.opacity(...)) is allowed by the pattern itself; a brand *mark* opts out with // design-review-allow: accent-mark"
+  "Solid brand shape fill — brick or ink (Circle()/RoundedRectangle().fill(Color.cyAccent|actionAccent), the ternary form, and the multi-line form where the colour sits on a later line) — same ban, same escape hatch for a real mark"
   "Brick-red glow (design.md: \"No glow\", rejected 2026-08-14) — accent shadows are banned outright and have no escape hatch; use the shared ambient shadow or nothing"
 )
 # One allowed filename per rule; empty means the rule applies to every file.
@@ -205,6 +205,66 @@ scan_glass_circle() {
   fi
 }
 
+# accent_shape_fill has the same multi-line problem glass_circle has, and it
+# had a live instance: the Pro upsell's 86-pt Cy disc was written as
+#   .fill(
+#       LinearGradient(
+#           colors: [Color.cyAccent, Color.cyAccent.opacity(0.78)],
+#           ...
+# which RULE_PATTERNS[8] (single-line) cannot see. This scans for a line ending
+# in ".fill(" and looks ahead a few lines for a solid brand colour before the
+# call closes. An opacity tint on its own is left alone, exactly as in the
+# single-line pattern, and the allow marker is honoured whether it sits on the
+# ".fill(" line or on the line naming the colour.
+scan_accent_shape_fill() {
+  local single
+  single="$(scan_rule "${RULE_PATTERNS[8]}" '' 1 "$@")"
+
+  local files
+  files="$(grep -rlE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' '\.fill\($' "$@" 2>/dev/null || true)"
+
+  local multi=""
+  if [[ -n "$files" ]]; then
+    local f hit
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      hit="$(awk -v marker="$ALLOW_MARKER" '
+        /\.fill\($/ {
+          start = NR
+          startline = $0
+          found = 0
+          allowed = (index(startline, marker) > 0)
+          for (i = 1; i <= 6; i++) {
+            if ((getline nextline) <= 0) break
+            if (index(nextline, marker) > 0) allowed = 1
+            if (nextline ~ /Color\.(cyAccent|actionAccent)([^A-Za-z0-9_.]|$)/) { found = 1; break }
+            if (nextline ~ /^[[:space:]]*\)/) break
+          }
+          if (found && !allowed) print start ":" startline
+        }
+      ' "$f" 2>/dev/null || true)"
+      if [[ -n "$hit" ]]; then
+        local line lineno content
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          lineno="${line%%:*}"
+          content="${line#*:}"
+          multi+="$f:$lineno:$content"$'\n'
+        done <<< "$hit"
+      fi
+    done <<< "$files"
+  fi
+  multi="${multi%$'\n'}"
+
+  if [[ -n "$single" && -n "$multi" ]]; then
+    printf '%s\n%s' "$single" "$multi"
+  elif [[ -n "$single" ]]; then
+    printf '%s' "$single"
+  else
+    printf '%s' "$multi"
+  fi
+}
+
 # accent_glow has the same multi-line problem glass_circle has: a banned
 # accent shadow is routinely written as
 #   .shadow(
@@ -314,6 +374,8 @@ run_design_review() {
     local matches
     if [[ "$rule_id" == "glass_circle" ]]; then
       matches="$(scan_glass_circle "${RULE_EXCLUDES[$i]}" "${search_paths[@]}")"
+    elif [[ "$rule_id" == "accent_shape_fill" ]]; then
+      matches="$(scan_accent_shape_fill "${search_paths[@]}")"
     elif [[ "$rule_id" == "accent_glow" ]]; then
       matches="$(scan_accent_glow "${search_paths[@]}")"
     else
@@ -555,6 +617,7 @@ struct AccentShapeFillFail: View {
         ZStack {
             Circle().fill(Color.cyAccent)
             Circle().fill(isOn ? Color.cyAccent : Color.clear)
+            RoundedRectangle(cornerRadius: 10).fill(Color.actionAccent)
         }
     }
 }
@@ -565,7 +628,48 @@ struct AccentShapeFillPass: View {
     var body: some View {
         ZStack {
             Circle().fill(Color.cyAccent.opacity(0.12))
+            Circle().fill(Color.actionAccent.opacity(0.09))
             Circle().fill(Color.cyAccent).frame(width: 5) // design-review-allow: accent-mark -- bullet
+        }
+    }
+}
+EOF
+  # accent_shape_fill multi-line fixtures: the shape the 86-pt Cy disc used to
+  # be written in, where the colour lives two lines below the ".fill(". The
+  # pass fixture wraps the same way but names only tints, so the look-ahead is
+  # proven to check the colour rather than the mere presence of a wrapped fill.
+  cat > "$tmp/AccentShapeFillMultilineFail.swift" <<'EOF'
+import SwiftUI
+struct AccentShapeFillMultilineFail: View {
+    var body: some View {
+        Circle()
+            .fill(
+                LinearGradient(
+                    colors: [Color.cyAccent, Color.cyAccent.opacity(0.78)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+    }
+}
+EOF
+  cat > "$tmp/AccentShapeFillMultilinePass.swift" <<'EOF'
+import SwiftUI
+struct AccentShapeFillMultilinePass: View {
+    var body: some View {
+        VStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.cyAccent.opacity(0.12), Color.cyAccent.opacity(0.035)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            Circle()
+                .fill(  // design-review-allow: accent-mark -- wrapped mark
+                    Color.cyAccent
+                )
         }
     }
 }
@@ -645,6 +749,23 @@ EOF
       continue
     fi
 
+    if [[ "$rule_id" == "accent_shape_fill" ]]; then
+      if [[ -n "$(scan_accent_shape_fill "$fail_file")" ]]; then
+        echo "self-test ok: $rule_id correctly flags its fail fixture"
+      else
+        echo "self-test FAIL: $rule_id did not flag ${rule_fail_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+
+      if [[ -z "$(scan_accent_shape_fill "$pass_file")" ]]; then
+        echo "self-test ok: $rule_id correctly clears its pass fixture"
+      else
+        echo "self-test FAIL: $rule_id incorrectly flagged ${rule_pass_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
+
     if [[ "$rule_id" == "glass_circle" ]]; then
       if [[ -n "$(scan_glass_circle "${RULE_EXCLUDES[$i]}" "$fail_file")" ]]; then
         echo "self-test ok: $rule_id correctly flags its fail fixture"
@@ -700,6 +821,24 @@ EOF
     echo "self-test ok: glass_circle clears a multi-line wrapped capsule/rect glassEffect"
   else
     echo "self-test FAIL: glass_circle incorrectly flagged GlassMultilinePass.swift (multi-line capsule/rect)" >&2
+    failures=$((failures + 1))
+  fi
+
+  # Multi-line accent shape fill: a wrapped .fill() whose colour sits on a
+  # later line must be flagged; the same wrapped shape naming only tints must
+  # not be; and a wrapped fill carrying the allow marker must be dropped, so
+  # the marker works on the multi-line form too.
+  if [[ -n "$(scan_accent_shape_fill "$tmp/AccentShapeFillMultilineFail.swift")" ]]; then
+    echo "self-test ok: accent_shape_fill flags a multi-line wrapped solid brand fill"
+  else
+    echo "self-test FAIL: accent_shape_fill did not flag AccentShapeFillMultilineFail.swift" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [[ -z "$(scan_accent_shape_fill "$tmp/AccentShapeFillMultilinePass.swift")" ]]; then
+    echo "self-test ok: accent_shape_fill clears a multi-line wrapped tint and a marked wrapped mark"
+  else
+    echo "self-test FAIL: accent_shape_fill incorrectly flagged AccentShapeFillMultilinePass.swift" >&2
     failures=$((failures + 1))
   fi
 

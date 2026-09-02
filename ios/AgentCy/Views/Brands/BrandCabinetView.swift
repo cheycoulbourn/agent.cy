@@ -555,7 +555,7 @@ private struct BrandActivityRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: AgentSpacing.x3) {
             Circle()
-                .fill(Color.actionAccent)
+                .fill(Color.actionAccent)  // design-review-allow: accent-mark -- 7 pt timeline dot on a brand activity row
                 .frame(width: 7, height: 7)
                 .padding(.top, 8)
 

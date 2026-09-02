@@ -101,4 +101,12 @@ final class DesignTokensTests: XCTestCase {
             AgentToolbarIconMetrics.diameter
         )
     }
+
+    /// The Cy identity disc is chrome, not colour: it draws the same 0.75-pt
+    /// hairline every elevated surface draws, so the five Cy avatars can never
+    /// drift back to a solid brick disc with a punched-out white glyph.
+    func testCyDiscUsesTheSharedSurfaceHairline() {
+        XCTAssertEqual(AgentCyDiscMetrics.borderWidth, 0.75)
+        XCTAssertEqual(AgentCyDiscMetrics.borderWidth, AgentQuietAccentTheme.borderWidth)
+    }
 }

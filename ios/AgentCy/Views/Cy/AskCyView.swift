@@ -1614,6 +1614,7 @@ struct AskCyView: View {
 
                         AgentQuietAccentIconLabel(
                             icon: wasAdded ? .check : .add,
+                            isActive: !wasAdded,
                             diameter: 36,
                             glyph: 14
                         )

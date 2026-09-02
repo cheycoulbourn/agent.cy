@@ -92,10 +92,25 @@ fills read as jarring against the paper canvas; boldness comes from the hue,
 not from area of coverage. The one accent-worthy action per Cy surface is the
 quiet accent action (`cy @ 12%` tint, brick label — see Buttons), never a fill.
 The lint's `accent_control_fill` and `accent_shape_fill` rules stand at zero; a
-genuine brand *mark* (an unread dot, a count badge, Cy's identity avatar, the
+genuine brand *mark* (an unread dot, a count badge, a 7-pt timeline dot, the
 walkthrough coach mark) opts out in the source with
 `// design-review-allow: accent-mark -- <reason>`, which is the complete list of
-places a solid brick fill is allowed to exist.
+places a solid brand fill is allowed to exist. `accent_control_fill` reads the
+whole `background(` argument list whatever the shape, `accent_shape_fill` covers
+**ink as well as brick** and sees the multi-line `.fill(` form, and neither
+matches an `.opacity(...)` tint.
+
+**Cy's identity disc is chrome plus a glyph, never a brick disc.** Every round
+Cy avatar — the Pro upsell's 86-pt hero, the Access and AI-connection 48-pt
+avatars, the MCP bridge's 42-pt Local Cy and 48-pt connection discs — is
+`AgentCyDisc`: a `Color.agentSurface` circle with the same 0.75-pt `agentBorder`
+hairline `agentSurfaceChrome` draws, carrying the brick glyph (`CyAsterisk`, or
+a Nucleo glyph in `cyAccent`). A large brick disc is a fill however
+identity-shaped its intent; the disc is the chrome and the brick is the mark
+inside it. Where a disc carries state (the MCP bridge), the **glyph** changes
+colour — brick when live, `agentSecondary` when not — and the disc does not.
+Gradients are not a way around this: a `LinearGradient` of the accent is still a
+fill, and design.md bans gradients as decoration regardless.
 
 **Creator Session selections (decided 2026-08-16):** mode choices use a quiet
 neutral selection fill, a darker structural border, and one Nucleo check. The

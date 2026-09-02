@@ -84,10 +84,10 @@ struct CaptureIdeaShortcutSettingsView: View {
         HStack(spacing: AgentSpacing.x4) {
             ZStack {
                 RoundedRectangle(cornerRadius: AgentRadius.control)
-                    .fill(Color.actionAccent)
+                    .fill(AgentActionButtonTheme.primaryFill)
                     .frame(width: 60, height: 60)
                 AgentIconView(.idea, size: 24)
-                    .foregroundStyle(Color.agentPureWhite)
+                    .foregroundStyle(Color.actionAccent)
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {

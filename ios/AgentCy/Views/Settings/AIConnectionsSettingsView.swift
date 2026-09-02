@@ -9,11 +9,8 @@ struct AIConnectionsSettingsView: View {
         ) {
             AgentInsetSurface {
                 HStack(alignment: .center, spacing: AgentSpacing.x4) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.cyAccent)  // design-review-allow: accent-mark -- Cy identity avatar
-                            .frame(width: 48, height: 48)
-                        CyAsterisk(color: .onCyAccent, size: 22, strokeWidth: 2)
+                    AgentCyDisc(diameter: 48) {
+                        CyAsterisk(color: .cyAccent, size: 22, strokeWidth: 2)
                     }
                     VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                         Text("Connected")

@@ -2109,17 +2109,14 @@ struct AccessSettingsView: View {
         let isActive = proIsActive(access)
         return VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             HStack(alignment: .center, spacing: AgentSpacing.x3) {
-                ZStack {
-                    Circle()
-                        .fill(Color.cyAccent)  // design-review-allow: accent-mark -- Cy identity avatar
-                    CyAsterisk(color: .onCyAccent, size: 20, strokeWidth: 1.6)
+                AgentCyDisc(diameter: 48) {
+                    CyAsterisk(color: .cyAccent, size: 20, strokeWidth: 1.6)
                         .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
                         .animation(
                             reduceMotion ? nil : .linear(duration: 8).repeatForever(autoreverses: false),
                             value: isRotating
                         )
                 }
-                .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: 2) {
                     MetaLabel("Pro access")
