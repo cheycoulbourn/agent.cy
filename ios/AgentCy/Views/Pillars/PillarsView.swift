@@ -507,7 +507,7 @@ struct PillarsView: View {
 
     private var pillarInfoButton: some View {
         Button { showPillarInfo = true } label: {
-            AgentToolbarIconLabel(icon: .info, iconSize: 18)
+            AgentToolbarIconLabel(icon: .info)
         }
         .buttonStyle(.plain)
         .popover(

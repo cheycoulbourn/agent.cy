@@ -718,7 +718,7 @@ struct TasksView: View {
             isFilterPresented = true
         } label: {
             ZStack(alignment: .topTrailing) {
-                AgentToolbarIconLabel(icon: .filter, iconSize: 16)
+                AgentToolbarIconLabel(icon: .filter)
 
                 if activeFilterCount > 0 {
                     Text("\(activeFilterCount)")

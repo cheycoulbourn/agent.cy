@@ -151,6 +151,8 @@ struct RootView: View {
             #if DEBUG
             if IdeaDraftRuntimeFixture.requestsIdeaDraft() {
                 PreviewIdeaDraftRoot()
+            } else if PostEditorRuntimeFixture.requestsSparkDevelopment() {
+                PreviewSparkDevelopmentRoot()
             } else if PostEditorRuntimeFixture.requestsPostEditor() {
                 PreviewPostEditorRoot()
             } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewScheduledPost") {
@@ -410,6 +412,26 @@ private struct PreviewPostEditorRoot: View {
                     icon: .calendar
                 )
             }
+        }
+    }
+}
+
+private struct PreviewSparkDevelopmentRoot: View {
+    @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var briefs: [CreativeBrief]
+    @Query(sort: \PlatformOutput.createdAt, order: .reverse) private var outputs: [PlatformOutput]
+
+    var body: some View {
+        if let output = outputs.first,
+           let brief = briefs.first(where: { $0.id == output.briefID }) {
+            DevelopBriefView(brief: brief, output: output)
+        } else if let brief = briefs.first {
+            DevelopBriefView(brief: brief)
+        } else {
+            AgentEmptyState(
+                title: "No spark fixture",
+                message: "Seed preview data to open Build with Cy.",
+                icon: .calendar
+            )
         }
     }
 }

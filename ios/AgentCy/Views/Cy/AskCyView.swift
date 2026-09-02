@@ -1273,23 +1273,12 @@ struct AskCyView: View {
 
             #if targetEnvironment(macCatalyst)
             if showsCloseButton {
-                Button(action: dismiss.callAsFunction) {
-                    AgentIconView(.close, size: 17)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 44, height: 44)
-                        .contentShape(.circle)
-                }
-                .buttonStyle(.plain)
-                .frame(width: 44, height: 44)
-                .glassEffect(.clear.interactive(), in: .circle)
-                .overlay {
-                    Circle()
-                        .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                        .allowsHitTesting(false)
-                }
-                .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
+                AgentToolbarIconButton(
+                    title: "Close Cy",
+                    icon: .close,
+                    action: dismiss.callAsFunction
+                )
                 .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("Close Cy")
                 .accessibilityHint("Press Escape to close")
             } else {
                 ProfileSettingsButton(

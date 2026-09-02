@@ -448,28 +448,19 @@ struct SocialGridView: View {
                     Button {
                         Task { await refreshFeed() }
                     } label: {
-                        Group {
+                        AgentToolbarIconContainer {
                             if isRefreshingFeed {
                                 ProgressView()
                                     .controlSize(.small)
                                     .tint(Color.agentText)
                             } else {
-                                AgentIconView(.refresh, size: 16)
+                                AgentIconView(.refresh, size: AgentToolbarIconMetrics.glyph)
                                     .foregroundStyle(Color.agentText)
                             }
                         }
-                        .frame(width: 44, height: 44)
-                        .contentShape(.circle)
-                        .glassEffect(.clear.interactive(), in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                                .allowsHitTesting(false)
-                        }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AgentPressButtonStyle())
                     .disabled(isRefreshingFeed)
-                    .opacity(isRefreshingFeed ? 0.72 : 1)
                     .accessibilityLabel(isRefreshingFeed ? "Refreshing feed" : "Refresh feed")
                     .accessibilityHint("Loads newly synced posts and retries missing live post thumbnails")
 
@@ -1039,19 +1030,7 @@ struct AddLivePostView: View {
                 Text("Add live post")
                     .font(.agentHeadline)
                 Spacer()
-                Button(action: close) {
-                    AgentIconView(.close, size: 16)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 40, height: 40)
-                        .background(Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.agentBorder, lineWidth: 1)
-                        }
-                        .contentShape(.circle)
-                }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityLabel("Close")
+                AgentToolbarIconButton(title: "Close", icon: .close, action: close)
             }
             .padding(.horizontal, AgentSpacing.x5)
             .agentQuickAddHeaderSurface()

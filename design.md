@@ -204,7 +204,7 @@ canonical shapes, all documented on the Paper design-system artboard:
 
 | Shape | Swift | Where |
 |---|---|---|
-| Circular toolbar icon (44 pt) | `.glassEffect(.clear.interactive(), in: .circle)` | `AgentToolbarIconButton`, capture/grid/idea buttons |
+| Circular toolbar icon (44 pt, 17 pt glyph) | `AgentToolbarIconButton` / `AgentToolbarIconLabel` / `AgentToolbarIconContainer` | Every icon control that leaves or acts on a screen: close, back, save, add, refresh, spark |
 | Floating bar (radius 28 = `AgentRadius.floating`) | `.glassEffect(.clear, in: .rect(cornerRadius: AgentRadius.floating))` | Ask Cy input bar, DevelopBrief bar |
 | Bottom-nav pill cluster | `GlassEffectContainer` + per-segment `.glassEffect` | `AppShellView` navigation |
 | Segmented selector rail | Native `Picker` + `.pickerStyle(.segmented)` | Agenda view rail, Tasks `Focus Tasks / Post Tasks` rail, and every peer-view selector rail |
@@ -215,6 +215,14 @@ media-overlay circles).
 Rules:
 - Glass is reserved for **floating chrome above content** — never for content
   surfaces (cards, lists, sheets' bodies). Content stays on opaque paper.
+- **One circular icon control.** There is exactly one glass circle: 44 pt,
+  17 pt glyph, `pureWhite@0.22` hairline, built by `AgentToolbarIconContainer`
+  in `DesignTokens.swift`. Close, back, save, add, refresh, and spark are all
+  that control; it never gets a per-screen shadow, a second diameter, or a
+  second glyph size. `AgentDesktopDetailBackButton` is its only desktop
+  substitute. Every circular `glassEffect` in the app goes through
+  `.agentGlassCircle()`, and `scripts/check_design_review.sh` fails the build
+  if another file writes one (rule `glass_circle`, baseline 0).
 - **Hard design rule — selector rails:** every compact horizontal rail that
   switches between peer views, modes, or collections **must** use the native
   iOS 26 segmented `Picker`, so the system renders it as Liquid Glass. The

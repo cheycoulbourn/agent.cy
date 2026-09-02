@@ -568,21 +568,17 @@ struct ResumablePostEditorView: View {
         icon: AgentIcon,
         foreground: Color = .agentText
     ) -> some View {
-        AgentToolbarIconLabel(icon: icon, foreground: foreground, iconSize: 16)
+        AgentToolbarIconLabel(icon: icon, foreground: foreground)
     }
 
     @ViewBuilder
     private var compactSparkToolbarButton: some View {
         if !isEditingFinalizedPost && !isReviewEditing {
             Button(action: openSpark) {
-                CyAsterisk(color: .cyAccent, size: 16, strokeWidth: 1.5)
-                    .frame(width: 18, height: 18)
-                    .frame(width: 44, height: 44)
-                    .glassEffect(.clear.interactive(), in: .circle)
-                    .overlay {
-                        Circle().stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                    }
-                    .contentShape(.circle)
+                AgentToolbarIconContainer {
+                    CyAsterisk(color: .cyAccent, size: 16, strokeWidth: 1.5)
+                        .frame(width: 18, height: 18)
+                }
             }
             .buttonStyle(AgentPressButtonStyle())
             .accessibilityLabel("Spark this post")
@@ -5407,6 +5403,15 @@ enum PostEditorRuntimeFixture {
         arguments: [String] = ProcessInfo.processInfo.arguments
     ) -> Bool {
         arguments.contains("-agentCyPreviewPostEditor")
+    }
+
+    /// Opens the editor's "spark" sheet (`DevelopBriefView`) directly, so the
+    /// post-editor-spark-development surface can be captured without driving
+    /// the editor's toolbar.
+    static func requestsSparkDevelopment(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool {
+        arguments.contains("-agentCyPreviewSparkDevelopment")
     }
 }
 #endif

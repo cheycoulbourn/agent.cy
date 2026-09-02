@@ -125,16 +125,10 @@ struct DevelopBriefView: View {
 
     private var topRail: some View {
         HStack(spacing: AgentSpacing.x2) {
-            Button {
+            AgentToolbarIconButton(title: "Close Build with Cy", icon: .close) {
                 request = nil
                 dismiss()
-            } label: {
-                AgentIconView(.close, size: 16)
-                    .frame(width: 44, height: 44)
-                    .background(Color.agentSurface, in: .circle)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close Build with Cy")
 
             MetaLabel("Cy · Post")
             Spacer()

@@ -343,7 +343,7 @@ struct CreatorSessionView: View {
         .buttonStyle(AgentPressButtonStyle())
         .accessibilityLabel(accessibilityLabel)
 #else
-        AgentCircularGlassIconButton(icon: icon, accessibilityLabel: accessibilityLabel, action: action)
+        AgentToolbarIconButton(title: accessibilityLabel, icon: icon, action: action)
 #endif
     }
 

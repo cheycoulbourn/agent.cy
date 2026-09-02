@@ -4,7 +4,7 @@ set -euo pipefail
 
 # check_design_review.sh — a ratchet, not a hard gate.
 #
-# Greps shipped Swift UI sources for five design-consistency bans and compares
+# Greps shipped Swift UI sources for six design-consistency bans and compares
 # each rule's current violation count against a checked-in baseline
 # (scripts/design-review-baseline.txt). It fails (exit 1) only when a rule's
 # count goes UP from its baseline; it passes when counts are equal or lower.
@@ -22,13 +22,16 @@ BASELINE_FILE="$ROOT/scripts/design-review-baseline.txt"
 REQUIRED_TOOLS=(grep find)
 
 # Parallel arrays (bash 3.2 on this Mac has no associative arrays) —
-# RULE_IDS[i] / RULE_PATTERNS[i] / RULE_DESCRIPTIONS[i] describe the same rule.
+# RULE_IDS[i] / RULE_PATTERNS[i] / RULE_DESCRIPTIONS[i] / RULE_EXCLUDES[i]
+# describe the same rule. RULE_EXCLUDES holds one filename the rule is allowed
+# to live in (empty = the rule applies everywhere).
 RULE_IDS=(
   sf_symbols
   animation_curves
   banned_fonts
   corner_radius
   pill_background
+  glass_circle
 )
 RULE_PATTERNS=(
   'Image\(systemName:|systemImage:'
@@ -36,6 +39,7 @@ RULE_PATTERNS=(
   'Font\.custom\(|paperInter|paperMetadata|\.font\(\.system'
   'cornerRadius: (3|5|6|9|13|14|18|22)\b'
   'background\(Color\.(cyAccent|actionAccent)[^)]*in: *\.(capsule|circle)'
+  'glassEffect\(.*in: *\.circle'
 )
 RULE_DESCRIPTIONS=(
   "SF Symbols in shipped UI (Image(systemName:) / systemImage:) — design.md bans SF Symbols outright"
@@ -43,6 +47,16 @@ RULE_DESCRIPTIONS=(
   "Non-Inter or off-token font reference (Font.custom / paperInter / paperMetadata / .font(.system)"
   "Off-scale cornerRadius literal (3/5/6/9/13/14/18/22 — not an AgentRadius token)"
   "Accent-filled capsule/circle background (solid-fill pill button banned per design.md)"
+  "Hand-rolled circular glassEffect outside DesignTokens.swift — every glass circle goes through .agentGlassCircle() / AgentToolbarIconContainer"
+)
+# One allowed filename per rule; empty means the rule applies to every file.
+RULE_EXCLUDES=(
+  ''
+  ''
+  ''
+  ''
+  ''
+  'DesignTokens.swift'
 )
 
 preflight() {
@@ -57,13 +71,19 @@ preflight() {
   fi
 }
 
-# Scans the given search paths for one rule's pattern. Prints file:line
-# matches to stdout. Never fails the script on "no matches" (grep's exit 1).
+# Scans the given search paths for one rule's pattern, skipping $2 if it names
+# a file the rule is allowed to live in. Prints file:line matches to stdout.
+# Never fails the script on "no matches" (grep's exit 1).
 scan_rule() {
   local pattern="$1"
-  shift
+  local exclude_file="$2"
+  shift 2
+  local exclude_args=()
+  if [[ -n "$exclude_file" ]]; then
+    exclude_args=(--exclude="$exclude_file")
+  fi
   local matches
-  matches="$(grep -rnE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' "$pattern" "$@" 2>/dev/null || true)"
+  matches="$(grep -rnE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' "${exclude_args[@]+"${exclude_args[@]}"}" "$pattern" "$@" 2>/dev/null || true)"
   printf '%s' "$matches"
 }
 
@@ -117,7 +137,7 @@ run_design_review() {
     local description="${RULE_DESCRIPTIONS[$i]}"
 
     local matches
-    matches="$(scan_rule "$pattern" "${search_paths[@]}")"
+    matches="$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${search_paths[@]}")"
     local count
     count="$(count_lines "$matches")"
 
@@ -238,8 +258,31 @@ struct PillPass: View {
 }
 EOF
 
-  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail)
-  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass)
+  # glass_circle
+  cat > "$tmp/GlassFail.swift" <<'EOF'
+import SwiftUI
+struct GlassFail: View {
+    var body: some View { Color.clear.glassEffect(.clear.interactive(), in: .circle) }
+}
+EOF
+  cat > "$tmp/GlassPass.swift" <<'EOF'
+import SwiftUI
+struct GlassPass: View {
+    var body: some View { Color.clear.agentGlassCircle() }
+}
+EOF
+  # The one file the glass_circle rule is allowed to live in. Same violating
+  # line as GlassFail.swift; it must be skipped purely because of its name.
+  mkdir -p "$tmp/allowed"
+  cat > "$tmp/allowed/DesignTokens.swift" <<'EOF'
+import SwiftUI
+struct AllowedGlass: View {
+    var body: some View { Color.clear.glassEffect(.clear.interactive(), in: .circle) }
+}
+EOF
+
+  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail)
+  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass)
 
   local i
   for i in "${!RULE_IDS[@]}"; do
@@ -248,20 +291,29 @@ EOF
     local fail_file="$tmp/${rule_fail_file[$i]}.swift"
     local pass_file="$tmp/${rule_pass_file[$i]}.swift"
 
-    if [[ -n "$(scan_rule "$pattern" "$fail_file")" ]]; then
+    if [[ -n "$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "$fail_file")" ]]; then
       echo "self-test ok: $rule_id correctly flags its fail fixture"
     else
       echo "self-test FAIL: $rule_id did not flag ${rule_fail_file[$i]}.swift" >&2
       failures=$((failures + 1))
     fi
 
-    if [[ -z "$(scan_rule "$pattern" "$pass_file")" ]]; then
+    if [[ -z "$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "$pass_file")" ]]; then
       echo "self-test ok: $rule_id correctly clears its pass fixture"
     else
       echo "self-test FAIL: $rule_id incorrectly flagged ${rule_pass_file[$i]}.swift" >&2
       failures=$((failures + 1))
     fi
   done
+
+  # The exclusion itself: the same violating line inside the rule's allowed
+  # filename must not be reported.
+  if [[ -z "$(scan_rule "${RULE_PATTERNS[5]}" "${RULE_EXCLUDES[5]}" "$tmp/allowed")" ]]; then
+    echo "self-test ok: glass_circle skips its allowed file (DesignTokens.swift)"
+  else
+    echo "self-test FAIL: glass_circle flagged its allowed file DesignTokens.swift" >&2
+    failures=$((failures + 1))
+  fi
 
   echo
   echo "--- ratchet mechanics ---"
@@ -280,7 +332,7 @@ EOF
 
   # Baseline equal to current count (2) must pass.
   local equal_baseline="$tmp/baseline-equal.txt"
-  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\n' > "$equal_baseline"
+  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$equal_baseline"
   if run_design_review "$equal_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count == baseline passes"
   else
@@ -290,7 +342,7 @@ EOF
 
   # Baseline below current count (1 < 2) must fail.
   local low_baseline="$tmp/baseline-low.txt"
-  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\n' > "$low_baseline"
+  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$low_baseline"
   if run_design_review "$low_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 1 ]]; then
     echo "self-test ok: count > baseline fails"
   else
@@ -300,7 +352,7 @@ EOF
 
   # Baseline above current count (3 > 2) must pass (ratchet only tightens).
   local high_baseline="$tmp/baseline-high.txt"
-  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\n' > "$high_baseline"
+  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$high_baseline"
   if run_design_review "$high_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count < baseline passes"
   else
@@ -310,7 +362,7 @@ EOF
 
   # --update-baseline rewrites the file from current counts.
   local update_target="$tmp/baseline-update.txt"
-  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\n' > "$update_target"
+  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$update_target"
   run_design_review "$update_target" 1 "$ratchet_dir" >/dev/null 2>&1
   if grep -q '^sf_symbols=2$' "$update_target"; then
     echo "self-test ok: --update-baseline rewrites counts from a fresh scan"

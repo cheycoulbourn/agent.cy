@@ -4,12 +4,10 @@ struct CreationHubView: View {
     private let onDismiss: (() -> Void)?
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var showQuickCapture = false
     @State private var showLivePost = false
     @State private var showVoiceSpark = false
-    @State private var closeIsPulsing = false
 
     init(onDismiss: (() -> Void)? = nil) {
         self.onDismiss = onDismiss
@@ -214,35 +212,12 @@ struct CreationHubView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
             ZStack {
                 HStack {
-                    Button { closeCreationHub() } label: {
-                        AgentIconView(.close, size: 17)
-                            .frame(width: 44, height: 44)
-                            .foregroundStyle(
-                                appModel.walkthroughStep == .quickAdd
-                                    ? Color.onCyAccent
-                                    : Color.agentText
-                            )
-                            .background {
-                                if appModel.walkthroughStep == .quickAdd {
-                                    Circle()
-                                        .fill(Color.cyAccent)
-                                        .shadow(
-                                            color: Color.cyAccent.opacity(closeIsPulsing ? 0.18 : 0.46),
-                                            radius: closeIsPulsing ? 14 : 8
-                                        )
-                                        .scaleEffect(closeIsPulsing ? 1.04 : 1)
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.clear.interactive(), in: .circle)
-                    .overlay {
-                        Circle()
-                            .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                            .allowsHitTesting(false)
-                    }
-                    .shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
-                    .accessibilityLabel("Close")
+                    AgentToolbarIconButton(
+                        title: "Close",
+                        icon: .close,
+                        highlight: appModel.walkthroughStep == .quickAdd,
+                        action: closeCreationHub
+                    )
                     .accessibilityHint(
                         appModel.walkthroughStep == .quickAdd
                             ? "Closes Quick Add and continues the guided tour"
@@ -266,12 +241,6 @@ struct CreationHubView: View {
         .padding(.horizontal, AgentLayout.dashboardGutter)
         .padding(.top, AgentSpacing.x8)
         .padding(.bottom, AgentSpacing.x2)
-        .onAppear {
-            guard appModel.walkthroughStep == .quickAdd, !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
-                closeIsPulsing = true
-            }
-        }
     }
 
     private enum Destination { case idea, post, task, livePost, cyIdeas }
@@ -486,14 +455,7 @@ struct CreationHubView: View {
 
                 Spacer(minLength: AgentSpacing.x2)
 
-                AgentIconView(.add, size: 15)
-                    .frame(width: 40, height: 40)
-                    .glassEffect(.clear.interactive(), in: .circle)
-                    .overlay {
-                        Circle()
-                            .stroke(Color.agentBorder, lineWidth: 0.5)
-                            .allowsHitTesting(false)
-                    }
+                AgentToolbarIconLabel(icon: .add)
             }
             .foregroundStyle(Color.agentText)
             .padding(.horizontal, AgentSpacing.x5)

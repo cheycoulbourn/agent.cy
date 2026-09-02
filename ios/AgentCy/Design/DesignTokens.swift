@@ -283,41 +283,140 @@ struct AgentIconLabel: View {
     }
 }
 
+extension View {
+    /// The single place in the app that writes `glassEffect(…, in: .circle)`.
+    /// Routing every glass circle through here keeps the material identical
+    /// across the icon controls, the tab bar's active pip, the Quick Add
+    /// button, and the recorder — and keeps the eventual `.clear` → `.regular`
+    /// move (DEC-01) a one-line change. `scripts/check_design_review.sh`
+    /// enforces that no other file writes a circular `glassEffect`.
+    func agentGlassCircle(interactive: Bool = true, tint: Color? = nil) -> some View {
+        var glass: Glass = interactive ? .clear.interactive() : .clear
+        if let tint {
+            glass = glass.tint(tint)
+        }
+        return glassEffect(glass, in: .circle)
+    }
+}
+
+/// The measurements of the one glass icon control. They live in a token so the
+/// geometry can be asserted in a test instead of re-typed per screen.
+enum AgentToolbarIconMetrics {
+    /// Matches the system back-button footprint and the 44 pt tap floor.
+    static let diameter: CGFloat = 44
+    /// One glyph size for every icon control: close, back, save, add, refresh.
+    static let glyph: CGFloat = 17
+    static let strokeOpacity: Double = 0.22
+    static let strokeWidth: CGFloat = 0.5
+}
+
 struct AgentToolbarIconButton: View {
     let title: String
     let icon: AgentIcon
     var isEnabled = true
+    var highlight = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            AgentToolbarIconLabel(icon: icon)
+            AgentToolbarIconLabel(icon: icon, highlight: highlight)
         }
-        .buttonStyle(.plain)
+        // `AgentPressButtonStyle` also supplies the disabled dimming, so the
+        // call site never has to repeat an `.opacity` for it.
+        .buttonStyle(AgentPressButtonStyle())
         .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.42)
         .accessibilityLabel(title)
     }
 }
 
-/// Canonical 44-point phone header control. It matches the system back-button
-/// footprint and can also be used as a Menu label without changing geometry.
+/// The one glass circle. Every icon control that leaves or acts on a screen —
+/// close, back, save, add, refresh, spark — is this container, so the diameter,
+/// the material, and the `pureWhite@0.22` hairline can never drift between
+/// screens. `AgentDesktopDetailBackButton` is its only desktop substitute.
+struct AgentToolbarIconContainer<Content: View>: View {
+    /// Walkthrough emphasis: paints the shared coach-mark cue under the glass.
+    var highlight = false
+    /// Lift for a control floating over scrolling content rather than sitting
+    /// on a header surface. Off by default — the glass edge already separates
+    /// the control from the canvas, and a per-screen shadow is what made these
+    /// controls read differently from one page to the next.
+    var shadow = false
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .frame(
+                width: AgentToolbarIconMetrics.diameter,
+                height: AgentToolbarIconMetrics.diameter
+            )
+            .background {
+                if highlight {
+                    AgentWalkthroughControlCue()
+                }
+            }
+            .contentShape(.circle)
+            .agentGlassCircle()
+            .overlay {
+                Circle()
+                    .stroke(
+                        Color.agentPureWhite.opacity(AgentToolbarIconMetrics.strokeOpacity),
+                        lineWidth: AgentToolbarIconMetrics.strokeWidth
+                    )
+                    .allowsHitTesting(false)
+            }
+            .shadow(
+                color: shadow ? Color.agentPureBlack.opacity(0.08) : .clear,
+                radius: shadow ? 12 : 0,
+                y: shadow ? 4 : 0
+            )
+    }
+}
+
+/// Canonical 44-point phone header control. It can also be used as a Menu label
+/// without changing geometry.
 struct AgentToolbarIconLabel: View {
     let icon: AgentIcon
     var foreground: Color = .agentText
-    var iconSize: CGFloat = 17
+    var highlight = false
+    var shadow = false
 
     var body: some View {
-        AgentIconView(icon, size: iconSize)
-            .foregroundStyle(foreground)
-            .frame(width: 44, height: 44)
-            .contentShape(.circle)
-            .glassEffect(.clear.interactive(), in: .circle)
-            .overlay {
-                Circle()
-                    .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
-                    .allowsHitTesting(false)
+        AgentToolbarIconContainer(highlight: highlight, shadow: shadow) {
+            AgentIconView(icon, size: AgentToolbarIconMetrics.glyph)
+                .foregroundStyle(highlight ? Color.onCyAccent : foreground)
+        }
+    }
+}
+
+/// The walkthrough's coach mark. One cue for every control the guided tour
+/// points at — the tab bar, Quick Add, and Quick Add's close button.
+struct AgentWalkthroughControlCue: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isExpanded = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.cyAccent)
+
+            Circle()
+                .stroke(Color.cyAccent.opacity(isExpanded ? 0.10 : 0.42), lineWidth: 2)
+                .padding(-5)
+                .scaleEffect(isExpanded ? 1.16 : 1)
+        }
+            .shadow(
+                color: Color.cyAccent.opacity(reduceMotion ? 0.32 : (isExpanded ? 0.18 : 0.48)),
+                radius: reduceMotion ? 8 : (isExpanded ? 14 : 8)
+            )
+            .scaleEffect(reduceMotion ? 1 : (isExpanded ? 1.04 : 1))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
+                    isExpanded = true
+                }
             }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 
@@ -910,33 +1009,6 @@ struct AgentPressButtonStyle: ButtonStyle {
                 AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
                 value: configuration.isPressed
             )
-    }
-}
-
-struct AgentCircularGlassIconButton: View {
-    let icon: AgentIcon
-    let accessibilityLabel: String
-    var isEnabled = true
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            AgentIconView(icon, size: 16)
-                .foregroundStyle(Color.agentText)
-                .frame(width: 48, height: 48)
-        }
-        .buttonStyle(AgentPressButtonStyle())
-        .frame(width: 48, height: 48)
-        .contentShape(.circle)
-        .glassEffect(.clear.interactive(), in: .circle)
-        .overlay {
-            Circle()
-                .stroke(Color.agentPureWhite.opacity(0.16), lineWidth: 0.5)
-                .allowsHitTesting(false)
-        }
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.34)
-        .accessibilityLabel(accessibilityLabel)
     }
 }
 

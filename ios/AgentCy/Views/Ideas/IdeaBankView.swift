@@ -406,7 +406,7 @@ struct IdeaBankView: View {
                     dynamicTypeSize: dynamicTypeSize
                 ) {
                     Button(action: endSelection) {
-                        AgentToolbarIconLabel(icon: .close, iconSize: 16)
+                        AgentToolbarIconLabel(icon: .close)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Cancel selection")
@@ -420,7 +420,7 @@ struct IdeaBankView: View {
                 if projection.normalizedFilter != .archived,
                    !visibleSelectableIDs(projection: projection).isEmpty {
                     Button(action: beginSelection) {
-                        AgentToolbarIconLabel(icon: .tasks, iconSize: 18)
+                        AgentToolbarIconLabel(icon: .tasks)
                     }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Select items")
@@ -435,7 +435,7 @@ struct IdeaBankView: View {
         Button {
             isFilterPresented.toggle()
         } label: {
-            AgentToolbarIconLabel(icon: .filter, iconSize: 18)
+            AgentToolbarIconLabel(icon: .filter)
         }
         .buttonStyle(.plain)
         .popover(

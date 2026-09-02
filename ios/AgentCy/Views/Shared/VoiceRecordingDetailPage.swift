@@ -302,17 +302,17 @@ struct VoiceRecordingDetailPage: View {
             MetaLabel("Recording")
 
             HStack {
-                AgentCircularGlassIconButton(
+                AgentToolbarIconButton(
+                    title: "Back",
                     icon: .back,
-                    accessibilityLabel: "Back",
                     action: { handle(.back) }
                 )
 
                 Spacer()
 
-                AgentCircularGlassIconButton(
+                AgentToolbarIconButton(
+                    title: "Save recording title",
                     icon: .check,
-                    accessibilityLabel: "Save recording title",
                     isEnabled: hasTitleChanges,
                     action: saveTitle
                 )

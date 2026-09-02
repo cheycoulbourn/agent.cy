@@ -1,7 +1,8 @@
 # design-review ratchet baseline — per-rule violation counts.
 # Regenerate with: scripts/check_design_review.sh --update-baseline
 sf_symbols=17
-animation_curves=19
+animation_curves=18
 banned_fonts=166
 corner_radius=63
 pill_background=10
+glass_circle=0

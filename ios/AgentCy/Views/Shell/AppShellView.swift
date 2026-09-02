@@ -700,35 +700,6 @@ private struct WalkthroughPrimaryButtonStyle: ButtonStyle {
     }
 }
 
-private struct WalkthroughControlCue: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isExpanded = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.cyAccent)
-
-            Circle()
-                .stroke(Color.cyAccent.opacity(isExpanded ? 0.10 : 0.42), lineWidth: 2)
-                .padding(-5)
-                .scaleEffect(isExpanded ? 1.16 : 1)
-        }
-            .shadow(
-                color: Color.cyAccent.opacity(reduceMotion ? 0.32 : (isExpanded ? 0.18 : 0.48)),
-                radius: reduceMotion ? 8 : (isExpanded ? 14 : 8)
-            )
-            .scaleEffect(reduceMotion ? 1 : (isExpanded ? 1.04 : 1))
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
-                    isExpanded = true
-                }
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-}
 private extension View {
     func appTabLayer(_ tab: AppTab, selection: AppTab) -> some View {
         opacity(selection == tab ? 1 : 0)
@@ -771,7 +742,7 @@ private struct PaperBottomNavigation: View {
                                     .foregroundStyle(foreground(for: tab))
                                     .background {
                                         if isWalkthroughTarget(tab) {
-                                            WalkthroughControlCue()
+                                            AgentWalkthroughControlCue()
                                         }
                                         if tab == .cy,
                                            showCyPlanningCue,
@@ -782,14 +753,10 @@ private struct PaperBottomNavigation: View {
                                         if selection == tab, !isWalkthroughTarget(tab) {
                                             Circle()
                                                 .fill(Color.clear)
-                                                .glassEffect(
-                                                    .clear.interactive()
-                                                        .tint(
-                                                            tab == .cy
-                                                                ? Color.cyAccent.opacity(colorScheme == .dark ? 0.34 : 0.78)
-                                                                : Color.agentText.opacity(0.09)
-                                                        ),
-                                                    in: .circle
+                                                .agentGlassCircle(
+                                                    tint: tab == .cy
+                                                        ? Color.cyAccent.opacity(colorScheme == .dark ? 0.34 : 0.78)
+                                                        : Color.agentText.opacity(0.09)
                                                 )
                                                 .matchedGeometryEffect(id: "active-tab", in: glassNamespace)
                                         }
@@ -826,10 +793,10 @@ private struct PaperBottomNavigation: View {
                         .foregroundStyle(walkthroughStep == .quickAdd ? Color.onCyAccent : Color.agentText)
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.clear, in: .circle)
+                .agentGlassCircle(interactive: false)
                 .background {
                     if walkthroughStep == .quickAdd {
-                        WalkthroughControlCue()
+                        AgentWalkthroughControlCue()
                     }
                 }
                 .overlay {

@@ -394,7 +394,7 @@ struct VoiceSparkView: View {
             MetaLabel("Voice Spark")
 
             HStack {
-                AgentCircularGlassIconButton(icon: .close, accessibilityLabel: "Close Voice Spark") {
+                AgentToolbarIconButton(title: "Close Voice Spark", icon: .close) {
                     recorder.reset()
                     playback.stop()
                     dismiss()
@@ -402,9 +402,9 @@ struct VoiceSparkView: View {
 
                 Spacer()
 
-                AgentCircularGlassIconButton(
+                AgentToolbarIconButton(
+                    title: autoLinkBrief == nil ? "Save Voice Spark" : "Add recording to post",
                     icon: .check,
-                    accessibilityLabel: autoLinkBrief == nil ? "Save Voice Spark" : "Add recording to post",
                     isEnabled: VoiceSparkSessionPolicy.canSave(
                         autoLinksToPost: autoLinkBrief != nil,
                         transcript: cleanTranscript,
@@ -462,7 +462,7 @@ struct VoiceSparkView: View {
                         .foregroundStyle(recorder.isRecording ? Color.cyAccent : Color.agentText)
                 }
                 .frame(width: 112, height: 112)
-                .glassEffect(.clear.interactive(), in: .circle)
+                .agentGlassCircle()
                 .shadow(color: Color.agentPureBlack.opacity(0.09), radius: 20, y: 8)
             }
             .buttonStyle(AgentPressButtonStyle())
@@ -1309,7 +1309,7 @@ private struct VoiceSparkLinkPickerView: View {
                                 .foregroundStyle(Color.agentSecondary)
                         }
                         HStack {
-                            AgentCircularGlassIconButton(icon: .close, accessibilityLabel: "Close picker") {
+                            AgentToolbarIconButton(title: "Close picker", icon: .close) {
                                 dismiss()
                             }
                             Spacer()

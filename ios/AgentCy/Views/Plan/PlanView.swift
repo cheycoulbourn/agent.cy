@@ -134,14 +134,14 @@ struct PlanView: View {
                     Button {
                         isSearchingPosts = true
                     } label: {
-                        AgentToolbarIconLabel(icon: .search, iconSize: 16)
+                        AgentToolbarIconLabel(icon: .search)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Search posts")
 
                     if showsFeedShortcut {
                         NavigationLink(value: PlanNavigationRoute.socialGrid) {
-                            AgentToolbarIconLabel(icon: .instagramCamera, iconSize: 16)
+                            AgentToolbarIconLabel(icon: .instagramCamera)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open social grid")
