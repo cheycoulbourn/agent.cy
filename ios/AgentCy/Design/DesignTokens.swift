@@ -284,6 +284,18 @@ struct AgentIconLabel: View {
 }
 
 extension View {
+    /// Applies the toolbar icon control's floating lift only when `active` is
+    /// true, instead of always attaching a `.shadow` modifier whose color and
+    /// radius collapse to zero (and still costs a render pass) when off.
+    @ViewBuilder
+    fileprivate func agentToolbarIconShadow(_ active: Bool) -> some View {
+        if active {
+            self.shadow(color: Color.agentPureBlack.opacity(0.08), radius: 12, y: 4)
+        } else {
+            self
+        }
+    }
+
     /// The single place in the app that writes `glassEffect(…, in: .circle)`.
     /// Routing every glass circle through here keeps the material identical
     /// across the icon controls, the tab bar's active pip, the Quick Add
@@ -364,11 +376,7 @@ struct AgentToolbarIconContainer<Content: View>: View {
                     )
                     .allowsHitTesting(false)
             }
-            .shadow(
-                color: shadow ? Color.agentPureBlack.opacity(0.08) : .clear,
-                radius: shadow ? 12 : 0,
-                y: shadow ? 4 : 0
-            )
+            .agentToolbarIconShadow(shadow)
     }
 }
 
@@ -528,9 +536,10 @@ struct AgentDesktopDetailIconButton: View {
         Button(role: role, action: action) {
             AgentDesktopDetailIconLabel(icon: icon, foreground: foreground)
         }
+        // `AgentPressButtonStyle` already supplies the disabled dimming (0.42);
+        // an extra `.opacity` here compounded to 0.176.
         .buttonStyle(AgentPressButtonStyle())
         .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.42)
         .accessibilityLabel(title)
     }
 }

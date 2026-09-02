@@ -87,6 +87,71 @@ scan_rule() {
   printf '%s' "$matches"
 }
 
+# glass_circle needs more than a single-line grep: `.glassEffect(` is
+# routinely written with its arguments split across lines, e.g.
+#   .glassEffect(
+#       .clear.interactive(),
+#       in: .circle
+#   )
+# RULE_PATTERNS[5] only catches the single-line form. This scans for a line
+# that ends in "glassEffect(" and looks ahead a few lines for "in: .circle"
+# before the call closes, so a wrapped circle glassEffect is caught too.
+# Non-circle wrapped calls (capsule, rect) are left alone, and the exclude
+# file (DesignTokens.swift) is skipped the same way scan_rule skips it.
+scan_glass_circle() {
+  local exclude_file="$1"
+  shift
+  local exclude_args=()
+  if [[ -n "$exclude_file" ]]; then
+    exclude_args=(--exclude="$exclude_file")
+  fi
+
+  local single
+  single="$(scan_rule "${RULE_PATTERNS[5]}" "$exclude_file" "$@")"
+
+  local files
+  files="$(grep -rlE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' "${exclude_args[@]+"${exclude_args[@]}"}" 'glassEffect\($' "$@" 2>/dev/null || true)"
+
+  local multi=""
+  if [[ -n "$files" ]]; then
+    local f hit
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      hit="$(awk '
+        /glassEffect\($/ {
+          start = NR
+          startline = $0
+          found = 0
+          for (i = 1; i <= 6; i++) {
+            if ((getline nextline) <= 0) break
+            if (nextline ~ /in: *\.circle/) { found = 1; break }
+            if (nextline ~ /^[[:space:]]*\)/) break
+          }
+          if (found) print start ":" startline
+        }
+      ' "$f" 2>/dev/null || true)"
+      if [[ -n "$hit" ]]; then
+        local line lineno content
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          lineno="${line%%:*}"
+          content="${line#*:}"
+          multi+="$f:$lineno:$content"$'\n'
+        done <<< "$hit"
+      fi
+    done <<< "$files"
+  fi
+  multi="${multi%$'\n'}"
+
+  if [[ -n "$single" && -n "$multi" ]]; then
+    printf '%s\n%s' "$single" "$multi"
+  elif [[ -n "$single" ]]; then
+    printf '%s' "$single"
+  else
+    printf '%s' "$multi"
+  fi
+}
+
 count_lines() {
   local text="$1"
   if [[ -z "$text" ]]; then
@@ -137,7 +202,11 @@ run_design_review() {
     local description="${RULE_DESCRIPTIONS[$i]}"
 
     local matches
-    matches="$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${search_paths[@]}")"
+    if [[ "$rule_id" == "glass_circle" ]]; then
+      matches="$(scan_glass_circle "${RULE_EXCLUDES[$i]}" "${search_paths[@]}")"
+    else
+      matches="$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${search_paths[@]}")"
+    fi
     local count
     count="$(count_lines "$matches")"
 
@@ -281,6 +350,42 @@ struct AllowedGlass: View {
 }
 EOF
 
+  # glass_circle multi-line fixtures: the same call written across several
+  # lines, the form the single-line pattern alone would miss (this repo
+  # already writes glassEffect multi-line at AppShellView.swift:778,
+  # ScheduledPostDetailView.swift:940, ResumablePostEditorView.swift:824 —
+  # all capsule/rect, none circle). Fail fixture wraps a circle; pass fixture
+  # wraps a capsule the same way, so the check proves shape still matters
+  # once the call spans lines, not just presence of "glassEffect(".
+  cat > "$tmp/GlassMultilineFail.swift" <<'EOF'
+import SwiftUI
+struct GlassMultilineFail: View {
+    var body: some View {
+        Color.clear
+            .glassEffect(
+                .clear.interactive(),
+                in: .circle
+            )
+    }
+}
+EOF
+  cat > "$tmp/GlassMultilinePass.swift" <<'EOF'
+import SwiftUI
+struct GlassMultilinePass: View {
+    var body: some View {
+        Color.clear
+            .glassEffect(
+                .clear.interactive(),
+                in: .capsule
+            )
+            .glassEffect(
+                .clear,
+                in: .rect(cornerRadius: 14)
+            )
+    }
+}
+EOF
+
   local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail)
   local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass)
 
@@ -290,6 +395,23 @@ EOF
     local pattern="${RULE_PATTERNS[$i]}"
     local fail_file="$tmp/${rule_fail_file[$i]}.swift"
     local pass_file="$tmp/${rule_pass_file[$i]}.swift"
+
+    if [[ "$rule_id" == "glass_circle" ]]; then
+      if [[ -n "$(scan_glass_circle "${RULE_EXCLUDES[$i]}" "$fail_file")" ]]; then
+        echo "self-test ok: $rule_id correctly flags its fail fixture"
+      else
+        echo "self-test FAIL: $rule_id did not flag ${rule_fail_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+
+      if [[ -z "$(scan_glass_circle "${RULE_EXCLUDES[$i]}" "$pass_file")" ]]; then
+        echo "self-test ok: $rule_id correctly clears its pass fixture"
+      else
+        echo "self-test FAIL: $rule_id incorrectly flagged ${rule_pass_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
 
     if [[ -n "$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "$fail_file")" ]]; then
       echo "self-test ok: $rule_id correctly flags its fail fixture"
@@ -308,10 +430,27 @@ EOF
 
   # The exclusion itself: the same violating line inside the rule's allowed
   # filename must not be reported.
-  if [[ -z "$(scan_rule "${RULE_PATTERNS[5]}" "${RULE_EXCLUDES[5]}" "$tmp/allowed")" ]]; then
+  if [[ -z "$(scan_glass_circle "${RULE_EXCLUDES[5]}" "$tmp/allowed")" ]]; then
     echo "self-test ok: glass_circle skips its allowed file (DesignTokens.swift)"
   else
     echo "self-test FAIL: glass_circle flagged its allowed file DesignTokens.swift" >&2
+    failures=$((failures + 1))
+  fi
+
+  # Multi-line glassEffect: a wrapped circle call must still be flagged, and
+  # a wrapped capsule/rect call must not be — proves the look-ahead checks
+  # shape, not just the presence of a multi-line "glassEffect(".
+  if [[ -n "$(scan_glass_circle '' "$tmp/GlassMultilineFail.swift")" ]]; then
+    echo "self-test ok: glass_circle flags a multi-line wrapped circle glassEffect"
+  else
+    echo "self-test FAIL: glass_circle did not flag GlassMultilineFail.swift (multi-line circle)" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [[ -z "$(scan_glass_circle '' "$tmp/GlassMultilinePass.swift")" ]]; then
+    echo "self-test ok: glass_circle clears a multi-line wrapped capsule/rect glassEffect"
+  else
+    echo "self-test FAIL: glass_circle incorrectly flagged GlassMultilinePass.swift (multi-line capsule/rect)" >&2
     failures=$((failures + 1))
   fi
 
