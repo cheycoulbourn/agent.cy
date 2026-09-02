@@ -4,7 +4,7 @@ set -euo pipefail
 
 # check_design_review.sh — a ratchet, not a hard gate.
 #
-# Greps shipped Swift UI sources for six design-consistency bans and compares
+# Greps shipped Swift UI sources for seven design-consistency bans and compares
 # each rule's current violation count against a checked-in baseline
 # (scripts/design-review-baseline.txt). It fails (exit 1) only when a rule's
 # count goes UP from its baseline; it passes when counts are equal or lower.
@@ -32,6 +32,7 @@ RULE_IDS=(
   corner_radius
   pill_background
   glass_circle
+  bordered_prominent
 )
 RULE_PATTERNS=(
   'Image\(systemName:|systemImage:'
@@ -40,6 +41,7 @@ RULE_PATTERNS=(
   'cornerRadius: (3|5|6|9|13|14|18|22)\b'
   'background\(Color\.(cyAccent|actionAccent)[^)]*in: *\.(capsule|circle)'
   'glassEffect\(.*in: *\.circle'
+  '\.buttonStyle\(\.borderedProminent\)'
 )
 RULE_DESCRIPTIONS=(
   "SF Symbols in shipped UI (Image(systemName:) / systemImage:) — design.md bans SF Symbols outright"
@@ -48,6 +50,7 @@ RULE_DESCRIPTIONS=(
   "Off-scale cornerRadius literal (3/5/6/9/13/14/18/22 — not an AgentRadius token)"
   "Accent-filled capsule/circle background (solid-fill pill button banned per design.md)"
   "Hand-rolled circular glassEffect outside DesignTokens.swift — every glass circle goes through .agentGlassCircle() / AgentToolbarIconContainer"
+  "Bordered-prominent button style anywhere in shipped UI — SwiftUI renders it as a solid accent fill (design.md: quiet ink tints only); AgentToolbarSaveButton / AgentToolbarIconButton are the shared replacement"
 )
 # One allowed filename per rule; empty means the rule applies to every file.
 RULE_EXCLUDES=(
@@ -57,6 +60,7 @@ RULE_EXCLUDES=(
   ''
   ''
   'DesignTokens.swift'
+  ''
 )
 
 preflight() {
@@ -386,8 +390,27 @@ struct GlassMultilinePass: View {
 }
 EOF
 
-  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail)
-  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass)
+  # bordered_prominent
+  cat > "$tmp/BorderedProminentFail.swift" <<'EOF'
+import SwiftUI
+struct BorderedProminentFail: View {
+    var body: some View {
+        Button("Save") {}
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.circle)
+            .tint(Color.agentPureWhite)
+    }
+}
+EOF
+  cat > "$tmp/BorderedProminentPass.swift" <<'EOF'
+import SwiftUI
+struct BorderedProminentPass: View {
+    var body: some View { AgentToolbarSaveButton(title: "Save", action: {}) }
+}
+EOF
+
+  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail BorderedProminentFail)
+  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass BorderedProminentPass)
 
   local i
   for i in "${!RULE_IDS[@]}"; do
@@ -471,7 +494,7 @@ EOF
 
   # Baseline equal to current count (2) must pass.
   local equal_baseline="$tmp/baseline-equal.txt"
-  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$equal_baseline"
+  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$equal_baseline"
   if run_design_review "$equal_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count == baseline passes"
   else
@@ -481,7 +504,7 @@ EOF
 
   # Baseline below current count (1 < 2) must fail.
   local low_baseline="$tmp/baseline-low.txt"
-  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$low_baseline"
+  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$low_baseline"
   if run_design_review "$low_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 1 ]]; then
     echo "self-test ok: count > baseline fails"
   else
@@ -491,7 +514,7 @@ EOF
 
   # Baseline above current count (3 > 2) must pass (ratchet only tightens).
   local high_baseline="$tmp/baseline-high.txt"
-  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$high_baseline"
+  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$high_baseline"
   if run_design_review "$high_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count < baseline passes"
   else
@@ -501,7 +524,7 @@ EOF
 
   # --update-baseline rewrites the file from current counts.
   local update_target="$tmp/baseline-update.txt"
-  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\n' > "$update_target"
+  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$update_target"
   run_design_review "$update_target" 1 "$ratchet_dir" >/dev/null 2>&1
   if grep -q '^sf_symbols=2$' "$update_target"; then
     echo "self-test ok: --update-baseline rewrites counts from a fresh scan"

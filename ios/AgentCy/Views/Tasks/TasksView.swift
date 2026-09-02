@@ -1575,19 +1575,13 @@ private struct LinkedPostTaskComposer: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button(action: save) {
-                    AgentIconView(.check, size: 15)
-                        .foregroundStyle(Color.agentPureBlack)
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .tint(Color.agentPureWhite)
-                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-                .accessibilityLabel("Add task")
+                AgentToolbarSaveButton(
+                    title: "Add task",
+                    isEnabled: !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    action: save
+                )
             }
+            .sharedBackgroundVisibility(.hidden)
         }
         .agentScreen()
         .sheet(isPresented: $showDueDatePicker) {

@@ -6,3 +6,4 @@ banned_fonts=166
 corner_radius=63
 pill_background=10
 glass_circle=0
+bordered_prominent=0

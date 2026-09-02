@@ -204,16 +204,13 @@ struct InspirationReviewView: View {
                 }
                 if hasUnsavedChanges {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button {
-                            saveChanges()
-                        } label: {
-                            // Saved Post save actions are always a checkmark only.
-                            AgentIconView(.check, size: 16)
-                                .frame(width: 24, height: 24)
-                        }
-                        .disabled(!canSaveChanges || isSavingChanges)
-                        .accessibilityLabel("Save changes")
+                        AgentToolbarSaveButton(
+                            title: "Save changes",
+                            isEnabled: canSaveChanges && !isSavingChanges,
+                            action: { saveChanges() }
+                        )
                     }
+                    .sharedBackgroundVisibility(.hidden)
                 }
             }
         }

@@ -2978,18 +2978,13 @@ struct DayAgendaView: View {
                 hasChanges: hasDayChanges(snapshot: snapshot)
             ) {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { saveAndDismiss(snapshot: snapshot) }) {
-                        AgentIconView(.check, size: 15)
-                            .foregroundStyle(Color.agentPureBlack)
-                            .frame(width: 18, height: 18)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.circle)
-                    .controlSize(.large)
-                    .tint(Color.agentPureWhite)
-                    .accessibilityLabel("Save day")
-                    .accessibilityHint("Saves your changes and returns to the week")
+                    AgentToolbarSaveButton(
+                        title: "Save day",
+                        hint: "Saves your changes and returns to the week",
+                        action: { saveAndDismiss(snapshot: snapshot) }
+                    )
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
 #endif

@@ -396,6 +396,39 @@ struct AgentToolbarIconLabel: View {
     }
 }
 
+/// The one Save control. Six screens used to hand-roll a bordered-prominent
+/// circle button tinted pure white for this, which is a solid accent fill —
+/// the contract's "never solid fills" broken byte-for-byte (L1-04). This is
+/// the same glass circle every other toolbar icon control uses, with the
+/// shared `AgentIcon.check` glyph in ink rather than a filled white puck, so
+/// in dark mode it reads like the Close beside it instead of being the
+/// brightest object on screen.
+struct AgentToolbarSaveButton: View {
+    let title: String
+    var hint: String = ""
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            AgentToolbarIconLabel(icon: .check)
+        }
+        // `AgentPressButtonStyle` also supplies the disabled dimming, so the
+        // call site never has to repeat an `.opacity` for it.
+        .buttonStyle(AgentPressButtonStyle())
+        .disabled(!isEnabled)
+        .accessibilityLabel(title)
+        .accessibilityHint(hint)
+    }
+}
+
+extension AgentToolbarSaveButton {
+    /// Exposed so a test can assert this control never grows its own
+    /// geometry independent of `AgentToolbarIconMetrics`.
+    static var diameter: CGFloat { AgentToolbarIconMetrics.diameter }
+    static var glyph: CGFloat { AgentToolbarIconMetrics.glyph }
+}
+
 /// The walkthrough's coach mark. One cue for every control the guided tour
 /// points at — the tab bar, Quick Add, and Quick Add's close button.
 struct AgentWalkthroughControlCue: View {

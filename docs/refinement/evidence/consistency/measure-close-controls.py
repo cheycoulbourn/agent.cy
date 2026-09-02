@@ -8,6 +8,10 @@ the four geometries the app used to ship (44 pt glass, 48 pt glass, 40 pt and
 44 pt opaque). AFTER cases read ../B1/task-4/, the captures taken once every
 icon control became the one shared glass circle, and are checked against the
 acceptance bar: 44 pt +/- 0.7, and one interior fill per appearance.
+
+TASK_5 cases read ../B1/task-5/: the Save control (six solid pure-white
+`.buttonStyle(.borderedProminent)` circles collapsed onto AgentToolbarSaveButton,
+the same glass circle as Close/Back). Checked against the same 44 pt +/- 0.7 bar.
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -56,6 +60,16 @@ AFTER_CASES = [
     ("post-editor-spark-development", "../B1/task-4/post-editor-spark-development-%s.png", 230, 390,  40,  300,  700, 300),
 ]
 
+# Task 5 captures: the Save control, on the top-right of a native toolbar in
+# each case. The search band starts below the sheet/nav-bar's own rounded top
+# edge (which otherwise reads as a false full-width run) and stops short of
+# the simulator screen's own corner radius on the right (same reason).
+TASK_5_CASES = [
+    ("day-agenda Save",         "../B1/task-5/day-agenda-%s.png",         235, 330, 1000, 1195, 850, 250),
+    ("weekly-focus-setup Save", "../B1/task-5/weekly-focus-setup-%s.png", 235, 330, 1000, 1195, 850, 250),
+    ("inspiration-review Save", "../B1/task-5/inspiration-review-%s.png", 235, 330, 1000, 1195, 850, 250),
+]
+
 print("== BEFORE (four geometries) ==")
 for label, f, *args in BEFORE_CASES:
     if not os.path.exists(f):
@@ -87,6 +101,32 @@ print()
 for mode, by_fill in fills.items():
     if len(by_fill) == 1:
         print(f"{mode}: one interior fill across all controls -- {list(by_fill)[0]}")
+    else:
+        print(f"{mode}: FAIL -- {len(by_fill)} different interior fills: {by_fill}")
+        failures += 1
+
+print()
+print("== TASK 5 (Save control, was six solid pure-white borderedProminent circles) ==")
+task5_fills = {}
+for mode in ("light", "dark"):
+    for label, pattern, *args in TASK_5_CASES:
+        path = pattern % mode
+        if not os.path.exists(path):
+            print(f"{label} ({mode}): capture missing at {path}")
+            failures += 1
+            continue
+        ground, pt, fill = widest_circle(path, *args)
+        ok = abs(pt - TARGET_PT) <= TOLERANCE_PT
+        task5_fills.setdefault(mode, {}).setdefault(fill, []).append(label)
+        print(f"{label:26s} ({mode:5s}): ground={ground}  diameter={pt:.2f} pt  "
+              f"interior fill={fill}  {'ok' if ok else 'FAIL'}")
+        if not ok:
+            failures += 1
+
+print()
+for mode, by_fill in task5_fills.items():
+    if len(by_fill) == 1:
+        print(f"{mode}: one interior fill across all Save controls -- {list(by_fill)[0]}")
     else:
         print(f"{mode}: FAIL -- {len(by_fill)} different interior fills: {by_fill}")
         failures += 1

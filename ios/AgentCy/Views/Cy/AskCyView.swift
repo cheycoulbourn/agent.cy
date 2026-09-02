@@ -2684,16 +2684,11 @@ private struct CyConversationTranscriptView: View {
                         AgentIconLabel(title: "Delete conversation", icon: .trash)
                     }
                 } label: {
-                    AgentIconView(.more, size: 14)
-                        .foregroundStyle(Color.agentText)
-                        .frame(width: 18, height: 18)
+                    AgentToolbarIconLabel(icon: .more)
                 }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .tint(Color.agentSurface)
                 .accessibilityLabel("Conversation options")
             }
+            .sharedBackgroundVisibility(.hidden)
         }
         .confirmationDialog("Delete this conversation?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete conversation", role: .destructive) {

@@ -44,4 +44,16 @@ final class DesignTokensTests: XCTestCase {
         XCTAssertEqual(AgentToolbarIconMetrics.strokeOpacity, 0.22, accuracy: 0.0001)
         XCTAssertEqual(AgentToolbarIconMetrics.strokeWidth, 0.5)
     }
+
+    /// L1-04: six screens hand-rolled a solid pure-white
+    /// `.buttonStyle(.borderedProminent)` circle for Save instead of the
+    /// shared glass control. `AgentToolbarSaveButton` is built on the same
+    /// `AgentToolbarIconMetrics` geometry as every other toolbar icon
+    /// control, not a new size of its own; this pins that so the Save
+    /// control can never quietly drift back to a bespoke diameter or glyph
+    /// size the way the six call sites did.
+    func testSaveButtonUsesToolbarIconMetrics() {
+        XCTAssertEqual(AgentToolbarSaveButton.diameter, AgentToolbarIconMetrics.diameter)
+        XCTAssertEqual(AgentToolbarSaveButton.glyph, AgentToolbarIconMetrics.glyph)
+    }
 }

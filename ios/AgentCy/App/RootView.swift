@@ -157,6 +157,8 @@ struct RootView: View {
                 PreviewPostEditorRoot()
             } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewScheduledPost") {
                 PreviewScheduledPostRoot()
+            } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewInspirationReview") {
+                PreviewInspirationReviewRoot()
             } else {
                 destinationView
             }
@@ -431,6 +433,27 @@ private struct PreviewSparkDevelopmentRoot: View {
                 title: "No spark fixture",
                 message: "Seed preview data to open Build with Cy.",
                 icon: .calendar
+            )
+        }
+    }
+}
+
+/// `inspiration-review` has no other headless entry point — it is normally
+/// reached only via `$model.inspirationReviewRoute`, which needs a share
+/// extension or a live source tap to populate. This mirrors
+/// `PreviewSparkDevelopmentRoot`: a DEBUG-only route straight to the view
+/// with the first seeded `InspirationSource`, for capture and measurement.
+private struct PreviewInspirationReviewRoot: View {
+    @Query(sort: \InspirationSource.updatedAt, order: .reverse) private var sources: [InspirationSource]
+
+    var body: some View {
+        if let source = sources.first {
+            InspirationReviewView(sourceID: source.id)
+        } else {
+            AgentEmptyState(
+                title: "No saved post fixture",
+                message: "Seed preview data to open the saved post review.",
+                icon: .link
             )
         }
     }

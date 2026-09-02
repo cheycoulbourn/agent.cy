@@ -97,18 +97,13 @@ struct WeeklyFocusSetupView: View {
                 .sharedBackgroundVisibility(.hidden)
                 if hasChanges {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: saveAndDismiss) {
-                            AgentIconView(.check, size: 15)
-                                .foregroundStyle(Color.agentPureBlack)
-                                .frame(width: 18, height: 18)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.circle)
-                        .controlSize(.large)
-                        .tint(Color.agentPureWhite)
-                        .accessibilityLabel("Save weekly focus")
-                        .accessibilityHint("Saves your weekly focuses and recurring tasks")
+                        AgentToolbarSaveButton(
+                            title: "Save weekly focus",
+                            hint: "Saves your weekly focuses and recurring tasks",
+                            action: saveAndDismiss
+                        )
                     }
+                    .sharedBackgroundVisibility(.hidden)
                 }
             }
             .onAppear(perform: load)
@@ -953,17 +948,9 @@ struct DailyFocusEditorView: View {
                 .sharedBackgroundVisibility(.hidden)
                 if hasChanges {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: save) {
-                            AgentIconView(.check, size: 15)
-                                .foregroundStyle(Color.agentPureBlack)
-                                .frame(width: 18, height: 18)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.circle)
-                        .controlSize(.large)
-                        .tint(Color.agentPureWhite)
-                        .accessibilityLabel("Save focus")
+                        AgentToolbarSaveButton(title: "Save focus", action: save)
                     }
+                    .sharedBackgroundVisibility(.hidden)
                 }
             }
             .onAppear(perform: load)

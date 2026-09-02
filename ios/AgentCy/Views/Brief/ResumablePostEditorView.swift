@@ -5305,19 +5305,13 @@ struct PostDraftTaskComposer: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(action: addTask) {
-                        AgentIconView(.check, size: 15)
-                            .foregroundStyle(Color.agentPureBlack)
-                            .frame(width: 18, height: 18)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.circle)
-                    .controlSize(.large)
-                    .tint(Color.agentPureWhite)
-                    .accessibilityLabel("Save task")
-                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .opacity(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
+                    AgentToolbarSaveButton(
+                        title: "Save task",
+                        isEnabled: !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        action: addTask
+                    )
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
         .agentScreen()

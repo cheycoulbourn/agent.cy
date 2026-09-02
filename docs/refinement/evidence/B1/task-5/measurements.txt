@@ -1,0 +1,30 @@
+== BEFORE (four geometries) ==
+weekly-focus Close  (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)
+weekly-focus Close  (dark): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)
+voice-spark Close   (light): ground=(245, 246, 243)  diameter=48.00 pt  interior fill=(255, 255, 255)
+
+== AFTER (one glass circle) ==
+weekly-focus-setup               (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)  ok
+voice-spark                      (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)  ok
+day-agenda-add-live-post         (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)  ok
+post-editor-spark-development    (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)  ok
+weekly-focus-setup               (dark ): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)  ok
+voice-spark                      (dark ): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)  ok
+day-agenda-add-live-post         (dark ): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)  ok
+post-editor-spark-development    (dark ): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)  ok
+
+light: one interior fill across all controls -- (255, 255, 255)
+dark: one interior fill across all controls -- (46, 46, 46)
+
+== TASK 5 (Save control, was six solid pure-white borderedProminent circles) ==
+day-agenda Save            (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)  ok
+weekly-focus-setup Save    (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)  ok
+inspiration-review Save    (light): ground=(245, 246, 243)  diameter=44.00 pt  interior fill=(255, 255, 255)  ok
+day-agenda Save            (dark ): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)  ok
+weekly-focus-setup Save    (dark ): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)  ok
+inspiration-review Save    (dark ): ground=(26, 26, 26)  diameter=44.67 pt  interior fill=(46, 46, 46)  ok
+
+light: one interior fill across all Save controls -- (255, 255, 255)
+dark: one interior fill across all Save controls -- (46, 46, 46)
+
+measure-close-controls: every control is 44 pt +/- 0.7 with one interior fill per appearance.
