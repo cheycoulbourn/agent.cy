@@ -760,13 +760,12 @@ enum AgentButtonPressFeedback {
 }
 
 /// One visual family for every action button in the app: a rounded rect at
-/// `AgentRadius.control` with a 1pt border and a flat tinted fill — the same
-/// structure as the pillar "add" affordance. Roles differ only by fill and
+/// `AgentRadius.button` with a 1pt border and a flat tinted fill. Roles differ only by fill and
 /// text color, never by shape, so buttons with similar purposes read as the
 /// same control everywhere. The Cy accent stays reserved for the single color
 /// moment on a screen and is never spent on a button fill.
 enum AgentActionButtonTheme {
-    static let radius = AgentRadius.control
+    static let radius = AgentRadius.button
 
     static let primaryFill = Color.agentText.opacity(0.09)
     static let secondaryFill = Color.agentText.opacity(0.055)
