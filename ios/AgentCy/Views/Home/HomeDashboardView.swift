@@ -194,17 +194,8 @@ struct HomeDashboardView: View {
     private var customizeDashboardButton: some View {
         Button(action: toggleDashboardCustomization) {
             Text(isArrangingDashboard ? "Done" : "Customize")
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.agentText)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(.rect(cornerRadius: 22))
         }
-        .buttonStyle(.plain)
-        .background(Color.agentSurface, in: .capsule)
-        .overlay {
-            Capsule()
-                .stroke(Color.agentBorder, lineWidth: 1)
-        }
+        .buttonStyle(AgentSecondaryButtonStyle())
         .accessibilityHint(
             isArrangingDashboard
                 ? "Finishes customizing your dashboard"

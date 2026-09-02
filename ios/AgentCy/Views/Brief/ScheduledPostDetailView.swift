@@ -935,19 +935,19 @@ struct ScheduledPostDetailView: View {
             .frame(maxWidth: .infinity, minHeight: 56)
             .background(
                 Color.agentPureWhite.opacity(colorScheme == .dark ? 0.18 : 0.94),
-                in: .capsule
+                in: .rect(cornerRadius: AgentActionButtonTheme.radius)
             )
             .glassEffect(
                 .clear.interactive()
                     .tint(Color.agentPureWhite.opacity(colorScheme == .dark ? 0.08 : 0.20)),
-                in: .capsule
+                in: .rect(cornerRadius: AgentActionButtonTheme.radius)
             )
             .overlay {
-                // A white stroke on a near-white capsule over a light canvas
+                // A white stroke on a near-white control over a light canvas
                 // read as no border at all on desktop. Dark mode keeps the
                 // white edge; light mode uses the border token so the control
                 // has a visible boundary.
-                Capsule()
+                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
                     .stroke(
                         colorScheme == .dark
                             ? Color.agentPureWhite.opacity(0.24)

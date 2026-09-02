@@ -489,12 +489,7 @@ struct SavedPostLinkCaptureView: View {
             HStack(spacing: AgentSpacing.x3) {
 #if targetEnvironment(macCatalyst)
                 Button("Cancel") { dismiss() }
-                    .font(.agentSubtext.weight(.semibold))
-                    .foregroundStyle(Color.agentText)
-                    .frame(minWidth: 100, minHeight: 44)
-                    .buttonStyle(.plain)
-                    .background(Color.agentSurface, in: .capsule)
-                    .overlay(Capsule().stroke(Color.agentBorder, lineWidth: 1))
+                    .buttonStyle(AgentCompactSecondaryButtonStyle())
                 Spacer(minLength: AgentSpacing.x4)
 #endif
                 Button(action: save) {

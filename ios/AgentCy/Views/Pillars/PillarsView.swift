@@ -1714,13 +1714,16 @@ struct PillarDetailView: View {
                     .font(.paperInter(size: 14, weight: selectedTab == tab ? .semibold : .regular, relativeTo: .subheadline))
                     .foregroundStyle(Color.agentText)
                     .frame(maxWidth: .infinity, minHeight: 36)
-                    .background(selectedTab == tab ? Color.agentSurface : Color.clear, in: .capsule)
+                    .background(
+                        selectedTab == tab ? Color.agentSurface : Color.clear,
+                        in: .rect(cornerRadius: AgentRadius.control)
+                    )
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(AgentSpacing.x1)
-        .background(Color.agentText.opacity(0.05), in: .capsule)
+        .background(Color.agentText.opacity(0.05), in: .rect(cornerRadius: AgentRadius.control))
     }
 
     @ViewBuilder
@@ -1790,13 +1793,7 @@ struct PillarDetailView: View {
 
     private var deleteButton: some View {
         Button("Delete pillar", role: .destructive) { confirmDelete = true }
-            .font(.paperInter(size: 15, weight: .semibold, relativeTo: .body))
-            .foregroundStyle(Color.agentDestructive)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .overlay {
-                Capsule().stroke(Color.agentDestructive.opacity(0.5), lineWidth: 1)
-            }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentQuietDestructiveButtonStyle())
     }
 
     private var displayedColorHex: String { isEditing ? draftColorHex : pillar.colorHex }

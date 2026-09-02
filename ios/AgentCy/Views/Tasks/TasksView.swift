@@ -837,14 +837,7 @@ struct TasksView: View {
                         Button("Clear filters") {
                             resetTaskFilters()
                         }
-                        .font(.agentBody.weight(.semibold))
-                        .foregroundStyle(Color.agentText)
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                        .background(Color.agentSurface, in: .capsule)
-                        .overlay {
-                            Capsule().stroke(Color.agentBorder, lineWidth: 0.75)
-                        }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AgentSecondaryButtonStyle())
                     }
                 }
                 .padding(.horizontal, AgentLayout.pageMargin)
@@ -2180,15 +2173,19 @@ struct TaskDetailView: View {
     ) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.paperInter(size: 13, weight: .semibold, relativeTo: .subheadline))
+                .font(.paperInter(size: 13, weight: isPrimary ? .semibold : .medium, relativeTo: .subheadline))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, minHeight: 42)
-                .foregroundStyle(isPrimary ? Color.agentCanvas : Color.agentText)
-                .background(isPrimary ? Color.agentText : Color.clear, in: .capsule)
+                .foregroundStyle(isPrimary ? Color.agentText : Color.agentSecondary)
+                .background(
+                    isPrimary ? Color.agentText.opacity(0.09) : Color.clear,
+                    in: .rect(cornerRadius: AgentRadius.control)
+                )
                 .overlay {
                     if !isPrimary {
-                        Capsule().stroke(Color.agentBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: AgentRadius.control)
+                            .stroke(Color.agentBorder, lineWidth: 1)
                     }
                 }
         }

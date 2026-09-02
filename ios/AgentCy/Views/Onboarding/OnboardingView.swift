@@ -832,7 +832,7 @@ struct OnboardingView: View {
                     }
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(PaperOnboardingOutlineButtonStyle())
+                .buttonStyle(AgentSecondaryButtonStyle())
 
                 if !showsBridgeSetupDetails {
                     Button("Finish later") {
@@ -928,7 +928,7 @@ struct OnboardingView: View {
                     )
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(PaperOnboardingOutlineButtonStyle())
+                .buttonStyle(AgentSecondaryButtonStyle())
 
                 Button {
                     checkBridgeConnection()
@@ -936,7 +936,7 @@ struct OnboardingView: View {
                     AgentIconLabel(title: "Check connection", icon: .refresh)
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(PaperOnboardingPrimaryButtonStyle())
+                .buttonStyle(AgentPrimaryButtonStyle())
                 }
             }
 
@@ -1153,14 +1153,14 @@ struct OnboardingView: View {
                     } label: {
                         HStack(spacing: AgentSpacing.x2) {
                             if appModel.isWorking {
-                                ProgressView().tint(Color.onAccent)
+                                ProgressView().tint(Color.agentText)
                             }
                             Text("Show me around")
                             AgentIconView(.forward, size: 16)
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(PaperOnboardingPrimaryButtonStyle())
+                    .buttonStyle(AgentPrimaryButtonStyle())
                     .disabled(appModel.isWorking)
                 }
 
@@ -1190,15 +1190,15 @@ struct OnboardingView: View {
                 } label: {
                     HStack(spacing: AgentSpacing.x2) {
                         if appModel.isWorking && step == .ready {
-                            ProgressView().tint(Color.onAccent)
+                            ProgressView().tint(Color.agentText)
                         }
                         Text(primaryButtonTitle)
                         if step == .ready {
-                            CyAsterisk(color: .onAccent, size: 17, strokeWidth: 1.8)
+                            CyAsterisk(color: .agentText, size: 17, strokeWidth: 1.8)
                         }
                     }
                 }
-                .buttonStyle(PaperOnboardingPrimaryButtonStyle())
+                .buttonStyle(AgentPrimaryButtonStyle())
                 .disabled(!isStepValid || appModel.isWorking)
             }
 
@@ -1740,10 +1740,19 @@ private struct PaperYouTubeCard: View {
             }
         } label: {
             Text(title)
-                .font(.paperInter(size: 13, weight: .semibold, relativeTo: .subheadline))
+                .font(.paperInter(size: 13, weight: isSelected ? .semibold : .medium, relativeTo: .subheadline))
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .foregroundStyle(isSelected ? Color.onAccent : Color.agentText)
-                .background(isSelected ? Color.actionAccent : Color.agentCanvas, in: .capsule)
+                .foregroundStyle(isSelected ? Color.agentText : Color.agentSecondary)
+                .background(
+                    isSelected ? Color.agentText.opacity(0.09) : Color.clear,
+                    in: .rect(cornerRadius: AgentRadius.control)
+                )
+                .overlay {
+                    if !isSelected {
+                        RoundedRectangle(cornerRadius: AgentRadius.control)
+                            .stroke(Color.agentBorder, lineWidth: 1)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .accessibilityValue(OnboardingAccessibility.selectionValue(isSelected: isSelected))
@@ -1956,34 +1965,6 @@ private struct OnboardingWeekdayChooser: View {
     }
 }
 
-private struct PaperOnboardingPrimaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.paperInter(size: 17, weight: .semibold, relativeTo: .headline))
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .foregroundStyle(Color.onAccent)
-            .background(Color.actionAccent, in: .capsule)
-            .opacity(isEnabled
-                ? AgentButtonPressFeedback.value(
-                    resting: 1.0,
-                    pressed: 0.78,
-                    isPressed: configuration.isPressed
-                )
-                : 0.36)
-            .scaleEffect(AgentButtonPressFeedback.scale(
-                isPressed: configuration.isPressed,
-                reduceMotion: reduceMotion
-            ))
-            .animation(
-                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
-                value: configuration.isPressed
-            )
-    }
-}
-
 private struct PaperOnboardingSecondaryButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1997,39 +1978,6 @@ private struct PaperOnboardingSecondaryButtonStyle: ButtonStyle {
                 pressed: 0.72,
                 isPressed: configuration.isPressed
             ))
-            .scaleEffect(AgentButtonPressFeedback.scale(
-                isPressed: configuration.isPressed,
-                reduceMotion: reduceMotion
-            ))
-            .animation(
-                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
-                value: configuration.isPressed
-            )
-    }
-}
-
-private struct PaperOnboardingOutlineButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.paperInter(size: 16, weight: .semibold, relativeTo: .headline))
-            .frame(maxWidth: .infinity, minHeight: 54)
-            .padding(.horizontal, AgentSpacing.x4)
-            .foregroundStyle(Color.agentText)
-            .background(Color.agentSurface, in: .rect(cornerRadius: 16))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.agentBorder, lineWidth: 1)
-            }
-            .opacity(isEnabled
-                ? AgentButtonPressFeedback.value(
-                    resting: 1.0,
-                    pressed: 0.72,
-                    isPressed: configuration.isPressed
-                )
-                : 0.42)
             .scaleEffect(AgentButtonPressFeedback.scale(
                 isPressed: configuration.isPressed,
                 reduceMotion: reduceMotion

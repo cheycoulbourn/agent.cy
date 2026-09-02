@@ -4,7 +4,7 @@ set -euo pipefail
 
 # check_design_review.sh — a ratchet, not a hard gate.
 #
-# Greps shipped Swift UI sources for ten design-consistency bans and compares
+# Greps shipped Swift UI sources for eleven design-consistency bans and compares
 # each rule's current violation count against a checked-in baseline
 # (scripts/design-review-baseline.txt). It fails (exit 1) only when a rule's
 # count goes UP from its baseline; it passes when counts are equal or lower.
@@ -48,6 +48,7 @@ RULE_IDS=(
   accent_control_fill
   accent_shape_fill
   accent_glow
+  capsule_button
 )
 RULE_PATTERNS=(
   'Image\(systemName:|systemImage:'
@@ -60,6 +61,7 @@ RULE_PATTERNS=(
   'background\([^)]*Color\.cyAccent([^A-Za-z0-9_.]|$)'
   '\.fill\([^)]*Color\.(cyAccent|actionAccent)([^A-Za-z0-9_.]|$)'
   'shadow\(color: *[^)]*\.cyAccent'
+  'Button\(.*\.background\(.*in: *\.capsule'
 )
 RULE_DESCRIPTIONS=(
   "SF Symbols in shipped UI (Image(systemName:) / systemImage:) — design.md bans SF Symbols outright"
@@ -72,6 +74,7 @@ RULE_DESCRIPTIONS=(
   "Solid brick-red anywhere in a background() argument list, whatever the shape (design.md: \"No solid accent fills, anywhere\", decided 2026-08-14) — the accent action is AgentQuietAccentButtonStyle / AgentQuietAccentIconLabel: cy@12% fill, 0.75pt cy@40% border, brick label. An opacity tint (Color.cyAccent.opacity(...)) is allowed by the pattern itself; a brand *mark* opts out with // design-review-allow: accent-mark"
   "Solid brand shape fill — brick or ink (Circle()/RoundedRectangle().fill(Color.cyAccent|actionAccent), the ternary form, and the multi-line form where the colour sits on a later line) — same ban, same escape hatch for a real mark"
   "Brick-red glow (design.md: \"No glow\", rejected 2026-08-14) — accent shadows are banned outright and have no escape hatch; use the shared ambient shadow or nothing"
+  "A Button's own label background shaped as .capsule, in ios/AgentCy/Views/ only (design.md's radius table: capsule is for chips, badges, count pills, avatars — never buttons, decided 2026-08-14). Catches both a direct Button(...).background(...) chain and a Button { action } label: { ... .background(..., in: .capsule) } trailing closure, wherever the capsule sits in the Button's own expression; a capsule background on a container that merely contains a Button (a toast holding an Undo button, say) is not the Button's own label and is not flagged. A design-review-allow: accent-mark badge nested inside a Button's label (an unread-count dot on a bell icon) is not flagged either — the mark exception applies here too, since the ban is about the button's own shape, not a mark riding on it."
 )
 # One allowed filename per rule; empty means the rule applies to every file.
 RULE_EXCLUDES=(
@@ -85,10 +88,14 @@ RULE_EXCLUDES=(
   ''
   ''
   ''
+  ''
 )
 
 # 1 = the rule honours the `// design-review-allow: accent-mark` line marker.
-# Only the solid-fill rules do; glow has no sanctioned exception.
+# Only the solid-fill rules do; glow has no sanctioned exception. capsule_button
+# honours it too (its own scan_capsule_button implements the drop directly,
+# since it is a custom multi-line scan like glass_circle/accent_shape_fill —
+# this array entry documents that, it is not read by scan_capsule_button).
 RULE_ALLOW_MARKER=(
   0
   0
@@ -100,6 +107,7 @@ RULE_ALLOW_MARKER=(
   1
   1
   0
+  1
 )
 
 ALLOW_MARKER='design-review-allow'
@@ -322,6 +330,88 @@ scan_accent_glow() {
   fi
 }
 
+# capsule_button bans `in: .capsule` on a Button's own label background —
+# design.md's radius table: "capsule / --radius-full ... Chips, badges, count
+# pills, avatars — never buttons" (decided 2026-08-14). A Button's label can
+# be a direct modifier chain on `Button(...)` (QuickCaptureView's old primary
+# action) or built inside a `Button { action } label: { ... }` / a single
+# `Button(action:) { ... }` trailing closure (TasksView's overdue-action
+# chips, OnboardingView's format chips) — a single-line grep for
+# "Button(...).background(...)" sees neither the trailing-closure form nor a
+# background several lines below the opening line.
+#
+# This walks forward from each `Button(`/`Button {` trigger, tracking `{ }`
+# depth, and looks for `.background(..., in: .capsule)` (same line, or a
+# wrapped `in: .capsule` continuation line) while still inside the Button's
+# own expression: either nested inside a closure the Button opened (depth >
+# 0) or, once those closures have all closed (depth == 0), on a directly
+# chained modifier line (one starting with `.`) that continues the same
+# statement — covering both `Button { action } label: { label }` (whose
+# `} label: {` line closes one brace and reopens another, net depth
+# unchanged, so scanning continues into the label closure) and
+# `Button(title, action:).modifier().modifier()` chains.
+#
+# Scanning for one trigger stops the moment a line neither continues the
+# chain (`.`) nor sits inside a still-open closure — typically the closing
+# brace of an *enclosing* container, exactly the shape of a capsule toast
+# that merely contains a Button rather than being one: AppShellView's
+# taskCompletionUndoToast has an inner `Button { ... } label: { ... }
+# .buttonStyle(.plain)` (fully closed, chain ended) inside an outer HStack
+# that itself gets `.background(Color.agentText, in: .capsule)` — that
+# background is the toast's own capsule pill, not the Undo button's, and is
+# correctly left unflagged because the HStack's closing `}` (which doesn't
+# start with `.`) ends the scan before reaching it.
+#
+# `// design-review-allow: accent-mark` is honoured the same way the fill
+# rules honour it, so a badge mark riding on a Button's label (an unread-count
+# dot on a bell icon) can opt out same as it can on any other control — the
+# ban is about the button's own shape, not a mark on top of it.
+scan_capsule_button() {
+  local files
+  files="$(grep -rlE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' '\bButton[[:space:]]*[({]' "$@" 2>/dev/null || true)"
+  [[ -z "$files" ]] && return 0
+
+  local f
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    local hit
+    hit="$(awk '
+      function trim(s) { sub(/^[ \t]+/, "", s); return s }
+      { lines[NR] = $0 }
+      END {
+        for (i = 1; i <= NR; i++) {
+          if (lines[i] !~ /Button[ \t]*[({]/) continue
+          depth = 0
+          for (j = i; j <= NR; j++) {
+            cur = lines[j]
+            t = trim(cur)
+            if (j > i) {
+              if (depth == 0 && t !~ /^\./) break
+            }
+            if ((cur ~ /\.background\(.*in:[ \t]*\.capsule/ || t ~ /^in:[ \t]*\.capsule/) \
+                && cur !~ /design-review-allow/) {
+              print j ":" lines[j]
+            }
+            tmp1 = cur; opens = gsub(/\{/, "{", tmp1)
+            tmp2 = cur; closes = gsub(/\}/, "}", tmp2)
+            depth += opens - closes
+            if (depth < 0) break
+          }
+        }
+      }
+    ' "$f" 2>/dev/null || true)"
+    if [[ -n "$hit" ]]; then
+      local line lineno content
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        lineno="${line%%:*}"
+        content="${line#*:}"
+        printf '%s:%s:%s\n' "$f" "$lineno" "$content"
+      done <<< "$hit"
+    fi
+  done <<< "$files"
+}
+
 count_lines() {
   local text="$1"
   if [[ -z "$text" ]]; then
@@ -378,6 +468,11 @@ run_design_review() {
       matches="$(scan_accent_shape_fill "${search_paths[@]}")"
     elif [[ "$rule_id" == "accent_glow" ]]; then
       matches="$(scan_accent_glow "${search_paths[@]}")"
+    elif [[ "$rule_id" == "capsule_button" ]]; then
+      # Scoped to ios/AgentCy/Views only (per the brief), not the generic
+      # four-path $search_paths every other rule scans — Widgets/Shared/
+      # InspirationShare carry no Button-capsule chip/pill styling to police.
+      matches="$(scan_capsule_button "$ROOT/ios/AgentCy/Views")"
     else
       matches="$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${RULE_ALLOW_MARKER[$i]}" "${search_paths[@]}")"
     fi
@@ -722,8 +817,37 @@ struct AccentGlowMultilinePass: View {
 }
 EOF
 
-  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail BorderedProminentFail AccentControlFillFail AccentShapeFillFail AccentGlowFail)
-  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass BorderedProminentPass AccentControlFillPass AccentShapeFillPass AccentGlowPass)
+  # capsule_button — a Button whose own label background is a solid capsule,
+  # the exact pattern L1-10 shipped as (QuickCaptureView's old primary action:
+  # `Button(title, action:).background(color, in: .capsule)`). The pass
+  # fixture is the fixture the brief calls out by name: "a genuine chip or
+  # badge that is not a Button" — a static Text badge with the same capsule
+  # background, no Button anywhere near it.
+  cat > "$tmp/CapsuleButtonFail.swift" <<'EOF'
+import SwiftUI
+struct CapsuleButtonFail: View {
+    var body: some View {
+        Button("Go", action: {})
+            .font(.agentBody)
+            .background(Color.actionAccent, in: .capsule)
+            .buttonStyle(.plain)
+    }
+}
+EOF
+  cat > "$tmp/CapsuleButtonPass.swift" <<'EOF'
+import SwiftUI
+struct CapsuleButtonPass: View {
+    var body: some View {
+        Text("New")
+            .font(.agentMetadata)
+            .padding(.horizontal, 6)
+            .background(Color.agentText.opacity(0.09), in: .capsule)
+    }
+}
+EOF
+
+  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail BorderedProminentFail AccentControlFillFail AccentShapeFillFail AccentGlowFail CapsuleButtonFail)
+  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass BorderedProminentPass AccentControlFillPass AccentShapeFillPass AccentGlowPass CapsuleButtonPass)
 
   local i
   for i in "${!RULE_IDS[@]}"; do
@@ -731,6 +855,23 @@ EOF
     local pattern="${RULE_PATTERNS[$i]}"
     local fail_file="$tmp/${rule_fail_file[$i]}.swift"
     local pass_file="$tmp/${rule_pass_file[$i]}.swift"
+
+    if [[ "$rule_id" == "capsule_button" ]]; then
+      if [[ -n "$(scan_capsule_button "$fail_file")" ]]; then
+        echo "self-test ok: $rule_id correctly flags its fail fixture"
+      else
+        echo "self-test FAIL: $rule_id did not flag ${rule_fail_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+
+      if [[ -z "$(scan_capsule_button "$pass_file")" ]]; then
+        echo "self-test ok: $rule_id correctly clears its pass fixture (a genuine chip/badge, not a Button)"
+      else
+        echo "self-test FAIL: $rule_id incorrectly flagged ${rule_pass_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
 
     if [[ "$rule_id" == "accent_glow" ]]; then
       if [[ -n "$(scan_accent_glow "$fail_file")" ]]; then
@@ -895,6 +1036,98 @@ EOF
   fi
 
   echo
+  echo "--- capsule_button structural cases ---"
+
+  # The trailing-closure form (`Button { action } label: { ... } `), the shape
+  # TasksView's overdue-action chips and OnboardingView's format chips shipped
+  # as: the capsule background sits several lines below the opening `Button {`,
+  # past a `} label: {` continuation the single-line pattern cannot see.
+  cat > "$tmp/CapsuleButtonTrailingClosureFail.swift" <<'EOF'
+import SwiftUI
+struct CapsuleButtonTrailingClosureFail: View {
+    let isSelected: Bool
+    var body: some View {
+        Button {
+            toggle()
+        } label: {
+            Text("Shorts")
+                .font(.agentSubtext)
+                .frame(minHeight: 40)
+                .background(isSelected ? Color.actionAccent : Color.agentCanvas, in: .capsule)
+        }
+        .buttonStyle(.plain)
+    }
+    func toggle() {}
+}
+EOF
+  if [[ -n "$(scan_capsule_button "$tmp/CapsuleButtonTrailingClosureFail.swift")" ]]; then
+    echo "self-test ok: capsule_button flags a Button { action } label: { ... } trailing-closure capsule"
+  else
+    echo "self-test FAIL: capsule_button did not flag CapsuleButtonTrailingClosureFail.swift" >&2
+    failures=$((failures + 1))
+  fi
+
+  # A container that merely *contains* a Button is not the Button's own label
+  # — AppShellView's taskCompletionUndoToast shape: the Button closes and
+  # `.buttonStyle(.plain)` still chains to it, but the enclosing HStack's own
+  # `.background(..., in: .capsule)` (the toast pill) comes after the HStack's
+  # closing brace, outside the Button's expression entirely.
+  cat > "$tmp/CapsuleButtonContainerPass.swift" <<'EOF'
+import SwiftUI
+struct CapsuleButtonContainerPass: View {
+    var body: some View {
+        HStack {
+            Text("Task completed")
+            Button {
+                undo()
+            } label: {
+                Text("Undo")
+                    .frame(minWidth: 56, minHeight: 44)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .background(Color.agentText, in: .capsule)
+    }
+    func undo() {}
+}
+EOF
+  if [[ -z "$(scan_capsule_button "$tmp/CapsuleButtonContainerPass.swift")" ]]; then
+    echo "self-test ok: capsule_button leaves a container's own capsule alone when it only contains a Button"
+  else
+    echo "self-test FAIL: capsule_button incorrectly flagged CapsuleButtonContainerPass.swift (container, not the Button's label)" >&2
+    failures=$((failures + 1))
+  fi
+
+  # The allow marker on a mark nested inside a Button's label (an unread-count
+  # badge on a bell icon) — the ban is the button's own shape, not a badge
+  # riding on it, so the marker exempts it the same way it exempts a standalone
+  # mark.
+  cat > "$tmp/CapsuleButtonMarkedPass.swift" <<'EOF'
+import SwiftUI
+struct CapsuleButtonMarkedPass: View {
+    var body: some View {
+        Button(action: openInbox) {
+            ZStack(alignment: .topTrailing) {
+                AgentIconView(.bell)
+                Text("3")
+                    .font(.agentMetadata)
+                    .background(Color.cyAccent, in: .capsule) // design-review-allow: accent-mark -- unread count badge
+            }
+        }
+        .buttonStyle(.plain)
+    }
+    func openInbox() {}
+}
+EOF
+  if [[ -z "$(scan_capsule_button "$tmp/CapsuleButtonMarkedPass.swift")" ]]; then
+    echo "self-test ok: capsule_button honours the allow marker on a mark nested inside a Button's label"
+  else
+    echo "self-test FAIL: capsule_button ignored the allow marker on CapsuleButtonMarkedPass.swift" >&2
+    failures=$((failures + 1))
+  fi
+
+  echo
   echo "--- ratchet mechanics ---"
 
   # One rule, one fixture directory with exactly 2 violations.
@@ -911,7 +1144,7 @@ EOF
 
   # Baseline equal to current count (2) must pass.
   local equal_baseline="$tmp/baseline-equal.txt"
-  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$equal_baseline"
+  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\ncapsule_button=0\n' > "$equal_baseline"
   if run_design_review "$equal_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count == baseline passes"
   else
@@ -921,7 +1154,7 @@ EOF
 
   # Baseline below current count (1 < 2) must fail.
   local low_baseline="$tmp/baseline-low.txt"
-  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$low_baseline"
+  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\ncapsule_button=0\n' > "$low_baseline"
   if run_design_review "$low_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 1 ]]; then
     echo "self-test ok: count > baseline fails"
   else
@@ -931,7 +1164,7 @@ EOF
 
   # Baseline above current count (3 > 2) must pass (ratchet only tightens).
   local high_baseline="$tmp/baseline-high.txt"
-  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$high_baseline"
+  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\ncapsule_button=0\n' > "$high_baseline"
   if run_design_review "$high_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count < baseline passes"
   else
@@ -941,7 +1174,7 @@ EOF
 
   # --update-baseline rewrites the file from current counts.
   local update_target="$tmp/baseline-update.txt"
-  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$update_target"
+  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\ncapsule_button=0\n' > "$update_target"
   run_design_review "$update_target" 1 "$ratchet_dir" >/dev/null 2>&1
   if grep -q '^sf_symbols=2$' "$update_target"; then
     echo "self-test ok: --update-baseline rewrites counts from a fresh scan"

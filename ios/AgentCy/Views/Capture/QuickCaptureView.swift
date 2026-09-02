@@ -669,12 +669,7 @@ struct QuickCaptureView: View {
     ) -> some View {
         VStack(spacing: AgentSpacing.x3) {
             Button(primaryTitle, action: primaryAction)
-                .font(.paperInter(size: 15, weight: .medium, relativeTo: .body))
-                .foregroundStyle(Color.onAccent)
-                .padding(.horizontal, AgentSpacing.x6)
-                .frame(minHeight: 46)
-                .background(Color.actionAccent, in: .capsule)
-                .buttonStyle(.plain)
+                .buttonStyle(AgentPrimaryButtonStyle())
 
             Button(secondaryTitle, action: secondaryAction)
                 .font(.paperInter(size: 14, weight: .medium, relativeTo: .body))

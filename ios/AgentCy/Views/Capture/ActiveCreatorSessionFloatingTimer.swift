@@ -47,15 +47,15 @@ struct ActiveCreatorSessionFloatingTimer: View {
                     .padding(.horizontal, AgentSpacing.x4)
                     .frame(minHeight: 56)
 #if targetEnvironment(macCatalyst)
-                    .background(Color.agentSurface, in: .capsule)
+                    .background(Color.agentSurface, in: .rect(cornerRadius: AgentActionButtonTheme.radius))
                     .overlay {
-                        Capsule()
+                        RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
                             .stroke(Color.agentBorder, lineWidth: 1)
                     }
 #else
-                    .glassEffect(.clear.interactive(), in: .capsule)
+                    .glassEffect(.clear.interactive(), in: .rect(cornerRadius: AgentActionButtonTheme.radius))
                     .overlay {
-                        Capsule()
+                        RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
                             .stroke(Color.agentPureWhite.opacity(0.22), lineWidth: 0.5)
                     }
 #endif
