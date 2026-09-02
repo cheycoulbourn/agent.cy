@@ -11,7 +11,7 @@ struct AIConnectionsSettingsView: View {
                 HStack(alignment: .center, spacing: AgentSpacing.x4) {
                     ZStack {
                         Circle()
-                            .fill(Color.cyAccent)
+                            .fill(Color.cyAccent)  // design-review-allow: accent-mark -- Cy identity avatar
                             .frame(width: 48, height: 48)
                         CyAsterisk(color: .onCyAccent, size: 22, strokeWidth: 2)
                     }

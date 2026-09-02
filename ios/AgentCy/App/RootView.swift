@@ -159,6 +159,8 @@ struct RootView: View {
                 PreviewScheduledPostRoot()
             } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewInspirationReview") {
                 PreviewInspirationReviewRoot()
+            } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewProUpsell") {
+                PreviewProUpsellRoot()
             } else {
                 destinationView
             }
@@ -414,6 +416,26 @@ private struct PreviewPostEditorRoot: View {
                     icon: .calendar
                 )
             }
+        }
+    }
+}
+
+/// Task 6 (L1-05): `cy-pro-upsell` is reachable only behind a live
+/// entitlement check, so the accent-action capture needed a headless route.
+private struct PreviewProUpsellRoot: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                CyProUpsellView(
+                    message: "Cy Pro plans, writes, and schedules with you.",
+                    primaryAction: {},
+                    secondaryAction: {}
+                )
+                .padding(AgentLayout.pageMargin)
+            }
+            .background(Color.agentCanvas)
+            .navigationTitle("Upgrade")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

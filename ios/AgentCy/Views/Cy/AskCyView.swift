@@ -471,7 +471,7 @@ struct CyMarkdownResponseView: View {
         case .bullet:
             HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
                 Circle()
-                    .fill(Color.cyAccent)
+                    .fill(Color.cyAccent)  // design-review-allow: accent-mark -- markdown bullet
                     .frame(width: 5, height: 5)
                 Text(inlineMarkdown(block.text))
                     .font(.agentBody)
@@ -501,7 +501,7 @@ struct CyMarkdownResponseView: View {
                 .padding(.leading, AgentSpacing.x3)
                 .overlay(alignment: .leading) {
                     Rectangle()
-                        .fill(Color.cyAccent)
+                        .fill(Color.cyAccent)  // design-review-allow: accent-mark -- blockquote rule
                         .frame(width: 2)
                 }
         }
@@ -1430,7 +1430,6 @@ struct AskCyView: View {
                     RoundedRectangle(cornerRadius: 14)
                         .stroke(Color.cyAccent.opacity(0.18), lineWidth: 1)
                 }
-                .shadow(color: Color.cyAccent.opacity(0.08), radius: 18)
             }
             .buttonStyle(.plain)
             .accessibilityHint("Adds Cy's suggested continuation to the composer")
@@ -1452,15 +1451,9 @@ struct AskCyView: View {
                     if !hasProAccess {
                         Button(action: openProAccess) {
                             Text("Upgrade to Pro to create with Cy")
-                                .font(.agentSubtext.weight(.semibold))
                                 .multilineTextAlignment(.center)
-                                .foregroundStyle(Color.onCyAccent)
-                                .padding(.horizontal, AgentSpacing.x4)
-                                .padding(.vertical, AgentSpacing.x3)
-                                .background(Color.cyAccent, in: .capsule)
-                                .shadow(color: Color.cyAccent.opacity(0.28), radius: 14, y: 5)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(AgentQuietAccentButtonStyle(isFullWidth: false))
                         .accessibilityHint("Opens plan and access settings")
                     }
                 }
@@ -1619,11 +1612,11 @@ struct AskCyView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                        AgentIconView(wasAdded ? .check : .add)
-                            .font(.agentInter(size: 14, weight: .semibold, relativeTo: .subheadline))
-                            .foregroundStyle(Color.onCyAccent)
-                            .frame(width: 36, height: 36)
-                            .background(Color.cyAccent, in: .circle)
+                        AgentQuietAccentIconLabel(
+                            icon: wasAdded ? .check : .add,
+                            diameter: 36,
+                            glyph: 14
+                        )
                     }
                     .padding(.horizontal, AgentSpacing.x3)
                     .padding(.vertical, AgentSpacing.x3)
@@ -1644,21 +1637,14 @@ struct AskCyView: View {
                     sendResponseToPost(message)
                 } label: {
                     HStack(spacing: AgentSpacing.x2) {
-                        CyAsterisk(color: .cyAccent, size: 13, strokeWidth: 1.4)
+                        CyAsterisk(color: .cyAccentText, size: 13, strokeWidth: 1.4)
                         Text(sentToPostMessageIDs.contains(message.id) ? "Post created" : "Create this post")
-                            .font(.agentSubtext.weight(.semibold))
                         Spacer(minLength: AgentSpacing.x2)
                         AgentIconView(sentToPostMessageIDs.contains(message.id) ? .check : .arrowRight)
                             .font(.agentInter(size: 12, weight: .semibold, relativeTo: .caption))
                     }
-                    .foregroundStyle(Color.cyAccent)
-                    .padding(.horizontal, AgentSpacing.x3)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(Color.cyAccent.opacity(0.07), in: .capsule)
-                    .overlay { Capsule().stroke(Color.cyAccent.opacity(0.38), lineWidth: 1) }
-                    .shadow(color: Color.cyAccent.opacity(0.10), radius: 12, y: 4)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AgentQuietAccentButtonStyle())
                 .disabled(sentToPostMessageIDs.contains(message.id))
                 .accessibilityHint("Creates a new post from Cy's response and opens its editor")
             }
@@ -1737,9 +1723,6 @@ struct AskCyView: View {
 
     private var composerActionButton: some View {
         let isEnabled = isSending || canSend
-        let foreground = isEnabled ? Color.onCyAccent : Color.agentSecondary
-        let background = isEnabled ? Color.cyAccent : Color.agentSurface
-        let border = isEnabled ? Color.cyAccent : Color.agentBorder
         return Button {
             if isSending {
                 stopSending()
@@ -1747,17 +1730,10 @@ struct AskCyView: View {
                 send()
             }
         } label: {
-            AgentIconView(isSending ? .stop : .arrowUp)
-                .font(.agentInter(size: 16, weight: .semibold, relativeTo: .body))
-                .foregroundStyle(foreground)
-                .frame(width: 44, height: 44)
-                .background(background, in: .circle)
-                .overlay { Circle().stroke(border, lineWidth: 1) }
-                .shadow(
-                    color: isEnabled ? Color.cyAccent.opacity(0.24) : Color.clear,
-                    radius: 10,
-                    y: 4
-                )
+            AgentQuietAccentIconLabel(
+                icon: isSending ? .stop : .arrowUp,
+                isActive: isEnabled
+            )
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)

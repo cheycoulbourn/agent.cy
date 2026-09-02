@@ -75,7 +75,6 @@ struct CyProUpsellView: View {
                         .overlay {
                             Circle().stroke(Color.onCyAccent.opacity(0.28), lineWidth: 1)
                         }
-                        .shadow(color: Color.cyAccent.opacity(0.34), radius: 28, y: 10)
 
                     ZStack {
                         CyAsterisk(color: .onCyAccent, size: 38, strokeWidth: 2.2)
@@ -129,12 +128,7 @@ struct CyProUpsellView: View {
                         .foregroundStyle(Color.agentSecondary)
 
                     Button("Start 14-day trial", action: primaryAction)
-                        .font(.paperInter(size: 16, weight: .semibold, relativeTo: .body))
-                        .foregroundStyle(Color.onCyAccent)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .background(Color.cyAccent, in: .capsule)
-                        .shadow(color: Color.cyAccent.opacity(0.26), radius: 14, y: 6)
-                        .buttonStyle(.plain)
+                        .buttonStyle(AgentQuietAccentButtonStyle(size: .page))
 
                     Button("Not now", action: secondaryAction)
                         .font(.paperInter(size: 14, weight: .medium, relativeTo: .body))
@@ -1025,19 +1019,13 @@ struct QuickCaptureView: View {
                         HStack(spacing: AgentSpacing.x2) {
                             Text(isFindingIdeas ? "Finding ideas" : "Three ideas")
                             if isFindingIdeas {
-                                CyThinkingMark(color: .onCyAccent, size: 14)
+                                CyThinkingMark(color: .cyAccentText, size: 14)
                             } else {
                                 AgentIconView(.arrowRight, size: 11)
                             }
                         }
-                        .font(.agentSubtext.weight(.semibold))
-                        .foregroundStyle(Color.onCyAccent)
-                        .padding(.horizontal, AgentSpacing.x4)
-                        .frame(minHeight: 42)
-                        .background(Color.cyAccent, in: .capsule)
-                        .shadow(color: Color.cyAccent.opacity(0.2), radius: 10, y: 4)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AgentQuietAccentButtonStyle(isFullWidth: false))
                     .disabled(isFindingIdeas)
                 }
 
@@ -1445,12 +1433,7 @@ struct QuickCaptureView: View {
                     addTarget = true
                     desktopInlinePicker = nil
                 }
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.onCyAccent)
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(minHeight: 40)
-                .background(Color.cyAccent, in: .capsule)
-                .buttonStyle(.plain)
+                .buttonStyle(AgentQuietAccentButtonStyle(isFullWidth: false))
             }
         }
         .padding(AgentSpacing.x4)
@@ -2295,10 +2278,6 @@ private struct IdeaDirectionRow: View {
                     lineWidth: 1
                 )
         }
-        .shadow(
-            color: Color.cyAccent.opacity(colorScheme == .dark ? 0.08 : 0.06),
-            radius: 12
-        )
         .accessibilityElement(children: .contain)
     }
 }

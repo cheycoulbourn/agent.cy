@@ -114,7 +114,7 @@ struct MCPBridgeSettingsView: View {
                     HStack(alignment: .center, spacing: AgentSpacing.x3) {
                         ZStack {
                             Circle()
-                                .fill(localCyStatus?.isRecentlyAvailable == true ? Color.cyAccent : Color.agentCanvas)
+                                .fill(localCyStatus?.isRecentlyAvailable == true ? Color.cyAccent : Color.agentCanvas)  // design-review-allow: accent-mark -- status dot
                                 .frame(width: 42, height: 42)
                             CyAsterisk(
                                 color: localCyStatus?.isRecentlyAvailable == true ? .onCyAccent : .agentText,
@@ -234,7 +234,7 @@ struct MCPBridgeSettingsView: View {
             HStack(spacing: AgentSpacing.x4) {
                 ZStack {
                     Circle()
-                        .fill(MCPBridgePreferences.isConnected ? Color.cyAccent : Color.agentCanvas)
+                        .fill(MCPBridgePreferences.isConnected ? Color.cyAccent : Color.agentCanvas)  // design-review-allow: accent-mark -- status dot
                         .frame(width: 48, height: 48)
                     AgentIconView(.terminal, size: 18)
                         .foregroundStyle(MCPBridgePreferences.isConnected ? Color.onCyAccent : Color.agentText)

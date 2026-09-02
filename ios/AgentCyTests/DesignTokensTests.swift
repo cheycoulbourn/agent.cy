@@ -56,4 +56,49 @@ final class DesignTokensTests: XCTestCase {
         XCTAssertEqual(AgentToolbarSaveButton.diameter, AgentToolbarIconMetrics.diameter)
         XCTAssertEqual(AgentToolbarSaveButton.glyph, AgentToolbarIconMetrics.glyph)
     }
+
+    /// L1-05 / G-5: nine buttons shipped the brick accent as a solid fill.
+    /// design.md's "No solid accent fills, anywhere" (2026-08-14) allows the
+    /// accent only as tint, mark, glyph, or text, and its light CyCallout
+    /// action spells the sanctioned values out: `cy @ 12%` ground, a 0.75-pt
+    /// `cy @ 40%` border, brick semibold label. These pin those numbers so the
+    /// one accent action can never quietly grow back into a filled button.
+    func testQuietAccentThemeValues() {
+        XCTAssertEqual(AgentQuietAccentTheme.fillOpacity, 0.12, accuracy: 0.0001)
+        XCTAssertEqual(AgentQuietAccentTheme.borderOpacity, 0.40, accuracy: 0.0001)
+        XCTAssertEqual(AgentQuietAccentTheme.borderWidth, 0.75)
+    }
+
+    /// The accent action is a member of the shared action-button family, not a
+    /// shape of its own: same 10-pt corner as every other standalone button.
+    func testQuietAccentUsesSharedButtonRadius() {
+        XCTAssertEqual(AgentQuietAccentTheme.radius, AgentActionButtonTheme.radius)
+        XCTAssertEqual(AgentQuietAccentTheme.radius, AgentRadius.button)
+    }
+
+    /// Both label sizes match an existing family footprint (the ink primary's
+    /// 52 pt, the CyCallout action's 44 pt) so an accent action never
+    /// introduces a third button height on a screen, and neither falls below
+    /// the 44-pt tap floor the toolbar controls are held to.
+    func testQuietAccentButtonSizesMatchTheButtonFamily() {
+        XCTAssertEqual(AgentQuietAccentButtonSize.page.minimumHeight, 52)
+        XCTAssertEqual(
+            AgentQuietAccentButtonSize.compact.minimumHeight,
+            AgentQuietAccentTheme.minimumHeight
+        )
+        XCTAssertGreaterThanOrEqual(
+            AgentQuietAccentButtonSize.compact.minimumHeight,
+            AgentToolbarIconMetrics.diameter
+        )
+    }
+
+    /// The circular sibling (Cy's composer send, Cy's inline "add this")
+    /// inherits the toolbar control diameter rather than picking its own, the
+    /// mistake L1-01..L1-03 caught in the close controls.
+    func testQuietAccentIconLabelDefaultsToToolbarDiameter() {
+        XCTAssertEqual(
+            AgentQuietAccentIconLabel(icon: .arrowUp).diameter,
+            AgentToolbarIconMetrics.diameter
+        )
+    }
 }

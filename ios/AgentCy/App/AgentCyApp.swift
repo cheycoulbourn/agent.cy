@@ -97,6 +97,18 @@ struct AgentCyApp: App {
            let sheet = AppSheet(rawValue: arguments[marker + 1]) {
             model.presentedSheet = sheet
         }
+        // Task 6 (L1-05): the walkthrough overlay and the pushed Settings
+        // pages had no headless route, so the accent-action captures could not
+        // be taken. Same DEBUG-only shape as the tab/sheet fixtures above.
+        if usesPreviewData,
+           let step = AppShellRuntimeFixture.previewWalkthroughStep(arguments: arguments) {
+            model.walkthroughStep = step
+        }
+        if usesPreviewData,
+           let page = AppShellRuntimeFixture.previewSettingsPage(arguments: arguments) {
+            model.presentedSheet = .settings
+            model.requestedSettingsPage = page
+        }
         if usesPreviewData,
            AppShellRuntimeFixture.requestsFirstPreviewTask(arguments: arguments) {
             let tasks = (try? container.mainContext.fetch(FetchDescriptor<CreatorTask>(
@@ -150,6 +162,27 @@ enum AppShellRuntimeFixture {
         arguments: [String] = ProcessInfo.processInfo.arguments
     ) -> Bool {
         arguments.contains("-agentCyPreviewAgendaDay")
+    }
+
+    /// `-agentCyPreviewWalkthroughStep <rawValue>` opens the guided-tour
+    /// overlay on one step (6 = the final Cy step, the accent action).
+    static func previewWalkthroughStep(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> AppWalkthroughStep? {
+        guard let marker = arguments.firstIndex(of: "-agentCyPreviewWalkthroughStep"),
+              arguments.indices.contains(marker + 1),
+              let raw = Int(arguments[marker + 1]) else { return nil }
+        return AppWalkthroughStep(rawValue: raw)
+    }
+
+    /// `-agentCyPreviewSettingsPage <rawValue>` opens Settings already pushed
+    /// to one of its subpages (e.g. `access`).
+    static func previewSettingsPage(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> RequestedSettingsPage? {
+        guard let marker = arguments.firstIndex(of: "-agentCyPreviewSettingsPage"),
+              arguments.indices.contains(marker + 1) else { return nil }
+        return RequestedSettingsPage(rawValue: arguments[marker + 1])
     }
 }
 #endif

@@ -2111,8 +2111,7 @@ struct AccessSettingsView: View {
             HStack(alignment: .center, spacing: AgentSpacing.x3) {
                 ZStack {
                     Circle()
-                        .fill(Color.cyAccent)
-                        .shadow(color: Color.cyAccent.opacity(0.3), radius: 14, y: 6)
+                        .fill(Color.cyAccent)  // design-review-allow: accent-mark -- Cy identity avatar
                     CyAsterisk(color: .onCyAccent, size: 20, strokeWidth: 1.6)
                         .rotationEffect(.degrees(reduceMotion ? 0 : (isRotating ? 360 : 0)))
                         .animation(
@@ -2133,12 +2132,9 @@ struct AccessSettingsView: View {
 
                 Spacer(minLength: 0)
 
-                Text(isActive ? "Active" : (appModel.purchasesAvailable ? "$8.99/mo" : "Coming soon"))
-                    .font(.agentMetadata)
-                    .foregroundStyle(Color.onCyAccent)
-                    .padding(.horizontal, AgentSpacing.x3)
-                    .frame(minHeight: 30)
-                    .background(Color.cyAccent, in: .capsule)
+                AgentQuietAccentChip(
+                    text: isActive ? "Active" : (appModel.purchasesAvailable ? "$8.99/mo" : "Coming soon")
+                )
             }
 
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {

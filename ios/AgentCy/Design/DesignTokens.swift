@@ -438,17 +438,15 @@ struct AgentWalkthroughControlCue: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.cyAccent)
+                .fill(Color.cyAccent)  // design-review-allow: accent-mark -- the coach-mark dot
 
             Circle()
                 .stroke(Color.cyAccent.opacity(isExpanded ? 0.10 : 0.42), lineWidth: 2)
                 .padding(-5)
                 .scaleEffect(isExpanded ? 1.16 : 1)
         }
-            .shadow(
-                color: Color.cyAccent.opacity(reduceMotion ? 0.32 : (isExpanded ? 0.18 : 0.48)),
-                radius: reduceMotion ? 8 : (isExpanded ? 14 : 8)
-            )
+            // L1-05: the cue used to carry an accent glow. The expanding ring
+            // and the scale pulse already draw the eye; design.md bans glow.
             .scaleEffect(reduceMotion ? 1 : (isExpanded ? 1.04 : 1))
             .onAppear {
                 guard !reduceMotion else { return }
@@ -914,6 +912,150 @@ enum AgentActionButtonTheme {
 
     static let border = Color.agentBorder
     static let destructiveBorder = Color.agentDestructive.opacity(0.35)
+}
+
+/// The quiet accent action (L1-05). `design.md` reserves the brick accent for
+/// one moment per surface and forbids it as a filled block, so the single
+/// accent-worthy action on a Cy surface arrives as a *tint*: a `cy @ 12%`
+/// ground, a 0.75-pt `cy @ 40%` border, and a brick semibold label on the same
+/// `AgentActionButtonTheme.radius` corner the ink buttons use. It is the light
+/// `CyCallout` action generalized out of the callout so Start trial, Upgrade to
+/// Pro, Three ideas, and the walkthrough's continue button stop hand-rolling a
+/// solid brick capsule each. One per surface — every other action stays ink.
+enum AgentQuietAccentTheme {
+    static let radius = AgentActionButtonTheme.radius
+    static let fillOpacity: Double = 0.12
+    static let borderOpacity: Double = 0.40
+    static let borderWidth: CGFloat = 0.75
+    /// design.md's CyCallout action floor, raised to the 44-pt tap target.
+    static let minimumHeight: CGFloat = 44
+
+    static var fill: Color { Color.cyAccent.opacity(fillOpacity) }
+    static var border: Color { Color.cyAccent.opacity(borderOpacity) }
+    /// Brick that still clears 4.5:1 on the dark canvas, not raw `cyAccent`.
+    static var label: Color { Color.cyAccentText }
+}
+
+/// The two label sizes the accent action comes in, each matching an existing
+/// member of the button family so an accent action is never a third height on
+/// a screen: `page` is the ink primary's 18-pt/52-pt footprint, `compact` is
+/// the CyCallout action's 13-pt/44-pt one for card and row-level actions.
+enum AgentQuietAccentButtonSize {
+    case page
+    case compact
+
+    var font: Font {
+        switch self {
+        case .page: .agentHeadline
+        case .compact: .agentSubtext.weight(.semibold)
+        }
+    }
+
+    var minimumHeight: CGFloat {
+        switch self {
+        case .page: 52
+        case .compact: AgentQuietAccentTheme.minimumHeight
+        }
+    }
+}
+
+/// Accent sibling in the unified action-button family: same shape and border
+/// structure as `AgentPrimaryButtonStyle`, brick tint for fill, stroke, and
+/// text. Reserved for the one accent-worthy action on a Cy surface.
+struct AgentQuietAccentButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var size: AgentQuietAccentButtonSize = .compact
+    /// Full width by default (the action-button family's shape); the inline
+    /// form is for a quiet accent action sharing a row with other controls.
+    var isFullWidth = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(size.font)
+            .foregroundStyle(AgentQuietAccentTheme.label)
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(
+                maxWidth: isFullWidth ? .infinity : nil,
+                minHeight: size.minimumHeight
+            )
+            .background(
+                AgentQuietAccentTheme.fill,
+                in: .rect(cornerRadius: AgentQuietAccentTheme.radius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentQuietAccentTheme.radius)
+                    .stroke(
+                        AgentQuietAccentTheme.border,
+                        lineWidth: AgentQuietAccentTheme.borderWidth
+                    )
+            }
+            .opacity(isEnabled ? 1 : 0.42)
+            .scaleEffect(AgentButtonPressFeedback.scale(
+                isPressed: configuration.isPressed,
+                reduceMotion: reduceMotion
+            ))
+            .animation(
+                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
+    }
+}
+
+/// Circular sibling of the quiet accent action: the Cy composer's send control
+/// and Cy's inline "add this" affordance. Same tint, border, and brick glyph —
+/// a circle rather than the 10-pt rect only because it sits inside a field or
+/// a card row. Inactive falls back to the neutral surface + border so the
+/// accent never marks a control the user cannot use.
+struct AgentQuietAccentIconLabel: View {
+    let icon: AgentIcon
+    var isActive = true
+    var diameter: CGFloat = AgentToolbarIconMetrics.diameter
+    var glyph: CGFloat = 16
+
+    var body: some View {
+        AgentIconView(icon, size: glyph)
+            .foregroundStyle(isActive ? AgentQuietAccentTheme.label : Color.agentSecondary)
+            .frame(width: diameter, height: diameter)
+            .background(
+                isActive ? AgentQuietAccentTheme.fill : Color.agentSurface,
+                in: .circle
+            )
+            .overlay {
+                Circle()
+                    .stroke(
+                        isActive ? AgentQuietAccentTheme.border : Color.agentBorder,
+                        lineWidth: AgentQuietAccentTheme.borderWidth
+                    )
+            }
+    }
+}
+
+/// A static accent chip — the quiet accent action's values without the press
+/// behaviour, for a label that carries the accent moment on a Cy surface
+/// (the Pro price on Access) instead of a tappable action.
+struct AgentQuietAccentChip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.agentMetadata)
+            .foregroundStyle(AgentQuietAccentTheme.label)
+            .padding(.horizontal, AgentSpacing.x3)
+            .frame(minHeight: 30)
+            .background(
+                AgentQuietAccentTheme.fill,
+                in: .rect(cornerRadius: AgentQuietAccentTheme.radius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: AgentQuietAccentTheme.radius)
+                    .stroke(
+                        AgentQuietAccentTheme.border,
+                        lineWidth: AgentQuietAccentTheme.borderWidth
+                    )
+            }
+    }
 }
 
 /// Destructive sibling in the unified action-button family: same shape and
@@ -1779,7 +1921,6 @@ struct CyAnimatedLogo: View {
                 }
             } else {
                 CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
-                    .shadow(color: color.opacity(0.12), radius: 5)
             }
         }
         .frame(width: size, height: size)
@@ -1787,13 +1928,11 @@ struct CyAnimatedLogo: View {
     }
 
     private func animatedMark(progress: Double, pulse: Double) -> some View {
+            // L1-05: the pulse is carried by rotation and scale alone. The
+            // accent glow this mark used to breathe is banned by design.md.
             CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
                 .rotationEffect(.degrees(progress * 45))
                 .scaleEffect(0.97 + (pulse * 0.06))
-                .shadow(
-                    color: color.opacity(0.12 + (pulse * 0.12)),
-                    radius: 5 + (pulse * 4)
-                )
     }
 }
 

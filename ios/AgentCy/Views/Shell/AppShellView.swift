@@ -567,6 +567,15 @@ private struct WalkthroughGuideCard: View {
     let skipAction: () -> Void
     @State private var contentIsVisible = false
 
+    private var walkthroughPrimaryLabel: some View {
+        HStack(spacing: AgentSpacing.x2) {
+            Text(step.primaryActionTitle)
+            Spacer()
+            AgentIconView(step == .cy ? .check : .forward, size: 15)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             HStack(alignment: .center, spacing: AgentSpacing.x3) {
@@ -615,16 +624,22 @@ private struct WalkthroughGuideCard: View {
             .padding(.vertical, AgentSpacing.x1)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(action: primaryAction) {
-                HStack(spacing: AgentSpacing.x2) {
-                    Text(step.primaryActionTitle)
-                    Spacer()
-                    AgentIconView(step == .cy ? .check : .forward, size: 15)
+            // The tour's last step is the one accent-worthy action on this
+            // surface (it hands the user to Cy); every earlier step is a plain
+            // ink primary, so the accent still lands only once.
+            if step == .cy {
+                Button(action: primaryAction) {
+                    walkthroughPrimaryLabel
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(AgentQuietAccentButtonStyle(size: .page))
+                .accessibilityHint("Continues to the next walkthrough step")
+            } else {
+                Button(action: primaryAction) {
+                    walkthroughPrimaryLabel
+                }
+                .buttonStyle(AgentPrimaryButtonStyle())
+                .accessibilityHint("Continues to the next walkthrough step")
             }
-            .buttonStyle(WalkthroughPrimaryButtonStyle(isFinalStep: step == .cy))
-            .accessibilityHint("Continues to the next walkthrough step")
         }
         .padding(AgentSpacing.x4)
         .frame(maxWidth: 440)
@@ -670,33 +685,6 @@ private struct WalkthroughAnimatedGlyph: View {
         .opacity(isVisible ? 1 : 0)
         .blur(radius: isVisible ? 0 : 4)
         .accessibilityHidden(true)
-    }
-}
-
-private struct WalkthroughPrimaryButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let isFinalStep: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.paperInter(size: 15, weight: .semibold, relativeTo: .headline))
-            .foregroundStyle(isFinalStep ? Color.onCyAccent : Color.agentCanvas)
-            .padding(.horizontal, AgentSpacing.x4)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .background(isFinalStep ? Color.cyAccent : Color.agentText, in: .capsule)
-            .shadow(
-                color: isFinalStep ? Color.cyAccent.opacity(0.24) : .clear,
-                radius: isFinalStep ? 12 : 0,
-                y: isFinalStep ? 4 : 0
-            )
-            .scaleEffect(AgentButtonPressFeedback.scale(
-                isPressed: configuration.isPressed,
-                reduceMotion: reduceMotion
-            ))
-            .animation(
-                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
-                value: configuration.isPressed
-            )
     }
 }
 
@@ -887,10 +875,6 @@ private struct CyWeeklyPlanningPulse: View {
             .fill(Color.cyAccent.opacity(reduceMotion ? 0.18 : 0.12 + (wave * 0.14)))
             .frame(width: 42, height: 42)
             .scaleEffect(reduceMotion ? 1.05 : 0.94 + (wave * 0.18))
-            .shadow(
-                color: Color.cyAccent.opacity(reduceMotion ? 0.28 : 0.24 + (wave * 0.34)),
-                radius: reduceMotion ? 8 : 7 + (wave * 7)
-            )
     }
 }
 

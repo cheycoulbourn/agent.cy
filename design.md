@@ -84,11 +84,18 @@ It may **not** appear on secondary buttons, decorative elements, multiple
 competing controls, or as a background wash. If a screen has two accent-colored
 elements that aren't the same action, remove one.
 
-**No solid accent fills, anywhere** (decided 2026-08-14): the accent shows up
-as tints (~10% opacity washes), thin marks (selection bars, dots), colored
-glyphs, and colored text — never as a filled color block. This includes the
-floating Cy button. Solid fills read as jarring against the paper canvas;
-boldness comes from the hue, not from area of coverage.
+**No solid accent fills, anywhere** (decided 2026-08-14, enforced by
+`scripts/check_design_review.sh`): the accent shows up as tints (~10% opacity
+washes), thin marks (selection bars, dots), colored glyphs, and colored text —
+never as a filled color block. This includes the floating Cy button. Solid
+fills read as jarring against the paper canvas; boldness comes from the hue,
+not from area of coverage. The one accent-worthy action per Cy surface is the
+quiet accent action (`cy @ 12%` tint, brick label — see Buttons), never a fill.
+The lint's `accent_control_fill` and `accent_shape_fill` rules stand at zero; a
+genuine brand *mark* (an unread dot, a count badge, Cy's identity avatar, the
+walkthrough coach mark) opts out in the source with
+`// design-review-allow: accent-mark -- <reason>`, which is the complete list of
+places a solid brick fill is allowed to exist.
 
 **Creator Session selections (decided 2026-08-16):** mode choices use a quiet
 neutral selection fill, a darker structural border, and one Nucleo check. The
@@ -319,8 +326,29 @@ In Paper mocks: `outline: 1px solid oklch(0% 0 0 / 0.1)` (light).
   ~10% tint with `--color-destructive` text — never a filled red button.
   Because destructive shares the brand hue, any red-tinted button
   automatically reads as dangerous; that is intended and reserved.
-  The Swift capsule styles (`AgentPrimaryButtonStyle`, `AgentCyPrimaryButtonStyle`)
-  are superseded and pending a code update to match.
+  The Swift styles (`AgentPrimaryButtonStyle`, `AgentSecondaryButtonStyle`,
+  `AgentCyPrimaryButtonStyle`, `AgentQuietDestructiveButtonStyle`) all read
+  `AgentActionButtonTheme.radius` and render this rounded-rect family; the
+  capsule versions they used to be are gone.
+- **Quiet accent action** (`AgentQuietAccentButtonStyle`, decided 2026-09-02,
+  closes L1-05) — the one exception to "no red on buttons", and the *only*
+  sanctioned brick-hued action: `cy @ 12%` fill, a 0.75-pt `cy @ 40%` border,
+  a brick semibold label (`cyAccentText`, so it still clears 4.5:1 in dark
+  mode), 10-px corners, and the shared press feedback (0.96 scale + easeOut
+  0.12 s, dropped under Reduce Motion). Two label sizes, each matching an
+  existing member of the family so an accent action never adds a third button
+  height to a screen: `.page` (18-pt semibold, min height 52 — the ink
+  primary's footprint) and `.compact` (13-pt semibold, min height 44 — the
+  CyCallout action's). `AgentQuietAccentIconLabel` is the circular sibling for
+  the icon-only form (Cy's composer send, Cy's inline "add this"); it falls
+  back to a neutral surface and border when the action is unavailable, so the
+  accent never marks a control the user cannot press.
+  **Use it for exactly one action per Cy surface** — the accent-worthy one
+  (Start 14-day trial, Upgrade to Pro, Three ideas, Create this post, the
+  walkthrough's final step). Every other action on that surface stays ink.
+  This is the same treatment as the light CyCallout action, lifted out of the
+  callout so screens stop hand-rolling a solid brick capsule each time; on a
+  non-Cy surface red still means destructive and stays banned from buttons.
 - **Floating Cy button** — a 56-pt **white** (`--color-surface`) circle with a
   1-px pure-black 10% border, ambient floating shadow, and the Cy asterisk
   glyph drawn in the accent. Never a solid accent circle. The circle shape is
@@ -361,7 +389,9 @@ In Paper mocks: `outline: 1px solid oklch(0% 0 0 / 0.1)` (light).
   **CyCallout chrome (decided 2026-08-14)** — the callout **surface-matches**:
   light variant in light mode, dark variant in dark mode (this supersedes the
   old "always the dark panel" rule). No glow — standard ambient shadows only
-  (a glow was tried and rejected 2026-08-14). Two variants, both sampled on
+  (a glow was tried and rejected 2026-08-14; enforced everywhere, not just on
+  the callout, by `scripts/check_design_review.sh`'s `accent_glow` rule, which
+  stands at zero and has no opt-out). Two variants, both sampled on
   the design-system sheet:
   - *Dark* (`cyPanel` ground): 0.75-pt red border, ambient shadow, full-width
     action in `cy @ 28%` with near-white semibold label.
@@ -564,7 +594,10 @@ In Paper mocks: `outline: 1px solid oklch(0% 0 0 / 0.1)` (light).
 - No per-row cards in lists; no boxes around things proximity can group.
 - No second accent competing with Cy on the same screen.
 - No solid accent fills and no capsule-shaped buttons — accent is tint, mark,
-  glyph, or text; buttons are 10-px rounded rectangles.
+  glyph, or text; buttons are 10-px rounded rectangles. The one brick-hued
+  action is `AgentQuietAccentButtonStyle`, and it is a 12% tint, not a fill.
+- No accent glow, anywhere — `shadow(color: …cyAccent…)` is banned outright and
+  linted at zero.
 - No Spark (or other Cy actions) on page chrome — Cy offers them in chat.
 - No pure black / pure white text or backgrounds outside `pureBlack`/`pureWhite`
   utility uses (shadows, overlays).

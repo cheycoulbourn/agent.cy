@@ -4,12 +4,24 @@ set -euo pipefail
 
 # check_design_review.sh — a ratchet, not a hard gate.
 #
-# Greps shipped Swift UI sources for seven design-consistency bans and compares
+# Greps shipped Swift UI sources for ten design-consistency bans and compares
 # each rule's current violation count against a checked-in baseline
 # (scripts/design-review-baseline.txt). It fails (exit 1) only when a rule's
 # count goes UP from its baseline; it passes when counts are equal or lower.
 # Every violation is printed with file:line either way, pass or fail, so the
 # output is useful even on a passing run.
+#
+# Three rules (pill_background, accent_control_fill, accent_shape_fill) ban a
+# *solid* brand fill but not the brand-as-a-mark the contract allows (a bullet
+# dot, an unread dot, a count badge, Cy's identity avatar, the walkthrough coach
+# mark). Those are indistinguishable from a filled button by grep, so a mark
+# opts out by carrying the marker
+#
+#   // design-review-allow: accent-mark -- <reason>
+#
+# on the SAME line as the fill. The marker is deliberately only available to the
+# fill rules: accent_glow has no escape hatch, because design.md bans glow
+# outright with no exception.
 #
 # Usage:
 #   check_design_review.sh                 run the ratchet against the baseline
@@ -33,24 +45,33 @@ RULE_IDS=(
   pill_background
   glass_circle
   bordered_prominent
+  accent_control_fill
+  accent_shape_fill
+  accent_glow
 )
 RULE_PATTERNS=(
   'Image\(systemName:|systemImage:'
   '\.animation\(\.(easeIn|easeOut|easeInOut|linear|spring|interactiveSpring|interpolatingSpring)\b|withAnimation\(\.(easeIn|easeOut|easeInOut|linear|spring|interactiveSpring|interpolatingSpring)\b'
   'Font\.custom\(|paperInter|paperMetadata|\.font\(\.system'
   'cornerRadius: (3|5|6|9|13|14|18|22)\b'
-  'background\(Color\.(cyAccent|actionAccent)[^)]*in: *\.(capsule|circle)'
+  'background\([^)]*Color\.(cyAccent|actionAccent)[^)]*in: *\.(capsule|circle)'
   'glassEffect\(.*in: *\.circle'
   '\.buttonStyle\(\.borderedProminent\)'
+  'background\([^)]*Color\.cyAccent[^)]*in: *\.(capsule|circle)'
+  '\.fill\([^)]*Color\.cyAccent([^A-Za-z0-9_.]|$)'
+  'shadow\(color: *[^)]*\.cyAccent'
 )
 RULE_DESCRIPTIONS=(
   "SF Symbols in shipped UI (Image(systemName:) / systemImage:) — design.md bans SF Symbols outright"
   "Raw animation curve outside AgentMotion (.animation/.withAnimation with a literal curve)"
   "Non-Inter or off-token font reference (Font.custom / paperInter / paperMetadata / .font(.system)"
   "Off-scale cornerRadius literal (3/5/6/9/13/14/18/22 — not an AgentRadius token)"
-  "Accent-filled capsule/circle background (solid-fill pill button banned per design.md)"
+  "Accent-filled capsule/circle background, in any argument position (solid-fill pill button banned per design.md)"
   "Hand-rolled circular glassEffect outside DesignTokens.swift — every glass circle goes through .agentGlassCircle() / AgentToolbarIconContainer"
   "Bordered-prominent button style anywhere in shipped UI — SwiftUI renders it as a solid accent fill (design.md: quiet ink tints only); AgentToolbarSaveButton / AgentToolbarIconButton are the shared replacement"
+  "Solid brick-red behind a control (design.md: \"No solid accent fills, anywhere\", decided 2026-08-14) — the accent action is AgentQuietAccentButtonStyle / AgentQuietAccentIconLabel: cy@12% fill, 0.75pt cy@40% border, brick label. A brand *mark* opts out with // design-review-allow: accent-mark"
+  "Solid brick-red shape fill (Circle()/Capsule().fill(Color.cyAccent), including the ternary form) — same ban, same escape hatch for a real mark"
+  "Brick-red glow (design.md: \"No glow\", rejected 2026-08-14) — accent shadows are banned outright and have no escape hatch; use the shared ambient shadow or nothing"
 )
 # One allowed filename per rule; empty means the rule applies to every file.
 RULE_EXCLUDES=(
@@ -61,7 +82,27 @@ RULE_EXCLUDES=(
   ''
   'DesignTokens.swift'
   ''
+  ''
+  ''
+  ''
 )
+
+# 1 = the rule honours the `// design-review-allow: accent-mark` line marker.
+# Only the solid-fill rules do; glow has no sanctioned exception.
+RULE_ALLOW_MARKER=(
+  0
+  0
+  0
+  0
+  1
+  0
+  0
+  1
+  1
+  0
+)
+
+ALLOW_MARKER='design-review-allow'
 
 preflight() {
   local missing=()
@@ -78,16 +119,24 @@ preflight() {
 # Scans the given search paths for one rule's pattern, skipping $2 if it names
 # a file the rule is allowed to live in. Prints file:line matches to stdout.
 # Never fails the script on "no matches" (grep's exit 1).
+#
+# $3 is the allow-marker flag: when it is 1, a matching line that also carries
+# `// design-review-allow: ...` is dropped, so a brand mark can opt out of a
+# solid-fill rule in the source itself rather than in a baseline number.
 scan_rule() {
   local pattern="$1"
   local exclude_file="$2"
-  shift 2
+  local allow_marker="${3:-0}"
+  shift 3
   local exclude_args=()
   if [[ -n "$exclude_file" ]]; then
     exclude_args=(--exclude="$exclude_file")
   fi
   local matches
   matches="$(grep -rnE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' "${exclude_args[@]+"${exclude_args[@]}"}" "$pattern" "$@" 2>/dev/null || true)"
+  if [[ "$allow_marker" -eq 1 && -n "$matches" ]]; then
+    matches="$(printf '%s\n' "$matches" | grep -v "$ALLOW_MARKER" || true)"
+  fi
   printf '%s' "$matches"
 }
 
@@ -111,7 +160,7 @@ scan_glass_circle() {
   fi
 
   local single
-  single="$(scan_rule "${RULE_PATTERNS[5]}" "$exclude_file" "$@")"
+  single="$(scan_rule "${RULE_PATTERNS[5]}" "$exclude_file" 0 "$@")"
 
   local files
   files="$(grep -rlE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' "${exclude_args[@]+"${exclude_args[@]}"}" 'glassEffect\($' "$@" 2>/dev/null || true)"
@@ -129,6 +178,63 @@ scan_glass_circle() {
           for (i = 1; i <= 6; i++) {
             if ((getline nextline) <= 0) break
             if (nextline ~ /in: *\.circle/) { found = 1; break }
+            if (nextline ~ /^[[:space:]]*\)/) break
+          }
+          if (found) print start ":" startline
+        }
+      ' "$f" 2>/dev/null || true)"
+      if [[ -n "$hit" ]]; then
+        local line lineno content
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          lineno="${line%%:*}"
+          content="${line#*:}"
+          multi+="$f:$lineno:$content"$'\n'
+        done <<< "$hit"
+      fi
+    done <<< "$files"
+  fi
+  multi="${multi%$'\n'}"
+
+  if [[ -n "$single" && -n "$multi" ]]; then
+    printf '%s\n%s' "$single" "$multi"
+  elif [[ -n "$single" ]]; then
+    printf '%s' "$single"
+  else
+    printf '%s' "$multi"
+  fi
+}
+
+# accent_glow has the same multi-line problem glass_circle has: a banned
+# accent shadow is routinely written as
+#   .shadow(
+#       color: Color.cyAccent.opacity(0.24),
+#       radius: 12
+#   )
+# which RULE_PATTERNS[9] (single-line) cannot see. This scans for a line ending
+# in ".shadow(" and looks ahead a few lines for a `color:` argument naming the
+# accent before the call closes. A non-accent wrapped shadow (ink, pure black)
+# is left alone, so the check is about the accent, not about shadows.
+scan_accent_glow() {
+  local single
+  single="$(scan_rule "${RULE_PATTERNS[9]}" '' 0 "$@")"
+
+  local files
+  files="$(grep -rlE --include='*.swift' --exclude-dir='build-device' --exclude-dir='*.xcodeproj' '\.shadow\($' "$@" 2>/dev/null || true)"
+
+  local multi=""
+  if [[ -n "$files" ]]; then
+    local f hit
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      hit="$(awk '
+        /\.shadow\($/ {
+          start = NR
+          startline = $0
+          found = 0
+          for (i = 1; i <= 6; i++) {
+            if ((getline nextline) <= 0) break
+            if (nextline ~ /color:.*\.cyAccent/) { found = 1; break }
             if (nextline ~ /^[[:space:]]*\)/) break
           }
           if (found) print start ":" startline
@@ -208,8 +314,10 @@ run_design_review() {
     local matches
     if [[ "$rule_id" == "glass_circle" ]]; then
       matches="$(scan_glass_circle "${RULE_EXCLUDES[$i]}" "${search_paths[@]}")"
+    elif [[ "$rule_id" == "accent_glow" ]]; then
+      matches="$(scan_accent_glow "${search_paths[@]}")"
     else
-      matches="$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${search_paths[@]}")"
+      matches="$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${RULE_ALLOW_MARKER[$i]}" "${search_paths[@]}")"
     fi
     local count
     count="$(count_lines "$matches")"
@@ -409,8 +517,109 @@ struct BorderedProminentPass: View {
 }
 EOF
 
-  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail BorderedProminentFail)
-  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass BorderedProminentPass)
+  # accent_control_fill — the two call shapes the old pill_background pattern
+  # missed: a ternary before Color.cyAccent, and a solid accent circle. The
+  # pass fixture is the quiet accent action the migration replaced them with.
+  cat > "$tmp/AccentControlFillFail.swift" <<'EOF'
+import SwiftUI
+struct AccentControlFillFail: View {
+    var body: some View {
+        VStack {
+            Text("Send").background(canSend ? Color.cyAccent : Color.agentSurface, in: .circle)
+            Text("Go").background(Color.cyAccent, in: .capsule)
+        }
+    }
+}
+EOF
+  cat > "$tmp/AccentControlFillPass.swift" <<'EOF'
+import SwiftUI
+struct AccentControlFillPass: View {
+    var body: some View {
+        VStack {
+            Button("Go") {}.buttonStyle(AgentQuietAccentButtonStyle())
+            Text("Badge")
+                .background(Color.cyAccent, in: .capsule) // design-review-allow: accent-mark -- unread count
+            Text("Tint").background(Color.cyAccent.opacity(0.12), in: .capsule)
+        }
+    }
+}
+EOF
+
+  # accent_shape_fill — a solid brick shape used as a control ground. The pass
+  # fixture keeps the two shapes the contract does allow: an opacity tint, and
+  # a real mark carrying the allow marker.
+  cat > "$tmp/AccentShapeFillFail.swift" <<'EOF'
+import SwiftUI
+struct AccentShapeFillFail: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.cyAccent)
+            Circle().fill(isOn ? Color.cyAccent : Color.clear)
+        }
+    }
+}
+EOF
+  cat > "$tmp/AccentShapeFillPass.swift" <<'EOF'
+import SwiftUI
+struct AccentShapeFillPass: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.cyAccent.opacity(0.12))
+            Circle().fill(Color.cyAccent).frame(width: 5) // design-review-allow: accent-mark -- bullet
+        }
+    }
+}
+EOF
+
+  # accent_glow — single-line and wrapped forms both banned, with no marker
+  # escape hatch. The pass fixture proves a non-accent shadow still passes and
+  # that the marker does NOT buy an exemption here.
+  cat > "$tmp/AccentGlowFail.swift" <<'EOF'
+import SwiftUI
+struct AccentGlowFail: View {
+    var body: some View {
+        Text("hi")
+            .shadow(color: Color.cyAccent.opacity(0.26), radius: 14, y: 6)
+    }
+}
+EOF
+  cat > "$tmp/AccentGlowPass.swift" <<'EOF'
+import SwiftUI
+struct AccentGlowPass: View {
+    var body: some View {
+        Text("hi")
+            .shadow(color: Color.agentPureBlack.opacity(0.14), radius: 14, y: 6)
+    }
+}
+EOF
+  cat > "$tmp/AccentGlowMultilineFail.swift" <<'EOF'
+import SwiftUI
+struct AccentGlowMultilineFail: View {
+    var body: some View {
+        Text("hi")
+            .shadow(
+                color: Color.cyAccent.opacity(0.24),
+                radius: 12
+            )
+    }
+}
+EOF
+  cat > "$tmp/AccentGlowMultilinePass.swift" <<'EOF'
+import SwiftUI
+struct AccentGlowMultilinePass: View {
+    var body: some View {
+        Text("hi")
+            .shadow(
+                color: Color.agentPureBlack.opacity(0.12),
+                radius: 12
+            )
+            .shadow(color: Color.cyAccent, radius: 0) // design-review-allow: accent-mark -- no escape hatch here
+    }
+}
+EOF
+
+  local rule_fail_file=(SfFail AnimFail FontFail RadiusFail PillFail GlassFail BorderedProminentFail AccentControlFillFail AccentShapeFillFail AccentGlowFail)
+  local rule_pass_file=(SfPass AnimPass FontPass RadiusPass PillPass GlassPass BorderedProminentPass AccentControlFillPass AccentShapeFillPass AccentGlowPass)
 
   local i
   for i in "${!RULE_IDS[@]}"; do
@@ -418,6 +627,23 @@ EOF
     local pattern="${RULE_PATTERNS[$i]}"
     local fail_file="$tmp/${rule_fail_file[$i]}.swift"
     local pass_file="$tmp/${rule_pass_file[$i]}.swift"
+
+    if [[ "$rule_id" == "accent_glow" ]]; then
+      if [[ -n "$(scan_accent_glow "$fail_file")" ]]; then
+        echo "self-test ok: $rule_id correctly flags its fail fixture"
+      else
+        echo "self-test FAIL: $rule_id did not flag ${rule_fail_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+
+      if [[ -z "$(scan_accent_glow "$pass_file")" ]]; then
+        echo "self-test ok: $rule_id correctly clears its pass fixture"
+      else
+        echo "self-test FAIL: $rule_id incorrectly flagged ${rule_pass_file[$i]}.swift" >&2
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
 
     if [[ "$rule_id" == "glass_circle" ]]; then
       if [[ -n "$(scan_glass_circle "${RULE_EXCLUDES[$i]}" "$fail_file")" ]]; then
@@ -436,14 +662,14 @@ EOF
       continue
     fi
 
-    if [[ -n "$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "$fail_file")" ]]; then
+    if [[ -n "$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${RULE_ALLOW_MARKER[$i]}" "$fail_file")" ]]; then
       echo "self-test ok: $rule_id correctly flags its fail fixture"
     else
       echo "self-test FAIL: $rule_id did not flag ${rule_fail_file[$i]}.swift" >&2
       failures=$((failures + 1))
     fi
 
-    if [[ -z "$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "$pass_file")" ]]; then
+    if [[ -z "$(scan_rule "$pattern" "${RULE_EXCLUDES[$i]}" "${RULE_ALLOW_MARKER[$i]}" "$pass_file")" ]]; then
       echo "self-test ok: $rule_id correctly clears its pass fixture"
     else
       echo "self-test FAIL: $rule_id incorrectly flagged ${rule_pass_file[$i]}.swift" >&2
@@ -477,6 +703,58 @@ EOF
     failures=$((failures + 1))
   fi
 
+  # Multi-line accent glow: a wrapped .shadow() naming the accent must still be
+  # flagged, a wrapped ink shadow must not be, and the allow marker must NOT
+  # exempt a glow (the fill rules honour it; accent_glow deliberately does not).
+  if [[ -n "$(scan_accent_glow "$tmp/AccentGlowMultilineFail.swift")" ]]; then
+    echo "self-test ok: accent_glow flags a multi-line wrapped accent shadow"
+  else
+    echo "self-test FAIL: accent_glow did not flag AccentGlowMultilineFail.swift" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [[ -n "$(scan_accent_glow "$tmp/AccentGlowMultilinePass.swift")" ]]; then
+    echo "self-test ok: accent_glow ignores the allow marker (glow has no escape hatch)"
+  else
+    echo "self-test FAIL: accent_glow honoured the allow marker; glow must have no escape hatch" >&2
+    failures=$((failures + 1))
+  fi
+
+  # The marker itself, on the rules that do honour it: the same violating line
+  # is reported without the marker and dropped with it.
+  cat > "$tmp/MarkerUnmarked.swift" <<'EOF'
+import SwiftUI
+struct MarkerUnmarked: View {
+    var body: some View { Circle().fill(Color.cyAccent) }
+}
+EOF
+  cat > "$tmp/MarkerMarked.swift" <<'EOF'
+import SwiftUI
+struct MarkerMarked: View {
+    var body: some View { Circle().fill(Color.cyAccent) } // design-review-allow: accent-mark -- dot
+}
+EOF
+  if [[ -n "$(scan_rule "${RULE_PATTERNS[8]}" '' 1 "$tmp/MarkerUnmarked.swift")" ]]; then
+    echo "self-test ok: allow marker absent -- accent_shape_fill still reports the line"
+  else
+    echo "self-test FAIL: accent_shape_fill missed MarkerUnmarked.swift" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [[ -z "$(scan_rule "${RULE_PATTERNS[8]}" '' 1 "$tmp/MarkerMarked.swift")" ]]; then
+    echo "self-test ok: allow marker present -- accent_shape_fill drops the line"
+  else
+    echo "self-test FAIL: accent_shape_fill ignored the allow marker" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [[ -n "$(scan_rule "${RULE_PATTERNS[8]}" '' 0 "$tmp/MarkerMarked.swift")" ]]; then
+    echo "self-test ok: allow marker only applies to rules that opt in"
+  else
+    echo "self-test FAIL: the allow marker was honoured by a rule that did not opt in" >&2
+    failures=$((failures + 1))
+  fi
+
   echo
   echo "--- ratchet mechanics ---"
 
@@ -494,7 +772,7 @@ EOF
 
   # Baseline equal to current count (2) must pass.
   local equal_baseline="$tmp/baseline-equal.txt"
-  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$equal_baseline"
+  printf 'sf_symbols=2\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$equal_baseline"
   if run_design_review "$equal_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count == baseline passes"
   else
@@ -504,7 +782,7 @@ EOF
 
   # Baseline below current count (1 < 2) must fail.
   local low_baseline="$tmp/baseline-low.txt"
-  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$low_baseline"
+  printf 'sf_symbols=1\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$low_baseline"
   if run_design_review "$low_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 1 ]]; then
     echo "self-test ok: count > baseline fails"
   else
@@ -514,7 +792,7 @@ EOF
 
   # Baseline above current count (3 > 2) must pass (ratchet only tightens).
   local high_baseline="$tmp/baseline-high.txt"
-  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$high_baseline"
+  printf 'sf_symbols=3\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$high_baseline"
   if run_design_review "$high_baseline" 0 "$ratchet_dir" >/dev/null 2>&1; [[ "$RATCHET_EXIT_CODE" -eq 0 ]]; then
     echo "self-test ok: count < baseline passes"
   else
@@ -524,7 +802,7 @@ EOF
 
   # --update-baseline rewrites the file from current counts.
   local update_target="$tmp/baseline-update.txt"
-  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\n' > "$update_target"
+  printf 'sf_symbols=0\nanimation_curves=0\nbanned_fonts=0\ncorner_radius=0\npill_background=0\nglass_circle=0\nbordered_prominent=0\naccent_control_fill=0\naccent_shape_fill=0\naccent_glow=0\n' > "$update_target"
   run_design_review "$update_target" 1 "$ratchet_dir" >/dev/null 2>&1
   if grep -q '^sf_symbols=2$' "$update_target"; then
     echo "self-test ok: --update-baseline rewrites counts from a fresh scan"

@@ -372,13 +372,8 @@ struct CreationHubView: View {
                     Spacer()
                     AgentIconView(.close, size: 13)
                 }
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.onCyAccent)
-                .padding(.horizontal, AgentSpacing.x4)
-                .frame(maxWidth: .infinity, minHeight: 46)
-                .background(Color.cyAccent, in: .capsule)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentQuietAccentButtonStyle())
             .accessibilityHint("Returns to the app and continues the guided tour")
         }
         .padding(AgentSpacing.x5)

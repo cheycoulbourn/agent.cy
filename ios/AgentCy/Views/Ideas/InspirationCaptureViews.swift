@@ -480,7 +480,6 @@ struct InspirationReviewView: View {
             RoundedRectangle(cornerRadius: AgentRadius.panel)
                 .stroke(Color.cyAccent.opacity(0.22), lineWidth: 1)
         }
-        .shadow(color: Color.cyAccent.opacity(0.08), radius: 14, y: 5)
         .disabled(analysisAction == .processing)
         .accessibilityLabel(analysisAction.accessibilityLabel)
     }

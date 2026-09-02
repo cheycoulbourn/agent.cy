@@ -2102,7 +2102,7 @@ private struct HomeActivityBellButton: View {
                         .foregroundStyle(Color.onCyAccent)
                         .padding(.horizontal, unreadCount > 9 ? 4 : 3)
                         .frame(minWidth: 16, minHeight: 16)
-                        .background(Color.cyAccent, in: .capsule)
+                        .background(Color.cyAccent, in: .capsule)  // design-review-allow: accent-mark -- unread count badge
                         .overlay {
                             Capsule().stroke(Color.agentCanvas, lineWidth: 2)
                         }
@@ -2250,7 +2250,7 @@ struct NotificationActivityCenterView: View {
                             // tab; the dot keeps that state visible.
                             .overlay(alignment: .topTrailing) {
                                 Circle()
-                                    .fill(Color.cyAccent)
+                                    .fill(Color.cyAccent)  // design-review-allow: accent-mark -- filter-engaged dot
                                     .frame(width: 7, height: 7)
                                     .opacity(contentFilter == .all ? 0 : 1)
                             }
@@ -2278,7 +2278,7 @@ struct NotificationActivityCenterView: View {
                         AgentToolbarIconLabel(icon: .filter)
                             .overlay(alignment: .topTrailing) {
                                 Circle()
-                                    .fill(Color.cyAccent)
+                                    .fill(Color.cyAccent)  // design-review-allow: accent-mark -- filter-engaged dot
                                     .frame(width: 7, height: 7)
                                     .opacity(contentFilter == .all ? 0 : 1)
                             }
@@ -2392,7 +2392,7 @@ struct NotificationActivityCenterView: View {
         } label: {
             HStack(alignment: .top, spacing: AgentSpacing.x3) {
                 Circle()
-                    .fill(record.readAt == nil ? Color.cyAccent : Color.clear)
+                    .fill(record.readAt == nil ? Color.cyAccent : Color.clear)  // design-review-allow: accent-mark -- unread dot
                     .frame(width: 7, height: 7)
                     .padding(.top, 7)
                     .accessibilityHidden(true)

@@ -336,15 +336,7 @@ struct DevelopBriefView: View {
                 .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
 
                 Button { send() } label: {
-                    AgentIconView(.arrowUp, size: 16)
-                        .foregroundStyle(canSend ? Color.onCyAccent : Color.agentSecondary)
-                        .frame(width: 44, height: 44)
-                        .background(canSend ? Color.cyAccent : Color.agentSurface, in: .circle)
-                        .overlay {
-                            Circle()
-                                .stroke(canSend ? Color.cyAccent : Color.agentBorder, lineWidth: 1)
-                        }
-                        .shadow(color: canSend ? Color.cyAccent.opacity(0.24) : .clear, radius: 10, y: 4)
+                    AgentQuietAccentIconLabel(icon: .arrowUp, isActive: canSend)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
