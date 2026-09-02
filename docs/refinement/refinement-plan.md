@@ -2166,6 +2166,18 @@ None. Every standing B6 finding is in a task above, in an earlier batch's task (
 
 ---
 
+## Added during execution
+
+### Task 114: Reproduce and fix the desktop sheet-presentation environment crash
+
+- **Closes:** EXEC-01 (blocker) in `findings-execution.md`.
+- **Files and sites:** start from the crash report at `docs/refinement/evidence/B1/task-2/desktop-crash-2026-09-02-091525.ips` (assertion in `EnvironmentValues.subscript.getter` under `DynamicBody.updateValue`). Enumerate every `.sheet`, `.fullScreenCover` and `.popover` content view reachable from `DesktopAppShellView` and check which of them reads an `@Environment` object (`AppModel`, services, custom keys) that the presenting site does not install; also check whether a `UserDefaults` change observed by the shell can present a sheet before its environment is ready. Reproduce on a scratch Catalyst build with the Task 43 fixtures, never on the installed app.
+- **Shared thing reused:** the fixtures from Task 43; the desktop presentation policy in `DesktopLayoutPolicy`.
+- **Tests:** a focused test that instantiates the offending sheet content with the shell's environment and asserts it renders; a regression on the trigger once known.
+- **Acceptance:** the reproduction steps crash before the fix and do not after, on the scratch build; desktop light capture of the sheet that used to crash.
+
+This task runs at the end of B3, after Task 59.
+
 ## Owner steps
 
 `findings-apple.md` §2 carries O-1 … O-14 in dependency order and they are reproduced in
