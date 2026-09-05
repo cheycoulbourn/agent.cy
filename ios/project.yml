@@ -83,7 +83,6 @@ targets:
         AGENTCY_CLOUDKIT_ENABLED: "$(AGENTCY_CLOUDKIT_ENABLED)"
         # Required by private CloudKit mirroring. Notification content remains local-only.
         UIBackgroundModes:
-          - audio
           - remote-notification
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -91,7 +90,6 @@ targets:
         NSCalendarsFullAccessUsageDescription: "Allow agent.cy to add scheduled posts and tasks to your chosen calendar."
         NSMicrophoneUsageDescription: "Allow agent.cy to record a Voice Spark that you choose to save as an editable idea."
         NSSpeechRecognitionUsageDescription: "Allow agent.cy to turn Voice Spark recordings into editable thoughts you can save, replay, and connect to your content."
-        NSSupportsLiveActivities: true
     entitlements:
       path: AgentCy/Support/AgentCy.entitlements
       properties:
@@ -200,7 +198,7 @@ targets:
       - path: AgentCyShared
       - path: AgentCy/Resources/Fonts
         buildPhase: resources
-      # Live Activities use the same licensed Nucleo assets as the app so
+      # Widgets use the same licensed Nucleo assets as the app so
       # system surfaces never fall back to an SF Symbol for app actions.
       - path: AgentCy/Resources/Assets.xcassets
         buildPhase: resources

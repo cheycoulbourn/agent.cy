@@ -3,7 +3,6 @@ import Foundation
 
 enum PhoneFeatureLaunchRoute: String, Codable, Sendable {
     case voiceSpark
-    case creatorSession
 }
 
 enum PhoneFeatureLaunchRequestStore {
@@ -19,10 +18,9 @@ enum PhoneFeatureLaunchRequestStore {
     static func take(
         defaults: UserDefaults? = UserDefaults(suiteName: AgentCyWidgetShared.appGroupIdentifier)
     ) -> PhoneFeatureLaunchRoute? {
-        guard let rawValue = defaults?.string(forKey: key),
-              let route = PhoneFeatureLaunchRoute(rawValue: rawValue) else { return nil }
+        guard let rawValue = defaults?.string(forKey: key) else { return nil }
         defaults?.removeObject(forKey: key)
-        return route
+        return PhoneFeatureLaunchRoute(rawValue: rawValue)
     }
 }
 

@@ -70,7 +70,7 @@ struct DesktopAppShellView: View {
         .sheet(item: nonCreationSheetBinding) { sheet in
             Group {
                 switch sheet {
-                case .creationHub, .voiceSpark, .creatorSession: EmptyView()
+                case .creationHub, .voiceSpark: EmptyView()
                 case .quickCapture: QuickCaptureView()
                 case .askCy: AskCyView(showsCloseButton: true)
                 case .settings: SettingsView()
@@ -117,23 +117,10 @@ struct DesktopAppShellView: View {
             cyFloatingButton
             .padding(AgentSpacing.x6)
         }
-        .overlay(alignment: .bottom) {
-            if CreatorSessionFeatureAvailability.isEnabled {
-                ActiveCreatorSessionFloatingTimer(
-                    isEnabled: appModel.presentedSheet != .creatorSession
-                ) {
-                    appModel.presentedSheet = .creatorSession
-                }
-                .padding(.bottom, AgentSpacing.x6)
-            }
-        }
         .agentScreen()
         .overlay {
             if appModel.presentedSheet == .creationHub {
                 creationHubOverlay
-            } else if CreatorSessionFeatureAvailability.isEnabled,
-                      appModel.presentedSheet == .creatorSession {
-                creatorSessionOverlay
             }
         }
         .task {
@@ -193,7 +180,7 @@ struct DesktopAppShellView: View {
         Binding(
             get: {
                 switch appModel.presentedSheet {
-                case .creationHub, .voiceSpark, .creatorSession:
+                case .creationHub, .voiceSpark:
                     return nil
                 default:
                     return appModel.presentedSheet
@@ -252,41 +239,6 @@ struct DesktopAppShellView: View {
         appModel.dismissGlobalPresentation()
         creationHubStage = .menu
         appModel.presentedSheet = .creationHub
-    }
-
-    private var creatorSessionOverlay: some View {
-        GeometryReader { proxy in
-            let side = min(780, max(620, min(proxy.size.width - 96, proxy.size.height - 64)))
-
-            ZStack {
-                Button(action: closeCreatorSession) {
-                    Color.agentPureBlack.opacity(0.18)
-                        .ignoresSafeArea()
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityHidden(true)
-
-                CreatorSessionView(onDismiss: closeCreatorSession)
-                    .environment(appModel)
-                    .modelContext(modelContext)
-                    .frame(width: side, height: side)
-                    .background(Color.agentCanvas)
-                    .clipShape(.rect(cornerRadius: AgentRadius.floating))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AgentRadius.floating)
-                            .stroke(Color.agentBorder, lineWidth: 1)
-                    }
-                    .accessibilityAddTraits(.isModal)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityAction(.escape, closeCreatorSession)
-        }
-    }
-
-    private func closeCreatorSession() {
-        appModel.presentedSheet = nil
     }
 
     private func sidebar(metrics: DesktopLayoutMetrics) -> some View {
@@ -1554,11 +1506,6 @@ struct DesktopAppShellView: View {
     private func openPillars() {
         selection = .pillars
         appModel.selectedTab = .pillars
-    }
-
-    private func openCy() {
-        selection = .cy
-        appModel.selectedTab = .cy
     }
 
     private func openPlan() {

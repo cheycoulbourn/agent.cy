@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import SwiftData
 import UIKit
@@ -483,3 +484,4 @@ private enum PreviewIdeaBankRuntimeState: String {
         return Self(rawValue: arguments[marker + 1])
     }
 }
+#endif

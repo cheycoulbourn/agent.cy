@@ -448,6 +448,14 @@ enum TaskRuntimeFixture {
 }
 
 struct TasksView: View {
+    var body: some View {
+        WorkspaceQueryScopeReader { scope in
+            TasksContent(scope: scope)
+        }
+    }
+}
+
+private struct TasksContent: View {
     enum StatusFilter: String, CaseIterable, Identifiable {
         case open = "Open"
         case completed = "Completed"
@@ -476,7 +484,9 @@ struct TasksView: View {
     @State private var isAddingPostTask = false
     @State private var tasksNow = Date()
 
-    init() {
+    init(scope: WorkspaceQueryScope) {
+        _tasks = Query(filter: scope.tasks, sort: \CreatorTask.createdAt, order: .reverse)
+        _pillars = Query(filter: scope.pillars, sort: \Pillar.createdAt)
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if let rawCollection = TaskRootRuntimeFixture.value(

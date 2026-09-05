@@ -54,147 +54,20 @@ final class WidgetTests: XCTestCase {
         XCTAssertNil(PhoneFeatureLaunchRequestStore.take(defaults: defaults))
     }
 
-    func testCreatorSessionRecordStoreRoundTrips() throws {
-        let suite = "AgentCyCreatorSessionTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let start = Date(timeIntervalSince1970: 1_784_050_200)
-        let postID = UUID()
-        let expected = ActiveCreatorSessionRecord(
-            sessionID: "session-1",
-            title: "Film the studio update",
-            mode: .filming,
-            startedAt: start,
-            endDate: start.addingTimeInterval(2_700),
-            durationMinutes: 45,
-            linkedPostID: postID,
-            linkedPostTitle: "Studio update"
-        )
-
-        try CreatorSessionRecordStore.save(expected, defaults: defaults)
-
-        XCTAssertEqual(CreatorSessionRecordStore.load(defaults: defaults), expected)
-        CreatorSessionRecordStore.clear(defaults: defaults)
-        XCTAssertNil(CreatorSessionRecordStore.load(defaults: defaults))
-    }
-
-    func testCreatorSessionAvailabilityGateRemainsClosed() {
-        XCTAssertFalse(CreatorSessionFeatureAvailability.isEnabled)
-    }
-
-    func testUnavailableCreatorSessionCannotBePresented() {
-        let model = AppModel(reminderService: PreviewReminderService())
-
-        model.presentCreatorSession(
-            linkedPostID: UUID(),
-            linkedPostTitle: "Studio update"
-        )
-
-        XCTAssertNil(model.presentedSheet)
-        XCTAssertNil(model.requestedCreatorSessionPostID)
-        XCTAssertNil(model.requestedCreatorSessionPostTitle)
-    }
-
-    func testCreatorSessionLogKeepsLinkedPostAndDeduplicatesSession() throws {
-        let suite = "AgentCyCreatorSessionLogTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let start = Date(timeIntervalSince1970: 1_784_050_200)
-        let postID = UUID()
-        let session = ActiveCreatorSessionRecord(
-            sessionID: "session-1",
-            title: "Film the studio update",
-            mode: .filming,
-            startedAt: start,
-            endDate: start.addingTimeInterval(2_700),
-            durationMinutes: 45,
-            linkedPostID: postID,
-            linkedPostTitle: "Studio update"
-        )
-        let log = CreatorSessionLog(session: session, endedAt: start.addingTimeInterval(900))
-
-        try CreatorSessionLogStore.append(log, defaults: defaults)
-        try CreatorSessionLogStore.append(log, defaults: defaults)
-
-        let history = CreatorSessionLogStore.load(defaults: defaults)
-        XCTAssertEqual(history.count, 1)
-        XCTAssertEqual(history.first?.linkedPostID, postID)
-        XCTAssertEqual(history.first?.linkedPostTitle, "Studio update")
-        XCTAssertEqual(history.first?.endedAt, start.addingTimeInterval(900))
-    }
-
-    func testCreatorSessionKeepsOptionalLogSeparateFromLinkedPostTitle() {
-        let start = Date(timeIntervalSince1970: 1_784_050_200)
-        let session = ActiveCreatorSessionRecord(
-            sessionID: "session-linked-post",
-            title: "",
-            mode: .writing,
-            startedAt: start,
-            endDate: start.addingTimeInterval(1_500),
-            durationMinutes: 25,
-            linkedPostID: UUID(),
-            linkedPostTitle: "No scroll Sundays ritual",
-            style: .pomodoro,
-            totalRounds: 4,
-            timerTheme: .splitDial
-        )
-
-        XCTAssertEqual(session.title, "")
-        XCTAssertEqual(session.displayTitle, "Write session")
-        XCTAssertEqual(session.linkedPostTitle, "No scroll Sundays ritual")
-        XCTAssertEqual(session.timerTheme, .splitDial)
-    }
-
-    func testCreatorSessionSupportsMultipleOrderedModes() throws {
-        let start = Date(timeIntervalSince1970: 1_784_050_200)
-        let session = ActiveCreatorSessionRecord(
-            sessionID: "session-multiple-modes",
-            title: "",
-            mode: .editing,
-            modes: [.editing, .planning, .writing, .planning],
-            startedAt: start,
-            endDate: start.addingTimeInterval(2_700),
-            durationMinutes: 45,
-            style: .custom,
-            timerTheme: .focusConsole
-        )
-
-        XCTAssertEqual(session.modes, [.planning, .writing, .editing])
-        XCTAssertEqual(session.mode, .planning)
-        XCTAssertEqual(session.modeSummary, "Plan + Write + Edit")
-        XCTAssertEqual(session.displayTitle, "Plan + Write + Edit session")
-
-        let decoded = try JSONDecoder().decode(
-            ActiveCreatorSessionRecord.self,
-            from: JSONEncoder().encode(session)
-        )
-        XCTAssertEqual(decoded.modes, session.modes)
-        XCTAssertEqual(CreatorSessionLog(session: session, endedAt: start).modes, session.modes)
-    }
-
-    func testCreatorSessionScrollResetsWhenTimerPresentationChanges() {
-        XCTAssertTrue(CreatorSessionPresentationPolicy.shouldResetScroll(
-            previousSessionID: nil,
-            currentSessionID: "session-1"
-        ))
-        XCTAssertFalse(CreatorSessionPresentationPolicy.shouldResetScroll(
-            previousSessionID: "session-1",
-            currentSessionID: "session-1"
-        ))
-        XCTAssertTrue(CreatorSessionPresentationPolicy.shouldResetScroll(
-            previousSessionID: "session-1",
-            currentSessionID: nil
-        ))
-    }
-
     func testPhoneQuickActionHeaderKeepsTopControlsBelowTheSafeArea() {
         XCTAssertEqual(AgentQuickAddLayout.phoneHeaderHeight, 72)
         XCTAssertEqual(AgentQuickAddLayout.phoneHeaderTopPadding, 12)
     }
 
-    func testPomodoroPlanIncludesFocusRoundsAndShortBreaks() {
-        let plan = CreatorSessionPlan(focusMinutes: 25, shortBreakMinutes: 5, rounds: 4, longBreakMinutes: 15)
-        XCTAssertEqual(plan.plannedDurationMinutes, 115)
+    func testRetiredCreatorSessionRoutesAreIgnoredAndConsumed() throws {
+        XCTAssertNil(AgentCyDeepLink(url: try XCTUnwrap(URL(string: "agentcy://creator-session"))))
+        let suite = "AgentCyRetiredRouteTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("creatorSession", forKey: "agentCy.phoneFeature.pendingRoute.v1")
+
+        XCTAssertNil(PhoneFeatureLaunchRequestStore.take(defaults: defaults))
+        XCTAssertNil(defaults.string(forKey: "agentCy.phoneFeature.pendingRoute.v1"))
     }
 
     func testPendingWidgetTaskCompletionReconcilesIntoSwiftData() throws {
@@ -236,7 +109,6 @@ final class WidgetTests: XCTestCase {
             .quickPost,
             .quickTask,
             .voiceSpark,
-            .creatorSession,
             .brief(briefID),
         ]
 

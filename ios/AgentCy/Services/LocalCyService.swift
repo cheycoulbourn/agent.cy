@@ -149,10 +149,6 @@ actor LocalCyAIClient {
         )
     }
 
-    func isRemoteAvailable() async -> Bool {
-        await isAvailable()
-    }
-
     private func performQueued<Request: Encodable, Result: Decodable & Sendable>(
         _ envelope: Request,
         requestID: UUID,
@@ -316,15 +312,6 @@ actor LocalCyAIClient {
                     .appending(path: "\(requestID.uuidString.lowercased()).json")
                 try? FileManager.default.removeItem(at: url)
             }
-        }
-    }
-
-    private func removeRequest(requestID: UUID) throws {
-        try MCPBridgePreferences.withDirectory { directory in
-            let url = directory
-                .appending(path: "cy-requests", directoryHint: .isDirectory)
-                .appending(path: "\(requestID.uuidString.lowercased()).json")
-            try? FileManager.default.removeItem(at: url)
         }
     }
 

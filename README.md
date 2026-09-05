@@ -7,7 +7,21 @@ The repository is a monorepo:
 - `ios/` contains the iOS 26 SwiftUI and SwiftData client.
 - `contracts/` contains canonical TypeScript/Zod API contracts.
 - `server/` contains the Fastify AI proxy and operational endpoints.
+- `mcp/` contains the desktop MCP bridge and Local Cy runtime.
 - `docs/` contains the canonical product, architecture, privacy, prompt, and validation documents.
+
+## iOS source organization
+
+- `ios/AgentCy/App/` owns launch and application lifecycle; `Views/Shell/` owns navigation and tab lifetime.
+- `ios/AgentCy/Views/` groups screens by feature. Activity Center lives in `Views/Activity/`; Home owns dashboard presentation.
+- `ios/AgentCy/Services/` owns reusable operations and presentation policies; `Models/` owns domain and persistence types.
+- `ios/AgentCyShared/` holds code compiled into app and extension targets. `Preview/` seed data is Debug-only.
+- `ios/project.yml` is the source for Xcode targets. After moving source files, run `xcodegen generate --spec ios/project.yml` from the repo root.
+
+Build products belong outside the source tree. For local Xcode commands, use
+`-derivedDataPath /tmp/agentcy-build` (or another local, unsynced directory).
+
+See the [September 5 cleanup review](docs/reviews/2026-09-05-code-cleanup.md) for changes, verification, and remaining performance work.
 
 ## Product boundary
 

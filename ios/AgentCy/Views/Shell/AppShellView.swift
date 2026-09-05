@@ -60,26 +60,32 @@ struct AppShellView: View {
         GeometryReader { proxy in
             ZStack(alignment: .bottom) {
                 ZStack {
-                    NavigationStack(path: $homePath) { HomeDashboardView().taskNavigationDestinations() }
-                        .appTabLayer(.home, selection: model.selectedTab)
-                    NavigationStack(path: $planPath) {
-                        PlanView(showsFeedShortcut: true)
-                            .id(model.requestedPlanNavigationReset)
-                            .planNavigationDestinations(bottomClearance: bottomNavigationClearance)
-                            .taskNavigationDestinations()
+                    RetainedTab(isSelected: model.selectedTab == .home) {
+                        NavigationStack(path: $homePath) { HomeDashboardView().taskNavigationDestinations() }
                     }
-                        .appTabLayer(.today, selection: model.selectedTab)
-                    NavigationStack(path: $tasksPath) { TasksView().taskNavigationDestinations() }
-                        .appTabLayer(.tasks, selection: model.selectedTab)
-                    NavigationStack(path: $pillarsPath) { PillarsView().taskNavigationDestinations() }
-                        .appTabLayer(.pillars, selection: model.selectedTab)
-                    NavigationStack(path: $ideaBankPath) { IdeaBankView().taskNavigationDestinations() }
-                        .appTabLayer(.ideaBank, selection: model.selectedTab)
-                    NavigationStack(path: $cyPath) {
-                        AskCyView(bottomClearance: isKeyboardVisible ? 0 : bottomNavigationClearance)
-                            .taskNavigationDestinations()
+                    RetainedTab(isSelected: model.selectedTab == .today) {
+                        NavigationStack(path: $planPath) {
+                            PlanView(showsFeedShortcut: true)
+                                .id(model.requestedPlanNavigationReset)
+                                .planNavigationDestinations(bottomClearance: bottomNavigationClearance)
+                                .taskNavigationDestinations()
+                        }
                     }
-                        .appTabLayer(.cy, selection: model.selectedTab)
+                    RetainedTab(isSelected: model.selectedTab == .tasks) {
+                        NavigationStack(path: $tasksPath) { TasksView().taskNavigationDestinations() }
+                    }
+                    RetainedTab(isSelected: model.selectedTab == .pillars) {
+                        NavigationStack(path: $pillarsPath) { PillarsView().taskNavigationDestinations() }
+                    }
+                    RetainedTab(isSelected: model.selectedTab == .ideaBank) {
+                        NavigationStack(path: $ideaBankPath) { IdeaBankView().taskNavigationDestinations() }
+                    }
+                    RetainedTab(isSelected: model.selectedTab == .cy) {
+                        NavigationStack(path: $cyPath) {
+                            AskCyView(bottomClearance: isKeyboardVisible ? 0 : bottomNavigationClearance)
+                                .taskNavigationDestinations()
+                        }
+                    }
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
 
@@ -93,19 +99,6 @@ struct AppShellView: View {
                     .padding(.bottom, AgentSpacing.x3)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .zIndex(model.walkthroughStep == nil ? 10 : 13)
-                }
-
-                if CreatorSessionFeatureAvailability.isEnabled,
-                   !isKeyboardVisible,
-                   model.walkthroughStep == nil {
-                    ActiveCreatorSessionFloatingTimer(
-                        isEnabled: model.presentedSheet != .creatorSession
-                    ) {
-                        model.presentedSheet = .creatorSession
-                    }
-                    .padding(.horizontal, AgentLayout.pageMargin + AgentSpacing.x3)
-                    .padding(.bottom, 84)
-                    .zIndex(9)
                 }
 
                 if !isKeyboardVisible, let undo = appModel.taskCompletionUndo {
@@ -170,16 +163,6 @@ struct AppShellView: View {
                     #else
                     VoiceSparkView()
                     #endif
-                case .creatorSession:
-                    if CreatorSessionFeatureAvailability.isEnabled {
-                        #if targetEnvironment(macCatalyst)
-                        EmptyView()
-                        #else
-                        CreatorSessionView()
-                        #endif
-                    } else {
-                        EmptyView()
-                    }
                 case .askCy: AskCyView()
                 case .settings: SettingsView()
                 case .weeklyFocus: WeeklyFocusSetupView()
@@ -688,18 +671,6 @@ private struct WalkthroughAnimatedGlyph: View {
     }
 }
 
-private extension View {
-    func appTabLayer(_ tab: AppTab, selection: AppTab) -> some View {
-        opacity(selection == tab ? 1 : 0)
-            .allowsHitTesting(selection == tab)
-            .accessibilityHidden(selection != tab)
-            .zIndex(selection == tab ? 1 : 0)
-            .transaction { transaction in
-                transaction.animation = nil
-            }
-    }
-}
-
 private struct PaperBottomNavigation: View {
     let selection: AppTab
     let onSelect: (AppTab) -> Void
@@ -878,9 +849,11 @@ private struct CyWeeklyPlanningPulse: View {
     }
 }
 
+#if DEBUG
 #Preview("Loaded creator") {
     let container = PreviewData.makeContainer()
     AppShellView()
         .environment(AppModel(reminderService: PreviewReminderService(), credentialStore: PreviewCredentialStore()))
         .modelContainer(container)
 }
+#endif

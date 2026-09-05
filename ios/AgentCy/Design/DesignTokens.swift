@@ -29,8 +29,6 @@ enum AgentLayout {
         AgentSpacing.x8
         #endif
     }
-    /// Standard vertical gap between a section's metadata heading and its primary content.
-    static let sectionHeadingSpacing: CGFloat = AgentSpacing.x2
     /// Clears the floating bottom navigation without each screen inventing its own inset.
     static let bottomNavigationClearance: CGFloat = 120
 }
@@ -766,13 +764,6 @@ extension Font {
             return .custom("InterVariable", size: 22, relativeTo: .title2).weight(.bold)
         }
         return .system(size: 22, weight: .bold, design: .default)
-    }
-
-    static var agentBriefTitle: Font {
-        if UIFont(name: "InterVariable", size: 28) != nil {
-            return .custom("InterVariable", size: 28, relativeTo: .title).weight(.semibold)
-        }
-        return .system(size: 28, weight: .semibold, design: .default)
     }
 
     static var agentHeadline: Font {
@@ -1557,41 +1548,6 @@ struct AgentCompactSecondaryButtonStyle: ButtonStyle {
     }
 }
 
-/// Compact primary action for persistent desktop rails. It keeps the main
-/// action visible without turning the bottom of a form into a floating card.
-struct AgentDesktopPrimaryActionButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.agentSubtext.weight(.semibold))
-            .padding(.horizontal, 14)
-            .frame(minHeight: 40)
-            .foregroundStyle(Color.agentText)
-            .background(AgentActionButtonTheme.primaryFill, in: .rect(cornerRadius: AgentActionButtonTheme.radius))
-            .overlay {
-                RoundedRectangle(cornerRadius: AgentActionButtonTheme.radius)
-                    .stroke(AgentActionButtonTheme.border, lineWidth: 1)
-            }
-            .opacity(isEnabled
-                ? AgentButtonPressFeedback.value(
-                    resting: 1.0,
-                    pressed: 0.82,
-                    isPressed: configuration.isPressed
-                )
-                : 0.42)
-            .scaleEffect(AgentButtonPressFeedback.scale(
-                isPressed: configuration.isPressed,
-                reduceMotion: reduceMotion
-            ))
-            .animation(
-                AgentButtonPressFeedback.animation(reduceMotion: reduceMotion),
-                value: configuration.isPressed
-            )
-    }
-}
-
 /// Compact actions that sit directly above a desktop paper surface. They keep
 /// edit controls discoverable without competing with the content card.
 struct AgentDesktopQuietActionButtonStyle: ButtonStyle {
@@ -1942,49 +1898,6 @@ struct CyPendingReviewLogo: View {
             )
             .onAppear { isRotating = true }
             .accessibilityHidden(true)
-    }
-}
-
-/// The primary animated Cy brand mark used on high-level Cy surfaces.
-/// Smaller inline references continue to use the static `CyAsterisk`.
-enum CyAnimatedLogoMotionPolicy {
-    static func usesTimeline(reduceMotion: Bool) -> Bool {
-        !reduceMotion
-    }
-}
-
-struct CyAnimatedLogo: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var color: Color = .cyAccent
-    var size: CGFloat = 31
-    var strokeWidth: CGFloat = 2.5
-    var duration: TimeInterval = 2.8
-
-    var body: some View {
-        Group {
-            if CyAnimatedLogoMotionPolicy.usesTimeline(reduceMotion: reduceMotion) {
-                TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
-                    let progress = timeline.date.timeIntervalSinceReferenceDate
-                        .truncatingRemainder(dividingBy: duration) / duration
-                    let pulse = 1 - (abs(progress - 0.5) * 2)
-
-                    animatedMark(progress: progress, pulse: pulse)
-                }
-            } else {
-                CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
-    }
-
-    private func animatedMark(progress: Double, pulse: Double) -> some View {
-            // L1-05: the pulse is carried by rotation and scale alone. The
-            // accent glow this mark used to breathe is banned by design.md.
-            CyAsterisk(color: color, size: size, strokeWidth: strokeWidth)
-                .rotationEffect(.degrees(progress * 45))
-                .scaleEffect(0.97 + (pulse * 0.06))
     }
 }
 

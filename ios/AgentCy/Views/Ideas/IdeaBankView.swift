@@ -195,6 +195,14 @@ enum IdeaBankRootProjectionPolicy {
 }
 
 struct IdeaBankView: View {
+    var body: some View {
+        WorkspaceQueryScopeReader { scope in
+            IdeaBankContent(scope: scope)
+        }
+    }
+}
+
+private struct IdeaBankContent: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.openURL) private var openURL
@@ -233,6 +241,12 @@ struct IdeaBankView: View {
             search: search,
             selectedFilter: selectedFilter
         )
+    }
+
+    init(scope: WorkspaceQueryScope) {
+        _allBriefs = Query(filter: scope.briefs, sort: \CreativeBrief.updatedAt, order: .reverse)
+        _allInspirationSources = Query(filter: scope.savedPosts, sort: \InspirationSource.updatedAt, order: .reverse)
+        _allPillars = Query(filter: scope.pillars, sort: \Pillar.createdAt)
     }
 
     var body: some View {

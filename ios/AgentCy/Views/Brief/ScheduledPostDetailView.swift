@@ -225,9 +225,6 @@ struct ScheduledPostDetailView: View {
                     )
                 }
                 scheduleSurface
-                if CreatorSessionFeatureAvailability.isEnabled {
-                    focusSessionAction
-                }
                 postContent
                 collaborationDetails
                 moodBoardDetails
@@ -383,49 +380,6 @@ struct ScheduledPostDetailView: View {
             if output.status == .posted, !showEditor { savePublishedLink() }
         }
         .agentScreen()
-    }
-
-    private var focusSessionAction: some View {
-        Button {
-            appModel.presentCreatorSession(
-                linkedPostID: brief.id,
-                linkedPostTitle: brief.title
-            )
-        } label: {
-            HStack(spacing: AgentSpacing.x4) {
-                AgentIconView(.play, size: 17)
-                    .offset(x: 1)
-                    .frame(width: 40, height: 40)
-                    .background(Color.agentSelectionFill, in: .rect(cornerRadius: AgentRadius.control))
-
-                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                    Text("Focus on this post")
-                        .font(.agentHeadline)
-                    HStack(spacing: AgentSpacing.x2) {
-                        AgentIconView(.link, size: 13)
-                        Text("Opens Creator Session with this post linked")
-                            .font(.agentMetadata)
-                    }
-                    .foregroundStyle(Color.agentSecondary)
-                }
-
-                Spacer(minLength: AgentSpacing.x3)
-                AgentIconView(.forward, size: 13)
-                    .foregroundStyle(Color.agentSecondary)
-            }
-            .foregroundStyle(Color.agentText)
-            .padding(AgentSpacing.x4)
-            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-            .background(Color.agentSurface)
-            .clipShape(.rect(cornerRadius: AgentRadius.card))
-            .overlay {
-                RoundedRectangle(cornerRadius: AgentRadius.card)
-                    .stroke(Color.agentBorder, lineWidth: 1)
-            }
-            .contentShape(.rect(cornerRadius: AgentRadius.card))
-        }
-        .buttonStyle(AgentPressButtonStyle())
-        .accessibilityHint("Starts a session without replacing your optional session note")
     }
 
 #if targetEnvironment(macCatalyst)

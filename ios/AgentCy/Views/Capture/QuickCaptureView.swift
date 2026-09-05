@@ -1421,18 +1421,6 @@ struct QuickCaptureView: View {
         }
     }
 
-    private func lockedTaskValue(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x4) {
-            MetaLabel(label)
-            Spacer()
-            Text(value)
-                .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.agentText)
-                .multilineTextAlignment(.trailing)
-        }
-        .frame(minHeight: 44)
-    }
-
     private var postComposer: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
             AgentCaptureField(label: "Title", placeholder: "What are you posting?", text: $postTitle)
@@ -1571,24 +1559,6 @@ struct QuickCaptureView: View {
             )
         }
         return targetDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
-    }
-
-    private var headerTitle: String {
-        if savedBrief != nil { return kind == .post ? "Post saved." : "Idea saved." }
-        return switch kind {
-        case .spark: "Save an idea."
-        case .post: "Plan a post."
-        case .task: "Add a task."
-        }
-    }
-
-    private var headerSubtitle: String {
-        if savedBrief != nil, kind == .spark { return "It’s in your Idea Bank. Keep editing here if you want." }
-        return switch kind {
-        case .spark: "Name it, add a note, and choose where it belongs."
-        case .post: "Choose the essentials. Build out the post when you need it."
-        case .task: "Capture one clear next action."
-        }
     }
 
     private func loadIdeas() async {

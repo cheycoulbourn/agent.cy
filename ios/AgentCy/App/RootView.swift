@@ -179,12 +179,6 @@ struct RootView: View {
             #if DEBUG
             RootRuntimeFixture.resolve()?.scheduleProfileArrival(context: context)
             #endif
-            if !CreatorSessionFeatureAvailability.isEnabled {
-                if appModel.presentedSheet == .creatorSession {
-                    appModel.presentedSheet = nil
-                }
-                await CreatorSessionActivityController.retireUnavailableFeature()
-            }
             appModel.removeLegacySimplifyPrefixes(context: context)
             try? FocusTaskRecurrenceService.reconcile(context: context)
             let repairedPostTasks = (try? PostTaskScheduleRepairService.reconcileOnce(context: context)) ?? 0
@@ -297,8 +291,6 @@ struct RootView: View {
             #if !targetEnvironment(macCatalyst)
             appModel.presentedSheet = .voiceSpark
             #endif
-        case .creatorSession:
-            break
         }
     }
 

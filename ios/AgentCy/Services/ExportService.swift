@@ -11,6 +11,7 @@ protocol ExportServicing {
 @MainActor
 struct LocalExportService: ExportServicing {
     func makeArchive(context: ModelContext) throws -> URL {
+        let dateFormatter = ISO8601DateFormatter()
         let profiles = try context.fetch(FetchDescriptor<CreatorProfile>())
         let voiceExamples = try context.fetch(FetchDescriptor<VoiceExample>())
         let voiceProfiles = try context.fetch(FetchDescriptor<VoiceProfile>())
@@ -43,7 +44,7 @@ struct LocalExportService: ExportServicing {
         let inspirationTags = try context.fetch(FetchDescriptor<InspirationTag>())
 
         let object: [String: Any] = [
-            "exportedAt": ISO8601DateFormatter().string(from: Date()),
+            "exportedAt": dateFormatter.string(from: Date()),
             "schemaVersion": 19,
             "profiles": profiles.map { [
                 "id": $0.id.uuidString,
@@ -65,8 +66,8 @@ struct LocalExportService: ExportServicing {
                     "source": $0.source.rawValue,
                     "sourceURL": $0.sourceURL?.absoluteString ?? NSNull(),
                     "creatorConfirmed": $0.creatorConfirmed,
-                    "createdAt": ISO8601DateFormatter().string(from: $0.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: $0.updatedAt)
+                    "createdAt": dateFormatter.string(from: $0.createdAt),
+                    "updatedAt": dateFormatter.string(from: $0.updatedAt)
                 ] as [String: Any]
             },
             "voiceProfiles": voiceProfiles.map { ["id": $0.id.uuidString, "profileID": $0.profileID.uuidString, "summary": $0.summary, "traits": $0.traitsText, "avoid": $0.avoidText, "version": $0.version, "isApproved": $0.isApproved, "canonicalPayloadJSON": $0.canonicalPayloadJSON, "evidenceFingerprint": $0.evidenceFingerprint] as [String: Any] },
@@ -106,13 +107,13 @@ struct LocalExportService: ExportServicing {
                     "seriesID": brief.seriesID?.uuidString ?? NSNull(),
                     "episodeNumber": brief.episodeNumber ?? NSNull(),
                     "episodeLabel": brief.episodeLabel,
-                    "workDate": brief.workDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "workDate": brief.workDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "includesWorkTime": brief.includesWorkTime,
-                    "agendaDate": brief.agendaDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "agendaDate": brief.agendaDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "lifecycleHistory": brief.lifecycleHistory.map {
                         [
                             "status": $0.status.rawValue,
-                            "date": ISO8601DateFormatter().string(from: $0.date)
+                            "date": dateFormatter.string(from: $0.date)
                         ]
                     },
                     "readyBriefPayloadJSON": brief.readyBriefPayloadJSON
@@ -136,8 +137,8 @@ struct LocalExportService: ExportServicing {
                     "status": source.status.rawValue,
                     "linkedBriefID": source.linkedBriefID?.uuidString ?? NSNull(),
                     "filmingTaskID": source.filmingTaskID?.uuidString ?? NSNull(),
-                    "createdAt": ISO8601DateFormatter().string(from: source.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: source.updatedAt)
+                    "createdAt": dateFormatter.string(from: source.createdAt),
+                    "updatedAt": dateFormatter.string(from: source.updatedAt)
                 ] as [String: Any]
             },
             "inspirationTags": inspirationTags.map { tag in
@@ -145,8 +146,8 @@ struct LocalExportService: ExportServicing {
                     "id": tag.id.uuidString,
                     "workspaceID": tag.workspaceID?.uuidString ?? NSNull(),
                     "name": tag.name,
-                    "createdAt": ISO8601DateFormatter().string(from: tag.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: tag.updatedAt)
+                    "createdAt": dateFormatter.string(from: tag.createdAt),
+                    "updatedAt": dateFormatter.string(from: tag.updatedAt)
                 ] as [String: Any]
             },
             "pendingBriefProposals": pendingProposals.map { proposal in
@@ -156,8 +157,8 @@ struct LocalExportService: ExportServicing {
                     "id": proposal.id.uuidString,
                     "briefID": proposal.briefID.uuidString,
                     "proposalKind": proposal.proposalKindRaw,
-                    "createdAt": ISO8601DateFormatter().string(from: proposal.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: proposal.updatedAt),
+                    "createdAt": dateFormatter.string(from: proposal.createdAt),
+                    "updatedAt": dateFormatter.string(from: proposal.updatedAt),
                     "payload": payload
                 ] as [String: Any]
             },
@@ -169,8 +170,8 @@ struct LocalExportService: ExportServicing {
                     "profileID": proposal.profileID.uuidString,
                     "sourceVersion": proposal.sourceVersion,
                     "proposalKind": proposal.proposalKindRaw,
-                    "createdAt": ISO8601DateFormatter().string(from: proposal.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: proposal.updatedAt),
+                    "createdAt": dateFormatter.string(from: proposal.createdAt),
+                    "updatedAt": dateFormatter.string(from: proposal.updatedAt),
                     "payload": payload
                 ] as [String: Any]
             },
@@ -192,11 +193,11 @@ struct LocalExportService: ExportServicing {
                     "recurrence": output.recurrence.rawValue,
                     "recurrenceWeekdays": output.recurrenceWeekdays.map(\.rawValue).sorted(),
                     "recurrenceMonthDay": output.recurrenceMonthDay ?? NSNull(),
-                    "recurrenceEndDate": output.recurrenceEndDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "recurrenceEndDate": output.recurrenceEndDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "includesTargetTime": output.includesTargetTime,
                     "seriesRootOutputID": output.seriesRootOutputID?.uuidString ?? NSNull(),
-                    "targetDate": output.targetDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
-                    "postedAt": output.postedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "targetDate": output.targetDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
+                    "postedAt": output.postedAt.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "publishedURL": output.publishedURLString
                 ] as [String: Any]
             },
@@ -213,17 +214,17 @@ struct LocalExportService: ExportServicing {
                     "estimatedMinutes": task.estimatedMinutes ?? NSNull(),
                     "isCompleted": task.isCompleted,
                     "isSkipped": task.isSkipped,
-                    "skippedAt": task.skippedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
-                    "targetDate": task.targetDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "skippedAt": task.skippedAt.map { dateFormatter.string(from: $0) } ?? NSNull(),
+                    "targetDate": task.targetDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "includesTargetTime": task.includesTargetTime,
-                    "dailyFocusDate": task.dailyFocusDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "dailyFocusDate": task.dailyFocusDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "dailyFocusTitle": task.dailyFocusTitle ?? NSNull(),
                     "dailyFocusTemplateEntryID": task.dailyFocusTemplateEntryID?.uuidString ?? NSNull(),
                     "focusTaskTemplateID": task.focusTaskTemplateID?.uuidString ?? NSNull(),
                     "isFocusTemplateCustomized": task.isFocusTemplateCustomized,
                     "recurrence": task.recurrence.rawValue,
                     "recurrenceRootTaskID": task.recurrenceRootTaskID?.uuidString ?? NSNull(),
-                    "completedAt": task.completedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "completedAt": task.completedAt.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "recordingMilestoneEmitted": task.recordingMilestoneEmitted,
                     "isRecordingMilestoneDesignated": task.isRecordingMilestoneDesignated
                 ] as [String: Any]
@@ -252,10 +253,10 @@ struct LocalExportService: ExportServicing {
                     "defaultSocialAccountID": series.defaultSocialAccountID?.uuidString ?? NSNull(),
                     "defaultDurationSeconds": series.defaultDurationSeconds ?? NSNull(),
                     "cadence": series.cadence.rawValue,
-                    "cadenceStartDate": series.cadenceStartDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "cadenceStartDate": series.cadenceStartDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "cadenceWeekdays": series.cadenceWeekdays.map(\.rawValue).sorted(),
                     "cadenceMonthDay": series.cadenceMonthDay ?? NSNull(),
-                    "cadenceEndDate": series.cadenceEndDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+                    "cadenceEndDate": series.cadenceEndDate.map { dateFormatter.string(from: $0) } ?? NSNull(),
                     "cadenceIncludesTime": series.cadenceIncludesTime,
                     "taskTemplate": series.taskTemplate.map { item in
                         [
@@ -268,9 +269,9 @@ struct LocalExportService: ExportServicing {
                             "sortOrder": item.sortOrder
                         ] as [String: Any]
                     },
-                    "createdAt": ISO8601DateFormatter().string(from: series.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: series.updatedAt),
-                    "archivedAt": series.archivedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+                    "createdAt": dateFormatter.string(from: series.createdAt),
+                    "updatedAt": dateFormatter.string(from: series.updatedAt),
+                    "archivedAt": series.archivedAt.map { dateFormatter.string(from: $0) } ?? NSNull()
                 ] as [String: Any]
             },
             "seriesEpisodeSlots": episodeSlots.map { slot in
@@ -278,18 +279,18 @@ struct LocalExportService: ExportServicing {
                     "id": slot.id.uuidString,
                     "workspaceID": slot.workspaceID?.uuidString ?? NSNull(),
                     "seriesID": slot.seriesID.uuidString,
-                    "plannedDate": ISO8601DateFormatter().string(from: slot.plannedDate),
+                    "plannedDate": dateFormatter.string(from: slot.plannedDate),
                     "includesTime": slot.includesTime,
                     "status": slot.status.rawValue,
                     "convertedBriefID": slot.convertedBriefID?.uuidString ?? NSNull(),
-                    "createdAt": ISO8601DateFormatter().string(from: slot.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: slot.updatedAt)
+                    "createdAt": dateFormatter.string(from: slot.createdAt),
+                    "updatedAt": dateFormatter.string(from: slot.updatedAt)
                 ] as [String: Any]
             },
             "rhythmTemplates": rhythmTemplates.map { ["id": $0.id.uuidString, "name": $0.name, "entries": $0.entriesText, "isActive": $0.isActive] as [String: Any] },
-            "weekPlans": weekPlans.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "rhythmEntries": $0.rhythmEntriesText, "notes": $0.notes] },
+            "weekPlans": weekPlans.map { ["id": $0.id.uuidString, "weekStart": dateFormatter.string(from: $0.weekStart), "rhythmEntries": $0.rhythmEntriesText, "notes": $0.notes] },
             "conversationThreads": threads.map { ["id": $0.id.uuidString, "briefID": $0.briefID?.uuidString ?? NSNull(), "title": $0.title, "turnCount": $0.turnCount] as [String: Any] },
-            "conversationMessages": messages.map { ["id": $0.id.uuidString, "threadID": $0.threadID.uuidString, "role": $0.role.rawValue, "text": $0.text, "createdAt": ISO8601DateFormatter().string(from: $0.createdAt)] },
+            "conversationMessages": messages.map { ["id": $0.id.uuidString, "threadID": $0.threadID.uuidString, "role": $0.role.rawValue, "text": $0.text, "createdAt": dateFormatter.string(from: $0.createdAt)] },
             "reminderSettings": reminders.map {
                 [
                     "id": $0.id.uuidString,
@@ -318,22 +319,22 @@ struct LocalExportService: ExportServicing {
                     "showNotificationTitles": $0.showNotificationTitles,
                 ] as [String: Any]
             },
-            "subscriptionStates": subscriptions.map { ["id": $0.id.uuidString, "access": $0.access.rawValue, "trialEnd": $0.trialEnd.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(), "freeBriefConsumed": $0.freeBriefConsumed, "ideationRequestsUsed": $0.ideationRequestsUsed, "revisionRequestsUsed": $0.revisionRequestsUsed, "teachCyUpdatesUsed": $0.teachCyUpdatesUsed] as [String: Any] }
+            "subscriptionStates": subscriptions.map { ["id": $0.id.uuidString, "access": $0.access.rawValue, "trialEnd": $0.trialEnd.map { dateFormatter.string(from: $0) } ?? NSNull(), "freeBriefConsumed": $0.freeBriefConsumed, "ideationRequestsUsed": $0.ideationRequestsUsed, "revisionRequestsUsed": $0.revisionRequestsUsed, "teachCyUpdatesUsed": $0.teachCyUpdatesUsed] as [String: Any] }
             ,"publishingDestinations": destinations.map { ["id": $0.id.uuidString, "name": $0.name, "builtInKind": $0.builtInKindRaw, "isArchived": $0.isArchived] as [String: Any] }
             ,"publishingFormats": formats.map { ["id": $0.id.uuidString, "destinationID": $0.destinationID.uuidString, "name": $0.name, "kind": $0.kind.rawValue, "isArchived": $0.isArchived] as [String: Any] }
             ,"socialAccounts": socialAccounts.map { ["id": $0.id.uuidString, "profileID": $0.profileID.uuidString, "destinationID": $0.destinationID.uuidString, "label": $0.label, "profileURL": $0.profileURLString, "isPrimary": $0.isPrimary, "isArchived": $0.isArchived] as [String: Any] }
             ,"dailyFocusTemplates": focusTemplates.map { ["id": $0.id.uuidString, "weekday": $0.weekday.rawValue, "kind": $0.kind.rawValue, "title": $0.title, "note": $0.note, "focusTasks": $0.focusTaskTemplates.map { ["id": $0.id.uuidString, "focusKind": $0.focusKind.rawValue, "title": $0.title, "priority": $0.priority.rawValue, "sortOrder": $0.sortOrder] }] as [String: Any] }
-            ,"dailyFocusOverrides": focusOverrides.map { ["id": $0.id.uuidString, "date": ISO8601DateFormatter().string(from: $0.date), "isCleared": $0.isCleared, "title": $0.title] as [String: Any] }
+            ,"dailyFocusOverrides": focusOverrides.map { ["id": $0.id.uuidString, "date": dateFormatter.string(from: $0.date), "isCleared": $0.isCleared, "title": $0.title] as [String: Any] }
             ,"dailyFocusDayDetails": focusDayDetails.map {
                 [
                     "id": $0.id.uuidString,
-                    "date": ISO8601DateFormatter().string(from: $0.date),
+                    "date": dateFormatter.string(from: $0.date),
                     "note": $0.note,
                     "reminderEnabled": $0.reminderEnabled,
-                    "reminderDate": $0.reminderDate.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+                    "reminderDate": $0.reminderDate.map { dateFormatter.string(from: $0) } ?? NSNull()
                 ] as [String: Any]
             }
-            ,"pendingWeekProposals": weekProposals.map { ["id": $0.id.uuidString, "weekStart": ISO8601DateFormatter().string(from: $0.weekStart), "status": $0.statusRaw, "payloadJSON": $0.payloadJSON] as [String: Any] }
+            ,"pendingWeekProposals": weekProposals.map { ["id": $0.id.uuidString, "weekStart": dateFormatter.string(from: $0.weekStart), "status": $0.statusRaw, "payloadJSON": $0.payloadJSON] as [String: Any] }
             ,"attachments": attachments.map { ["id": $0.id.uuidString, "briefID": $0.briefID.uuidString, "platformOutputID": $0.platformOutputID?.uuidString ?? NSNull(), "ownerKind": $0.ownerKind.rawValue, "fileName": $0.fileName, "kind": $0.kind.rawValue, "contentType": $0.uniformTypeIdentifier, "byteCount": $0.byteCount] as [String: Any] }
             ,"brandPartners": brandPartners.map {
                 [
@@ -345,8 +346,8 @@ struct LocalExportService: ExportServicing {
                     "website": $0.websiteURLString,
                     "socialHandle": $0.socialHandle,
                     "notes": $0.notes,
-                    "nextFollowUpAt": $0.nextFollowUpAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
-                    "lastContactedAt": $0.lastContactedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+                    "nextFollowUpAt": $0.nextFollowUpAt.map { dateFormatter.string(from: $0) } ?? NSNull(),
+                    "lastContactedAt": $0.lastContactedAt.map { dateFormatter.string(from: $0) } ?? NSNull()
                 ] as [String: Any]
             }
             ,"brandContacts": brandContacts.map {
@@ -372,9 +373,9 @@ struct LocalExportService: ExportServicing {
                     "kind": $0.kind.rawValue,
                     "title": $0.title,
                     "note": $0.note,
-                    "occurredAt": ISO8601DateFormatter().string(from: $0.occurredAt),
-                    "createdAt": ISO8601DateFormatter().string(from: $0.createdAt),
-                    "updatedAt": ISO8601DateFormatter().string(from: $0.updatedAt)
+                    "occurredAt": dateFormatter.string(from: $0.occurredAt),
+                    "createdAt": dateFormatter.string(from: $0.createdAt),
+                    "updatedAt": dateFormatter.string(from: $0.updatedAt)
                 ] as [String: Any]
             }
         ]

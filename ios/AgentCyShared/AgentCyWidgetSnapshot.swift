@@ -369,7 +369,6 @@ enum AgentCyDeepLink: Equatable, Sendable {
     case quickPost
     case quickTask
     case voiceSpark
-    case creatorSession
     case brief(UUID)
 
     var url: URL {
@@ -400,8 +399,6 @@ enum AgentCyDeepLink: Equatable, Sendable {
             components.path = "/task"
         case .voiceSpark:
             components.host = "voice-spark"
-        case .creatorSession:
-            components.host = "creator-session"
         case .brief(let id):
             components.host = "brief"
             components.path = "/\(id.uuidString.lowercased())"
@@ -426,8 +423,6 @@ enum AgentCyDeepLink: Equatable, Sendable {
             self = .ideaBank
         case "voice-spark":
             self = .voiceSpark
-        case "creator-session":
-            self = .creatorSession
         case "capture":
             switch url.path.lowercased() {
             case "/idea": self = .quickIdea

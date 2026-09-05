@@ -7,7 +7,6 @@ enum AppSheet: String, Identifiable, Equatable {
     case creationHub
     case quickCapture
     case voiceSpark
-    case creatorSession
     case askCy
     case settings
     case weeklyFocus
@@ -273,8 +272,6 @@ final class AppModel {
     var requestedPlanNavigationReset = 0
     var requestedOpenPostsList = 0
     var requestedLateWorkList = 0
-    var requestedCreatorSessionPostID: UUID?
-    var requestedCreatorSessionPostTitle: String?
     var requestedSettingsPage: RequestedSettingsPage?
     var pendingCyPrompt: String?
     var walkthroughStep: AppWalkthroughStep?
@@ -364,20 +361,6 @@ final class AppModel {
     func presentMCPReview() {
         requestedSettingsPage = nil
         presentedSheet = .askCy
-    }
-
-    func presentCreatorSession(linkedPostID: UUID? = nil, linkedPostTitle: String? = nil) {
-        guard CreatorSessionFeatureAvailability.isEnabled else { return }
-        requestedCreatorSessionPostID = linkedPostID
-        requestedCreatorSessionPostTitle = linkedPostTitle
-        presentedSheet = .creatorSession
-    }
-
-    func consumeCreatorSessionRequest() -> (postID: UUID?, postTitle: String?) {
-        let request = (requestedCreatorSessionPostID, requestedCreatorSessionPostTitle)
-        requestedCreatorSessionPostID = nil
-        requestedCreatorSessionPostTitle = nil
-        return request
     }
 
     func presentCreatorError(_ error: Error, action: String? = nil) {
@@ -656,21 +639,6 @@ final class AppModel {
         try? context.save()
     }
 
-    func voiceExampleDrafts(context: ModelContext) -> [VoiceExampleDraft] {
-        guard let profile = fetchOne(CreatorProfile.self, context: context) else { return [] }
-        return ((try? context.fetch(FetchDescriptor<VoiceExample>(sortBy: [SortDescriptor(\.sortOrder)]))) ?? [])
-            .filter { $0.profileID == profile.id }
-            .prefix(5)
-            .map {
-                VoiceExampleDraft(
-                    id: $0.id,
-                    text: $0.text,
-                    source: $0.source,
-                    sourceURLString: $0.sourceURLString
-                )
-            }
-    }
-
     @discardableResult
     func saveVoiceExamples(_ drafts: [VoiceExampleDraft], context: ModelContext) -> Bool {
         guard let profile = fetchOne(CreatorProfile.self, context: context) else {
@@ -833,13 +801,6 @@ final class AppModel {
         } catch {
             presentCreatorError(error, action: "The voice profile")
         }
-    }
-
-    func isVoiceProfileStale(_ voiceProfile: VoiceProfile, context: ModelContext) -> Bool {
-        guard !voiceProfile.evidenceFingerprint.isEmpty else { return false }
-        let examples = ((try? context.fetch(FetchDescriptor<VoiceExample>())) ?? [])
-            .filter { $0.profileID == voiceProfile.profileID && $0.creatorConfirmed && !$0.text.isEmpty }
-        return VoiceExampleFingerprint.make(from: examples) != voiceProfile.evidenceFingerprint
     }
 
     @discardableResult
@@ -2909,12 +2870,6 @@ final class AppModel {
         queueCalendarSync(context: context)
     }
 
-    func noteManualDevelopment(of brief: CreativeBrief, context: ModelContext) {
-        guard brief.status == .spark else { return }
-        BriefLifecycle.beginDevelopment(brief)
-        try? context.save()
-    }
-
     @discardableResult
     func markPostDraft(
         brief: CreativeBrief,
@@ -3843,10 +3798,6 @@ final class AppModel {
         ))) ?? []
     }
 
-    func createRepurposedSpark(from brief: CreativeBrief, context: ModelContext) -> CreativeBrief? {
-        createSpark(text: "A new angle from \(brief.title): \(brief.takeaway)", source: .repurposedBrief, context: context)
-    }
-
     func askCy(
         _ message: String,
         conversation: [ConversationMessageWire]? = nil,
@@ -3882,37 +3833,6 @@ final class AppModel {
         }
     }
 
-    func proposedPillars(context: ModelContext) -> [Pillar] {
-        let workspaces = (try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
-        let briefs = ((try? context.fetch(FetchDescriptor<CreativeBrief>())) ?? []).filter {
-            $0.status != .spark &&
-                $0.status != .archived &&
-                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeWorkspaceID, workspaces: workspaces)
-        }
-        guard briefs.count >= 3 else { return [] }
-        return Array(briefs.prefix(3)).enumerated().map { index, brief in
-            let fallback = ["Practical shifts", "Behind the work", "Starting points"][index]
-            let name = brief.title.split(separator: " ").prefix(3).joined(separator: " ")
-            return Pillar(name: name.isEmpty ? fallback : name, detail: "A recurring pillar inferred from your posts.")
-        }
-    }
-
-    func acceptPillar(_ proposal: Pillar, context: ModelContext) {
-        let workspaces = (try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
-        let activePillarCount = ((try? context.fetch(FetchDescriptor<Pillar>())) ?? []).filter {
-            !$0.isArchived &&
-                WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: activeWorkspaceID, workspaces: workspaces)
-        }.count
-        guard PillarCollectionPolicy.canCreate(activeCount: activePillarCount) else {
-            notice = .info("You can have up to six pillars.")
-            return
-        }
-        let pillar = Pillar(name: proposal.name, detail: proposal.detail, colorHex: proposal.colorHex)
-        pillar.workspaceID = resolvedWorkspaceID(context: context)
-        context.insert(pillar)
-        try? context.save()
-    }
-
     func ensureWeek(startingAt requestedStart: Date, context: ModelContext) -> WeekPlan {
         let calendar = Calendar.current
         let start = calendar.dateInterval(of: .weekOfYear, for: requestedStart)?.start ?? calendar.startOfDay(for: requestedStart)
@@ -3931,25 +3851,6 @@ final class AppModel {
         context.insert(plan)
         try? context.save()
         return plan
-    }
-
-    func ensureCurrentWeek(context: ModelContext) -> WeekPlan {
-        ensureWeek(startingAt: Date(), context: context)
-    }
-
-    func saveWeekToTemplate(_ plan: WeekPlan, context: ModelContext) {
-        let workspaces = (try? context.fetch(FetchDescriptor<CreatorWorkspace>())) ?? []
-        let workspaceID = resolvedWorkspaceID(context: context)
-        let template = ((try? context.fetch(FetchDescriptor<RhythmTemplate>())) ?? []).first {
-            WorkspaceScope.includes($0.workspaceID, activeWorkspaceID: workspaceID, workspaces: workspaces)
-        } ?? RhythmTemplate()
-        if template.modelContext == nil {
-            template.workspaceID = resolvedWorkspaceID(context: context)
-            context.insert(template)
-        }
-        template.entriesText = plan.rhythmEntriesText
-        template.updatedAt = Date()
-        try? context.save()
     }
 
     func export(context: ModelContext) {
@@ -4314,40 +4215,6 @@ final class AppModel {
             notice = .error("That platform could not be added.")
             return nil
         }
-    }
-
-    @discardableResult
-    func addPublishingOutput(
-        to brief: CreativeBrief,
-        destination: PublishingDestination,
-        format: PublishingFormat,
-        context: ModelContext
-    ) -> PlatformOutput? {
-        guard can(.editExisting, context: context), brief.status != .archived else { return nil }
-        let existing = outputs(for: brief, context: context)
-        guard !existing.contains(where: { $0.destinationID == destination.id && $0.formatID == format.id }) else {
-            notice = .info("That platform is already part of this post.")
-            return nil
-        }
-        let legacy = PublishingCatalog.legacyPlatform(destinationID: destination.id, formatID: format.id)
-            ?? (format.kind == .longVideo ? .youtubeVideo : .instagramReels)
-        let output = PlatformOutput(
-            briefID: brief.id,
-            platform: legacy,
-            destinationID: destination.id,
-            formatID: format.id,
-            socialAccountID: preferredSocialAccountID(for: destination.id, context: context),
-            durationSeconds: format.kind.defaultDurationSeconds ?? brief.durationSeconds,
-            status: [.ready, .scheduled, .posted].contains(brief.status) ? .ready : .draft
-        )
-        output.workspaceID = brief.workspaceID ?? resolvedWorkspaceID(context: context)
-        if let source = existing.first { output.caption = source.caption; output.cta = source.cta }
-        else { output.cta = brief.ctaIntent }
-        output.titleOverride = brief.title
-        context.insert(output)
-        brief.updatedAt = Date()
-        do { try context.save(); return output }
-        catch { context.delete(output); notice = .error("That platform could not be added."); return nil }
     }
 
     func deletePlatformOutput(

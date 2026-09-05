@@ -167,11 +167,6 @@ final class PageMain01Tests: XCTestCase {
         XCTAssertEqual(scoped.map(\.id), [legacy.id])
     }
 
-    func testReducedMotionDoesNotKeepTheHomeLogoTimelineAlive() {
-        XCTAssertFalse(CyAnimatedLogoMotionPolicy.usesTimeline(reduceMotion: true))
-        XCTAssertTrue(CyAnimatedLogoMotionPolicy.usesTimeline(reduceMotion: false))
-    }
-
     func testActivityBadgeStaysBoundedAndCapsItsVisualCount() {
         XCTAssertEqual(HomeActivityBadgePolicy.displayText(unreadCount: 1), "1")
         XCTAssertEqual(HomeActivityBadgePolicy.displayText(unreadCount: 12), "9+")

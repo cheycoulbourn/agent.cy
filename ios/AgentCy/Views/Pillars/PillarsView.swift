@@ -156,6 +156,14 @@ struct NewPillarRequest: Identifiable {
 }
 
 struct PillarsView: View {
+    var body: some View {
+        WorkspaceQueryScopeReader { scope in
+            PillarsContent(scope: scope)
+        }
+    }
+}
+
+private struct PillarsContent: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -216,6 +224,12 @@ struct PillarsView: View {
         guard let profileID = activeWorkspace?.profileID else { return profiles.first?.vibePalette }
         return profiles.first { $0.id == profileID }?.vibePalette
     }
+    init(scope: WorkspaceQueryScope) {
+        _allPillars = Query(filter: scope.pillars, sort: \Pillar.createdAt)
+        _allBriefs = Query(filter: scope.briefs, sort: \CreativeBrief.updatedAt, order: .reverse)
+        _allOutputs = Query(filter: scope.outputs, sort: \PlatformOutput.createdAt, order: .reverse)
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
@@ -2289,37 +2303,6 @@ private struct PillarColorChooser: View {
     }
     private func isSelected(_ hex: String) -> Bool {
         selectedHex.caseInsensitiveCompare(hex) == .orderedSame
-    }
-}
-
-private struct PillarMetrics {
-    let pillar: Pillar
-    let includesBranches: Bool
-    let pillars: [Pillar]
-    let briefs: [CreativeBrief]
-    let outputs: [PlatformOutput]
-
-    private var IDs: Set<UUID> {
-        guard includesBranches else { return [pillar.id] }
-        return Set([pillar.id] + pillars.filter { $0.parentPillarID == pillar.id }.map(\.id))
-    }
-    private var familyBriefs: [CreativeBrief] {
-        briefs.filter { $0.pillarID.map(IDs.contains) == true && $0.status != .archived }
-    }
-    var ideaCount: Int { familyBriefs.filter(IdeaBankPlacementPolicy.includes).count }
-    var postedCount: Int {
-        familyBriefs.filter { brief in
-            brief.status == .posted || outputs.contains { $0.briefID == brief.id && $0.status == .posted }
-        }.count
-    }
-    var thisWeekCount: Int {
-        let interval = PillarUsageSchedulePolicy.weekInterval(containing: Date())
-        let counts = PillarUsageSchedulePolicy.scheduledBriefCountsByPillar(
-            briefs: briefs,
-            outputs: outputs,
-            interval: interval
-        )
-        return IDs.reduce(0) { $0 + (counts[$1] ?? 0) }
     }
 }
 

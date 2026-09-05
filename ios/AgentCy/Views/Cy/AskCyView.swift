@@ -526,6 +526,17 @@ private enum BatchReviewDecision: String, Identifiable {
 }
 
 struct AskCyView: View {
+    var bottomClearance: CGFloat = 0
+    var showsCloseButton = false
+
+    var body: some View {
+        WorkspaceQueryScopeReader { scope in
+            AskCyContent(bottomClearance: bottomClearance, showsCloseButton: showsCloseButton, scope: scope)
+        }
+    }
+}
+
+private struct AskCyContent: View {
     private let bottomClearance: CGFloat
     private let showsCloseButton: Bool
     @Environment(AppModel.self) private var appModel
@@ -533,6 +544,8 @@ struct AskCyView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.agentTabIsActive) private var isTabActive
     @Query(sort: \ConversationThread.updatedAt, order: .reverse) private var allThreads: [ConversationThread]
     @Query(sort: \ConversationMessage.createdAt) private var allMessages: [ConversationMessage]
     @Query(sort: \CreativeBrief.updatedAt, order: .reverse) private var allBriefs: [CreativeBrief]
@@ -582,7 +595,12 @@ struct AskCyView: View {
         }
     }
 
-    init(bottomClearance: CGFloat = 0, showsCloseButton: Bool = false) {
+    init(bottomClearance: CGFloat, showsCloseButton: Bool, scope: WorkspaceQueryScope) {
+        _allThreads = Query(filter: scope.threads, sort: \ConversationThread.updatedAt, order: .reverse)
+        _allBriefs = Query(filter: scope.briefs, sort: \CreativeBrief.updatedAt, order: .reverse)
+        _allOutputs = Query(filter: scope.outputs)
+        _allTasks = Query(filter: scope.tasks, sort: \CreatorTask.createdAt)
+        _allPillars = Query(filter: scope.pillars)
         self.bottomClearance = bottomClearance
         self.showsCloseButton = showsCloseButton
     }
@@ -697,7 +715,8 @@ struct AskCyView: View {
             }
             await appModel.refreshAccess(context: context)
         }
-        .task {
+        .task(id: isTabActive && scenePhase == .active) {
+            guard isTabActive, scenePhase == .active else { return }
             while !Task.isCancelled {
                 // The bridge folder can live in iCloud Drive; reading it on
                 // the main thread stutters an in-flight scroll, so the poll
@@ -724,6 +743,7 @@ struct AskCyView: View {
             loadThread()
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentCyMCPInboxChanged)) { _ in
+            guard isTabActive, scenePhase == .active else { return }
             Task { await refreshPendingReviews() }
         }
         .sheet(item: $reviewingRequest) { request in
@@ -915,7 +935,8 @@ struct AskCyView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                 HStack(spacing: AgentSpacing.x2) {
-                    CyAnimatedLogo(size: 20, strokeWidth: 1.7)
+                    CyAsterisk(size: 20, strokeWidth: 1.7)
+                        .accessibilityHidden(true)
                     MetaLabel("CY · FOR REVIEW")
                         .foregroundStyle(Color.cyAccent)
                 }
@@ -1208,7 +1229,8 @@ struct AskCyView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x6) {
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                 HStack(spacing: AgentSpacing.x2) {
-                    CyAnimatedLogo(size: 20, strokeWidth: 1.7)
+                    CyAsterisk(size: 20, strokeWidth: 1.7)
+                        .accessibilityHidden(true)
                     MetaLabel("CY · REVIEW COMPLETE")
                         .foregroundStyle(Color.cyAccent)
                 }
@@ -1373,7 +1395,8 @@ struct AskCyView: View {
 
     private var opening: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-            CyAnimatedLogo()
+            CyAsterisk(size: 31, strokeWidth: 2.5)
+                .accessibilityHidden(true)
                 .frame(width: 44, height: 44, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {

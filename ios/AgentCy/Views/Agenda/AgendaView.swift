@@ -202,6 +202,18 @@ private enum AgendaLayout {
 struct AgendaView: View {
     @Binding var weekOffset: Int
     @Binding var selectedDay: Date
+    let referenceDate: Date
+
+    var body: some View {
+        WorkspaceQueryScopeReader { scope in
+            AgendaContent(weekOffset: $weekOffset, selectedDay: $selectedDay, referenceDate: referenceDate, scope: scope)
+        }
+    }
+}
+
+private struct AgendaContent: View {
+    @Binding var weekOffset: Int
+    @Binding var selectedDay: Date
     @Environment(AppModel.self) private var appModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -269,8 +281,17 @@ struct AgendaView: View {
     init(
         weekOffset: Binding<Int>,
         selectedDay: Binding<Date>,
-        referenceDate: Date
+        referenceDate: Date,
+        scope: WorkspaceQueryScope
     ) {
+        _allBriefs = Query(filter: scope.briefs, sort: \CreativeBrief.updatedAt, order: .reverse)
+        _allOutputs = Query(filter: scope.outputs, sort: \PlatformOutput.createdAt)
+        _allPillars = Query(filter: scope.pillars, sort: \Pillar.createdAt)
+        _allSeries = Query(filter: scope.series, sort: \ContentSeries.createdAt)
+        _allEpisodeSlots = Query(filter: scope.episodeSlots, sort: \SeriesEpisodeSlot.plannedDate)
+        _allTasks = Query(filter: scope.tasks, sort: \CreatorTask.createdAt)
+        _allFocusTemplates = Query(filter: scope.focusTemplates)
+        _allFocusOverrides = Query(filter: scope.focusOverrides)
         _weekOffset = weekOffset
         _selectedDay = selectedDay
         _calendarMonth = State(initialValue: referenceDate)
