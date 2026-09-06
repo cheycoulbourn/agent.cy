@@ -56,7 +56,7 @@ struct CyProUpsellView: View {
 
                 HStack(alignment: .firstTextBaseline) {
                 MetaLabel("agent.cy Pro")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                     Spacer()
                     MetaLabel("From spark to ready")
                 }
@@ -94,7 +94,7 @@ struct CyProUpsellView: View {
 
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     MetaLabel("What agent.cy Pro adds")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                     benefitRow("Strategy and ideas grounded in your goals, pillars, and work")
                     benefitRow("Content calendars, tasks, and weekly planning")
                     benefitRow("Hooks, captions, platform versions, and ongoing revisions")
@@ -571,7 +571,7 @@ struct QuickCaptureView: View {
                     CyAsterisk(color: .cyAccent, size: 15, strokeWidth: 1.4)
                 }
                 MetaLabel("Cy · Ideas")
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
 
                 Spacer(minLength: AgentSpacing.x3)
 
@@ -583,7 +583,7 @@ struct QuickCaptureView: View {
                             .font(.agentMetadata)
                             .tracking(1.2)
                             .textCase(.uppercase)
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.cyAccentText)
                             .frame(minHeight: 44)
                             .contentShape(.rect)
                     }
@@ -2087,7 +2087,7 @@ private struct IdeaDirectionRow: View {
                         .frame(width: 7, height: 7)
                 }
                 MetaLabel(suggestedPillarName ?? "No pillar")
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
 
                 Spacer()
                 MetaLabel("Idea \(number)")
@@ -2126,7 +2126,7 @@ private struct IdeaDirectionRow: View {
                         .font(.agentInter(size: 11, weight: .semibold, relativeTo: .caption))
                 }
                 .font(.agentSubtext.weight(.semibold))
-                .foregroundStyle(Color.cyAccent)
+                .foregroundStyle(Color.cyAccentText)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
                 .contentShape(.rect)
             }

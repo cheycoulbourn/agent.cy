@@ -149,7 +149,13 @@ struct RootView: View {
     var body: some View {
         Group {
             #if DEBUG
-            if IdeaDraftRuntimeFixture.requestsIdeaDraft() {
+            if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewData"),
+               ProcessInfo.processInfo.arguments.contains("-agentCyPreviewEpisodeReview") {
+                ReviewFlowPreview(showsEpisode: true)
+            } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewData"),
+                      ProcessInfo.processInfo.arguments.contains("-agentCyPreviewProposalReview") {
+                ReviewFlowPreview(showsEpisode: false)
+            } else if IdeaDraftRuntimeFixture.requestsIdeaDraft() {
                 PreviewIdeaDraftRoot()
             } else if PostEditorRuntimeFixture.requestsSparkDevelopment() {
                 PreviewSparkDevelopmentRoot()
@@ -157,6 +163,8 @@ struct RootView: View {
                 PreviewPostEditorRoot()
             } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewScheduledPost") {
                 PreviewScheduledPostRoot()
+            } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewActualPostedDate") {
+                PreviewActualPostedDateRoot()
             } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewInspirationReview") {
                 PreviewInspirationReviewRoot()
             } else if ProcessInfo.processInfo.arguments.contains("-agentCyPreviewProUpsell") {
@@ -389,6 +397,20 @@ private struct PreviewScheduledPostRoot: View {
                 )
             }
         }
+    }
+}
+
+private struct PreviewActualPostedDateRoot: View {
+    @State private var postedAt = Date()
+    @State private var showsPicker = true
+
+    var body: some View {
+        Color.agentCanvas
+            .ignoresSafeArea()
+            .sheet(isPresented: $showsPicker) {
+                ActualPostedDatePicker(postedAt: $postedAt) { _ in }
+                    .agentSheetDragIndicator()
+            }
     }
 }
 

@@ -413,7 +413,7 @@ struct AccountSwitcherSettingsView: View {
                                         if appModel.activeWorkspaceID == workspace.id {
                                             Text("Active")
                                                 .font(.agentMetadata)
-                                                .foregroundStyle(Color.cyAccent)
+                                                .foregroundStyle(Color.cyAccentText)
                                         }
                                         AgentIconView(appModel.activeWorkspaceID == workspace.id ? .check : .radioEmpty)
                                             .font(.agentInter(size: 13, weight: .semibold, relativeTo: .subheadline))
@@ -554,7 +554,7 @@ private struct SocialAccountRow: View {
                         .lineLimit(1)
                     HStack(spacing: AgentSpacing.x2) {
                         MetaLabel(destinationName)
-                        if account.isPrimary { MetaLabel("Primary").foregroundStyle(Color.cyAccent) }
+                        if account.isPrimary { MetaLabel("Primary").foregroundStyle(Color.cyAccentText) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2120,7 +2120,7 @@ struct AccessSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     MetaLabel("Pro access")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                     Text("Create your whole week with Cy.")
                         .font(.agentHeadline)
                         .foregroundStyle(Color.agentText)

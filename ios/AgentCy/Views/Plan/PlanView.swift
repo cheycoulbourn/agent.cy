@@ -163,7 +163,7 @@ struct PlanView: View {
                     } label: {
                         Text("Today")
                             .font(.agentDisplayLead)
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.cyAccentText)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Return to this week")

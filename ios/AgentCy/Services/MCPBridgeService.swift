@@ -66,6 +66,44 @@ enum MCPBridgeBookmarkPolicy {
     }
 }
 
+enum MCPBridgeQueueMaterializationPolicy {
+    static let maximumRefreshAttempts = 20
+    static let minimumEmptyRefreshAttempts = 5
+
+    static func logicalURL(forICloudPlaceholder url: URL) -> URL? {
+        let name = url.lastPathComponent
+        let suffix = ".icloud"
+        guard name.hasPrefix("."), name.hasSuffix(suffix) else { return nil }
+        let logicalName = String(name.dropFirst().dropLast(suffix.count))
+        guard !logicalName.isEmpty else { return nil }
+        return url.deletingLastPathComponent().appending(path: logicalName)
+    }
+
+    static func downloadCandidates(
+        rootDirectory: URL,
+        requestsDirectory: URL,
+        entries: [URL]
+    ) -> [URL] {
+        var seen: Set<URL> = []
+        return ([rootDirectory, requestsDirectory] + entries.flatMap { entry in
+            if let logicalURL = logicalURL(forICloudPlaceholder: entry) {
+                return [entry, logicalURL]
+            }
+            return [entry]
+        }).filter { seen.insert($0).inserted }
+    }
+
+    static func shouldRetry(
+        completedAttempt: Int,
+        hasUndownloadedPlaceholders: Bool,
+        requestCount: Int
+    ) -> Bool {
+        guard completedAttempt + 1 < maximumRefreshAttempts else { return false }
+        if hasUndownloadedPlaceholders { return true }
+        return requestCount == 0 && completedAttempt + 1 < minimumEmptyRefreshAttempts
+    }
+}
+
 enum MCPBridgePreferences {
     static let bookmarkKey = "agentcy.mcp.folderBookmark"
     static let folderNameKey = "agentcy.mcp.folderName"
@@ -768,12 +806,20 @@ enum MCPBridgeService {
     ) async throws -> [MCPBridgeChangeRequest] {
         guard MCPBridgePreferences.isConnected else { return [] }
         var latest: [MCPBridgeChangeRequest] = []
-        for attempt in 0..<3 {
-            latest = try MCPBridgePreferences.withDirectory { directory in
-                try requestUbiquitousDownloads(in: directory)
-                return try pendingRequests(directory: directory, workspaceID: workspaceID)
+        for attempt in 0..<MCPBridgeQueueMaterializationPolicy.maximumRefreshAttempts {
+            let result = try MCPBridgePreferences.withDirectory { directory in
+                let hasUndownloadedPlaceholders = try requestUbiquitousDownloads(in: directory)
+                return (
+                    try pendingRequests(directory: directory, workspaceID: workspaceID),
+                    hasUndownloadedPlaceholders
+                )
             }
-            guard attempt < 2 else { break }
+            latest = result.0
+            guard MCPBridgeQueueMaterializationPolicy.shouldRetry(
+                completedAttempt: attempt,
+                hasUndownloadedPlaceholders: result.1,
+                requestCount: latest.count
+            ) else { break }
             try await Task.sleep(for: .milliseconds(250))
         }
         return latest
@@ -783,12 +829,22 @@ enum MCPBridgeService {
         directory: URL,
         workspaceID: UUID? = CreatorWorkspacePreferences.activeWorkspaceID
     ) async throws -> [MCPBridgeChangeRequest] {
-        try requestUbiquitousDownloads(in: directory)
-        await Task.yield()
-        return try pendingRequests(directory: directory, workspaceID: workspaceID)
+        var latest: [MCPBridgeChangeRequest] = []
+        for attempt in 0..<MCPBridgeQueueMaterializationPolicy.maximumRefreshAttempts {
+            let hasUndownloadedPlaceholders = try requestUbiquitousDownloads(in: directory)
+            latest = try pendingRequests(directory: directory, workspaceID: workspaceID)
+            guard MCPBridgeQueueMaterializationPolicy.shouldRetry(
+                completedAttempt: attempt,
+                hasUndownloadedPlaceholders: hasUndownloadedPlaceholders,
+                requestCount: latest.count
+            ) else { break }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        return latest
     }
 
-    private nonisolated static func requestUbiquitousDownloads(in directory: URL) throws {
+    @discardableResult
+    private nonisolated static func requestUbiquitousDownloads(in directory: URL) throws -> Bool {
         let fileManager = FileManager.default
         let requests = directory.appending(path: "requests", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: requests, withIntermediateDirectories: true)
@@ -797,17 +853,25 @@ enum MCPBridgeService {
         // items that still needed downloading, so a device that never
         // materialised the folder (typically iPhone) saw an empty queue
         // forever. Include hidden entries so the download is actually asked for.
-        let urls = [requests] + ((try? fileManager.contentsOfDirectory(
+        let entries = (try? fileManager.contentsOfDirectory(
             at: requests,
             includingPropertiesForKeys: [.isUbiquitousItemKey],
             options: []
-        )) ?? [])
-        for url in urls {
-            let isUbiquitous = (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?
-                .isUbiquitousItem == true
-            if isUbiquitous {
-                try? fileManager.startDownloadingUbiquitousItem(at: url)
-            }
+        )) ?? []
+        let candidates = MCPBridgeQueueMaterializationPolicy.downloadCandidates(
+            rootDirectory: directory,
+            requestsDirectory: requests,
+            entries: entries
+        )
+        for url in candidates {
+            // File Provider may expose an undownloaded item as
+            // `.request.json.icloud`, while FileManager expects the logical
+            // `request.json` URL when starting the download. Ask for both;
+            // non-ubiquitous local files simply fail this best-effort call.
+            try? fileManager.startDownloadingUbiquitousItem(at: url)
+        }
+        return entries.contains {
+            MCPBridgeQueueMaterializationPolicy.logicalURL(forICloudPlaceholder: $0) != nil
         }
     }
 
@@ -1583,14 +1647,22 @@ enum MCPBridgeService {
                   }) else {
                 throw MCPBridgeError.missingRecord("The active series no longer exists.")
             }
-            guard let seriesPillarID = series.pillarID,
+            // An explicit pillar chosen during review repairs an older series
+            // whose stored pillar was archived or removed. Episodes still
+            // inherit one series pillar; the review override updates that
+            // source of truth before the episode is created.
+            guard let requestedPillarID = request.payload.pillarId ?? series.pillarID,
                   let inheritedPillarID = try validatedPillarID(
-                      seriesPillarID,
+                      requestedPillarID,
                       context: context,
                       workspaceID: workspaceID,
                       workspaces: workspaces
                   ) else {
                 throw MCPBridgeError.actionNotAllowed("Assign an active pillar to this series before approving an MCP episode.")
+            }
+            if request.payload.pillarId != nil, series.pillarID != inheritedPillarID {
+                series.pillarID = inheritedPillarID
+                series.updatedAt = Date()
             }
             let slot: SeriesEpisodeSlot
             let isNewSlot: Bool
@@ -1657,12 +1729,15 @@ enum MCPBridgeService {
                 ?? series.defaultPlatform
                 ?? .instagramReels
             let identifiers = PublishingCatalog.identifiers(for: platform)
+            let seriesDestinationID = series.defaultDestinationID ?? series.defaultPlatform.map { PublishingCatalog.identifiers(for: $0).destination }
+            let destinationID = request.payload.platform == nil ? series.defaultDestinationID ?? identifiers.destination : identifiers.destination
+            let inheritedAccountID = destinationID == seriesDestinationID ? series.defaultSocialAccountID : nil
             let output = PlatformOutput(
                 briefID: brief.id,
                 platform: platform,
-                destinationID: series.defaultDestinationID ?? identifiers.destination,
-                formatID: series.defaultFormatID ?? identifiers.format,
-                socialAccountID: series.defaultSocialAccountID,
+                destinationID: destinationID,
+                formatID: destinationID == seriesDestinationID ? series.defaultFormatID ?? identifiers.format : identifiers.format,
+                socialAccountID: inheritedAccountID,
                 durationSeconds: series.defaultDurationSeconds ?? brief.durationSeconds,
                 status: .draft
             )
@@ -1673,7 +1748,7 @@ enum MCPBridgeService {
             try applyRequestedFormat(request.payload.format, to: output, context: context)
             output.socialAccountID = try resolvedSocialAccountID(
                 requestedID: request.payload.socialAccountId,
-                existingID: series.defaultSocialAccountID,
+                existingID: inheritedAccountID,
                 destinationID: output.destinationID,
                 context: context,
                 workspaceID: workspaceID,

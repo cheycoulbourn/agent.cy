@@ -102,6 +102,7 @@ struct ResumablePostEditorView: View {
     /// back/title/spark/delete never appear inside quick add (creator
     /// direction 2026-08-19).
     let showsEditorChrome: Bool
+    let externalSaveCoordinator: PostEditorSaveCoordinator?
 
     @State private var targetDate: Date
     @State private var hasTargetDate: Bool
@@ -144,6 +145,7 @@ struct ResumablePostEditorView: View {
     @State private var newSeriesName = ""
     @State private var isKeyboardVisible = false
     @State private var draftNotes: String
+    @State private var externalSaveError: String?
     @State private var showSparkDevelopment = false
     @State private var suppressExitPersistence = false
     @State private var textCommitCoordinator = PostEditorTextCommitCoordinator()
@@ -189,6 +191,7 @@ struct ResumablePostEditorView: View {
         bottomActionClearance: CGFloat = 88,
         closeAction: (() -> Void)? = nil,
         showsEditorChrome: Bool = true,
+        externalSaveCoordinator: PostEditorSaveCoordinator? = nil,
         onSpark: @escaping () -> Void
     ) {
         self.brief = brief
@@ -199,6 +202,7 @@ struct ResumablePostEditorView: View {
         self.bottomActionClearance = bottomActionClearance
         self.closeAction = closeAction
         self.showsEditorChrome = showsEditorChrome
+        self.externalSaveCoordinator = externalSaveCoordinator
         let briefID = brief.id
         _outputs = Query(
             filter: #Predicate<PlatformOutput> { $0.briefID == briefID },
@@ -254,6 +258,14 @@ struct ResumablePostEditorView: View {
     var body: some View {
         editorImportExportContainer
             .environment(textCommitCoordinator)
+            .onAppear {
+                externalSaveCoordinator?.save = {
+                    let saved = persistChanges()
+                    externalSaveError = saved ? nil : appModel.notice?.message
+                    return saved
+                }
+            }
+            .onDisappear { externalSaveCoordinator?.save = nil }
     }
 
     private var editorScrollContainer: some View {
@@ -323,7 +335,6 @@ struct ResumablePostEditorView: View {
                     postedAt: $actualPostedDate,
                     onSave: markPosted
                 )
-                .presentationDetents([.height(330)])
                 .agentSheetDragIndicator()
 #endif
             }
@@ -684,9 +695,16 @@ struct ResumablePostEditorView: View {
         }
     }
 
+    private var isPendingEpisodeReview: Bool { isReviewEditing && externalSaveCoordinator != nil }
+
     private var editorContent: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x8) {
             editorHeading
+            if let externalSaveError {
+                Text(externalSaveError)
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentDestructive)
+            }
             BufferedPostTitleField(text: $brief.title)
             postSetupSection
 
@@ -701,46 +719,56 @@ struct ResumablePostEditorView: View {
             }
 #endif
 
-            if let contentFormat = selectedFormat?.kind.contentFormat {
-                AgentDurationPicker(seconds: $output.durationSeconds, format: contentFormat)
-            }
+            if !isPendingEpisodeReview {
+                if let contentFormat = selectedFormat?.kind.contentFormat {
+                    AgentDurationPicker(seconds: $output.durationSeconds, format: contentFormat)
+                }
 
-            mediaSection
+                mediaSection
 #if targetEnvironment(macCatalyst)
-            if !voiceRecordings.isEmpty {
+                if !voiceRecordings.isEmpty {
+                    PostVoiceRecordingsSection(
+                        recordings: voiceRecordings,
+                        onDownload: requestMediaExport,
+                        onDelete: deleteAttachment,
+                        onTitleChange: updateVoiceRecordingTitle,
+                        onPlaybackError: { appModel.notice = .error($0) }
+                    )
+                }
+#else
                 PostVoiceRecordingsSection(
                     recordings: voiceRecordings,
+                    onAdd: { voiceRecorderBrief = brief },
                     onDownload: requestMediaExport,
                     onDelete: deleteAttachment,
                     onTitleChange: updateVoiceRecordingTitle,
                     onPlaybackError: { appModel.notice = .error($0) }
                 )
-            }
-#else
-            PostVoiceRecordingsSection(
-                recordings: voiceRecordings,
-                onAdd: { voiceRecorderBrief = brief },
-                onDownload: requestMediaExport,
-                onDelete: deleteAttachment,
-                onTitleChange: updateVoiceRecordingTitle,
-                onPlaybackError: { appModel.notice = .error($0) }
-            )
 #endif
+            }
             postCopySection
-            seriesSection
+            if isPendingEpisodeReview {
+                Text("Add scripts, media, and tasks after you approve this episode.")
+                    .font(.agentSubtext)
+                    .foregroundStyle(Color.agentSecondary)
+            } else {
+                seriesSection
 
-            if showsBrandDealsSection {
-                collaborationSection
+                if showsBrandDealsSection {
+                    collaborationSection
+                }
+
+                if showsMoodBoardsSection {
+                    moodBoardSection
+                }
+
             }
-
-            if showsMoodBoardsSection {
-                moodBoardSection
-            }
-
             notesSection
-            moreDetailsSection
-            postedLinkSection
-            tasksSection
+            if !isPendingEpisodeReview {
+                moreDetailsSection
+                postedLinkSection
+                tasksSection
+            }
         }
         // Catalyst proposes an effectively unbounded vertical size to the
         // single ScrollView child. Keep the form at the sum of its sections
@@ -900,14 +928,16 @@ struct ResumablePostEditorView: View {
             .disabled(output.destinationID == nil)
             .opacity(output.destinationID == nil ? 0.55 : 1)
 
-            Button {
-                presentSetupPicker(.status)
-            } label: {
-                PostDraftSetupRow(label: "Status", value: displayedWorkflowStatus)
-            }
-            .buttonStyle(AgentPressButtonStyle())
+            if !isPendingEpisodeReview {
+                Button {
+                    presentSetupPicker(.status)
+                } label: {
+                    PostDraftSetupRow(label: "Status", value: displayedWorkflowStatus)
+                }
+                .buttonStyle(AgentPressButtonStyle())
 
-            if workflowStatus != .idea {
+            }
+            if workflowStatus != .idea || isPendingEpisodeReview {
                 Button { editPostDate(.work) } label: {
                     PostDraftSetupRow(
                         label: "Work on",
@@ -1604,7 +1634,7 @@ struct ResumablePostEditorView: View {
     private var postCopySection: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x4) {
             ForEach(CreatorPostCopyField.allCases) { field in
-                if field != .hook || showsHookSection {
+                if (field != .hook || showsHookSection) && (!isPendingEpisodeReview || field != .script) {
                     PostEditorTextField(
                         label: field.editorTitle,
                         text: postCopyBinding(for: field),
@@ -4137,6 +4167,14 @@ enum EmptyPostDraftDeletionPolicy {
 
 @MainActor
 @Observable
+final class PostEditorSaveCoordinator {
+    var save: (() -> Bool)?
+
+    func commit() -> Bool { save?() ?? false }
+}
+
+@MainActor
+@Observable
 final class PostEditorTextCommitCoordinator {
     private struct PendingValue {
         var value: String
@@ -4817,85 +4855,92 @@ struct PostDatesPicker: View {
     }
 }
 
+enum ActualPostedDateSheetMode: Equatable {
+    case compact
+    case expanded
+}
+
+enum ActualPostedDateSheetPolicy {
+    static let compactHeight: CGFloat = 320
+
+    static func mode(showsCalendar: Bool) -> ActualPostedDateSheetMode {
+        showsCalendar ? .expanded : .compact
+    }
+}
+
 struct ActualPostedDatePicker: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var postedAt: Date
     let onSave: (Date) -> Void
     @State private var showsCalendar = false
+    @State private var selectedDetent: PresentationDetent = .height(ActualPostedDateSheetPolicy.compactHeight)
 
     var body: some View {
+#if targetEnvironment(macCatalyst)
+        pickerContent
+#else
+        pickerContent
+            .presentationDetents(
+                [.height(ActualPostedDateSheetPolicy.compactHeight), .large],
+                selection: $selectedDetent
+            )
+            .presentationContentInteraction(.scrolls)
+            .presentationCornerRadius(AgentRadius.floating)
+            .presentationBackground(Color.agentCanvas)
+#endif
+    }
+
+    private var pickerContent: some View {
         VStack(spacing: 0) {
-            HStack(spacing: AgentSpacing.x3) {
-                Text("Actual posted date")
-                    .font(.agentHeadline)
-                    .foregroundStyle(Color.agentText)
+            HStack(alignment: .top, spacing: AgentSpacing.x3) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
+                    Text("Actual posted date")
+                        .font(.agentTitle)
+                        .foregroundStyle(Color.agentText)
+
+                    Text("Confirm when this post went live.")
+                        .font(.agentSubtext)
+                        .foregroundStyle(Color.agentSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer(minLength: 0)
-                Button { dismiss() } label: {
-                    AgentIconView(.close, size: 14)
-                        .frame(width: 40, height: 40)
-                        .contentShape(.circle)
+                AgentToolbarIconButton(title: "Cancel", icon: .close) {
+                    dismiss()
                 }
-                .buttonStyle(AgentPressButtonStyle())
-                .accessibilityLabel("Cancel")
             }
-            .padding(.leading, AgentSpacing.x5)
-            .padding(.trailing, AgentSpacing.x3)
+            .padding(.horizontal, AgentSpacing.x5)
             .padding(.top, AgentSpacing.x3)
+            .padding(.bottom, AgentSpacing.x4)
 
-            VStack(alignment: .leading, spacing: AgentSpacing.x4) {
-                Text("Confirm when this post went live.")
-                    .font(.agentSubtext)
-                    .foregroundStyle(Color.agentSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: AgentSpacing.x4) {
+                    VStack(spacing: 0) {
+                        postedDateButton
 
-                HStack(spacing: AgentSpacing.x2) {
-                    postedDateButton
-                    postedTimeField
-                }
+                        Divider()
+                            .overlay(Color.agentHairline)
+                            .padding(.leading, AgentSpacing.x4)
 
-                if showsCalendar {
-                    PillarCalendarDatePicker(
-                        date: $postedAt,
-                        pillarMarkers: [],
-                        maximumDate: Date(),
-                        cellHeight: 38,
-                        dayDiameter: 28
-                    )
-                    .padding(AgentSpacing.x4)
+                        postedTimeField
+                    }
                     .background(
                         Color.agentSurface,
                         in: .rect(cornerRadius: AgentRadius.card)
                     )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: AgentRadius.card)
-                            .stroke(Color.agentBorder, lineWidth: 1)
-                    }
-                }
-            }
-            .padding(.horizontal, AgentSpacing.x5)
-            .padding(.top, AgentSpacing.x2)
-            .padding(.bottom, AgentSpacing.x5)
+                    .agentSurfaceChrome(
+                        cornerRadius: AgentRadius.card,
+                        role: .structural
+                    )
 
-            Divider()
-                .overlay(Color.agentHairline)
-
-            HStack(spacing: AgentSpacing.x3) {
-                Button("Cancel") { dismiss() }
-                    .font(.agentSubtext.weight(.medium))
-                    .foregroundStyle(Color.agentSecondary)
-                    .frame(width: 92)
-                    .frame(minHeight: 44)
-                    .contentShape(.rect(cornerRadius: AgentRadius.card))
-                    .buttonStyle(AgentPressButtonStyle())
-
-                Button {
-                    onSave(postedAt)
-                    dismiss()
-                } label: {
-                    Text("Mark posted")
-                        .font(.agentSubtext.weight(.medium))
-                        .foregroundStyle(Color.agentText)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                    if showsCalendar {
+                        PillarCalendarDatePicker(
+                            date: $postedAt,
+                            pillarMarkers: [],
+                            maximumDate: Date(),
+                            cellHeight: 38,
+                            dayDiameter: 28
+                        )
+                        .padding(AgentSpacing.x4)
                         .background(
                             Color.agentSurface,
                             in: .rect(cornerRadius: AgentRadius.card)
@@ -4904,60 +4949,81 @@ struct ActualPostedDatePicker: View {
                             RoundedRectangle(cornerRadius: AgentRadius.card)
                                 .stroke(Color.agentBorder, lineWidth: 1)
                         }
+                    }
                 }
-                .buttonStyle(AgentPressButtonStyle())
-                .disabled(!PostedDatePolicy.isValid(postedAt))
+                .padding(.horizontal, AgentSpacing.x5)
+                .padding(.bottom, AgentSpacing.x4)
             }
-            .padding(AgentSpacing.x4)
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+
+            Button {
+                onSave(postedAt)
+                dismiss()
+            } label: {
+                Text("Mark posted")
+            }
+            .buttonStyle(AgentPrimaryButtonStyle())
+            .disabled(!PostedDatePolicy.isValid(postedAt))
+            .padding(.horizontal, AgentSpacing.x5)
+            .padding(.bottom, AgentSpacing.x4)
         }
-        .frame(width: dialogWidth)
+        .frame(width: dialogWidth, height: dialogHeight)
         .background(Color.agentCanvas)
         .agentScreen()
     }
 
     private var postedDateButton: some View {
         Button {
-            showsCalendar.toggle()
+            toggleCalendar()
         } label: {
-            VStack(alignment: .leading, spacing: AgentSpacing.x2) {
-                HStack(spacing: AgentSpacing.x2) {
+            HStack(spacing: AgentSpacing.x3) {
+                VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                     Text("DATE")
                         .font(.agentMetadata)
                         .tracking(1.4)
                         .foregroundStyle(Color.agentSecondary)
-                    Spacer(minLength: 0)
-                    AgentIconView(showsCalendar ? .collapse : .expand, size: 11)
-                        .foregroundStyle(Color.agentSecondary)
+
+                    Text(postedAt.formatted(.dateTime.month(.abbreviated).day().year()))
+                        .font(.agentBody.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.agentText)
+                        .lineLimit(1)
                 }
-                Text(postedAt.formatted(.dateTime.month(.abbreviated).day().year()))
-                    .font(.agentBody.weight(.medium))
-                    .foregroundStyle(Color.agentText)
-                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                AgentIconView(showsCalendar ? .collapse : .expand, size: 13)
+                    .foregroundStyle(Color.agentSecondary)
             }
-            .padding(.horizontal, AgentSpacing.x3)
-            .padding(.vertical, AgentSpacing.x3)
-            .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
-            .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: AgentRadius.control)
-                    .stroke(
-                        showsCalendar ? Color.agentText.opacity(0.35) : Color.agentBorder,
-                        lineWidth: 1
-                    )
-            }
-            .contentShape(.rect(cornerRadius: AgentRadius.control))
+            .padding(.horizontal, AgentSpacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+            .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AgentPressButtonStyle())
         .accessibilityLabel("Posted date, \(postedAt.formatted(date: .complete, time: .omitted))")
         .accessibilityHint(showsCalendar ? "Hides the calendar" : "Shows the calendar")
     }
 
+    private func toggleCalendar() {
+        showsCalendar.toggle()
+#if !targetEnvironment(macCatalyst)
+        selectedDetent = switch ActualPostedDateSheetPolicy.mode(showsCalendar: showsCalendar) {
+        case .compact: .height(ActualPostedDateSheetPolicy.compactHeight)
+        case .expanded: .large
+        }
+#endif
+    }
+
     private var postedTimeField: some View {
-        VStack(alignment: .leading, spacing: AgentSpacing.x2) {
+        HStack(spacing: AgentSpacing.x3) {
             Text("TIME")
                 .font(.agentMetadata)
                 .tracking(1.4)
                 .foregroundStyle(Color.agentSecondary)
+
+            Spacer(minLength: 0)
+
             DatePicker(
                 "Time",
                 selection: $postedAt,
@@ -4967,22 +5033,25 @@ struct ActualPostedDatePicker: View {
             .labelsHidden()
             .datePickerStyle(.compact)
             .font(.agentBody.weight(.medium))
+            .monospacedDigit()
             .tint(Color.actionAccent)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Posted time")
         }
-        .padding(.horizontal, AgentSpacing.x3)
-        .padding(.vertical, AgentSpacing.x3)
-        .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
-        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: AgentRadius.control)
-                .stroke(Color.agentBorder, lineWidth: 1)
-        }
+        .padding(.horizontal, AgentSpacing.x4)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
     }
 
     private var dialogWidth: CGFloat? {
 #if targetEnvironment(macCatalyst)
         500
+#else
+        nil
+#endif
+    }
+
+    private var dialogHeight: CGFloat? {
+#if targetEnvironment(macCatalyst)
+        360
 #else
         nil
 #endif

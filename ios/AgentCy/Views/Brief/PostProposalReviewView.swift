@@ -5,28 +5,37 @@ struct PostProposalReviewView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     let brief: CreativeBrief
     @State private var proposal: BriefProposal
+    @State private var lastSavedProposal: BriefProposal
+    @State private var didFinishReview = false
+    @State private var reviewError: String?
     @State private var confirmDiscard = false
     @State private var showDetails = false
     @State private var showPlatforms = false
     @State private var showTasks = false
     private let revisionProposal: BriefRevisionProposal?
+    private let onAccepted: () -> Void
 
     private var contentFormat: ContentFormat {
         proposal.variants.contains { $0.platform == .youtubeVideo } ? .longForm : .shortForm
     }
 
-    init(brief: CreativeBrief, initialProposal: BriefProposal) {
+    init(brief: CreativeBrief, initialProposal: BriefProposal, onAccepted: @escaping () -> Void = {}) {
         self.brief = brief
         revisionProposal = nil
+        self.onAccepted = onAccepted
         _proposal = State(initialValue: initialProposal)
+        _lastSavedProposal = State(initialValue: initialProposal)
     }
 
     init(brief: CreativeBrief, revisionProposal: BriefRevisionProposal) {
         self.brief = brief
         self.revisionProposal = revisionProposal
+        onAccepted = {}
         _proposal = State(initialValue: revisionProposal.edited)
+        _lastSavedProposal = State(initialValue: revisionProposal.edited)
     }
 
     var body: some View {
@@ -36,8 +45,14 @@ struct PostProposalReviewView: View {
                     EditorialHeader(
                         kicker: revisionProposal == nil ? "Draft post" : "Post revision",
                         title: revisionProposal == nil ? "Review your post." : "Review the changes.",
-                        subtitle: "Edit the details below. Nothing changes until you accept."
+                        subtitle: "Edit the details below. Review edits are saved when you close; your post changes only when you accept."
                     )
+
+                    if let reviewError {
+                        Text(reviewError)
+                            .font(.agentSubtext)
+                            .foregroundStyle(Color.agentDestructive)
+                    }
 
                     if let revisionProposal {
                         CyCallout(heading: .madeThisForYou) {
@@ -144,7 +159,11 @@ struct PostProposalReviewView: View {
                             accepted = appModel.acceptProposal(proposal, for: brief, context: context)
                         }
                         if accepted {
+                            didFinishReview = true
+                            onAccepted()
                             dismiss()
+                        } else {
+                            reviewError = appModel.notice?.message
                         }
                     } label: {
                         AgentIconLabel(
@@ -165,7 +184,9 @@ struct PostProposalReviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    AgentToolbarIconButton(title: "Close", icon: .close) { dismiss() }
+                    AgentToolbarIconButton(title: "Save review and close", icon: .close) {
+                        if saveReviewEdits() { dismiss() }
+                    }
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
@@ -176,13 +197,19 @@ struct PostProposalReviewView: View {
                 if revisionProposal == nil {
                     Button("Discard post", role: .destructive) {
                         if appModel.discardProposal(for: brief, context: context) {
+                            didFinishReview = true
                             dismiss()
+                        } else {
+                            reviewError = appModel.notice?.message
                         }
                     }
                 } else {
                     Button("Keep current post") {
                         if appModel.discardRevision(for: brief, context: context) {
+                            didFinishReview = true
                             dismiss()
+                        } else {
+                            reviewError = appModel.notice?.message
                         }
                     }
                 }
@@ -191,6 +218,23 @@ struct PostProposalReviewView: View {
             .agentScreen()
         }
         .agentKeyboardDismissal()
+        .interactiveDismissDisabled(proposal != lastSavedProposal)
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { _ = saveReviewEdits() }
+        }
+        .onDisappear { _ = saveReviewEdits() }
+    }
+
+    @discardableResult
+    private func saveReviewEdits() -> Bool {
+        guard !didFinishReview, proposal != lastSavedProposal else { return true }
+        guard appModel.saveProposalReview(proposal, for: brief, revisionID: revisionProposal?.id, context: context) else {
+            reviewError = appModel.notice?.message ?? "Your review edits could not be saved. Try closing again."
+            return false
+        }
+        lastSavedProposal = proposal
+        reviewError = nil
+        return true
     }
 
     private func taskKindBinding(_ index: Int) -> Binding<CreatorTaskKind> {

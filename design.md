@@ -44,7 +44,7 @@ in only one mode.
 | Border (controls) | `Color.agentBorder` | `--color-border` | `oklch(88% 0.0068 115.72)` | `oklch(34.07% 0 0)` |
 | Hairline (row dividers) | `Color.agentHairline` | `--color-hairline` | `oklch(92.58% 0.0068 115.71)` | `oklch(29.72% 0 0)` |
 | Selection/hover fill | `Color.agentSelectionFill` | `--color-selection` | ink @ 5.5% | ink @ 5.5% |
-| **Cy accent** | `Color.cyAccent` | `--color-cy` | `oklch(48.23% 0.1323 29.75)` | same (use `--color-cy-text-dark` for text: `oklch(60.36% 0.1447 29.73)`) |
+| **Cy accent** | `Color.cyAccent` | `--color-cy` | `oklch(48.23% 0.1323 29.75)` | same (use `--color-cy-text-dark` for text: `oklch(62.2% 0.1447 29.73)`) |
 | Cy as text/label | — | `--color-cy-text` | = Cy accent | `--color-cy-text-dark` |
 | On-accent text | `Color.onCyAccent` | `--color-on-cy` | near-white | near-white |
 | Success | `Color.agentSuccess` | `--color-success` | `oklch(50% 0.09 150)` moss † | `oklch(72% 0.1 150)` † |

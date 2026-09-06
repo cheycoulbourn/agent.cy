@@ -508,7 +508,7 @@ struct VoiceSparkView: View {
             if let libraryErrorMessage {
                 Text(libraryErrorMessage)
                     .font(.agentSubtext)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }

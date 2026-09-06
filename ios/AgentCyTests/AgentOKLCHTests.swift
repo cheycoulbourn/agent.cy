@@ -48,6 +48,14 @@ final class AgentOKLCHTests: XCTestCase {
 
     func testCoreTextContrastMeetsAA() {
         XCTAssertGreaterThanOrEqual(
+            contrast(AgentColorPalette.cy.uiColor, AgentColorPalette.canvasLight.uiColor),
+            4.5
+        )
+        XCTAssertGreaterThanOrEqual(
+            contrast(AgentColorPalette.cyTextDark.uiColor, AgentColorPalette.canvasDark.uiColor),
+            4.5
+        )
+        XCTAssertGreaterThanOrEqual(
             contrast(AgentColorPalette.inkLight.uiColor, AgentColorPalette.canvasLight.uiColor),
             4.5
         )

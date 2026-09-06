@@ -12,6 +12,7 @@ private struct DevelopBriefRequest: Identifiable {
 }
 
 struct DevelopBriefView: View {
+    @State private var didAcceptReview = false
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -25,6 +26,7 @@ struct DevelopBriefView: View {
     @State private var messages: [ConversationMessage] = []
     @State private var answer = ""
     @State private var postProposal: BriefProposal?
+    @State private var hasPendingReview = false
     @State private var confirmsArchive = false
     @State private var request: DevelopBriefRequest?
     @FocusState private var answerIsFocused: Bool
@@ -109,6 +111,7 @@ struct DevelopBriefView: View {
                 thread = appModel.developmentThread(for: brief, context: context)
                 reloadMessages()
                 postProposal = appModel.proposal(for: brief, context: context)
+                hasPendingReview = postProposal != nil
             }
             .task(id: request?.id) {
                 guard let request else { return }
@@ -116,8 +119,13 @@ struct DevelopBriefView: View {
                 guard !Task.isCancelled, self.request?.id == request.id else { return }
                 self.request = nil
             }
-            .sheet(item: $postProposal) { proposal in
-                PostProposalReviewView(brief: brief, initialProposal: proposal)
+            .sheet(item: $postProposal, onDismiss: {
+                hasPendingReview = appModel.proposal(for: brief, context: context) != nil
+                if didAcceptReview { dismiss() }
+            }) { proposal in
+                PostProposalReviewView(brief: brief, initialProposal: proposal) {
+                    didAcceptReview = true
+                }
             }
         }
         .agentKeyboardDismissal()
@@ -189,7 +197,7 @@ struct DevelopBriefView: View {
     private var postContextCard: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             MetaLabel("Post details")
-                .foregroundStyle(Color.cyAccent)
+                .foregroundStyle(Color.cyAccentText)
 
             if !postNotes.isEmpty {
                 Text(postNotes)
@@ -356,9 +364,9 @@ struct DevelopBriefView: View {
                     .monospacedDigit()
                 Spacer()
                 Button { composePost() } label: {
-                    Text("Compose post")
+                    Text(hasPendingReview ? "Continue review" : "Compose post")
                         .font(.agentSubtext.weight(.semibold))
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                         .frame(minHeight: 44)
                         .contentShape(.rect)
                 }
@@ -463,6 +471,10 @@ struct DevelopBriefView: View {
 
     private func composePost() {
         answerIsFocused = false
+        if let pending = appModel.proposal(for: brief, context: context) {
+            postProposal = pending
+            return
+        }
         request = DevelopBriefRequest(action: .compose)
     }
 

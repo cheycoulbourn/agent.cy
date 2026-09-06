@@ -18,6 +18,44 @@ final class ServiceTests: XCTestCase {
         )
     }
 
+    func testMCPBridgeMaterializationRequestsTheLogicalFileBehindAnICloudPlaceholder() {
+        let root = URL(fileURLWithPath: "/tmp/agent.cy MCP", isDirectory: true)
+        let requests = root.appending(path: "requests", directoryHint: .isDirectory)
+        let placeholder = requests.appending(path: ".proposal.json.icloud")
+        let logical = requests.appending(path: "proposal.json")
+
+        XCTAssertEqual(
+            MCPBridgeQueueMaterializationPolicy.logicalURL(forICloudPlaceholder: placeholder),
+            logical
+        )
+        XCTAssertEqual(
+            MCPBridgeQueueMaterializationPolicy.downloadCandidates(
+                rootDirectory: root,
+                requestsDirectory: requests,
+                entries: [placeholder]
+            ),
+            [root, requests, placeholder, logical]
+        )
+    }
+
+    func testMCPBridgeMaterializationKeepsRetryingWhilePlaceholdersRemain() {
+        XCTAssertTrue(MCPBridgeQueueMaterializationPolicy.shouldRetry(
+            completedAttempt: MCPBridgeQueueMaterializationPolicy.minimumEmptyRefreshAttempts,
+            hasUndownloadedPlaceholders: true,
+            requestCount: 0
+        ))
+        XCTAssertFalse(MCPBridgeQueueMaterializationPolicy.shouldRetry(
+            completedAttempt: MCPBridgeQueueMaterializationPolicy.maximumRefreshAttempts - 1,
+            hasUndownloadedPlaceholders: true,
+            requestCount: 0
+        ))
+        XCTAssertFalse(MCPBridgeQueueMaterializationPolicy.shouldRetry(
+            completedAttempt: MCPBridgeQueueMaterializationPolicy.minimumEmptyRefreshAttempts,
+            hasUndownloadedPlaceholders: false,
+            requestCount: 0
+        ))
+    }
+
     func testBridgePushRegistrationUsesPhoneAsTheSingleNotificationDestination() {
         XCTAssertTrue(BridgePushRegistrationPolicy.shouldRegister(isMacCatalyst: false))
         XCTAssertFalse(BridgePushRegistrationPolicy.shouldRegister(isMacCatalyst: true))
@@ -1141,6 +1179,40 @@ final class ServiceTests: XCTestCase {
         XCTAssertEqual(partner.name, "Example Brand")
         XCTAssertEqual(partner.stage, .talking)
         XCTAssertEqual(partner.socialHandle, "@example")
+    }
+
+    func testMCPBridgeEpisodeApprovalRepairsAStaleSeriesPillarFromTheReviewedPayload() throws {
+        let container = ModelContainerFactory.make(isStoredInMemoryOnly: true)
+        let context = container.mainContext
+        let activePillar = Pillar(role: .anchor, name: "Creative Ambition", colorHex: "FCE6B7")
+        let stalePillarID = UUID()
+        let series = ContentSeries(name: "Gear for the Girlies", pillarID: stalePillarID)
+        context.insert(activePillar)
+        context.insert(series)
+        let targetDate = Date(timeIntervalSince1970: 1_800_100_000)
+        let request = MCPBridgeChangeRequest(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            source: "codex",
+            workspaceId: nil,
+            type: "createSeriesEpisode",
+            payload: MCPBridgeRequestPayload(
+                title: "FX3 or ZV-E1?",
+                pillarId: activePillar.id,
+                targetDate: targetDate,
+                includesTargetTime: false,
+                seriesId: series.id
+            )
+        )
+
+        try MCPBridgeService.apply(request, context: context)
+
+        let episode = try XCTUnwrap(
+            context.fetch(FetchDescriptor<CreativeBrief>()).first(where: { $0.seriesID == series.id })
+        )
+        XCTAssertEqual(series.pillarID, activePillar.id)
+        XCTAssertEqual(episode.pillarID, activePillar.id)
     }
 
     func testMCPBridgeDeniedSeriesEpisodeKeepsContextAndApprovedRevisionUsesTheSameSlot() throws {

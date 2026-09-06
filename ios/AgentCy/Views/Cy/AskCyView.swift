@@ -38,24 +38,6 @@ private struct CyPlateItem: Identifiable {
     let title: String
 }
 
-private enum CyAvailabilityState: Equatable {
-    case localBridge
-    case hosted
-    case unavailable
-
-    var label: String {
-        switch self {
-        case .localBridge: "Local bridge"
-        case .hosted: "Hosted Cy"
-        case .unavailable: "Unavailable"
-        }
-    }
-
-    var isAvailable: Bool {
-        self != .unavailable
-    }
-}
-
 enum CyChatActionPolicy {
     static func visibleSuggestions(
         _ suggestions: [ChatSuggestionWire],
@@ -483,7 +465,7 @@ struct CyMarkdownResponseView: View {
             HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
                 Text(marker)
                     .font(.agentMetadata)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
                     .frame(width: 18, alignment: .leading)
                 Text(inlineMarkdown(block.text))
                     .font(.agentBody)
@@ -576,7 +558,7 @@ private struct AskCyContent: View {
     @State private var showConversationHistory = false
     @State private var showProUpsell = false
     @State private var showProAccessDetails = false
-    @State private var cyAvailability: CyAvailabilityState = .unavailable
+    @State private var cyAvailability: CyAvailabilityState = .checking
     @State private var sendTask: Task<Void, Never>?
     @State private var activeSendID: UUID?
     @State private var activeSendThreadID: UUID?
@@ -938,7 +920,7 @@ private struct AskCyContent: View {
                     CyAsterisk(size: 20, strokeWidth: 1.7)
                         .accessibilityHidden(true)
                     MetaLabel("CY · FOR REVIEW")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                 }
                 Text("I have something\nfor you.")
                     .font(.agentDisplay)
@@ -1019,7 +1001,7 @@ private struct AskCyContent: View {
                 HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x2) {
                     VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                         MetaLabel("REVIEW INBOX")
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.cyAccentText)
                         Text("\(pendingReviews.count) waiting")
                             .font(.agentTitle)
                     }
@@ -1106,7 +1088,7 @@ private struct AskCyContent: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: AgentSpacing.x6) {
                         MetaLabel("SERIES PACKAGE")
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.cyAccentText)
                         Text(bundle.series.summary)
                             .font(.agentDisplay)
                         Text("\(bundle.episodes.count) episodes are attached. Open the package to inspect, edit, approve, or deny every item.")
@@ -1232,7 +1214,7 @@ private struct AskCyContent: View {
                     CyAsterisk(size: 20, strokeWidth: 1.7)
                         .accessibilityHidden(true)
                     MetaLabel("CY · REVIEW COMPLETE")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                 }
 
                 Text("All done\nfor now.")
@@ -1321,45 +1303,24 @@ private struct AskCyContent: View {
     private var availabilityStatus: some View {
         HStack(spacing: AgentSpacing.x2) {
             Circle()
-                .fill(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
+                .fill(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentSecondary)
                 .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
 
             Text(cyAvailability.label)
                 .font(.agentMetadata)
-                .foregroundStyle(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentDestructive)
+                .foregroundStyle(cyAvailability.isAvailable ? Color.agentSuccess : Color.agentSecondary)
                 .lineLimit(CyTopRailPresentationPolicy.stacksAvailability(for: dynamicTypeSize) ? 2 : 1)
         }
     }
 
     @MainActor
     private func reloadCyAvailability() async {
-        let resolved = await resolveCyAvailability()
+        let resolved = await CyAvailabilityResolver.resolve(subscription: subscriptions.first)
         // An unchanged poll result must not touch @State: the write re-runs
         // this body, which kills any in-flight scroll bounce mid-animation.
         if cyAvailability != resolved {
             cyAvailability = resolved
-        }
-    }
-
-    private func resolveCyAvailability() async -> CyAvailabilityState {
-        if await LocalCyAIClient.shared.isAvailable() {
-            return .localBridge
-        }
-
-        guard AccessPolicy.allows(.askCy, state: subscriptions.first) else {
-            return .unavailable
-        }
-
-        do {
-            guard let identity = try await DeviceOnlyKeychainCredentialStore.shared.load(),
-                  !identity.credential.isEmpty,
-                  identity.credentialExpiresAt.map({ $0 > Date() }) ?? true else {
-                return .unavailable
-            }
-            return .hosted
-        } catch {
-            return .unavailable
         }
     }
 
@@ -1368,12 +1329,13 @@ private struct AskCyContent: View {
             MetaLabel("CY IS OFFLINE")
                 .foregroundStyle(Color.agentDestructive)
 
-            Text("Connect Claude or Codex on your Mac, or turn on hosted Agent Cy.")
+            Text("Check hosted access or connect Claude or Codex on your Mac.")
                 .font(.agentBody)
                 .foregroundStyle(Color.agentText)
                 .fixedSize(horizontal: false, vertical: true)
 
             Button {
+                appModel.requestedSettingsPage = .cyConnection
                 appModel.presentedSheet = .settings
             } label: {
                 HStack(spacing: AgentSpacing.x2) {
@@ -1410,7 +1372,7 @@ private struct AskCyContent: View {
             Button(action: useOnYourPlatePrompt) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x2) {
                     MetaLabel("On your plate")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
 
                     if !onYourPlateItems.isEmpty {
                         VStack(spacing: 0) {
@@ -1418,7 +1380,7 @@ private struct AskCyContent: View {
                                 HStack(alignment: .firstTextBaseline, spacing: AgentSpacing.x3) {
                                     Text("\(item.count)")
                                         .font(.agentMetadata)
-                                        .foregroundStyle(Color.cyAccent)
+                                        .foregroundStyle(Color.cyAccentText)
                                         .frame(width: 24, alignment: .leading)
                                     Text(item.title)
                                         .font(.agentSubtext)
@@ -1442,7 +1404,7 @@ private struct AskCyContent: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         AgentIconView(.forward, size: 11)
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.cyAccentText)
                     }
                 }
                 .padding(.horizontal, AgentSpacing.x4)
@@ -1624,7 +1586,7 @@ private struct AskCyContent: View {
                     HStack(alignment: .center, spacing: AgentSpacing.x3) {
                         VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                             MetaLabel(wasAdded ? "TASK ADDED" : "PROPOSED TASK")
-                                .foregroundStyle(Color.cyAccent)
+                                .foregroundStyle(Color.cyAccentText)
                             Text(taskProposal.title)
                                 .font(.agentBody.weight(.semibold))
                                 .foregroundStyle(Color.agentText)
@@ -2531,7 +2493,7 @@ private struct CyConversationHistoryView: View {
                 Spacer()
                 if currentThreadID == thread.id {
                     MetaLabel("Current")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                 }
                 AgentIconView(.forward, size: 11)
                     .foregroundStyle(Color.agentSecondary)

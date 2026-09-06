@@ -877,7 +877,7 @@ struct DesktopAppShellView: View {
                     Text("CY NOTICED")
                         .font(.agentMetadata)
                         .tracking(1.4)
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                 }
                 Text(utilityCyNoticedSummary.message)
                     .font(.agentSubtext)
@@ -889,7 +889,7 @@ struct DesktopAppShellView: View {
                         .font(.agentSubtext.weight(.semibold))
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(Color.cyAccent)
+                .foregroundStyle(Color.cyAccentText)
                 .frame(maxWidth: .infinity, minHeight: 36)
                 .background(
                     Color.cyAccent.opacity(0.12),

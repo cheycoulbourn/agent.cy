@@ -17,6 +17,52 @@ final class PostOutputDetailPolicyTests: XCTestCase {
         XCTAssertFalse(MCPReviewEditPolicy.allowsEditing(type: "addTask"))
     }
 
+    @MainActor
+    func testSeriesEpisodeEditSessionHydratesOnFirstPresentationAndKeepsTheReviewedPillar() {
+        let requestID = UUID()
+        let stalePillarID = UUID()
+        let reviewedPillarID = UUID()
+        let seriesID = UUID()
+        let targetDate = Date(timeIntervalSince1970: 1_800_100_000)
+        let payload = MCPBridgeRequestPayload(
+            title: "FX3 or ZV-E1?",
+            premise: "Compare the creator cameras.",
+            notes: "Keep the comparison practical.",
+            platform: CreatorPlatform.instagramReels.rawValue,
+            targetDate: targetDate,
+            includesTargetTime: false,
+            seriesId: seriesID,
+            episodeNumber: 1
+        )
+
+        let session = MCPSeriesEpisodeEditSession(
+            requestID: requestID,
+            workspaceID: nil,
+            payload: payload,
+            inheritedPillarID: stalePillarID,
+            seriesName: "Gear for the Girlies"
+        )
+
+        XCTAssertEqual(session.id, requestID)
+        XCTAssertEqual(session.brief.title, "FX3 or ZV-E1?")
+        XCTAssertEqual(session.brief.pillarID, stalePillarID)
+        XCTAssertEqual(session.output.targetDate, targetDate)
+        XCTAssertEqual(session.output.seriesName, "Gear for the Girlies")
+
+        session.brief.pillarID = reviewedPillarID
+        let updated = session.updatedPayload()
+
+        XCTAssertEqual(updated.pillarId, reviewedPillarID)
+        XCTAssertEqual(updated.seriesId, seriesID)
+        XCTAssertEqual(updated.targetDate, targetDate)
+    }
+
+    func testActualPostedDateSheetExpandsWithTheCalendar() {
+        XCTAssertEqual(ActualPostedDateSheetPolicy.mode(showsCalendar: false), .compact)
+        XCTAssertEqual(ActualPostedDateSheetPolicy.mode(showsCalendar: true), .expanded)
+        XCTAssertEqual(ActualPostedDateSheetPolicy.compactHeight, 320)
+    }
+
     func testMCPSeriesReviewBundleKeepsSeriesFirstAndOrdersEpisodes() {
         let seriesID = UUID()
         let pillarID = UUID()

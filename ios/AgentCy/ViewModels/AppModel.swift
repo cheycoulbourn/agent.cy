@@ -176,6 +176,7 @@ enum AccountAuthorizationDiagnostics {
 }
 
 enum RequestedSettingsPage: String, Identifiable, Hashable {
+    case cyConnection
     case notifications
     case access
     case mcpBridge
@@ -2538,6 +2539,62 @@ final class AppModel {
         } catch {
             context.rollback()
             presentCreatorError(error, action: "The post review")
+            return false
+        }
+    }
+
+    /// Saves review edits without accepting them or changing the working post.
+    /// A dismissed or replaced proposal must never be recreated by a late exit.
+    @discardableResult
+    func saveProposalReview(
+        _ proposal: BriefProposal,
+        for brief: CreativeBrief,
+        revisionID: UUID? = nil,
+        context: ModelContext
+    ) -> Bool {
+        do {
+            let briefID = brief.id
+            let kind = revisionID == nil ? "composition" : "revision"
+            let records = try context.fetch(FetchDescriptor<PendingBriefProposal>(
+                predicate: #Predicate { $0.briefID == briefID },
+                sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+            ))
+            guard proposal.briefID == briefID,
+                  let record = records.first(where: { $0.proposalKindRaw == kind }),
+                  let data = record.payloadJSON.data(using: .utf8) else {
+                notice = .error("This proposal is no longer waiting for review.")
+                return false
+            }
+
+            var revised: BriefRevisionProposal?
+            if let revisionID {
+                var stored = try JSONDecoder().decode(BriefRevisionProposal.self, from: data)
+                guard stored.id == revisionID, stored.edited.id == proposal.id else {
+                    notice = .error("A newer revision is waiting for review. Reopen it before editing.")
+                    return false
+                }
+                stored.edited = proposal
+                record.payloadJSON = try encodeJSONString(stored)
+                revised = stored
+            } else {
+                let stored = try JSONDecoder().decode(BriefProposal.self, from: data)
+                guard stored.id == proposal.id else {
+                    notice = .error("A newer proposal is waiting for review. Reopen it before editing.")
+                    return false
+                }
+                record.payloadJSON = try encodeJSONString(proposal)
+            }
+            record.updatedAt = Date()
+            try context.save()
+            if let revised {
+                revisionProposals[briefID] = revised
+            } else {
+                briefProposals[briefID] = proposal
+            }
+            return true
+        } catch {
+            context.rollback()
+            presentCreatorError(error, action: "The review edits")
             return false
         }
     }

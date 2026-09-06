@@ -140,7 +140,6 @@ struct IdeaPostDraftView: View {
     @State private var availablePillars: [Pillar] = []
     @State private var existingOutput: PlatformOutput?
     @State private var plannedOutput: PlatformOutput?
-    @State private var showPostEditor = false
     @State private var showDevelopment = false
     @State private var confirmsArchive = false
     @FocusState private var focusedField: Field?
@@ -206,17 +205,13 @@ struct IdeaPostDraftView: View {
             DevelopBriefView(brief: brief, output: existingOutput)
                 .agentDesktopWorkspaceModal()
         }
-        .navigationDestination(isPresented: $showPostEditor) {
-            if let plannedOutput {
-                ResumablePostEditorView(
-                    brief: brief,
-                    output: plannedOutput,
-                    suggestedTargetDate: suggestedTargetDate,
-                    onSpark: { showDevelopment = true }
-                )
-            } else {
-                unavailablePostState
-            }
+        .navigationDestination(item: $plannedOutput) { plannedOutput in
+            ResumablePostEditorView(
+                brief: brief,
+                output: plannedOutput,
+                suggestedTargetDate: suggestedTargetDate,
+                onSpark: { showDevelopment = true }
+            )
         }
         .confirmationDialog(
             "Archive this idea?",
@@ -246,7 +241,7 @@ struct IdeaPostDraftView: View {
                         focusedField = nil
                     }
                     TextField("Name this idea", text: $form.title, axis: .vertical)
-                        .font(.paperInter(size: 24, weight: .bold, relativeTo: .title2))
+                        .font(.agentTitle)
                         .lineLimit(1...3)
                         .padding(AgentSpacing.x4)
                         .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
@@ -292,7 +287,7 @@ struct IdeaPostDraftView: View {
                     .disabled(!hasValidTitle)
 
                     Button(action: planPost) {
-                        Text(suggestedTargetDate == nil ? "Turn into a post" : "Plan this post")
+                        Text(suggestedTargetDate != nil ? "Plan this post" : (existingOutput == nil ? "Turn into a post" : "Open post"))
                     }
                     .buttonStyle(AgentSecondaryButtonStyle())
                     .disabled(!hasValidTitle)
@@ -300,7 +295,7 @@ struct IdeaPostDraftView: View {
             }
             .padding(.horizontal, AgentLayout.pageMargin)
             .padding(.top, AgentSpacing.x4)
-            .padding(.bottom, AgentSpacing.x8)
+            .agentBottomNavigationClearance()
         }
         .scrollDismissesKeyboard(.interactively)
 #if targetEnvironment(macCatalyst)
@@ -375,7 +370,6 @@ struct IdeaPostDraftView: View {
             if existingOutput != nil {
                 Button("Open post") {
                     plannedOutput = existingOutput
-                    showPostEditor = true
                 }
                 .buttonStyle(AgentSecondaryButtonStyle())
                 .padding(.horizontal, AgentLayout.pageMargin)
@@ -388,14 +382,6 @@ struct IdeaPostDraftView: View {
             title: "This idea is archived",
             message: "It stays in your archive and cannot be edited from this page.",
             icon: .archive
-        )
-    }
-
-    private var unavailablePostState: some View {
-        AgentEmptyState(
-            title: "This post is unavailable",
-            message: "It may have been moved or removed. Return to Plan and try again.",
-            icon: .warning
         )
     }
 
@@ -489,7 +475,6 @@ struct IdeaPostDraftView: View {
         }
         existingOutput = output
         plannedOutput = output
-        showPostEditor = true
     }
 
     private func archive() {

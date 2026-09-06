@@ -290,7 +290,6 @@ struct ScheduledPostDetailView: View {
                 postedAt: $actualPostedDate,
                 onSave: markPosted
             )
-            .presentationDetents([.height(330)])
             .agentSheetDragIndicator()
 #endif
         }

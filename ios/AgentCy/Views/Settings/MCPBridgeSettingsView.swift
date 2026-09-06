@@ -390,7 +390,7 @@ struct MCPBridgeSettingsView: View {
                         HStack(spacing: AgentSpacing.x2) {
                             CyAsterisk(color: .cyAccent, size: 18, strokeWidth: 1.6)
                             MetaLabel("CY · FOR REVIEW")
-                                .foregroundStyle(Color.cyAccent)
+                                .foregroundStyle(Color.cyAccentText)
                         }
                         Text("\(pendingRequests.count) change\(pendingRequests.count == 1 ? "" : "s") waiting")
                             .font(.agentHeadline)
@@ -730,6 +730,95 @@ enum MCPReviewPillarPresentation {
     }
 }
 
+@MainActor
+struct MCPSeriesEpisodeEditSession: Identifiable {
+    let saveCoordinator = PostEditorSaveCoordinator()
+    let id: UUID
+    let originalPayload: MCPBridgeRequestPayload
+    let brief: CreativeBrief
+    let output: PlatformOutput
+
+    init(
+        requestID: UUID,
+        workspaceID: UUID?,
+        payload: MCPBridgeRequestPayload,
+        inheritedPillarID: UUID?,
+        seriesName: String?,
+        series: ContentSeries? = nil,
+        formats: [PublishingFormat] = []
+    ) {
+        id = requestID
+        originalPayload = payload
+
+        let brief = CreativeBrief(
+            title: payload.title ?? "Untitled episode",
+            premise: payload.premise ?? ""
+        )
+        brief.workspaceID = workspaceID
+        brief.ideaBankPlacement = .post
+        brief.spokenHook = payload.hook ?? ""
+        brief.notes = payload.notes ?? ""
+        brief.ctaIntent = payload.callToAction ?? ""
+        brief.pillarID = payload.pillarId ?? inheritedPillarID
+        brief.seriesID = payload.seriesId
+        brief.episodeNumber = payload.episodeNumber
+        brief.episodeLabel = payload.episodeLabel ?? ""
+        brief.workDate = payload.workDate
+        brief.includesWorkTime = payload.includesWorkTime ?? false
+        brief.agendaDate = payload.targetDate ?? payload.workDate
+
+        let platform = payload.platform.flatMap(CreatorPlatform.init(rawValue:)) ?? series?.defaultPlatform ?? .instagramReels
+        let identifiers = PublishingCatalog.identifiers(for: platform)
+        let seriesDestinationID = series?.defaultDestinationID ?? series?.defaultPlatform.map { PublishingCatalog.identifiers(for: $0).destination }
+        let destinationID = payload.platform == nil ? series?.defaultDestinationID ?? identifiers.destination : identifiers.destination
+        let requestedFormat = payload.format?.lowercased().components(separatedBy: "·").first?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let format = formats.first {
+            !$0.isArchived && $0.destinationID == destinationID && requestedFormat == $0.name.lowercased()
+        }
+        let output = PlatformOutput(
+            briefID: brief.id,
+            platform: platform,
+            destinationID: destinationID,
+            formatID: format?.id ?? (destinationID == seriesDestinationID ? series?.defaultFormatID : nil) ?? identifiers.format,
+            socialAccountID: payload.socialAccountId ?? (destinationID == seriesDestinationID ? series?.defaultSocialAccountID : nil),
+            durationSeconds: series?.defaultDurationSeconds ?? brief.durationSeconds
+        )
+        output.workspaceID = workspaceID
+        output.targetDate = payload.targetDate
+        output.includesTargetTime = payload.includesTargetTime ?? false
+        output.caption = payload.caption ?? ""
+        output.cta = payload.callToAction ?? ""
+        output.seriesName = seriesName ?? ""
+
+        self.brief = brief
+        self.output = output
+    }
+
+    func updatedPayload(formats: [PublishingFormat] = []) -> MCPBridgeRequestPayload {
+        var payload = originalPayload
+        payload.title = brief.title
+        payload.premise = brief.premise
+        payload.hook = brief.spokenHook
+        payload.notes = brief.notes
+        payload.pillarId = brief.pillarID
+        payload.seriesId = brief.seriesID
+        payload.episodeNumber = brief.episodeNumber
+        payload.episodeLabel = brief.episodeLabel
+        payload.workDate = brief.workDate
+        payload.includesWorkTime = brief.includesWorkTime
+        payload.targetDate = output.targetDate
+        payload.includesTargetTime = output.includesTargetTime
+        payload.platform = output.platform.rawValue
+        if let format = formats.first(where: { $0.id == output.formatID }) {
+            payload.format = format.name
+        }
+        payload.socialAccountId = output.socialAccountID
+        payload.caption = output.caption
+        payload.callToAction = output.cta.isEmpty ? brief.ctaIntent : output.cta
+        return payload
+    }
+}
+
 struct MCPBridgeRequestReviewView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
@@ -752,11 +841,9 @@ struct MCPBridgeRequestReviewView: View {
 
     @State private var errorMessage: String?
     @State private var showEditor = false
-    // Scratch models let a queued episode open the real post editor before any
-    // post exists. They are deliberately NEVER inserted into the model context,
-    // so an abandoned edit cannot leave a phantom post behind.
-    @State private var scratchBrief: CreativeBrief?
-    @State private var scratchOutput: PlatformOutput?
+    // One item owns both scratch models so the sheet cannot present between
+    // separate state writes and render an empty first frame.
+    @State private var episodeEditSession: MCPSeriesEpisodeEditSession?
     @State private var showRevisionNote = false
     @State private var revisionNote = ""
     @State private var workingPayload: MCPBridgeRequestPayload
@@ -819,6 +906,39 @@ struct MCPBridgeRequestReviewView: View {
                 }
             }
         }
+        .sheet(item: $episodeEditSession) { session in
+            NavigationStack {
+                ResumablePostEditorView(
+                    brief: session.brief,
+                    output: session.output,
+                    contextLabel: "Edit before approval",
+                    isReviewEditing: true,
+                    bottomActionClearance: AgentSpacing.x3,
+                    showsEditorChrome: false,
+                    externalSaveCoordinator: session.saveCoordinator,
+                    onSpark: {}
+                )
+                .id(session.id)
+                .taskNavigationDestinations()
+                .navigationTitle("Edit episode")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        AgentToolbarIconButton(title: "Close", icon: .close) {
+                            cancelEpisodeEdit()
+                        }
+                        .keyboardShortcut(.cancelAction)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { commitEpisodeEdit(session) }
+                            .keyboardShortcut("s", modifiers: .command)
+                    }
+                }
+                .agentScreen()
+                .agentKeyboardDismissal()
+            }
+        }
         .sheet(isPresented: $showEditor) {
             if request.type == "createPostDraft" {
                 NavigationStack {
@@ -826,34 +946,6 @@ struct MCPBridgeRequestReviewView: View {
                         payload: $workingPayload,
                         onSave: { showEditor = false }
                     )
-                }
-            } else if request.type == "createSeriesEpisode",
-                      let scratchBrief, let scratchOutput {
-                NavigationStack {
-                    ResumablePostEditorView(
-                        brief: scratchBrief,
-                        output: scratchOutput,
-                        contextLabel: "Edit before approval",
-                        isReviewEditing: true,
-                        bottomActionClearance: AgentSpacing.x3,
-                        onSpark: {}
-                    )
-                    .taskNavigationDestinations()
-                    .navigationTitle("Edit episode")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            AgentToolbarIconButton(title: "Close", icon: .close) {
-                                cancelEpisodeEdit()
-                            }
-                        }
-                        .sharedBackgroundVisibility(.hidden)
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Save") { commitEpisodeEdit() }
-                        }
-                    }
-                    .agentScreen()
-                    .agentKeyboardDismissal()
                 }
             } else if let editableBrief, let editableOutput {
                 NavigationStack {
@@ -946,47 +1038,29 @@ struct MCPBridgeRequestReviewView: View {
     /// Builds in-memory models from the queued payload so the episode can be
     /// edited in the standard post editor. Nothing is inserted into the context.
     private func beginEpisodeEdit() {
-        let brief = CreativeBrief(
-            title: payload.title ?? "Untitled episode",
-            premise: payload.premise ?? ""
+        let inheritedPillarID = payload.seriesId.flatMap { id in
+            series.first(where: { $0.id == id })?.pillarID
+        }
+        episodeEditSession = MCPSeriesEpisodeEditSession(
+            requestID: request.id,
+            workspaceID: request.workspaceId,
+            payload: payload,
+            inheritedPillarID: inheritedPillarID,
+            seriesName: proposedSeriesName,
+            series: series.first(where: { $0.id == payload.seriesId }),
+            formats: formats
         )
-        brief.spokenHook = payload.hook ?? ""
-        brief.notes = payload.notes ?? ""
-        brief.pillarID = selectedPillar?.id
-        brief.seriesID = payload.seriesId
-
-        let platform = payload.platform.flatMap(CreatorPlatform.init(rawValue:)) ?? .instagramReels
-        let output = PlatformOutput(briefID: brief.id, platform: platform)
-        output.targetDate = payload.targetDate
-
-        scratchBrief = brief
-        scratchOutput = output
-        showEditor = true
     }
 
     /// Copies the edited values back into the payload that ships on approval.
-    private func commitEpisodeEdit() {
-        if let brief = scratchBrief {
-            workingPayload.title = brief.title
-            workingPayload.premise = brief.premise
-            workingPayload.hook = brief.spokenHook
-            workingPayload.notes = brief.notes
-        }
-        if let output = scratchOutput {
-            workingPayload.targetDate = output.targetDate
-            workingPayload.platform = output.platform.rawValue
-        }
-        clearEpisodeScratch()
+    private func commitEpisodeEdit(_ session: MCPSeriesEpisodeEditSession) {
+        guard session.saveCoordinator.commit() else { return }
+        workingPayload = session.updatedPayload(formats: formats)
+        episodeEditSession = nil
     }
 
     private func cancelEpisodeEdit() {
-        clearEpisodeScratch()
-    }
-
-    private func clearEpisodeScratch() {
-        scratchBrief = nil
-        scratchOutput = nil
-        showEditor = false
+        episodeEditSession = nil
     }
 
     private var proposedSeriesName: String? {
@@ -1217,10 +1291,9 @@ struct MCPBridgeRequestReviewView: View {
     }
 
     private var selectedPillar: Pillar? {
-        // An episode carries no pillar of its own: it inherits the one on its
-        // series, the same way `selectedSocialAccount` resolves the series
-        // account below. Without this fallback every queued episode reads
-        // "Unfiled" even though its series is filed correctly.
+        // Episodes inherit the series pillar until the creator chooses an
+        // active replacement during review. That explicit choice is carried
+        // in the working payload and repairs the series when approved.
         let seriesPillarID = payload.seriesId.flatMap { id in
             series.first(where: { $0.id == id })?.pillarID
         }
@@ -1542,7 +1615,7 @@ struct MCPSeriesReviewFlow: View {
             VStack(alignment: .leading, spacing: AgentSpacing.x8) {
                 VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                     MetaLabel("SERIES REVIEW · 1 OF 2")
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                     Text(seriesName)
                         .font(.paperInter(size: 32, weight: .bold, relativeTo: .largeTitle))
                         .tracking(-0.64)
@@ -1578,7 +1651,7 @@ struct MCPSeriesReviewFlow: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: AgentSpacing.x3) {
                 MetaLabel("SERIES REVIEW · 2 OF 2")
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
                 Text("Review every episode")
                     .font(.paperInter(size: 32, weight: .bold, relativeTo: .largeTitle))
                     .tracking(-0.64)
@@ -1643,7 +1716,7 @@ struct MCPSeriesReviewFlow: View {
                 if sentBackCount > 0 {
                     HStack(alignment: .top, spacing: AgentSpacing.x3) {
                         AgentIconView(.info)
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.cyAccentText)
                             .frame(width: 24, height: 24)
                         Text("\(sentBackCount) episode\(sentBackCount == 1 ? "" : "s") remain in Needs revision and can rejoin this series after a later version is approved.")
                             .font(.agentSubtext)
@@ -1741,7 +1814,7 @@ struct MCPSeriesReviewFlow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             Text("READY")
                 .font(.agentMetadata)
-                .foregroundStyle(Color.cyAccent)
+                .foregroundStyle(Color.cyAccentText)
             AgentIconView(.forward)
                 .font(.agentInter(size: 12, weight: .semibold, relativeTo: .caption))
                 .foregroundStyle(Color.agentSecondary)

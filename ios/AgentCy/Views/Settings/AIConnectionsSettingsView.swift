@@ -1,11 +1,16 @@
+import SwiftData
 import SwiftUI
 
 struct AIConnectionsSettingsView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @Query private var subscriptions: [SubscriptionState]
+    @State private var availability: CyAvailabilityState = .checking
+
     var body: some View {
         SettingsPageShell(
             kicker: "AI",
             title: "Cy connection",
-            subtitle: "Cy is ready inside agent.cy."
+            subtitle: "Check how Cy connects on this device."
         ) {
             AgentInsetSurface {
                 HStack(alignment: .center, spacing: AgentSpacing.x4) {
@@ -13,17 +18,32 @@ struct AIConnectionsSettingsView: View {
                         CyAsterisk(color: .cyAccent, size: 22, strokeWidth: 2)
                     }
                     VStack(alignment: .leading, spacing: AgentSpacing.x1) {
-                        Text("Connected")
+                        Text(availability.label)
                             .font(.agentHeadline)
-                        Text("Powered by Claude through agent.cy")
+                        Text(availability.detail)
                             .font(.agentSubtext)
                             .foregroundStyle(Color.agentSecondary)
                     }
                     Spacer()
-                    AgentIconView(.check, size: 15)
-                        .foregroundStyle(Color.agentSuccess)
+                    if availability.isAvailable {
+                        AgentIconView(.check, size: 15)
+                            .foregroundStyle(Color.agentSuccess)
+                    }
                 }
             }
+
+            if availability == .unavailable {
+                NavigationLink("Check hosted access") { AccessSettingsView() }
+                    .buttonStyle(AgentPrimaryButtonStyle())
+                NavigationLink("Connect Claude or Codex") { MCPBridgeSettingsView() }
+                    .buttonStyle(AgentSecondaryButtonStyle())
+            }
+
+            Button("Check connection again") {
+                Task { await refreshAvailability() }
+            }
+            .buttonStyle(AgentSecondaryButtonStyle())
+            .disabled(availability == .checking)
 
             VStack(alignment: .leading, spacing: AgentSpacing.x4) {
                 SectionRuleHeader(title: "How it works")
@@ -37,6 +57,14 @@ struct AIConnectionsSettingsView: View {
                 .foregroundStyle(Color.agentSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .task(id: scenePhase) {
+            if scenePhase == .active { await refreshAvailability() }
+        }
+    }
+
+    private func refreshAvailability() async {
+        availability = .checking
+        availability = await CyAvailabilityResolver.resolve(subscription: subscriptions.first)
     }
 
     private func instruction(number: String, text: String) -> some View {

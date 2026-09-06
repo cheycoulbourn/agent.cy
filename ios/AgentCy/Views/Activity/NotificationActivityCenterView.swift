@@ -313,7 +313,7 @@ struct NotificationActivityCenterView: View {
                         ) {
                             Text(account)
                                 .font(.agentMetadata.weight(.semibold))
-                                .foregroundStyle(Color.cyAccent)
+                                .foregroundStyle(Color.cyAccentText)
                                 .lineLimit(1)
                         }
                         Text(record.reason)

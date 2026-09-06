@@ -14,7 +14,6 @@ struct CreationHubView: View {
     }
 
     var body: some View {
-        #if targetEnvironment(macCatalyst)
         Group {
             if showLivePost {
                 AddLivePostView(onDismiss: returnToCreationHub)
@@ -24,25 +23,15 @@ struct CreationHubView: View {
                 creationHubContent
             }
         }
-        .background(Color.agentCanvas)
+        .background(Color.agentCanvas.ignoresSafeArea())
+        #if targetEnvironment(macCatalyst)
         .preference(
             key: DesktopCreationHubStagePreferenceKey.self,
             value: showLivePost || showQuickCapture ? .capture : .menu
         )
         #else
-        creationHubContent
-            .background(Color.agentCanvas.ignoresSafeArea())
             .presentationBackground(Color.agentCanvas)
-            .sheet(isPresented: $showQuickCapture) {
-                QuickCaptureView()
-                    .environment(appModel)
-            }
-            .sheet(isPresented: $showLivePost) {
-                AddLivePostView()
-                    .environment(appModel)
-                    .presentationDetents([.large])
-                    .agentSheetDragIndicator()
-            }
+            .presentationDetents([.large])
             .sheet(isPresented: $showVoiceSpark) {
                 VoiceSparkView()
                     .environment(appModel)
@@ -178,7 +167,7 @@ struct CreationHubView: View {
                         Text("WITH CY")
                             .font(.agentMetadata)
                             .tracking(0.7)
-                            .foregroundStyle(Color.cyAccent)
+                            .foregroundStyle(Color.cyAccentText)
                     }
                     Text("Get directions grounded in your pillars and saved work.")
                         .font(.agentSubtext)
@@ -189,7 +178,7 @@ struct CreationHubView: View {
                 Spacer(minLength: AgentSpacing.x3)
 
                 AgentIconView(.arrowRight, size: 13)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
                     .frame(width: 40, height: 40)
             }
             .foregroundStyle(Color.agentText)
@@ -349,11 +338,11 @@ struct CreationHubView: View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             HStack(spacing: AgentSpacing.x2) {
                 AgentIconView(.add, size: 15)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
                 Text("QUICK ADD")
                     .font(.agentMetadata)
                     .tracking(0.8)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
             }
 
             Text("Start with what you have.")
@@ -390,7 +379,7 @@ struct CreationHubView: View {
     private var cyAction: some View {
         VStack(alignment: .leading, spacing: AgentSpacing.x3) {
             MetaLabel("With Cy")
-                .foregroundStyle(Color.cyAccent)
+                .foregroundStyle(Color.cyAccentText)
                 .padding(.leading, AgentLayout.dashboardGutter)
 
             Button { openCapture(.cyIdeas) } label: {
@@ -411,7 +400,7 @@ struct CreationHubView: View {
                     Spacer(minLength: AgentSpacing.x2)
 
                     AgentIconView(.arrowRight, size: 13)
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                         .frame(width: 32, height: 32)
                 }
                 .foregroundStyle(Color.agentText)

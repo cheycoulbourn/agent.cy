@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
+    @State private var cyAvailability: CyAvailabilityState = .checking
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -144,7 +145,7 @@ struct SettingsView: View {
                             } label: {
                                 SettingsIndexRow(
                                     title: "Cy connection",
-                                    value: "Connected"
+                                    value: cyAvailability.label
                                 )
                             }
                             if let activeWorkspace {
@@ -265,6 +266,7 @@ struct SettingsView: View {
             }
             .navigationDestination(for: RequestedSettingsPage.self) { page in
                 switch page {
+                case .cyConnection: AIConnectionsSettingsView()
                 case .notifications: NotificationSettingsView()
                 case .access: AccessSettingsView()
                 case .mcpBridge: MCPBridgeSettingsView()
@@ -294,6 +296,7 @@ struct SettingsView: View {
             }
         }
         .onAppear(perform: openRequestedPageIfNeeded)
+        .task { cyAvailability = await CyAvailabilityResolver.resolve(subscription: subscriptions.first) }
         .onChange(of: appModel.requestedSettingsPage) { _, _ in
             openRequestedPageIfNeeded()
         }

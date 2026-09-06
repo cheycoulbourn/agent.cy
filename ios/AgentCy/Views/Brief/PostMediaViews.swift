@@ -964,8 +964,11 @@ struct PostMediaManagerView: View {
             MetaLabel("Cover")
             if let currentCover {
                 HStack(spacing: AgentSpacing.x4) {
-                    PostMediaManagerThumbnail(attachment: currentCover)
-                        .frame(width: 74, height: 92)
+                    PostMediaManagerThumbnail(
+                        attachment: currentCover,
+                        width: 74,
+                        height: 92
+                    )
                     VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                         Text(currentCover.isCoverOnly ? "Separate thumbnail" : "Media cover")
                             .font(.agentBody.weight(.semibold))
@@ -1083,8 +1086,11 @@ private struct PostMediaManagerRow: View {
 
     var body: some View {
         HStack(spacing: AgentSpacing.x3) {
-            PostMediaManagerThumbnail(attachment: attachment)
-                .frame(width: 68, height: 84)
+            PostMediaManagerThumbnail(
+                attachment: attachment,
+                width: 68,
+                height: 84
+            )
 
             VStack(alignment: .leading, spacing: AgentSpacing.x1) {
                 HStack(spacing: AgentSpacing.x2) {
@@ -1136,6 +1142,8 @@ private struct PostMediaManagerRow: View {
 
 private struct PostMediaManagerThumbnail: View {
     let attachment: CreatorAttachment
+    let width: CGFloat
+    let height: CGFloat
 
     var body: some View {
         ZStack {
@@ -1156,6 +1164,7 @@ private struct PostMediaManagerThumbnail: View {
                     .background(Color.agentPureBlack.opacity(0.58), in: .circle)
             }
         }
+        .frame(width: width, height: height)
         .clipped()
         .clipShape(.rect(cornerRadius: AgentRadius.control))
         .overlay {

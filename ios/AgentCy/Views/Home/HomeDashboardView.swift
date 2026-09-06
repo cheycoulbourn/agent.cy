@@ -212,12 +212,12 @@ private struct HomeDashboardContent: View {
                 .font(.agentSubtext.weight(.semibold))
                 .foregroundStyle(Color.agentText)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(.rect(cornerRadius: AgentRadius.control))
+                .contentShape(.rect(cornerRadius: AgentRadius.button))
         }
         .buttonStyle(.plain)
-        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.control))
+        .background(Color.agentSurface, in: .rect(cornerRadius: AgentRadius.button))
         .overlay {
-            RoundedRectangle(cornerRadius: AgentRadius.control)
+            RoundedRectangle(cornerRadius: AgentRadius.button)
                 .stroke(Color.agentBorder, lineWidth: 1)
         }
         .accessibilityHint(
@@ -465,7 +465,7 @@ private struct HomeDashboardContent: View {
                     Text("CY NOTICED")
                         .font(.agentMetadata)
                         .tracking(1.4)
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                 }
                 Text(cyNoticedSummary.message)
                     .font(.agentSubtext)
@@ -477,7 +477,7 @@ private struct HomeDashboardContent: View {
                         .font(.agentSubtext.weight(.semibold))
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(Color.cyAccent)
+                .foregroundStyle(Color.cyAccentText)
                 .frame(maxWidth: .infinity, minHeight: 36)
                 .background(
                     Color.cyAccent.opacity(0.12),

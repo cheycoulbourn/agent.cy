@@ -169,8 +169,8 @@ enum AgentColorPalette {
     static let destructiveDark = AgentOKLCH(lightness: 0.603_551, chroma: 0.144_740, hue: 29.729)
 
     /// Cy as a *foreground* on dark surfaces: same hue with lifted lightness so
-    /// 10-11pt text clears 4.5:1 against surfaceDark. Fills keep using `cy`.
-    static let cyTextDark = destructiveDark
+    /// Text clears 4.5:1 against both dark canvas and surface. Fills keep using `cy`.
+    static let cyTextDark = AgentOKLCH(lightness: 0.622, chroma: 0.144_740, hue: 29.729)
 
     /// The one fallback for pillar colors that fail to parse or are absent,
     /// shared by the app and the widgets so the two never drift apart.

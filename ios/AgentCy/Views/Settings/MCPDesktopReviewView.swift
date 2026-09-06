@@ -19,6 +19,7 @@ struct MCPDesktopReviewView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var existingSeries: [ContentSeries]
+    @Query private var formats: [PublishingFormat]
     @Query private var allPillars: [Pillar]
 
     let requests: [MCPBridgeChangeRequest]
@@ -27,6 +28,9 @@ struct MCPDesktopReviewView: View {
     /// modal dismissal.
     var onClose: (() -> Void)?
     let onQueueChanged: () -> Void
+    var approveRequests: ([MCPBridgeChangeRequest], ModelContext) throws -> Void = {
+        try MCPBridgeService.approve($0, context: $1)
+    }
 
     @State private var bundles: [MCPSeriesReviewBundle] = []
     @State private var ideas: [MCPBridgeChangeRequest] = []
@@ -39,21 +43,19 @@ struct MCPDesktopReviewView: View {
     @State private var otherRequests: [MCPBridgeChangeRequest] = []
     @State private var taskRequests: [MCPBridgeChangeRequest] = []
     @State private var selection: Selection?
-    @State private var editingPayload: MCPBridgeRequestPayload?
-    @State private var editingEpisodeID: UUID?
-    // Never inserted into the model context, so an abandoned edit cannot leave
-    // a phantom post behind.
-    @State private var scratchBrief: CreativeBrief?
-    @State private var scratchOutput: PlatformOutput?
+    // One item owns both uninserted scratch models. This makes presentation
+    // atomic and prevents an empty editor on the first open.
+    @State private var episodeEditSession: MCPSeriesEpisodeEditSession?
     @State private var denyTarget: MCPSeriesReviewBundle?
     @State private var errorMessage: String?
 
     var body: some View {
         Group {
-            if let scratchBrief, let scratchOutput {
+            if let episodeEditSession {
                 // The editor takes over this same surface. It used to be a
                 // sheet on top of a sheet, which left no obvious way back.
-                editorSurface(brief: scratchBrief, output: scratchOutput)
+                editorSurface(episodeEditSession)
+                    .id(episodeEditSession.id)
             } else {
                 VStack(spacing: 0) {
                     header
@@ -102,10 +104,10 @@ struct MCPDesktopReviewView: View {
 
     /// The post editor rendered in place with this view's own Back/Save header.
     /// The editor's built-in rail is suppressed so only one header shows.
-    private func editorSurface(brief: CreativeBrief, output: PlatformOutput) -> some View {
+    private func editorSurface(_ session: MCPSeriesEpisodeEditSession) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Button { clearScratch() } label: {
+                Button { clearEpisodeEditSession() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
                             .font(.footnote.weight(.semibold))
@@ -120,7 +122,8 @@ struct MCPDesktopReviewView: View {
 
                 Spacer()
 
-                Button("Save") { commitEdit() }
+                Button("Save") { commitEdit(session) }
+                    .keyboardShortcut("s", modifiers: .command)
                     .buttonStyle(AgentQuietSecondaryButtonStyle(isEmphasized: true))
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -131,12 +134,13 @@ struct MCPDesktopReviewView: View {
             Divider().overlay(Color.agentHairline)
 
             ResumablePostEditorView(
-                brief: brief,
-                output: output,
+                brief: session.brief,
+                output: session.output,
                 contextLabel: "Edit before approval",
                 isReviewEditing: true,
                 bottomActionClearance: AgentSpacing.x3,
                 showsEditorChrome: false,
+                externalSaveCoordinator: session.saveCoordinator,
                 onSpark: {}
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -663,14 +667,6 @@ struct MCPDesktopReviewView: View {
         bundles.flatMap(\.episodes) + looseEpisodes
     }
 
-    private var editingPayloadBinding: Binding<MCPBridgeRequestPayload>? {
-        guard editingPayload != nil else { return nil }
-        return Binding(
-            get: { editingPayload ?? MCPBridgeRequestPayload() },
-            set: { editingPayload = $0 }
-        )
-    }
-
     private var denyTitle: String {
         guard let denyTarget else { return "Deny this series?" }
         return "Deny \(seriesName(denyTarget))?"
@@ -743,48 +739,29 @@ struct MCPDesktopReviewView: View {
     }
 
     private func beginEdit(_ episode: MCPBridgeChangeRequest) {
-        editingEpisodeID = episode.id
-        editingPayload = episode.payload
-
-        let brief = CreativeBrief(
-            title: episode.payload.title ?? "Untitled episode",
-            premise: episode.payload.premise ?? ""
-        )
-        brief.spokenHook = episode.payload.hook ?? ""
-        brief.notes = episode.payload.notes ?? ""
-        brief.seriesID = episode.payload.seriesId
-        brief.pillarID = episode.payload.seriesId.flatMap { id in
-            existingSeries.first(where: { $0.id == id })?.pillarID
+        let seriesRecord = episode.payload.seriesId.flatMap { id in
+            existingSeries.first(where: { $0.id == id })
         }
-
-        let platform = episode.payload.platform.flatMap(CreatorPlatform.init(rawValue:)) ?? .instagramReels
-        let output = PlatformOutput(briefID: brief.id, platform: platform)
-        output.targetDate = episode.payload.targetDate
-
-        scratchBrief = brief
-        scratchOutput = output
+        episodeEditSession = MCPSeriesEpisodeEditSession(
+            requestID: episode.id,
+            workspaceID: episode.workspaceId,
+            payload: episode.payload,
+            inheritedPillarID: seriesRecord?.pillarID,
+            seriesName: seriesRecord?.name,
+            series: seriesRecord,
+            formats: formats
+        )
     }
 
-    private func clearScratch() {
-        scratchBrief = nil
-        scratchOutput = nil
-        editingPayload = nil
-        editingEpisodeID = nil
+    private func clearEpisodeEditSession() {
+        episodeEditSession = nil
     }
 
     /// Keeps the edited payload in the bundle so it ships on approval.
-    private func commitEdit() {
-        guard let id = editingEpisodeID, var payload = editingPayload else { return }
-        if let brief = scratchBrief {
-            payload.title = brief.title
-            payload.premise = brief.premise
-            payload.hook = brief.spokenHook
-            payload.notes = brief.notes
-        }
-        if let output = scratchOutput {
-            payload.targetDate = output.targetDate
-            payload.platform = output.platform.rawValue
-        }
+    private func commitEdit(_ session: MCPSeriesEpisodeEditSession) {
+        guard session.saveCoordinator.commit() else { return }
+        let id = session.id
+        let payload = session.updatedPayload(formats: formats)
         for index in bundles.indices {
             guard let episodeIndex = bundles[index].episodes.firstIndex(where: { $0.id == id }) else {
                 continue
@@ -816,7 +793,7 @@ struct MCPDesktopReviewView: View {
                 payload: payload
             )
         }
-        clearScratch()
+        clearEpisodeEditSession()
     }
 
     private func removeEpisode(_ episode: MCPBridgeChangeRequest) {
@@ -837,7 +814,7 @@ struct MCPDesktopReviewView: View {
 
     private func approveBundle(_ bundle: MCPSeriesReviewBundle) {
         do {
-            try MCPBridgeService.approve(bundle.requests, context: context)
+            try approveRequests(bundle.requests, context)
             bundles.removeAll { $0.id == bundle.id }
             selection = nil
             onQueueChanged()
@@ -862,7 +839,7 @@ struct MCPDesktopReviewView: View {
 
     private func approveSingle(_ request: MCPBridgeChangeRequest) {
         do {
-            try MCPBridgeService.approve([request], context: context)
+            try approveRequests([request], context)
             ideas.removeAll { $0.id == request.id }
             looseEpisodes.removeAll { $0.id == request.id }
             otherRequests.removeAll { $0.id == request.id }
@@ -891,4 +868,3 @@ struct MCPDesktopReviewView: View {
         errorMessage = CreatorFacingErrorMapper.presentation(for: error, action: action).message
     }
 }
-

@@ -659,7 +659,7 @@ private struct WalkthroughAnimatedGlyph: View {
                 CyAsterisk(color: .cyAccent, size: 18, strokeWidth: 1.6)
             } else {
                 AgentIconView(step.icon, size: 17)
-                    .foregroundStyle(Color.cyAccent)
+                    .foregroundStyle(Color.cyAccentText)
             }
         }
         .frame(width: 36, height: 36)

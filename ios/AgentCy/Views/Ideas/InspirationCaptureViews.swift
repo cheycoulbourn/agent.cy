@@ -467,7 +467,7 @@ struct InspirationReviewView: View {
 
                 if analysisAction != .processing {
                     AgentIconView(.arrowRight, size: 14)
-                        .foregroundStyle(Color.cyAccent)
+                        .foregroundStyle(Color.cyAccentText)
                 }
             }
             .padding(AgentSpacing.x4)

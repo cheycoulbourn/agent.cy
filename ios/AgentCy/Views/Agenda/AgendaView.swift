@@ -1428,7 +1428,7 @@ private struct AgendaContent: View {
                         .textCase(.uppercase)
                         .foregroundStyle(
                             Calendar.current.isDate(day, inSameDayAs: referenceDate)
-                                ? Color.cyAccent
+                                ? Color.cyAccentText
                                 : Color.agentText
                         )
                         .fixedSize()
